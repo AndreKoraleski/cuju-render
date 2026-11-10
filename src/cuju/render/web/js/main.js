@@ -6,13 +6,15 @@
 import * as THREE from 'three';
 import { api, formatBytes } from './core/api.js';
 import { PlayerTools } from './watch/player-tools.js';
+import { AnnotationOverlay } from './watch/annotations.js';
 import { AccessibilityControls } from './core/accessibility.js';
 import { OWN_KEYS, openPanel } from './core/comfort.js';
 import { Sound } from './broadcast/audio.js';
 import { Ball } from './world/ball.js';
 import { CAMERA_MODES, CameraRig, PLAYER_VIEWS } from './world/cameras.js';
 import { TeamEditor, loadShippedRig } from './teams/editor.js';
-import { ACTION, EPISODE_START, FormatError, PLAYER_FLOATS, TOUCH, isCut, parseRecording } from './recording/format.js';
+import { ACTION, EPISODE_START, FormatError, PLAYER_FLOATS, TOUCH, isCut } from './recording/format.js';
+import { decodeRecording } from './recording/decode.js';
 import { Hud, formatSeconds } from './broadcast/hud.js';
 import { modelChoice, normalizeStyle, separateKeepers } from './players/kits.js';
 import { loadTeamArt } from './teams/art.js';
@@ -43,6 +45,7 @@ import { FirstRun } from './help/firstrun.js';
 import { TouchControls } from './play/touch.js';
 import { FlatMode, headlessView } from './watch/flat.js';
 import { EnvironmentGrid } from './watch/grid.js';
+import { VideoExport } from './export/video-export.js';
 
 const $ = (id) => document.getElementById(id);
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
@@ -161,8 +164,10 @@ class App {
         this.transition = new Transitions(this);
         this.decisions = new Decisions(this, this.transition);
         this.playerTools = new PlayerTools(this);
+        this.annotationOverlay = new AnnotationOverlay(this);
         this.accessibility = new AccessibilityControls(this);
         this.palette = new CommandPalette(this, { CAMERA_MODES, api });
+        this.videoExport = new VideoExport(this);
         this.clock = 0;
         this.idleTimer = null;
         this.hashTimer = null;
@@ -194,7 +199,10 @@ class App {
         this.touch = new TouchControls(this);
         this.showEmpty(true);
         this.applyField(this.field);
-        loadAssets().then((assets) => {
+        // The art loads beside the first recording, which waits for it to build its players once.
+        this.assetsReady = loadAssets(undefined, (done, asked) => {
+            this.assetProgress = done / Math.max(1, asked);
+        }).then((assets) => {
             this.assets = assets;
             if (assets.ball) {
                 this.ball.useModel(assets.ball);
@@ -299,13 +307,11 @@ class App {
                 return;
             }
             this.showLoading(`Reading ${formatBytes(bytes.length)} of frames`, null);
-            // Reading blocks the page for a moment, so the message paints first.
-            await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
-            const rec = await parseRecording(bytes);
-            if (token !== this.loadToken) {
+            const rec = await decodeRecording(bytes);
+            if (token !== this.loadToken || !(await this.waitForAssets(token))) {
                 return;
             }
-            await this.setSource({ kind: 'match', id, header: rec.header, store: new FrameStore(rec.header, rec.frames) });
+            await this.setSource({ kind: 'match', id, header: rec.header, store: new FrameStore(rec.header, rec.frames, Infinity, rec.annotations) });
             if (seekSeconds != null) {
                 this.timeline.seek(this.timeline.first + seekSeconds * this.timeline.sps);
                 this.afterSeek();
@@ -326,17 +332,31 @@ class App {
         }
     }
 
+    // Waits for the art that is still loading, with its share on the bar, so the players of a
+    // recording are built once with their models. Returns whether the load of `token` goes on.
+    async waitForAssets(token) {
+        let done = false;
+        const settled = this.assetsReady.catch(() => {}).then(() => {
+            done = true;
+        });
+        while (!done && token === this.loadToken) {
+            this.showLoading('Loading the players and the stadium', this.assetProgress || 0);
+            await Promise.race([settled, new Promise((resolve) => setTimeout(resolve, 100))]);
+        }
+        return token === this.loadToken;
+    }
+
     async openFile(file) {
         this.showPage('watch');
         const token = ++this.loadToken;
         this.dropPendingLive();
         this.showLoading(`Reading ${file.name}`);
         try {
-            const rec = await parseRecording(new Uint8Array(await file.arrayBuffer()));
-            if (token !== this.loadToken) {
+            const rec = await decodeRecording(new Uint8Array(await file.arrayBuffer()));
+            if (token !== this.loadToken || !(await this.waitForAssets(token))) {
                 return;
             }
-            await this.setSource({ kind: 'file', id: file.name, header: rec.header, store: new FrameStore(rec.header, rec.frames) });
+            await this.setSource({ kind: 'file', id: file.name, header: rec.header, store: new FrameStore(rec.header, rec.frames, Infinity, rec.annotations) });
             this.timeline.play(1);
             this.director.showLineups();
             this.updateHash(true);
@@ -495,6 +515,7 @@ class App {
         if (this.postMatch.running) {
             this.postMatch.end();
         }
+        this.sound.stopEvents();
         clearTimeout(this.fullTimeTimer);
         $('post-show').hidden = true;
         if (this.endCard) {
@@ -959,6 +980,7 @@ class App {
         this.cameras.update(dt, ballPos, this.players, this.pose || { players: 1 }, this.view.aspect, follow);
         this.sound.setListener(this.view.camera);
         this.playerTools.update();
+        this.annotationOverlay.update();
         // Sound plays on the pages that show a match, while it plays or while a show runs that the
         // viewer has not paused, and stops on every other page.
         const onStage = this.page === 'watch' || this.page === 'play';
@@ -1211,6 +1233,7 @@ class App {
     }
 
     afterSeek() {
+        this.sound.stopEvents();
         this.ball.reset();
         this.cameras.jump();
         this.hud.hideGoal();

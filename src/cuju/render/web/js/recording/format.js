@@ -1,8 +1,10 @@
 // Copyright 2026 The cuju Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Reader of the cuju recording format, version 1, as the section Recording format of
+// Reader of the cuju recording format, versions 1 and 2, as the section Recording format of
 // docs/rendering.md describes it.
+
+import { ANNOTATIONS_TAG, FRAMES_TAG, decodeFrames, sectionBytes } from './codec.js';
 
 export const MAGIC = 'CUJREC1\n';
 export const NODE_COUNT = 14;
@@ -122,8 +124,12 @@ export function validateHeader(header) {
     if (header.stream_sequence !== undefined && header.stream_sequence !== 1) {
         throw new FormatError('This live stream numbers its frames in a format this viewer does not read.');
     }
-    if (header.version !== 1) {
-        throw new FormatError(`Recording version ${header.version} is not supported, this viewer reads version 1.`);
+    if (header.version !== 1 && header.version !== 2) {
+        throw new FormatError(`Recording version ${header.version} is not supported, this viewer reads versions 1 and 2.`);
+    }
+    if (header.version === 2 && (!Number.isInteger(header.frame_count) || header.frame_count < 0
+        || !Number.isInteger(header.keyframe_interval) || header.keyframe_interval < 1)) {
+        throw new FormatError('The recording header gives no valid frame count or keyframe interval.');
     }
     if (!Array.isArray(header.players) || header.players.length === 0) {
         throw new FormatError('The recording header lists no players.');
@@ -201,9 +207,22 @@ export async function parseRecording(input) {
     }
     const { header, offset } = parsed;
     const size = header.frame_bytes;
-    const count = Math.floor((bytes.length - offset) / size);
-    // The writer pads the header to four bytes, and a copy keeps older or foreign files readable.
-    const aligned = bytes.slice(offset, offset + count * size).buffer;
+    let count = Math.floor((bytes.length - offset) / size);
+    let aligned;
+    let annotations = null;
+    if (header.version === 2) {
+        const sections = readSections(bytes, offset);
+        const coded = sections.get(FRAMES_TAG);
+        count = header.frame_count;
+        if (!coded || coded.length !== sectionBytes(header.players.length, count)) {
+            throw new FormatError('The recording is truncated or its frames section is malformed.');
+        }
+        aligned = decodeFrames(coded, header.players.length, count, header.keyframe_interval);
+        annotations = readAnnotations(sections.get(ANNOTATIONS_TAG));
+    } else {
+        // The writer pads the header to four bytes, and a copy keeps older or foreign files readable.
+        aligned = bytes.slice(offset, offset + count * size).buffer;
+    }
     const frames = new Array(count);
     for (let i = 0; i < count; i++) {
         frames[i] = makeFrame(aligned, i * size, header);
@@ -211,20 +230,62 @@ export async function parseRecording(input) {
     if (header.frame_count != null && header.frame_count !== count) {
         console.warn(`header says ${header.frame_count} frames, file holds ${count}`);
     }
-    return { header, frames };
+    return { header, frames, annotations };
+}
+
+// The records of an annotations section, or null when there is none or it is malformed, which
+// leaves the frames to play without annotations.
+export function readAnnotations(payload) {
+    if (!payload) {
+        return null;
+    }
+    try {
+        const records = JSON.parse(new TextDecoder().decode(payload)).records;
+        return Array.isArray(records) ? records : null;
+    } catch {
+        return null;
+    }
+}
+
+// The sections of version 2 after the header, each a tag of four letters, a length and the
+// payload padded to four bytes. A reader keeps the first section of each tag and skips tags it
+// does not know.
+export function readSections(bytes, offset) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const sections = new Map();
+    let at = offset;
+    while (at + 8 <= bytes.length) {
+        const tag = String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
+        const length = view.getUint32(at + 4, true);
+        if (at + 8 + length > bytes.length) {
+            throw new FormatError('The recording is truncated inside a section.');
+        }
+        if (!sections.has(tag)) {
+            sections.set(tag, bytes.subarray(at + 8, at + 8 + length));
+        }
+        at += 8 + length + ((4 - (length % 4)) % 4);
+    }
+    return sections;
 }
 
 // Incremental parser for the live stream, fed with chunks as they arrive.
 // The serial that ends a numbered live stream, which no frame carries.
 const STREAM_END = 0xffffffffffffffffn;
+// The serial that opens annotations in a stream whose header has stream_annotations 1, followed
+// by the length of a JSON object as an unsigned 32 bit integer and the object, whose records name
+// the serials of their frames.
+const STREAM_NOTES = 0xfffffffffffffffen;
+const MAX_NOTES_BYTES = 1024 * 1024;
 
 // Reads a stream in chunks. A header with stream_sequence 1 puts a serial of eight bytes before
 // every frame, which the frame keeps as its sequence, and the serial STREAM_END ends the stream,
-// before the header too when a source closes before its first frame.
+// before the header too when a source closes before its first frame. onAnnotations, when given,
+// receives the records of the annotations of such a stream.
 export class StreamParser {
-    constructor(onHeader, onFrame) {
+    constructor(onHeader, onFrame, onAnnotations = null) {
         this.onHeader = onHeader;
         this.onFrame = onFrame;
+        this.onAnnotations = onAnnotations;
         this.buffer = new Uint8Array(1 << 16);
         this.length = 0;
         this.header = null;
@@ -270,6 +331,24 @@ export class StreamParser {
                 this.ended = true;
                 start = this.length;
                 break;
+            }
+            if (serial === STREAM_NOTES && this.header.stream_annotations === 1) {
+                if (this.length - start < 12) {
+                    break;
+                }
+                const length = view.getUint32(start + 8, true);
+                if (length > MAX_NOTES_BYTES) {
+                    throw new FormatError('The live stream sent implausibly large annotations.');
+                }
+                if (this.length - start < 12 + length) {
+                    break;
+                }
+                const records = readAnnotations(this.buffer.subarray(start + 12, start + 12 + length));
+                if (records && this.onAnnotations) {
+                    this.onAnnotations(records);
+                }
+                start += 12 + length;
+                continue;
             }
             if (this.length - start < size) {
                 break;

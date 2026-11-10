@@ -19,13 +19,17 @@ writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const load = (name) => import(pathToFileURL(join(folder, name)).href);
 const { LiveSource, RECONNECT_ATTEMPTS, liveLimit } = await load('recording/live.js');
-const { NODES_FLOAT, PLAYER_FLOATS, StreamParser, isCut, validateHeader } = await load('recording/format.js');
+const { NODES_FLOAT, PLAYER_FLOATS, StreamParser, isCut, readSections, validateHeader } = await load('recording/format.js');
+const { decodeFrames } = await load('recording/codec.js');
 
 const sample = (name) => gunzipSync(readFileSync(new URL(`../../src/cuju/render/samples/${name}`, import.meta.url)));
 const bytes = sample('sample-5v5.cjr');
 const length = bytes.readUInt32LE(8);
-const header = JSON.parse(bytes.subarray(12, 12 + length));
-const frame = bytes.subarray(12 + length, 12 + length + header.frame_bytes);
+// A live stream sends the header and frames of version 1, so the sample of version 2 decodes first.
+const { keyframe_interval: interval, ...stored } = JSON.parse(bytes.subarray(12, 12 + length));
+const header = { ...stored, version: 1, frame_count: null };
+const coded = readSections(new Uint8Array(bytes), 12 + length).get('FRMS');
+const frame = Buffer.from(decodeFrames(coded, header.players.length, stored.frame_count, interval), 0, header.frame_bytes);
 const END = Buffer.alloc(8, 255);
 
 // A numbered stream with the frames of the given serials, the end marker when ended is true.

@@ -127,6 +127,125 @@ def debugging_port(profile, port):
     raise RuntimeError('Chrome startup failed.')
 
 
+# The SHA-256 of the frames of the shipped sample of five a side as version 1 stores them.
+SAMPLE_5V5_DIGEST = 'b41e32efb5decbece8ea3a1ab949e2f1e62c8052e4929f7a1f429a938e6b0d27'
+
+
+def format_checks(client):
+    """Checks that the page reads a recording of version 2 as the frames of version 1."""
+    result = client.evaluate("""
+        (async () => {
+            const format = await import('./js/recording/format.js');
+            const { gunzip, parseHeader, parseRecording, readSections } = format;
+            const { decodeFrames } = await import('./js/recording/codec.js');
+            const response = await fetch('/api/mock/samples/sample-5v5');
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            const started = performance.now();
+            const recording = await parseRecording(bytes);
+            const seconds = (performance.now() - started) / 1000;
+            const plain = await gunzip(bytes);
+            const { header, offset } = parseHeader(plain);
+            const raw = decodeFrames(readSections(plain, offset).get('FRMS'), header.players.length,
+                header.frame_count, header.keyframe_interval);
+            const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', raw)),
+                (b) => b.toString(16).padStart(2, '0')).join('');
+            await cuju.openFile(new File([bytes], 'sample-5v5.cjr'));
+            const opened = cuju.source.store.size;
+            cuju.act('pause');
+            const { version } = recording.header;
+            return { version, frames: recording.frames.length, digest, opened, seconds };
+        })()
+    """)
+    assert result['version'] == 2 and result['frames'] == result['opened'] == 3002, result
+    assert result['digest'] == SAMPLE_5V5_DIGEST, result
+    print(f'A sample of version 2 parses in {result["seconds"]:.2f} s in Chrome.', flush=True)
+    return 1
+
+
+def annotation_checks(client):
+    """Checks the overlay of annotations, hidden without them, its labels, lines and panel."""
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const settle = async (test) => {
+                for (let i = 0; i < 60 && !test(); i++) {
+                    await wait(50);
+                }
+                return test();
+            };
+            const open = async (bytes, name) => {
+                await cuju.openFile(new File([bytes], name));
+                cuju.director.stop(true);
+                if (cuju.postMatch.running) cuju.postMatch.end({ home: false });
+                cuju.timeline.seek(cuju.timeline.first + 50);
+                cuju.timeline.pause();
+                cuju.setCamera('tactical');
+                cuju.cameras.jump();
+            };
+            const { gunzip } = await import('./js/recording/format.js');
+            const response = await fetch('/api/mock/samples/sample-5v5');
+            const plain = await gunzip(new Uint8Array(await response.arrayBuffer()));
+            const button = document.getElementById('annotations-button');
+            const layer = document.querySelector('.annotation-labels');
+            const paths = () => document.querySelectorAll('.timeline-series path').length;
+            await open(plain, 'plain.cjr');
+            await wait(300);
+            const off = button.hidden && layer.hidden && paths() === 0;
+            const records = [];
+            for (let f = 0; f < 3002; f++) {
+                for (let p = 0; p < 10; p++) {
+                    records.push({ f, p, v: { value: Math.sin(f / 50 + p) }, a: 12,
+                        k: [[12, 0.6], [11, 0.3], [0, 0.1]] });
+                }
+                records.push({ f, v: { pressure: f / 3002 }, t: `minute ${Math.floor(f / 600)}` });
+            }
+            const json = new TextEncoder().encode(JSON.stringify({ records }));
+            const padding = (4 - (json.length % 4)) % 4;
+            const bytes = new Uint8Array(plain.length + 8 + json.length + padding);
+            bytes.set(plain);
+            bytes.set(new TextEncoder().encode('ANNO'), plain.length);
+            new DataView(bytes.buffer).setUint32(plain.length + 4, json.length, true);
+            bytes.set(json, plain.length + 8);
+            await open(bytes, 'annotated.cjr');
+            const labelled = await settle(() => layer.querySelector('span'));
+            const label = labelled ? labelled.textContent : '';
+            const shown = !button.hidden && label.includes('value')
+                && label.includes('Shot chosen');
+            const box = document.querySelector('.annotation-match');
+            const match = !box.hidden && box.textContent.includes('minute 0');
+            const line = await settle(() => paths() === 1);
+            button.click();
+            const panel = document.getElementById('annotations-panel');
+            const opened = panel.classList.contains('open')
+                && button.getAttribute('aria-expanded') === 'true';
+            const boxes = [...panel.querySelectorAll('[data-series]')];
+            const listed = boxes.length === 11 && boxes[0].checked;
+            boxes[1].click();
+            const two = await settle(() => paths() === 2);
+            boxes[0].click();
+            boxes[1].click();
+            const none = await settle(() => paths() === 0);
+            const toggles = ['annotation-players', 'annotation-actions', 'annotation-text'];
+            for (const id of toggles) {
+                document.getElementById(id).click();
+            }
+            const quiet = await settle(() => layer.hidden && box.hidden);
+            for (const id of toggles) {
+                document.getElementById(id).click();
+            }
+            panel.querySelector('input').focus();
+            panel.querySelector('input').dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            const closed = !panel.classList.contains('open') && document.activeElement === button;
+            await open(plain, 'plain.cjr');
+            const hidden = await settle(() => button.hidden && layer.hidden && paths() === 0);
+            return { off, shown, match, line, opened, listed, two, none, quiet, closed, hidden };
+        })()
+    """)
+    assert all(result.values()), f'Annotations {result}'
+    return 1
+
+
 def library_checks(client):
     """Checks the Trash, the details of a recording, duplicated teams and request pages."""
     result = client.evaluate("""
@@ -729,6 +848,93 @@ def touch_checks(client):
     return 4
 
 
+def loading_checks(client, port):
+    """Checks decoding in a worker, the progress of loading and opening a match by its address."""
+    result = client.evaluate("""
+        (async () => {
+            const { api } = await import('./js/core/api.js');
+            const decode = await import('./js/recording/decode.js');
+            const [entry] = await api.matches();
+            const bytes = await api.matchBytes(entry.id);
+            const inWorker = await decode.decodeRecording(bytes);
+            const worker = decode.lastDecoder;
+            const onPage = await decode.decodeRecording(bytes, { makeWorker: null });
+            const page = decode.lastDecoder;
+            const sum = (rec) => rec.frames.reduce((total, frame) => total
+                + frame.data.reduce((a, b) => a + b, 0) + frame.step + frame.actions.length, 0);
+            const same = JSON.stringify(inWorker.header) === JSON.stringify(onPage.header)
+                && inWorker.frames.length === onPage.frames.length
+                && sum(inWorker) === sum(onPage);
+            const all = { worker: worker === 'worker', page: page === 'page', same };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'Recordings decode in a worker {result}'
+    result = client.evaluate("""
+        (async () => {
+            const saved = cuju.assetsReady;
+            const savedShare = cuju.assetProgress;
+            let finish;
+            cuju.assetsReady = new Promise((resolve) => { finish = resolve; });
+            cuju.assetProgress = 0.5;
+            const waiting = cuju.waitForAssets(cuju.loadToken);
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            const box = document.getElementById('loading');
+            const shown = !box.hidden
+                && document.getElementById('loading-text').textContent
+                    === 'Loading the players and the stadium'
+                && document.getElementById('loading-bar').style.width === '50%';
+            finish();
+            const goes = await waiting;
+            cuju.assetsReady = saved;
+            cuju.assetProgress = savedShare;
+            cuju.hideLoading();
+            // A muted page fetches no sound file, and Home asks for the montage's poster.
+            cuju.showPage('home');
+            for (let i = 0; i < 100 && !cuju.home; i++) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            cuju.home?.show();
+            const sounds = performance.getEntriesByType('resource')
+                .some((item) => item.name.includes('/assets/sounds/'));
+            const poster = document.querySelector('.home-reel-video')?.getAttribute('poster');
+            const all = {
+                shown, goes, silent: !sounds, poster: poster === 'assets/promo-poster.jpg',
+            };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'Loading progress and lazy files {result}'
+    identifier = client.evaluate("""
+        (async () => (await (await import('./js/core/api.js')).api.matches())[0].id)()
+    """)
+    client.call(
+        'Page.navigate',
+        {'url': f'http://127.0.0.1:{port}/index.html#match={identifier}'},
+    )
+    opened = None
+    for _ in range(300):
+        with contextlib.suppress(RuntimeError):
+            opened = client.evaluate(f"""
+                (async () => {{
+                    const wanted = {json.dumps(identifier)};
+                    if (!window.cuju || !cuju.source || cuju.source.id !== wanted) {{
+                        return null;
+                    }}
+                    const decode = await import('./js/recording/decode.js');
+                    return {{ page: cuju.page, decoder: decode.lastDecoder,
+                        loading: !document.getElementById('loading').hidden,
+                        players: !!cuju.players, frames: cuju.source.store.size }};
+                }})()
+            """)
+        if opened and not opened['loading']:
+            break
+        time.sleep(0.2)
+    assert opened and opened['page'] == 'watch' and opened['decoder'] == 'worker', opened
+    assert opened['players'] and opened['frames'] > 0, opened
+    return 3
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -924,6 +1130,27 @@ def main():
                 elif code == 'KeyK':
                     assert not client.evaluate('cuju.timeline.playing')
                 checks += 1
+            # Export video opens a dialog over Watch, which says what this server lacks and
+            # closes with Escape.
+            result = client.evaluate("""
+                (async () => {
+                    document.getElementById('video-export-btn').click();
+                    const d = document.querySelector('dialog.video-export');
+                    for (let i = 0; i < 50 && !d.querySelector('.ve-actions'); i++) {
+                        await new Promise((r) => setTimeout(r, 100));
+                    }
+                    return { open: d.open, text: d.textContent, paused: !cuju.timeline.playing };
+                })()
+            """)
+            assert result['open'] and result['paused'], result
+            assert 'video export' in result['text'].lower(), result
+            escape = {'key': 'Escape', 'code': 'Escape', 'windowsVirtualKeyCode': 27}
+            client.call('Input.dispatchKeyEvent', {'type': 'keyDown', **escape})
+            client.call('Input.dispatchKeyEvent', {'type': 'keyUp', **escape})
+            closed = client.evaluate("!document.querySelector('dialog.video-export').open")
+            assert closed, 'Escape closes Export video'
+            assert client.evaluate('!document.pointerLockElement'), 'Export video frees the pointer'
+            checks += 1
             result = client.evaluate("""
                 (async () => {
                     const { api } = await import('./js/core/api.js');
@@ -1714,6 +1941,9 @@ def main():
             checks += touch_checks(client)
             checks += page_grid.check_grid(client)
             checks += page_grid.check_flat(client, f'http://127.0.0.1:{port}/')
+            checks += loading_checks(client, port)
+            checks += format_checks(client)
+            checks += annotation_checks(client)
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
             assert not client.evaluate('!!document.pointerLockElement')
             assert not client.errors, client.errors

@@ -24,8 +24,17 @@ from cuju import __version__
 from cuju import state as _state
 from cuju.errors import StateError
 
+from . import annotations as _annotations
+from . import codec as _codec
+
 MAGIC = b'CUJREC1\n'
-VERSION = 1
+# The version that `write` gives a recording by default. Version 1 stores the frames one after
+# another, and version 2 stores them coded in sections, about a third of the size.
+VERSION = 2
+VERSIONS = (1, 2)
+# The tag and length that open every section of a recording of version 2.
+_SECTION = struct.Struct('<4sI')
+FRAMES_TAG = b'FRMS'
 NODES = (
     'player',
     'body',
@@ -372,7 +381,9 @@ def header(
     timing: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
 ) -> bytes:
-    """Returns the magic, the header length and the header of a recording.
+    """Returns the magic, the header length and the header of a recording, as version 1 has it.
+
+    A live stream sends the header as it is, and `write` turns it into the version it writes.
 
     Args:
         title: The title that the viewer shows.
@@ -386,7 +397,7 @@ def header(
     """
     given = [*(teams or ()), {}, {}]
     document = {
-        'version': VERSION,
+        'version': 1,
         'engine_scorer': True,
         'offside_called': True,
         **(timing or {}),
@@ -405,20 +416,79 @@ def header(
     seed = document['provenance'].get('seed')
     if isinstance(seed, int) and not isinstance(seed, bool) and seed > 2**53 - 1:
         document['provenance']['seed'] = str(seed)
+    return _encode_header(document)
+
+
+def _document(head: bytes) -> dict[str, Any]:
+    """Returns the header of the bytes that `header` returns."""
+    return json.loads(head[len(MAGIC) + 4 :])
+
+
+def _encode_header(document: dict[str, Any]) -> bytes:
+    """Returns the magic, the length and a header, padded so that what follows aligns to four."""
     text = json.dumps(document, separators=(',', ':')).encode()
     # Spaces after the JSON align the frames to four bytes, so a reader views their floats in place.
     text += b' ' * (-(len(MAGIC) + 4 + len(text)) % 4)
     return MAGIC + struct.pack('<I', len(text)) + text
 
 
-def write(path: Path, head: bytes, frames: list[bytes]) -> None:
-    """Writes a recording, its header and frames gzip-compressed, through a temporary file."""
+def _section(tag: bytes, payload: bytes) -> bytes:
+    """Returns a section of version 2, its tag, its length, the payload and zeros to four bytes."""
+    return _SECTION.pack(tag, len(payload)) + payload + bytes(-len(payload) % 4)
+
+
+def encode(
+    head: bytes,
+    frames: list[bytes],
+    version: int = VERSION,
+    annotations: list[dict[str, Any]] | None = None,
+) -> bytes:
+    """Returns a recording before compression, in version 1 or 2.
+
+    Args:
+        head: The magic, length and header, as `header` returns them.
+        frames: The frames, each as `StateReader.frame` returns it.
+        version: The version of the file.
+        annotations: The records of the annotations, which version 2 keeps in a section of its own
+            and version 1 has no room for.
+
+    Raises:
+        StateError: If the version is unknown.
+    """
+    if version == 1:
+        return head + b''.join(frames)
+    if version != 2:
+        raise StateError(f'expected a recording version from {VERSIONS}, found {version!r}')
+    document = _document(head)
+    players = len(document['players'])
+    document.update(version=2, frame_count=len(frames), keyframe_interval=_codec.KEYFRAME_INTERVAL)
+    data = _encode_header(document) + _section(FRAMES_TAG, _codec.encode(frames, players))
+    if annotations:
+        data += _section(_annotations.TAG, _annotations.encode(annotations))
+    return data
+
+
+def write(
+    path: Path,
+    head: bytes,
+    frames: list[bytes],
+    version: int = VERSION,
+    annotations: list[dict[str, Any]] | None = None,
+) -> None:
+    """Writes a recording, gzip-compressed, through a temporary file.
+
+    Args:
+        path: The path of the file.
+        head: The magic, length and header, as `header` returns them.
+        frames: The frames, each as `StateReader.frame` returns it.
+        version: The version of the file, 2 by default, or 1 for readers of cuju 0.2.0.
+        annotations: The records of the annotations, kept by version 2 alone.
+    """
+    data = encode(head, frames, version, annotations)
     path = Path(path)
     temporary = path.with_name(path.name + '.part')
     with gzip.open(temporary, 'wb', compresslevel=6) as stream:
-        stream.write(head)
-        for frame in frames:
-            stream.write(frame)
+        stream.write(data)
     temporary.replace(path)
 
 
@@ -437,12 +507,86 @@ def read_header(path: Path) -> dict[str, Any]:
         return _parse_header(stream)
 
 
-def frames(path: Path) -> Iterator[bytes]:
-    """Yields the frames of a recording file one after another."""
+def _sections(stream: Any) -> dict[bytes, bytes]:
+    """Returns the sections of version 2 that follow the header in `stream`, by tag."""
+    found = {}
+    while head := stream.read(_SECTION.size):
+        if len(head) < _SECTION.size:
+            raise StateError('expected a whole section of the recording, found it cut short')
+        tag, length = _SECTION.unpack(head)
+        payload = stream.read(length + (-length % 4))[:length]
+        if len(payload) < length:
+            raise StateError('expected a whole section of the recording, found it cut short')
+        found.setdefault(tag, payload)
+    return found
+
+
+def _coded_frames(document: dict[str, Any], sections: dict[bytes, bytes]) -> tuple[bytes, int]:
+    """Returns the frames section of a recording of version 2 and the number of its players."""
+    players, count = len(document.get('players') or ()), document.get('frame_count')
+    interval = document.get('keyframe_interval')
+    data = sections.get(FRAMES_TAG)
+    if (
+        not isinstance(count, int)
+        or not isinstance(interval, int)
+        or count < 0
+        or interval < 1
+        or not players
+        or data is None
+        or len(data) != _codec.section_bytes(players, count)
+    ):
+        raise StateError('expected the frames of a recording of version 2, found them malformed')
+    return data, players
+
+
+def _version(document: dict[str, Any]) -> int:
+    """Returns the version of a header, after checking that this module reads it."""
+    version = document.get('version', 1)
+    if version not in VERSIONS:
+        raise StateError(f'expected a recording version from {VERSIONS}, found {version!r}')
+    return version
+
+
+def annotations(path: Path) -> list[dict[str, Any]]:
+    """Returns the records of the annotations of a recording file, none for version 1."""
     with gzip.open(path, 'rb') as stream:
-        size = _parse_header(stream)['frame_bytes']
-        while chunk := stream.read(size):
-            yield chunk
+        if _version(_parse_header(stream)) == 1:
+            return []
+        payload = _sections(stream).get(_annotations.TAG)
+    return _annotations.decode(payload) if payload is not None else []
+
+
+def frames(path: Path, start: int = 0, stop: int | None = None) -> Iterator[bytes]:
+    """Yields the frames of a recording file one after another, each as version 1 stores it.
+
+    A file of version 2 decodes from the keyframe before `start`, so the last frames come quickly.
+
+    Args:
+        path: The path of the file.
+        start: The first frame to yield.
+        stop: The frame after the last to yield, by default the end.
+    """
+    with gzip.open(path, 'rb') as stream:
+        document = _parse_header(stream)
+        if _version(document) == 1:
+            size = document['frame_bytes']
+            index = 0
+            while (stop is None or index < stop) and (chunk := stream.read(size)):
+                if index >= start:
+                    yield chunk
+                index += 1
+            return
+        data, players = _coded_frames(document, _sections(stream))
+    decoded = _codec.decode(
+        data,
+        players,
+        document['frame_count'],
+        document['keyframe_interval'],
+        max(0, start),
+        stop,
+    )
+    for row in decoded:
+        yield row.tobytes()
 
 
 def scenario_timing(state: bytes) -> dict[str, Any]:

@@ -4,6 +4,7 @@
 
 import gzip
 import json
+import logging
 import os
 import struct
 import subprocess
@@ -17,7 +18,15 @@ import cuju
 import cuju.errors
 import cuju.state
 from conftest import actions_at, tensor_bytes
-from support.common import _SEVERAL, _control, _get, _short_matches, _toy_team
+from support.common import (
+    _SEVERAL,
+    _control,
+    _filtered_episodes,
+    _get,
+    _goals,
+    _short_matches,
+    _toy_team,
+)
 
 
 def test_layout_offsets():
@@ -100,7 +109,6 @@ def test_live_environment_switch_changes_no_output(render_home):
 
 
 def test_live_environment_switch_survives_a_failed_announcement(render_home, monkeypatch, caplog):
-    import logging
     import pathlib
 
     batch = cuju.BatchEnvironment('5_vs_5_l1_r0', environment_count=2, device='cpu')
@@ -208,3 +216,117 @@ def test_demo_starts_its_server_and_ends_cleanly_on_ctrl_c(render_home):
     finally:
         if process.poll() is None:
             process.kill()
+
+
+def test_recorder_keeps_every_nth_episode_and_a_reward_threshold(render_home):
+    episodes, kept, _, _ = _filtered_episodes(every=3)
+    assert kept == episodes[::3]
+    episodes, kept, _, _ = _filtered_episodes(min_reward=0.5)
+    # GRF: the left team's agent receives 1 for its goal, the scenario's only reward.
+    assert kept == [frames for frames in episodes if struct.unpack_from('<i', frames[-1], 8)[0]]
+
+
+def test_recorder_keeps_what_a_function_chooses_from_the_summary(render_home):
+    episodes, kept, seen, _ = _filtered_episodes(keep='record')
+    assert [summary['episode'] for summary in seen] == list(range(len(episodes)))
+    for summary, frames in zip(seen, episodes, strict=True):
+        assert summary['length'] == len(frames)
+        assert summary['score'] == list(struct.unpack_from('<2i', frames[-1], 8))
+        assert summary['goals'] == _goals(frames)
+        assert summary['steps'] == struct.unpack_from('<i', frames[-1], 0)[0]
+        assert summary['environment'] == 0
+        assert summary['reward'] == sum(summary['rewards']) == summary['score'][0]
+    assert kept == [frames for frames in episodes if len(frames) % 2 == 0]
+
+
+def test_recorder_filters_refuse_invalid_values(render_home):
+    batch = cuju.BatchEnvironment(
+        'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu'
+    )
+    for options in (
+        {'keep': 'shots'},
+        {'every': 0},
+        {'every': 1.5},
+        {'min_reward': float('nan')},
+        {'min_reward': 'high'},
+    ):
+        with pytest.raises(cuju.errors.ArgumentError):
+            cuju.render.Recorder(batch, **options)
+    batch.close()
+
+
+def test_recorder_filters_leave_the_outputs_as_they_were(render_home):
+    """A batch steps the same bits with a filtering recorder as with none."""
+    outputs = []
+    for watched in (False, True):
+        batch = cuju.BatchEnvironment(
+            'academy_empty_goal_close_l1_r0', environment_count=2, device='cpu', seed=4
+        )
+        if watched:
+            cuju.render.Recorder(batch, keep=lambda summary: summary['goals'] > 0, every=2)
+        steps = [batch.reset().clone()]
+        for step in range(120):
+            observation, reward, done, _ = batch.step(actions_at(step, 2, 1, 19))
+            steps.append((observation.clone(), reward.clone(), done.clone()))
+        steps.append(batch.get_state(0))
+        outputs.append(steps)
+        batch.close()
+    assert torch.equal(outputs[0][0], outputs[1][0])
+    for first, second in zip(outputs[0][1:-1], outputs[1][1:-1], strict=True):
+        assert all(torch.equal(a, b) for a, b in zip(first, second, strict=True))
+    assert outputs[0][-1] == outputs[1][-1]
+
+
+def test_recorder_annotate_refuses_invalid_input(render_home):
+    batch = cuju.BatchEnvironment(
+        'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu'
+    )
+    recorder = cuju.render.Recorder(batch)
+    with pytest.raises(cuju.errors.ArgumentError):
+        recorder.annotate(text='before the first step')
+    batch.reset()
+    for options in (
+        {},
+        {'player': 1},
+        {'text': 'x', 'player': 99},
+        {'text': 'x', 'player': (1, 5)},
+        {'values': {'value': float('nan')}},
+        {'values': {'': 1.0}},
+        {'values': {f'v{k}': k for k in range(17)}},
+        {'text': 3},
+        {'action': -1},
+        {'probabilities': 'likely'},
+        {'probabilities': [0.5, float('inf')]},
+        {'text': 'x', 'step': 7},
+    ):
+        with pytest.raises(cuju.errors.ArgumentError):
+            recorder.annotate(**options)
+    recorder.annotate(text='a' * 300)
+    assert recorder._notes[(0, -1)]['t'] == 'a' * 200
+    batch.close()
+
+
+def test_annotations_leave_the_outputs_as_they_were(render_home):
+    outputs = []
+    for watched in (False, True):
+        batch = cuju.BatchEnvironment(
+            'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu', seed=4
+        )
+        recorder = cuju.render.Recorder(batch) if watched else None
+        source = cuju.render.watch(batch, backlog=True) if watched else None
+        steps = [batch.reset().clone()]
+        for step in range(60):
+            if watched:
+                recorder.annotate(values={'value': step}, text=f'step {step}', player=0)
+                source.annotate(values={'value': step}, player=0)
+            observation, reward, done, _ = batch.step(actions_at(step, 1, 1, 19))
+            steps.append((observation.clone(), reward.clone(), done.clone()))
+        steps.append(batch.get_state(0))
+        outputs.append(steps)
+        if source:
+            source.close()
+        batch.close()
+    assert torch.equal(outputs[0][0], outputs[1][0])
+    for first, second in zip(outputs[0][1:-1], outputs[1][1:-1], strict=True):
+        assert all(torch.equal(a, b) for a, b in zip(first, second, strict=True))
+    assert outputs[0][-1] == outputs[1][-1]

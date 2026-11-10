@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import hashlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -50,6 +52,7 @@ _MAXIMUM_BYTES = 100 * 1024 * 1024
 # An archive may unpack to this much and this many files, so a small upload cannot fill the disk.
 _MAXIMUM_UNPACKED = 500 * 1024 * 1024
 _MAXIMUM_FILES = 10000
+_LOGGER = logging.getLogger('cuju')
 # One lock serializes every change of the registry, which the server makes from several threads.
 _LOCK = threading.RLock()
 
@@ -91,6 +94,8 @@ IMAGE_SLOTS = (
     'sponsor-3-edit',
     'sponsor-4-edit',
 )
+# The fields of an entry that the team's folder implies, which its file never stores.
+_IMPLIED = ('images', 'sounds', 'sounds_version', 'clips')
 # The folder of a submission that holds the renderer's files of its team.
 TEAM_FOLDER = 'cuju-team'
 _MAXIMUM_IMAGE_BYTES = 8 * 1024 * 1024
@@ -98,6 +103,11 @@ _MAXIMUM_IMAGE_BYTES = 8 * 1024 * 1024
 SOUND_SLOTS = ('goal', 'shot', 'pass', 'tackle', 'save', 'kick', 'celebration', 'chant')
 _MAXIMUM_SOUND_BYTES = 2 * 1024 * 1024
 _SOUND_SUFFIXES = ('.ogg', '.mp3', '.wav')
+_IMAGE_SUFFIXES = ('.png', '.jpg', '.webp', '.json')
+# An imported file that fails its checks keeps its bytes under its name followed by this.
+_REJECTED = '.rejected'
+# Windows: these names open a device in any folder, whatever their extension.
+_DEVICES = re.compile(r'(con|prn|aux|nul|com[0-9]|lpt[0-9])', re.IGNORECASE)
 _KIT = {
     'pattern': 'plain',
     'primary': [214, 48, 49],
@@ -140,6 +150,9 @@ def default_style(format: str = '11v11', kit: dict[str, Any] | None = None) -> d
         'crowd': {'colors': [list(colors['primary']), list(colors['secondary'])]},
         # The celebrations the page picks from after a goal, empty for every one it knows.
         'celebrations': [],
+        # The models on whose backs the page leaves out the shirt numbers, which every model but
+        # GRF's, which paints its own, wears where its torso holds one.
+        'hidden_numbers': [],
         'players': [_player_style(index) for index in range(FORMATS[format])],
     }
 
@@ -261,6 +274,20 @@ def _colors(value: Any, models: tuple[str, ...]) -> dict[str, dict[str, str]]:
     return result
 
 
+def _hidden_numbers(value: Any, models: tuple[str, ...]) -> list[str]:
+    """Returns the models on which a team hides its shirt numbers, each listed once.
+
+    A model that is no longer shipped is left out, so a style saved with it still loads.
+    """
+    if (
+        not isinstance(value, list)
+        or len(value) > 64
+        or not all(isinstance(model, str) and len(model) <= 64 for model in value)
+    ):
+        raise ArgumentError(f'expected hidden_numbers as a list of model names, found {value!r}')
+    return list(dict.fromkeys(model for model in value if model in models))
+
+
 def style(
     changes: dict[str, Any] | None, base: dict[str, Any], models: tuple[str, ...] = ()
 ) -> dict[str, Any]:
@@ -307,6 +334,8 @@ def style(
             if not isinstance(value, list) or len(value) > 32:
                 raise ArgumentError('expected a list of at most 32 celebrations')
             result[key] = [_celebration(item) for item in value]
+        elif key == 'hidden_numbers':
+            result[key] = _hidden_numbers(value, ('custom', *models))
         elif key == 'crowd':
             if not isinstance(value, dict) or set(value) - {'colors'}:
                 raise ArgumentError(f'expected the crowd as {{"colors": [...]}}, found {value!r}')
@@ -366,10 +395,30 @@ def _complete(entry: dict[str, Any], kit: dict[str, Any] | None = None) -> dict[
     folder = _meta_path(entry['id']).parent
     entry['images'] = [slot for slot in IMAGE_SLOTS if _image_file(folder, slot) is not None]
     entry['sounds'] = [slot for slot in SOUND_SLOTS if _sound_file(folder, slot) is not None]
+    entry['sounds_version'] = _sounds_version(folder)
     from . import clips as _clips
 
     entry['clips'] = _clips.listing(folder)
     return entry
+
+
+def _sounds_version(folder: Path) -> str:
+    """Returns a short text that changes whenever a sound of a team's folder changes.
+
+    The page keeps the sounds it decoded under this text, so a sound replaced under the same slot
+    loads again. Each file's size, modification time and file number go in, and a sound stored
+    anew always lands as a new file.
+    """
+    parts = []
+    for slot in SOUND_SLOTS:
+        path = _sound_file(folder, slot)
+        with contextlib.suppress(OSError):
+            if path is not None:
+                stat = path.stat()
+                parts.append(f'{path.name}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ino}')
+    if not parts:
+        return ''
+    return hashlib.sha256('/'.join(parts).encode()).hexdigest()[:16]
 
 
 def _known(saved: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
@@ -851,9 +900,7 @@ def _replace(path: Path, data: bytes) -> None:
 
 def _write(identifier: str, current: dict[str, Any]) -> None:
     """Writes a team's entry, without the fields the folder implies."""
-    stored = {
-        key: value for key, value in current.items() if key not in ('images', 'sounds', 'clips')
-    }
+    stored = {key: value for key, value in current.items() if key not in _IMPLIED}
     _replace(_meta_path(identifier), json.dumps(stored).encode())
 
 
@@ -1172,7 +1219,8 @@ def add(
         'model': None,
     }
     # A folder exported from the page brings its format, style, images and model along, each
-    # checked as an upload is, and whatever fails a check is left out.
+    # checked as an upload is. Whatever fails a check is set aside under a name that the page
+    # never reads, and the other files of the folder stay as they came.
     _import(folder / TEAM_FOLDER, entry, name_given)
     if control is not None:
         entry['control'] = check_control(control, entry['format'])
@@ -1196,6 +1244,51 @@ def _new_folder() -> tuple[str, Path]:
         except FileExistsError:
             continue
         return identifier, folder
+
+
+def set_aside(path: Path, reason: str) -> None:
+    """Renames a file of an imported `cuju-team` folder that fails its checks, and logs why.
+
+    The file keeps its bytes under its name followed by `.rejected`, which the page never reads,
+    so the team plays without it and the owner still finds it in the folder.
+    """
+    target = path.with_name(f'{path.name}{_REJECTED}')
+    count = 1
+    while target.exists() or target.is_symlink():
+        count += 1
+        target = path.with_name(f'{path.name}.{count}{_REJECTED}')
+    try:
+        path.rename(target)
+    except OSError as error:
+        _LOGGER.warning('cuju render leaves out %s of an imported team, %s', path.name, error)
+        return
+    _LOGGER.warning(
+        'cuju render sets aside %s of an imported team as %s, since %s',
+        path.name,
+        target.name,
+        reason,
+    )
+
+
+def _kept(path: Path) -> bool:
+    """Returns whether a file of an imported `cuju-team` folder may stay, and removes it if not.
+
+    A link could point outside the team's folder and a name such as `con.txt` opens a device on
+    Windows, so either is removed, the link alone and never what it points to, and logged. Every
+    other file stays.
+    """
+    if path.is_symlink():
+        reason = 'it is a link'
+    elif _DEVICES.fullmatch(path.name.split('.')[0].rstrip(' ')):
+        reason = 'its name opens a device on Windows'
+    else:
+        return True
+    _LOGGER.warning('cuju render removes %s of an imported team, since %s', path.name, reason)
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        path.unlink(missing_ok=True)
+    return False
 
 
 def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
@@ -1226,26 +1319,25 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
         entry['name'] = saved['name'].strip()[:80]
     for path in list(team_folder.iterdir()):
         slot, suffix = path.stem, path.suffix
-        if path.name in ('team.json', _MODEL, 'clips'):
+        if path.name in ('team.json', _MODEL, 'clips') or not _kept(path):
             continue
+        sound = slot.startswith('sound-')
+        if sound and not (slot[len('sound-') :] in SOUND_SLOTS and suffix in _SOUND_SUFFIXES):
+            continue
+        if not sound and not (slot in IMAGE_SLOTS and suffix in _IMAGE_SUFFIXES):
+            continue
+        # A file that the page would read as an image or a sound is checked as an upload is, and
+        # one that fails is set aside. Every other file stays as the submission brought it.
         try:
             data = path.read_bytes()
-            if slot.startswith('sound-'):
-                valid = (
-                    slot[len('sound-') :] in SOUND_SLOTS
-                    and len(data) <= _MAXIMUM_SOUND_BYTES
-                    and _sound_suffix(data) == suffix
-                )
+            if sound:
+                valid = len(data) <= _MAXIMUM_SOUND_BYTES and _sound_suffix(data) == suffix
             else:
-                valid = (
-                    slot in IMAGE_SLOTS
-                    and len(data) <= _MAXIMUM_IMAGE_BYTES
-                    and _image_suffix(slot, data) == suffix
-                )
+                valid = len(data) <= _MAXIMUM_IMAGE_BYTES and _image_suffix(slot, data) == suffix
         except (OSError, ArgumentError):
             valid = False
         if not valid:
-            path.unlink() if path.is_file() else shutil.rmtree(path, ignore_errors=True)
+            set_aside(path, 'it fails the checks of an upload')
     from . import clips as _clips
 
     _clips.import_folder(team_folder)
@@ -1267,7 +1359,8 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
             'bytes': len(data),
         }
     except (OSError, ArgumentError, AttributeError):
-        model.unlink(missing_ok=True)
+        if model.exists() or model.is_symlink():
+            set_aside(model, 'it fails the checks of an uploaded model')
         entry['model'] = None
         if entry['style'].get('model') == 'custom':
             entry['style']['model'] = 'grf'
@@ -1303,7 +1396,7 @@ def export(identifier: str) -> tuple[str, bytes]:
     team = entry(identifier)
     root = _meta_path(identifier).parent.parent
     meta = _meta_path(identifier)
-    stored = {key: value for key, value in team.items() if key not in ('images', 'sounds', 'clips')}
+    stored = {key: value for key, value in team.items() if key not in _IMPLIED}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(f'{TEAM_FOLDER}/team.json', json.dumps(stored))

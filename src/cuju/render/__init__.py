@@ -13,14 +13,20 @@ The guide is in the repository's `docs/rendering.md`.
 
 from __future__ import annotations
 
+import logging
 import struct
+import threading
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from cuju.errors import ArgumentError
 
+from ._format import annotations as _annotations
+from ._format import keep as _keep
 from ._format import recording as _recording
+from ._format import writer as _writer
 from ._http.server import serve
 from ._registry.teams import add_folder as add_team
 from ._store import library as _library
@@ -43,6 +49,8 @@ __all__ = [
     'watch',
 ]
 
+_LOGGER = logging.getLogger('cuju')
+
 
 class Recorder:
     """Records the matches of one environment of a batch into the renderer's library.
@@ -52,9 +60,20 @@ class Recorder:
     yields one recording per episode. Code that calls `capture` after each step, as with cuju
     0.2.0, still works, since the first call of `capture` turns the automatic capture off.
 
+    Filters keep only the episodes worth watching. At the end of each episode the recorder reads
+    its summary, and an episode that a filter drops is discarded without writing anything.
+    `annotate` attaches numbers and text of a training loop or a policy to the captured steps.
+
+    The step that ends an episode only hands its frames over, and one thread of the renderer codes
+    and writes the recording while training steps on. `save` and closing the batch wait for the
+    recordings handed over, and `flush` waits for them alone.
+
     Attributes:
         environment: The index of the environment.
-        saved: The paths of the recordings written so far.
+        saved: The paths of the recordings written so far, each added once its file is written.
+        version: The version of the recording files.
+        episodes: The number of episodes that ended, saved or dropped.
+        dropped: The number of episodes that the filters dropped.
     """
 
     def __init__(
@@ -64,6 +83,10 @@ class Recorder:
         title: str | None = None,
         teams: list[dict[str, Any]] | None = None,
         scenario: str | None = None,
+        version: int = 2,
+        keep: str | Callable[[dict[str, Any]], Any] | None = None,
+        every: int = 1,
+        min_reward: float | None = None,
     ) -> None:
         """Attaches a recorder of `environment` to `batch`, which captures from the next call on.
 
@@ -74,6 +97,23 @@ class Recorder:
             teams: The name, `color` and `secondary` color of the left and right team, each an
                 RGB list of three integers from 0 to 255, each optional.
             scenario: The name of the scenario that the header records, by default the batch's.
+            version: The version of the recording files, 2, or 1 for the readers of cuju 0.2.0,
+                which takes about three times the room.
+            keep: Which episodes to save, `all` or `None` for every one, `goals` for those with a
+                goal, or a function that takes the summary of the episode and returns whether to
+                save it. The summary holds the `episode` number, counted from 0 over the episodes
+                that the recorder ended, the `environment`, the `score` of the left and right
+                team, the number of `goals`, the `length` in frames, the last `steps` number, the
+                `rewards` of each agent summed over the captured steps, their sum, `reward`, and
+                the `annotations` of the episode, each with its `frame`, `step`, `player`,
+                `values`, `text`, `action` and `probabilities`.
+            every: Saves the first episode and every `every`-th after it, counting every episode
+                that ends, saved or not.
+            min_reward: Saves only episodes whose `reward` is at least this.
+
+        Raises:
+            ArgumentError: If the batch is not a `BatchEnvironment`, the environment is not one of
+                the batch, or a version or filter is invalid.
         """
         if not callable(getattr(batch, 'add_observer', None)):
             raise ArgumentError(
@@ -85,6 +125,21 @@ class Recorder:
                 f'expected an environment from 0 to {batch.environment_count - 1}, '
                 f'found {environment}'
             )
+        if version not in _recording.VERSIONS or isinstance(version, bool):
+            raise ArgumentError(f'expected a version from {_recording.VERSIONS}, found {version!r}')
+        self.version = version
+        self._filter = _keep.Filter(keep, every, min_reward)
+        # The rewards of the episode, the episodes ended so far and those dropped.
+        self._rewards: list[float] = []
+        self.episodes = 0
+        self.dropped = 0
+        # The recordings handed to the writer and not written yet, and the error of a failed
+        # write, which the next `save` or `flush` raises.
+        self._pending = 0
+        self._written = threading.Condition()
+        self._failure: Exception | None = None
+        # The annotations of the recording, by frame and player.
+        self._notes: dict[tuple[int, int], dict[str, Any]] = {}
         # The batch holds the recorder, which holds the batch weakly, so that a dropped batch
         # frees its memory without waiting for the garbage collector.
         self._batch = weakref.ref(batch)
@@ -105,8 +160,14 @@ class Recorder:
         batch.add_observer(self)
 
     def __call__(self, batch: Any, done: Any, information: dict[str, Any]) -> None:
-        """Captures a reset of the environment or a step, as a step observer of the batch."""
+        """Captures a reset of the environment or a step, as a step observer of the batch.
+
+        A batch that closes waits for the recordings handed to the writer.
+        """
         if done is None:
+            if information.get('close'):
+                self._wait()
+                return
             if self._manual or 'reset' not in information:
                 return
             reset = information['reset']
@@ -134,14 +195,15 @@ class Recorder:
             done: The done flags that `step` returned, or `None` after `reset`.
 
         Returns:
-            The path of the recording saved by this call, or `None`.
+            The path of the recording that this call hands to the writer, which `saved` lists
+            once its file is written, or `None`, also for an episode that the filters dropped.
 
         Raises:
             ArgumentError: If the batch is gone.
         """
         if not self._manual:
             self._manual = True
-            self._frames, self._lineup = [], None
+            self._frames, self._lineup, self._rewards, self._notes = [], None, [], {}
         batch = self._batch()
         if batch is None:
             raise ArgumentError('expected the batch of the recorder, found it gone')
@@ -150,6 +212,17 @@ class Recorder:
     def _capture(self, batch: Any, done: Any) -> Path | None:
         """Adds the environment's current step, as `capture` describes."""
         ended = done is not None and bool(done[self.environment])
+        if done is not None:
+            # The step's rewards belong to the episode that it ends, if it ends one.
+            rewards = _keep.step_rewards(batch, self.environment, self._information or {})
+            if not rewards:
+                rewards = [0.0] * len(self._rewards)
+            self._rewards = [
+                total + reward
+                for total, reward in zip(
+                    self._rewards or [0.0] * len(rewards), rewards, strict=True
+                )
+            ]
         saved = None
         if ended and batch.auto_reset:
             if self._frames:
@@ -166,7 +239,7 @@ class Recorder:
                     struct.pack_into('<i', last, offset, goals + 1)
                     struct.pack_into('<i', last, 28, (flags | 1) & ~(31 << 8))
                 self._frames[-1] = bytes(last)
-            saved = self.save()
+            saved = self._finish()
         state = batch.get_state(self.environment, stacked=batch.stacked)
         self._timing = _recording.scenario_timing(state)
         if self._lineup is None:
@@ -174,14 +247,101 @@ class Recorder:
         closing = ended and not batch.auto_reset
         self._frames.append(self._reader.frame(state, 1 if closing else 0))
         if closing:
-            saved = self.save()
+            saved = self._finish()
         return saved
 
+    def _finish(self) -> Path | None:
+        """Ends the episode, which the filters save or drop, and returns the path of a save."""
+        if not self._frames or self._lineup is None:
+            self._rewards = []
+            return None
+        notes = [_annotations.public(note, self._frames) for note in self._notes.values()]
+        summary = _keep.episode_summary(
+            self.episodes, self._frames, self._rewards, self.environment, notes
+        )
+        self.episodes += 1
+        if self._filter(summary):
+            return self._hand_over()
+        self._frames, self._lineup, self._rewards, self._notes = [], None, [], {}
+        self.dropped += 1
+        return None
+
+    def annotate(
+        self,
+        values: dict[str, Any] | None = None,
+        text: str | None = None,
+        player: Any = None,
+        step: int | None = None,
+        probabilities: Any = None,
+        action: Any = None,
+    ) -> None:
+        """Attaches numbers or text to a captured step, which the page shows with the recording.
+
+        Annotating reads nothing of the batch and changes nothing of it. Several calls for one
+        step and player join their numbers, and a later text, action or probabilities replace the
+        earlier ones. A recording of version 1 has no room for annotations and leaves them out.
+
+        Args:
+            values: Named numbers, such as `{'value': 0.4, 'reward': 1.0}`, at most 16 names of at
+                most 40 characters. Each number is kept to six significant digits.
+            text: A short text, cut at 200 characters.
+            player: The player, an index in the header's list of players or a pair of team, 0 for
+                the left, and the index within the team, or `None` for the whole match.
+            step: The step of the current episode, as the frame's step counts it, by default the
+                step captured last.
+            probabilities: The probability of each action, a sequence indexed by action or a
+                mapping of action to probability. The three most likely actions are kept.
+            action: The action chosen.
+
+        Raises:
+            ArgumentError: If no step is captured yet, the step is not one of the current
+                episode, or a part is invalid.
+        """
+        if not self._frames or self._lineup is None:
+            raise ArgumentError('expected a captured step to annotate, found none')
+        record = _annotations.note(self._lineup, values, text, player, probabilities, action)
+        _annotations.merge(self._notes, _annotations.frame_of(self._frames, step), record)
+
     def save(self) -> Path | None:
-        """Writes the frames captured so far as one recording and starts a new one.
+        """Writes the frames captured so far as one recording, starts a new one, and waits until
+        every recording handed to the writer is written.
+
+        A call by hand saves whatever the filters say, as a training run that stops may wish.
 
         Returns:
             The path of the recording, or `None` when nothing was captured.
+
+        Raises:
+            Exception: The error of a write that failed since the last `save` or `flush`.
+        """
+        path = self._hand_over()
+        self.flush()
+        return path
+
+    def flush(self) -> None:
+        """Waits until every recording handed to the writer is written.
+
+        Raises:
+            Exception: The error of a write that failed since the last `save` or `flush`, which
+                the logger `cuju` also reported when it happened.
+        """
+        self._wait()
+        with self._written:
+            failure, self._failure = self._failure, None
+        if failure is not None:
+            raise failure
+
+    def _wait(self) -> None:
+        """Waits for the writes of the recorder."""
+        with self._written:
+            self._written.wait_for(lambda: self._pending == 0)
+
+    def _hand_over(self) -> Path | None:
+        """Hands the frames captured so far to the writer, and returns the path they will take.
+
+        The step pays for the header and the name of the file alone, and the writer codes and
+        writes the recording. A writer that is busy with several recordings makes this wait for
+        room.
         """
         if not self._frames or self._lineup is None:
             return None
@@ -197,16 +357,46 @@ class Recorder:
             self._timing,
             {'source': 'recorder', 'environment': self.environment},
         )
-        path = _library.save(head, self._frames)
-        self._frames, self._lineup = [], None
-        self.saved.append(path)
+        frames, notes = self._frames, list(self._notes.values())
+        self._frames, self._lineup, self._rewards, self._notes = [], None, [], {}
+        path = _library.reserve()
+        version = self.version
+
+        def write() -> None:
+            try:
+                _library.save(head, frames, path.stem, version, notes)
+            except Exception as error:
+                if not path.exists():
+                    path.with_suffix('.json').unlink(missing_ok=True)
+                _LOGGER.warning(
+                    'cuju render: the recorder could not write %s, %s: %s',
+                    path.name,
+                    type(error).__name__,
+                    error,
+                )
+                with self._written:
+                    self._failure = error
+            else:
+                self.saved.append(path)
+            finally:
+                with self._written:
+                    self._pending -= 1
+                    self._written.notify_all()
+
+        with self._written:
+            self._pending += 1
+        _writer.WRITER.submit(write)
         return path
 
     def close(self) -> Path | None:
-        """Detaches the recorder from its batch and saves the frames captured so far.
+        """Detaches the recorder from its batch, saves the frames captured so far and waits until
+        every recording handed to the writer is written.
 
         Returns:
             The path of the recording that this call saved, or `None` when nothing was captured.
+
+        Raises:
+            Exception: The error of a write that failed since the last `save` or `flush`.
         """
         batch = self._batch()
         if batch is not None and any(observer is self for observer in batch.observers):

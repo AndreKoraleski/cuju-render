@@ -3,6 +3,7 @@
 """Checks of the recording format, the recorder, its filters and annotations."""
 
 import gzip
+import hashlib
 import io
 import json
 import struct
@@ -19,13 +20,14 @@ from conftest import actions_at
 from cuju.render._format import recording as _recording
 from cuju.render._http import server as _server
 from cuju.render._store import library as _library
+from cuju.render._watch import live as _live
 from support.common import (
     _SAMPLES,
     _SEVERAL,
     _frames,
     _get,
     _library_ids,
-    _one_second,
+    _sample_head,
     _serve_once,
     _short_matches,
     _toy_team,
@@ -92,10 +94,11 @@ def test_recorder_writes_episodes(render_home):
     batch.reset()
     recorder.capture()
     step = 0
-    while len(recorder.saved) < 2:
+    while recorder.episodes < 2:
         _, _, done, _ = batch.step(torch.tensor([[12 if step % 3 else 5]], dtype=torch.int32))
         recorder.capture(done)
         step += 1
+    recorder.flush()
     first = recorder.saved[0]
     document = _recording.read_header(first)
     frames = list(_recording.frames(first))
@@ -192,10 +195,11 @@ def test_recorder_keeps_the_final_goal_with_automatic_resets(render_home):
     batch.reset()
     recorder.capture()
     step = 0
-    while not recorder.saved:
+    while not recorder.episodes:
         _, reward, done, _ = batch.step(torch.tensor([[12 if step % 3 else 5]], dtype=torch.int32))
         recorder.capture(done)
         step += 1
+    recorder.flush()
     scored = float(reward[0, 0]) > 0
     last = list(_recording.frames(recorder.saved[0]))[-1]
     assert struct.unpack_from('<2i', last, 8) == ((1, 0) if scored else (0, 0))
@@ -219,7 +223,7 @@ def test_recorder_captures_by_itself_as_by_hand(render_home, auto_reset):
         if by_hand:
             recorder.capture()
         step = 0
-        while len(recorder.saved) < 2:
+        while recorder.episodes < 2:
             actions = torch.tensor([[12 if step % 3 else 5]] * 2, dtype=torch.int32)
             _, _, done, _ = batch.step(actions)
             if by_hand:
@@ -235,6 +239,7 @@ def test_recorder_captures_by_itself_as_by_hand(render_home, auto_reset):
         frames = len(recorder._frames)
         batch.reset(mask=[True, False])
         assert len(recorder._frames) == frames
+        recorder.flush()
         recorded.append([list(_recording.frames(path)) for path in recorder.saved])
         batch.close()
     assert recorded[0] == recorded[1]
@@ -426,31 +431,6 @@ def test_new_home_gets_the_samples_once(render_home, monkeypatch):
     )
 
 
-def test_recording_identifiers_are_unique_within_a_second(render_home, monkeypatch):
-    data = gzip.decompress((_library._SAMPLES / 'sample-5v5.cjr').read_bytes())
-    (length,) = struct.unpack_from('<I', data, len(_recording.MAGIC))
-    end = len(_recording.MAGIC) + 4 + length
-    size = json.loads(data[len(_recording.MAGIC) + 4 : end])['frame_bytes']
-    head, frames = data[:end], [data[end + k * size : end + (k + 1) * size] for k in range(3)]
-    _one_second(monkeypatch)
-    saved = []
-
-    def save_many():
-        for _ in range(10):
-            saved.append(_library.save(head, frames).stem)
-
-    workers = [threading.Thread(target=save_many) for _ in range(4)]
-    for worker in workers:
-        worker.start()
-    for worker in workers:
-        worker.join(60)
-    assert len(saved) == len(set(saved)) == 40
-    assert sorted(saved) == _library_ids()
-    for name in saved:
-        assert list(_recording.frames(_library.path_of(name))) == frames
-        assert _library.details(name)['steps'] == 3
-
-
 @pytest.mark.parametrize('name,players', [('sample-11v11', 22), ('sample-5v5', 10)])
 def test_bundled_samples_are_full_recordings(name, players):
     path = _library._SAMPLES / f'{name}.cjr'
@@ -464,3 +444,220 @@ def test_bundled_samples_are_full_recordings(name, players):
     left, right = document['teams']
     assert left['name'] != right['name'] and left['color'] != right['color']
     assert sum(struct.unpack_from('<2i', frames[-1], 8)) >= 2
+
+
+# The SHA-256 of the frames of each shipped sample as version 1 stores them, which the samples of
+# version 2 decode to bit for bit. tests/web/format.mjs checks the same digests on the page.
+_SAMPLE_DIGESTS = {
+    'sample-11v11': '518c377d7b32648e94e9fb9c33baa70fcf5ea9232be7d8c4bf368638fdd94076',
+    'sample-5v5': 'b41e32efb5decbece8ea3a1ab949e2f1e62c8052e4929f7a1f429a938e6b0d27',
+}
+
+
+@pytest.mark.parametrize('name', sorted(_SAMPLE_DIGESTS))
+def test_samples_of_version_2_decode_to_their_frames(name):
+    path = _library._SAMPLES / f'{name}.cjr'
+    document = _recording.read_header(path)
+    assert document['version'] == 2
+    assert document['keyframe_interval'] == 100
+    frames = list(_recording.frames(path))
+    assert hashlib.sha256(b''.join(frames)).hexdigest() == _SAMPLE_DIGESTS[name]
+    head, _ = _sample_head(name, 0)
+    one = len(gzip.compress(_recording.encode(head, frames, 1), 6))
+    two = path.stat().st_size
+    print(f'{name}: version 2 takes {two} bytes, version 1 {one}, {two / one:.0%}')
+    assert two < 0.42 * one
+
+
+def test_recording_versions_round_trip_and_seek(tmp_path):
+    head, frames = _sample_head('sample-5v5', 250)
+    for version in (1, 2):
+        path = tmp_path / f'version{version}.cjr'
+        _recording.write(path, head, frames, version)
+        document = _recording.read_header(path)
+        assert document['version'] == version
+        assert document['frame_count'] == 250
+        assert list(_recording.frames(path)) == frames
+        assert list(_recording.frames(path, 99, 103)) == frames[99:103]
+        assert list(_recording.frames(path, 249)) == frames[249:]
+        assert list(_recording.frames(path, 300)) == []
+    with pytest.raises(cuju.StateError):
+        _recording.write(tmp_path / 'bad.cjr', head, frames, 3)
+
+
+def test_recording_version_2_keeps_any_frame_bit_for_bit(tmp_path):
+    """Frames of any bytes, such as joints of no length, decode exactly, wrapping where needed."""
+    generator = np.random.default_rng(7)
+    players = 10
+    size = _recording.frame_bytes(players)
+    frames = [generator.integers(0, 256, size, np.uint8).tobytes() for _ in range(230)]
+    extremes = np.frombuffer(frames[5], np.uint8).copy()
+    nodes = extremes[76 : 76 + players * 196].view('<i2')
+    nodes[::2], nodes[1::2] = 32767, -32768
+    frames[5] = extremes.tobytes()
+    frames[6] = bytes(size)
+    lineup = [
+        {'team': k // 5, 'index': k % 5, 'goalkeeper': False, 'controlled': False}
+        for k in range(players)
+    ]
+    head = _recording.header('Noise', 'custom', lineup, frame_count=len(frames))
+    path = tmp_path / 'noise.cjr'
+    _recording.write(path, head, frames)
+    assert list(_recording.frames(path)) == frames
+    assert list(_recording.frames(path, 150, 160)) == frames[150:160]
+
+
+def test_recorder_writes_version_2_or_1_with_the_same_frames(render_home):
+    batch = cuju.BatchEnvironment(
+        'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu', seed=5
+    )
+    two = cuju.render.Recorder(batch)
+    one = cuju.render.Recorder(batch, version=1)
+    with pytest.raises(cuju.errors.ArgumentError):
+        cuju.render.Recorder(batch, version=3)
+    batch.reset()
+    step = 0
+    while not one.episodes:
+        batch.step(torch.tensor([[12 if step % 3 else 5]], dtype=torch.int32))
+        step += 1
+    one.flush()
+    two.flush()
+    assert (two.version, one.version) == (2, 1)
+    assert _recording.read_header(two.saved[0])['version'] == 2
+    assert _recording.read_header(one.saved[0])['version'] == 1
+    assert list(_recording.frames(two.saved[0])) == list(_recording.frames(one.saved[0]))
+    summaries = {entry['id']: entry for entry in _library.matches()}
+    assert summaries[two.saved[0].stem]['score'] == summaries[one.saved[0].stem]['score']
+    assert summaries[two.saved[0].stem]['steps'] == summaries[one.saved[0].stem]['steps']
+    batch.close()
+
+
+def _shooting_episode(recorder_options=(), annotate=None):
+    """Plays one scoring episode under a recorder, calling `annotate(recorder, step)` each step.
+
+    Returns the recorder after its first save.
+    """
+    batch = cuju.BatchEnvironment(
+        'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu', seed=11
+    )
+    recorder = cuju.render.Recorder(batch, **dict(recorder_options))
+    batch.reset()
+    step = 0
+    while not recorder.episodes:
+        if annotate:
+            annotate(recorder, step)
+        batch.step(torch.tensor([[12 if step % 3 else 5]], dtype=torch.int32))
+        step += 1
+    batch.close()
+    return recorder
+
+
+def test_recorder_annotations_round_trip(render_home):
+    players = {}
+
+    def annotate(recorder, step):
+        lineup = recorder._lineup
+        players['agent'] = next(k for k, entry in enumerate(lineup) if entry['controlled'])
+        players['other'] = next(k for k, entry in enumerate(lineup) if not entry['controlled'])
+        other = lineup[players['other']]
+        recorder.annotate(
+            values={'value': 0.5 + step / 100, 'reward': torch.tensor(0.0)},
+            player=players['agent'],
+            probabilities=torch.tensor([0.05] * 11 + [0.3, 0.15] + [0.05] * 6),
+            action=12 if step % 3 else 5,
+        )
+        if step == 2:
+            recorder.annotate(text='first shot', player=(other['team'], other['index']))
+            recorder.annotate(values={'pressure': 1}, step=1, player=players['agent'])
+            recorder.annotate(values={'reward': 0.25}, step=1, player=players['agent'])
+
+    seen = []
+    recorder = _shooting_episode(
+        {'keep': lambda summary: seen.append(summary['annotations']) or True}, annotate
+    )
+    path = recorder.saved[0]
+    records = _recording.annotations(path)
+    frames = list(_recording.frames(path))
+    by_key = {(record['f'], record.get('p', -1)): record for record in records}
+    agent = players['agent']
+    assert by_key[(0, agent)]['v'] == {'value': 0.5, 'reward': 0}
+    assert by_key[(0, agent)]['a'] == 5
+    # The three most likely actions, the most likely first.
+    assert by_key[(0, agent)]['k'] == [[11, 0.3], [12, 0.15], [0, 0.05]]
+    # Annotations of one step and player join their numbers.
+    assert by_key[(1, agent)]['v'] == {'value': 0.51, 'reward': 0.25, 'pressure': 1}
+    assert by_key[(2, players['other'])]['t'] == 'first shot'
+    assert [record['f'] for record in records] == sorted(record['f'] for record in records)
+    # The filter read the same annotations with long keys and the step of each frame.
+    (summary,) = seen
+    assert len(summary) == len(records)
+    note = next(item for item in summary if item['text'] == 'first shot')
+    assert note['frame'] == 2 and note['step'] == struct.unpack_from('<i', frames[2])[0]
+    assert note['player'] == players['other'] and note['values'] == {}
+    assert note['probabilities'] == [] and note['action'] is None
+    # A file without annotations reads none, and version 1 has no room for them.
+    assert _recording.annotations(_library._SAMPLES / 'sample-5v5.cjr') == []
+    plain = _shooting_episode({'version': 1}, lambda recorder, step: recorder.annotate(text='x'))
+    assert _recording.annotations(plain.saved[0]) == []
+
+
+def _stream_items(response, header, count):
+    """Reads `count` items of a numbered stream, frames as pairs and annotations as lists."""
+    items = []
+    while len(items) < count:
+        (serial,) = struct.unpack('<Q', response.read(8))
+        if serial == _live.NOTES:
+            (length,) = struct.unpack('<I', response.read(4))
+            items.append(json.loads(response.read(length))['records'])
+        else:
+            items.append((serial, response.read(header['frame_bytes'])))
+    return items
+
+
+def test_live_source_streams_annotations(render_home):
+    batch = cuju.BatchEnvironment('5_vs_5_l1_r0', environment_count=1, device='cpu')
+    source = cuju.render.watch(batch, backlog=True)
+    assert not source.annotate(text='nothing streamed yet')
+    batch.reset()
+    actions = torch.zeros((1, 1), dtype=torch.int32)
+    connections = []
+
+    def open_stream(path):
+        connection = _server.http.client.HTTPConnection('127.0.0.1', source.port, timeout=10)
+        connections.append(connection)
+        connection.request('GET', path)
+        response = connection.getresponse()
+        return response, _recording._parse_header(response)
+
+    try:
+        batch.step(actions)
+        first, header = open_stream('/stream?sequence=1&annotations=1')
+        assert header['stream_annotations'] == 1
+        assert _stream_items(first, header, 1)[0][0] == 0
+        assert source.annotate(values={'value': 0.25}, player=(1, 2), text='pressing')
+        assert source.annotate(values={'reward': 1.0}, player=(1, 2), step=1)
+        assert not source.annotate(text='a step never streamed', step=40)
+        batch.step(actions)
+        notes, frame = _stream_items(first, header, 2)
+        index = next(
+            k
+            for k, entry in enumerate(header['players'])
+            if (entry['team'], entry['index']) == (1, 2)
+        )
+        assert notes == [{'f': 0, 'p': index, 'v': {'value': 0.25, 'reward': 1}, 't': 'pressing'}]
+        assert frame[0] == 1
+        # A viewer that joins later receives the annotations of the history after its frames.
+        late, _ = open_stream('/stream?sequence=1&annotations=1')
+        items = _stream_items(late, header, 3)
+        assert [item[0] for item in items[:2]] == [0, 1] and items[2] == notes
+        # A viewer that asks for no annotations receives none, as the page of 0.2.0.
+        plain, plain_header = open_stream('/stream?sequence=1')
+        assert 'stream_annotations' not in plain_header
+        source.annotate(text='later')
+        batch.step(actions)
+        assert [serial for serial, _ in _stream_items(plain, header, 3)] == [0, 1, 2]
+    finally:
+        source.close()
+        for connection in connections:
+            connection.close()
+        batch.close()

@@ -183,7 +183,7 @@ export class LiveSource {
                         throw new FormatError('The reconnected stream lists other players than the stream it continues.');
                     }
                 } else {
-                    this.store = new FrameStore(header, [], liveLimit(header));
+                    this.store = new FrameStore(header, [], liveLimit(header), header.stream_annotations === 1 ? [] : null);
                     this.headerAt = performance.now();
                     this.resumable = header.stream_sequence === 1;
                     this.callbacks.onHeader(header, this.store);
@@ -214,7 +214,16 @@ export class LiveSource {
                     this.backlog = Math.max(this.backlog, ahead);
                 }
                 this.store.push(frame);
+                // The annotations of frames that the store dropped go with them.
+                if (this.store.annotations && this.received % 100 === 0) {
+                    this.store.annotations.prune(this.store.get(this.store.first).sequence ?? 0);
+                }
                 this.callbacks.onFrame(frame);
+            },
+            (records) => {
+                if (this.store && this.store.annotations) {
+                    this.store.annotations.add(records);
+                }
             },
         );
         const reader = res.body.getReader();

@@ -32,6 +32,8 @@ export class PlayerTools {
         this.points = [];
         this.labels = load('playerLabels', false) === true;
         this.picking = load('clickFollow', false) === true;
+        // Whether another layer, the annotations, wants the players in view without labels.
+        this.wanted = false;
         this.ray = new THREE.Raycaster();
         this.layer = h('div', { class: 'player-labels', 'aria-hidden': 'true', hidden: true });
         document.body.append(this.layer);
@@ -94,7 +96,8 @@ export class PlayerTools {
         const covered = app.page !== 'watch' || app.director.running || app.postMatch.running || app.transition.active;
         const ready = !covered && app.source && app.pose && app.players;
         this.layer.hidden = !this.labels || !ready;
-        if (!ready || (!this.labels && !force) || (!this.labels && !this.picking)) {
+        const wanted = this.labels || this.wanted;
+        if (!ready || (!wanted && !force) || (!wanted && !this.picking)) {
             this.points = [];
             if (this.layer.childElementCount) {
                 this.layer.replaceChildren();

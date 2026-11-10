@@ -1116,6 +1116,20 @@ export class TeamEditor {
         const resetAll = h('button', { type: 'button', class: 'btn small ghost' }, 'Reset all to the kit');
         const tools = h('div', { class: 'row colors-tools' },
             h('label', { class: 'check' }, follow, ' Dress the model in the kit colors'), resetAll);
+        // The shirt numbers ride the back of the model, and a team turns them off on a model where
+        // they do not fit.
+        const numbered = h('input', { type: 'checkbox', checked: !(this.style.hidden_numbers || []).includes(key) });
+        numbered.addEventListener('change', () => {
+            const hidden = new Set(this.style.hidden_numbers || []);
+            if (numbered.checked) {
+                hidden.delete(key);
+            } else {
+                hidden.add(key);
+            }
+            this.style.hidden_numbers = [...hidden];
+            this.refreshPreview();
+        });
+        tools.append(h('label', { class: 'check' }, numbered, ' Shirt numbers on the back'));
         const host = h('div', { class: 'model-colors', role: 'list', 'aria-label': `Colors of ${this.modelName(key)}` },
             h('p', { class: 'muted small' }, 'Reading the colors of the model'));
         box.append(tools, host, h('p', { class: 'muted small' },
@@ -1579,6 +1593,8 @@ export class TeamEditor {
         try {
             await api.putSound(team.id, slot, f, f.type || 'application/octet-stream');
             this.app.hud.toast(`${(SOUND_LABELS[slot] || [slot])[0]} sound saved.`);
+            // The sound is stored at once, so the match on the page takes the new one now.
+            this.app.teamsChanged();
             if (token !== this.token) {
                 return;
             }
@@ -1598,6 +1614,7 @@ export class TeamEditor {
         const token = this.token;
         try {
             await api.deleteSound(team.id, slot);
+            this.app.teamsChanged();
             if (token !== this.token) {
                 return;
             }

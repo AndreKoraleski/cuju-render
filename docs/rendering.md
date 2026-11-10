@@ -196,15 +196,53 @@ and the recording ends on it.
 Call `recorder.save()` to keep an episode before it ends, for example when a training run stops.
 It returns the saved path, or `None` when there are no captured frames, and starts a fresh
 recording on the next capture. The list `recorder.saved` holds the paths written so far.
+
+The step that ends an episode only hands its frames over. One thread of the renderer codes and
+writes each recording while training steps on, in the order the episodes ended, and holds up to
+four recordings, so a recorder that saves faster than the thread writes waits for room. The list
+`recorder.saved` gains a recording once its file is written, and the path that `capture` returns
+names the file before it exists. `recorder.save()` and closing the batch wait until every
+recording handed over is written, and `recorder.flush()` waits without saving the frames of the
+current episode. A write that fails, from a full disk for example, logs one warning through the
+logger `cuju`, and the next `save` or `flush` raises its error. A process that exits waits for the
+recordings handed over, and `recorder.episodes` counts the episodes that ended.
+
+A recorder can keep only the episodes worth watching. `keep='goals'` saves the episodes with at
+least one goal, `every=10` saves the first episode and every tenth after it, and `min_reward=1.0`
+saves the episodes whose reward reaches 1. `keep` also takes a function, which receives the
+summary of each episode as it ends and returns whether to save it.
+
+```python
+recorder = cuju.render.Recorder(
+    batch, environment=3, keep=lambda summary: summary['goals'] >= 2 or summary['reward'] > 0.5
+)
+```
+
+The summary holds the `episode` number, counted from 0 over the episodes that the recorder ended,
+the `environment`, the `score` of the left and the right team, the number of `goals`, the
+`length` in frames, the `steps` number of the last frame, the `rewards` of each agent of the
+environment summed over the captured steps, their sum as `reward`, and the episode's
+[annotations](#annotations), each with its `frame`, `step`, `player`, `values`, `text`, `action`
+and `probabilities`. The agents count in the batch's order, the left team's first. An episode is
+saved when every condition holds, and `every`
+counts every episode that ends, saved or not. The recorder decides when the episode ends, and
+discards the frames of an episode that it drops without writing anything, which
+`recorder.dropped` counts. A filter reads only what the recorder captured and the rewards that the
+step returned, so filters leave every output of the batch as it was. A call of `recorder.save()`
+writes the frames captured so far whatever the filters say, and a function that raises an
+exception removes the recorder from its batch as any failure of capture does.
 A recorder that captures by hand does so after every step to preserve consecutive motion. Each
 recorder takes one batch of a `MultiDeviceBatch`, as a live source does. A recorder that fails
 while it captures by itself, from a full disk for example, leaves its batch with one warning
 through the logger `cuju`, and the batch steps on.
 
-A full match of eleven a side takes 3001 frames with automatic resets and 3002 without, about 12 MB
-on disk, and one of five a side about 1 MB with the built in AI on both sides and up to about 5 MB
-when agents keep the players moving. A full match of
-eleven a side plays and records in about half a minute on one core of a laptop processor. The
+A full match of eleven a side takes 3001 frames with automatic resets and 3002 without, about 4.4 MB
+on disk, and one of five a side about 1.1 MB with the built in AI on both sides and more when agents
+keep the players moving. A full match of
+eleven a side plays and records in about half a minute on one core of a laptop processor, and the
+recorder's writing thread codes its frames in a few seconds. The recorder writes the
+[recording format](#recording-format) of version 2 by default, and `Recorder(batch, version=1)`
+writes version 1, about two and a half times larger, for the page of cuju 0.2.0. The
 library keeps each recording as a `.cjr` file beside a small summary that the page lists. The
 summary also holds the favorite mark, tags and notes that the page edits, and the time a recording
 went to the Trash, so every one of these changes rewrites the small file and leaves the frames as
@@ -326,6 +364,70 @@ bit, and consumes no random numbers. On a laptop with 64 environments of eleven 
 read and the gathering of its fields took about 2 milliseconds on the CPU and 3.5 milliseconds on
 CUDA, and a watched grid took about 3.5 percent of the wall time on either. The stream of the
 source goes on beside the grid at its own cost.
+
+## Annotations
+
+A training loop or a policy can attach numbers and text to the steps that a recorder or a live
+source captures, and the page shows them with the match. `annotate` takes named numbers such as a
+value estimate or a reward, a short text, the probabilities of the actions and the action chosen,
+for one player or for the whole match.
+
+```python
+recorder = cuju.render.Recorder(batch, environment=0)
+source = cuju.render.watch(batch, environment=0)
+observation = batch.reset()
+for step in range(3001):
+    probabilities, value = policy(observation)
+    actions = probabilities.argmax(-1)
+    for annotated in (recorder, source):
+        annotated.annotate(
+            values={'value': value[0, 0]},
+            probabilities=probabilities[0, 0],
+            action=actions[0, 0],
+            player=(0, 3),
+        )
+    observation, reward, done, information = batch.step(actions)
+    recorder.annotate(values={'reward': reward[0, 0]}, player=(0, 3))
+```
+
+An annotation belongs to a step and to a player. `player` takes the index of a player in the
+header's list of players, or a pair of the team, 0 for the left, and the index within the team, and
+`None` leaves the annotation to the whole match. `step` takes the step number of the current
+episode, as the frame counts it, and by default the annotation goes to the step captured last. A
+call before `batch.step` therefore describes the step that the policy looked at, and a call after
+it the step that the batch has just played. Several calls for one step and player join their
+numbers, and a later text, action or probabilities replace the earlier ones.
+
+`values` holds at most 16 names of at most 40 characters, each number finite and kept to six
+significant digits. The text is cut at 200 characters, and of the probabilities the three most
+likely actions are kept. Numbers of numpy and PyTorch arrive as plain numbers, and probabilities
+may be a sequence indexed by action or a mapping of action to probability. An invalid annotation
+raises `ArgumentError`.
+
+A recorder keeps the annotations of the recording it is capturing and writes them with it, in a
+section of the file that version 2 holds and version 1 leaves out. They join the summary that a
+[filter](#recordings) reads, so a filter can keep the episodes whose value estimate fell, for
+example. A recorder that has captured no step raises `ArgumentError`, as does a step outside the
+current episode.
+
+A live source attaches an annotation to a frame of its history, the last by default, and sends it
+to its viewers before the next frame, and a viewer who joins later receives the annotations of the
+frames of its history. `source.annotate` returns whether a frame took the annotation, which fails
+for a step that the source did not read while nobody watched.
+
+Annotating reads nothing of the batch and changes nothing of it, so every observation, reward and
+state stays as it was, bit for bit.
+
+On the page, a recording or a live source with annotations shows the button Annotations among the
+Watch controls, and a recording without them keeps the button and the overlay hidden. Under each
+player in view the overlay shows the player's numbers, the action chosen with the three most likely
+actions and their probabilities, and the text, and the annotation of the whole match shows in a box
+over the controls. The labels of the nearest players come first, and a label that would cover
+another stays out, as the player labels do. Lines over the timeline draw the chosen series, one
+series for each name of each player and each name of the whole match, each scaled from its smallest
+value to its largest. The Annotations panel turns the numbers, the actions and the text on or off,
+a choice that the page keeps in the browser, and picks the series of the timeline. The first series
+shows when a recording opens. The panel works by keyboard, and Esc closes it.
 
 ## Teams and requested matches
 
@@ -539,6 +641,13 @@ images, and laid over the colors and the pattern. The pattern, the artwork, the 
 numbers
 dress GRF's model, and the other models wear the kit's colors as described above.
 
+Every other model, KayKit's characters and a team's own model among them, wears each player's number
+on its back as GRF's model does, in the color of the numbers, following the upper back, sized and
+placed from the model's torso in GRF's standing pose. A model whose torso is too small to hold a
+number shows none. Clearing Shirt numbers on the back, beside the colors of each model in Model and
+colors, turns the numbers off for that model alone, for a model where they do not fit, and the
+choice saves with the team as `hidden_numbers` in its style.
+
 A goal brings the scorer's celebration, picked from the moves that the team ticks, or from every
 move when it ticks none, and each player of the roster may take a celebration of its own. The moves
 include arms up, a knee slide, a jump and punch, dances, the airplane, a backflip, a salute, the
@@ -551,7 +660,9 @@ plays in the editor before it is chosen.
 A team may also bring sounds of its own, in Ogg, MP3 or WAV files of up to 2 MB, for eight moments,
 a goal, a shot, a pass, a tackle, a save, any kick, the scorer's celebration and a chant that the
 fans sing now and then in every arena. The page plays each one from where it happens, cut to four
-seconds and brought to the level of the other sounds on the page.
+seconds and brought to the level of the other sounds on the page. A sound is stored as soon as it is
+chosen, and the match on the page plays the new sound from then on, a sound replaced under the same
+moment included.
 
 A team also holds up to four sponsors, wide images made in the same editor from uploaded images and
 drawing, which the advertising boards around the pitch show while the team plays. Boards alternate
@@ -652,6 +763,14 @@ submission folder that holds one brings the whole look back when it is added to 
 on the page or from the command line, each file checked as an upload is. The built in AI exports its
 look alone.
 
+An import keeps every file of `cuju-team` that the page leaves unread, such as notes, source artwork
+or a folder of drafts, so these files travel on with the next export. Each image, sound, model and
+clip that the page reads is checked as an upload is, and a file that fails its check stays in the
+folder under its own name followed by `.rejected`, which the page never reads, so the team plays
+without it and its bytes remain for its owner. A link, which could point outside the team's folder,
+and a file whose name opens a device on Windows, such as `con.txt`, are removed. The server's log
+names every file set aside or removed and the reason.
+
 Duplicate saved team, in the same section, makes a new team of the registry from a submission
 team as it was last saved, with the submission's files, its format, controls, style, roster,
 images, sounds, model and clips, under the team's name followed by `copy`. The two teams change
@@ -726,9 +845,10 @@ sources and the six newest recordings, with a count of the live sources on the m
 address field takes the identifier of a live source or of a recording, such as
 `m-20261106-105640-3a3f`. The View menu chooses the camera, turns broadcast mode, fullscreen and
 the 2D view on and off, sets the hour, the weather and the arena, and sets the quality and the
-theme. A recording
-also opens when its file is dropped anywhere on the page. The view shows a spinner while it waits
-for a live source to send its first step, and a bar of progress while a recording downloads.
+theme. Export video turns a range of the open recording into a video file, as described under
+Exporting video. A recording also opens when its file is dropped anywhere on the page. The view
+shows a spinner while it waits for a live source to send its first step, and a bar of progress
+while a recording downloads.
 
 The controls along the bottom of the view hold a timeline, the time and the length of the match,
 buttons that restart, jump to the previous and next goal, skip 30 and 5 seconds either way, step
@@ -951,6 +1071,127 @@ The Play and Field pages draw their pictures with WebGL alone. When the 3D pictu
 match draws fewer than 12 frames a second over 5 seconds, a card at the top right offers the 2D
 view once in each visit. Use the 2D view turns it on, and Keep 3D keeps the 3D view and stops the
 offer for good in that browser.
+
+## Exporting video
+
+The command `cuju render video` turns a range of a recording into an MP4 video. It draws the same
+page that Watch shows, in a copy of Chrome or Chromium that runs without a window, one frame at a
+time, and passes every picture straight to ffmpeg, which encodes the file. Between two pictures the
+page's clocks, timers and animations move by exactly one frame, so the video plays evenly at its
+frame rate however slowly the machine draws. A browser without a graphics card draws in software,
+about one frame a second at 1280 by 720 on a laptop, and a graphics card draws faster.
+
+```sh
+cuju render video sample-5v5 -o kickoff.mp4 --end 20
+cuju render video match.cjr -o goal.mp4 --goal 2 --size 1080p --fps 60
+cuju render video match.cjr -o night.mp4 --start 1:30 --end 2:00 --arena neon --time night
+```
+
+The source is a `.cjr` file or the identifier of a recording of the library, as the Recordings page
+lists them. The video goes to the file of `-o`, by default the name of the source with the
+extension `.mp4` in the current folder, and a file that already exists stays as it is unless
+`--overwrite` is given.
+
+### Range
+
+The options `--start` and `--end` take a moment as seconds, such as `75`, or as minutes and seconds,
+such as `1:15`, counted from the first frame of the recording as the timeline of Watch counts them.
+A moment also names a goal, as `goal:2` for the first frame that shows the score of the second goal,
+with seconds before or after it, as in `goal:2-8` or `goal:2+4`. The option `--goal 2` picks the
+range from 8 seconds before the second goal to 4 seconds after it, and a `--start` or `--end` beside
+it replaces that end of the range. The range is the whole recording when no moment and no goal is
+given. A range is kept within the recording, and a goal beyond the last one stops the command with
+the number of goals that the recording holds.
+
+### Presentation
+
+The video follows the match clock, one second of video for each second of play. The page shows the
+picture alone, as broadcast mode does, with the scoreboard and clock, the banner of a goal and the
+graphics of the referee's decisions. The team sheets, the presentation of restarts, celebrations,
+replays and the show after the match each hold or stop play, so they stay off. The option
+`--broadcast` keeps them all, and the video then shows the match as Watch presents it and runs
+until play reaches the end of the range, longer than the range itself and at most the maximum
+length.
+
+The option `--no-score` hides the scoreboard and clock. The option `--camera` picks one of the
+cameras that follow play by themselves, `broadcast`, `tactical`, `goal`, `ball` or `owner`, as
+described under Cameras. The option `--arena` picks the arena, and `--time` the time of day as
+`dawn`, `day`, `dusk`, `night` or an hour from 0 to 24. The export runs in a browser profile of its
+own, so the other settings of the Field page keep their defaults. Kits, models, boards and
+celebrations come from the registry of the renderer's folder, as Watch shows them.
+
+An exported video is silent. The page mixes its sound live, in step with real time, while the
+export draws far slower than real time, so the sound of the page stays out of the file.
+
+### Options
+
+| Option | Meaning |
+| ------ | ------- |
+| `-o`, `--output` | the MP4 file to write |
+| `--overwrite` | replace the output file when it exists |
+| `--start`, `--end` | the moments where the video starts and ends |
+| `--goal` | the range around one goal |
+| `--camera` | the camera, `broadcast` by default |
+| `--size` | width by height, such as `1920x1080`, or `480p` to `2160p`, `1280x720` by default |
+| `--fps` | frames a second from 1 to 60, 30 by default |
+| `--quality` | `draft`, `standard` or `high`, `standard` by default |
+| `--no-score` | hide the scoreboard and clock |
+| `--arena`, `--time` | the arena and the time of day |
+| `--broadcast` | keep the team sheets, restarts, celebrations and replays |
+| `--max-seconds` | the longest video, 600 seconds by default and 3600 at most |
+| `--max-size` | the largest file in MB, 2048 by default and 16384 at most |
+| `--chrome`, `--ffmpeg` | the programs to run, found on the path by default |
+| `--software` | draw in software, without the graphics card |
+| `--no-sandbox` | run Chrome without its sandbox |
+
+A picture is between 160 by 90 and 3840 by 2160 pixels, with even sides, which the encoder needs.
+The page lays out at a height of 720 pixels and scales up for a taller picture, so the scoreboard
+and banners keep their proportion at every size. The quality `draft` encodes fast and small,
+`standard` suits sharing, and `high` keeps fine detail in larger files. A range longer than the
+maximum length stops before anything is drawn, and a file that reaches the maximum size stops the
+export.
+
+### Requirements and progress
+
+Chrome, Chromium and Edge all serve the export, as does any browser built on Chromium. The command
+looks for `google-chrome`, `chromium`, `chromium-browser` and `chrome` on the path and then in the
+usual places of each system, and `--chrome` or the variable `CUJU_CHROME` names another program.
+ffmpeg comes from the path, from `--ffmpeg` or from the variable `CUJU_FFMPEG`. Both stay optional
+and outside cuju's dependencies, and the command says which one is missing and how to install it,
+for example with `apt install chromium ffmpeg` on Debian and Ubuntu, `brew install ffmpeg` on macOS
+or `winget install ffmpeg` on Windows. Chrome running as root, as in many containers, runs without
+its sandbox, which Chrome refuses to the root user, and `--no-sandbox` turns the sandbox off
+elsewhere, for the containers that need it. A machine whose graphics card the headless browser
+cannot use draws in software by itself, and `--software` asks for that from the start.
+
+The command prints the range and the number of frames, then one line of progress with the frame,
+the share done and an estimate of the time left. The pictures pass from Chrome to ffmpeg through a
+pipe, and the file is written beside the output under a hidden name, `.NAME.part.mp4`, which takes
+the output's name once the video is complete. Ctrl+C cancels the export, closes Chrome and ffmpeg,
+removes the partial file and the temporary browser profile and ends with exit status 130, so a
+failed or cancelled export leaves nothing behind.
+
+### From the Watch page
+
+Export video in the bar of Watch opens a dialog for the open recording of the library and pauses
+play. The dialog asks for the start and end, by default the moment that the timeline shows and 15
+seconds after it. From here and To here take the timeline's position, and the Goal list sets the
+range around one goal of the match, from 8 seconds before it to 4 seconds after. The dialog offers
+sizes of 854 by 480, 1280 by 720 and 1920 by 1080, frame rates of 24, 25, 30, 50 and 60 a second,
+the three qualities, the five cameras and the scoreboard, and it uses the arena and the time of day
+of the page's own field settings. A range is at most 10 minutes.
+
+Export asks the server to run the same export as the command, in a process of its own on the
+machine of the server, and the dialog shows a bar and a line of progress. Once the video is ready,
+Download video saves it under the title of the recording and its range, and Export again starts
+another. Cancel export stops a running export, which removes its partial file. The server runs one
+export at a time, and a second request waits for the first to finish or be cancelled. Closing the
+dialog leaves the export running, and opening it again shows the latest export of that recording.
+
+The server looks for Chrome and ffmpeg as the command does. When either is missing, the dialog says
+which one and how to install it, and the server needs a restart once both are installed. A file
+dropped on the page and a live source carry no recording of the library, and for them the dialog
+explains that the export draws recordings of the library.
 
 ## Playing a game
 
@@ -1614,6 +1855,12 @@ forward play at up to two and a half times real time, and pausing silences the p
 own sounds play under its crowd. The sound files load the first time the sound is turned on, so a
 muted page fetches none, and unavailable files fall back to the synthesized sounds where available.
 
+Each sound of the play, a whistle, a kick, a roar or a team's own sound, ends with the moment it
+belongs to. A seek, a jump to a goal, a restart and a change of match fade every sound of the play
+out within a tenth of a second, sounds that were due a moment later included, while the soundscape,
+the crowd's murmur and the weather play on. At most twelve sounds of the play sound together, and a
+new one fades out the oldest, so a quick run of kicks and tackles stays clear.
+
 The page starts muted, since browsers start sound only after a click or a key, and M or the speaker
 button turns the sound on, at half volume by default.
 
@@ -1732,13 +1979,19 @@ retains the first offside candidate. Older recordings retain their candidate bas
 A recording is a gzip compressed file with the extension `.cjr`. After decompression it holds the
 seven bytes `CUJREC1` followed by a newline, the length of a header as an unsigned 32 bit integer,
 the
-header as UTF 8 JSON padded with spaces to a multiple of four bytes, and the frames back to back,
-each of the same size and aligned to four bytes. Every number is little endian.
+header as UTF 8 JSON padded with spaces to a multiple of four bytes, and the frames. Every number is
+little endian. Version 1 stores the frames back to back, each of the same size and aligned to four
+bytes, and version 2 stores them coded in sections, as [Version 2](#version-2) describes. Both
+versions hold the same frames bit for bit. The recorder, requested matches and games on the Play
+page write version 2, `Recorder(batch, version=1)` writes version 1, and the page, the library and
+the module `cuju.render` read both. A live stream sends the header of version 1 and its frames
+uncompressed.
 
-The header records the version, 1, the title, the scenario, the steps per second, 10, the names of
-the fourteen joints and the parent of each, one entry per player with its team, its index within the
-team, whether it is the goalkeeper and whether an agent controls it, the name and colors of each
-team, the size of a frame and the number of frames, which a live stream gives as null.
+The header records the version, 1 or 2, the title, the scenario, the steps per second, 10, the
+names of the fourteen joints and the parent of each, one entry per player with its team, its index
+within the team, whether it is the goalkeeper and whether an agent controls it, the name and colors
+of each team, the size of a frame as version 1 stores it and the number of frames, which a live
+stream gives as null.
 
 The header also holds a `provenance` object, which records what was known of the recording's
 origin when it was made. Every recording names the version of cuju that made it as
@@ -1781,8 +2034,9 @@ lists them.
 The joints of every player follow, seven signed 16 bit integers per joint, fourteen joints per
 player in the order of the header. The first three hold the world position in steps of 2 mm, which
 spans 65 m either way of the center spot, and the last four the rotation as a quaternion, x, y, z
-then w, in steps of one part in 32767. A full match of eleven a side occupies 13 MB before
-compression and 12 MB in the file, half the size of the same match stored as 32 bit floats. Every
+then w, in steps of one part in 32767. A full match of eleven a side occupies 13 MB of frames
+before compression and 12 MB in a file of version 1, half the size of the same match stored as
+32 bit floats, and 4.4 MB in a file of version 2. Every
 position is in the frame of the pitch, with the center spot at the origin, the left team defending
 negative x and the z axis pointing up.
 
@@ -1798,18 +2052,108 @@ step, and otherwise 1 plus GRF's kind of the touch, 1 for a kick, 2 for another 
 
 A live stream sends the same bytes uncompressed.
 
+A page that asks a live source for annotations, with `annotations=1` beside `sequence=1`, receives
+a header with `stream_annotations` set to 1. Between the frames, such a stream sends batches of
+annotations, each made of the serial `2**64 - 2`, the length of a UTF 8 JSON object as an unsigned
+32 bit integer and the object. Its `records` take the form of the section `ANNO` of version 2, with
+`f` holding the serial of the annotated frame. The page of cuju 0.2.0 asks for no annotations and
+reads the stream as before.
+
+### Version 2
+
+A file of version 2 adds two fields to the header, `frame_count`, the number of frames, and
+`keyframe_interval`, the number of frames from one keyframe to the next, 100 in the files that cuju
+writes. Sections follow the header, each made of a tag of four ASCII letters, the length of its
+payload as an unsigned 32 bit integer, the payload and zeros up to a multiple of four bytes. A
+reader keeps the first section of each tag and skips the tags it does not know, so a later version
+can add sections that an earlier reader passes over. The section `FRMS` holds the frames, and every
+file has it.
+
+The frames section stores each field of the frames as a lane, the values of that field in every
+frame in order, and its values decode to the frames of version 1 bit for bit. The coding starts
+afresh at every frame whose index is a multiple of the keyframe interval, a keyframe, so a frame
+decodes from the keyframe at or before it, and a reader that seeks decodes at most one interval of
+frames. The page decodes every frame when it opens a recording, and `cuju.render` decodes from the
+keyframe before the first frame that it reads, so the library reads the last frame of a recording
+for its summary at once.
+
+A lane of 16 bits stores each value zigzag coded, so that 0, -1, 1 and -2 become 0, 1, 2 and 3. A
+run of such lanes stores the low byte of every value of its first lane, then of its second lane and
+so on, and the high bytes after all the low bytes. A lane of 32 bits stores four such planes, the
+lowest byte first, and a lane of 8 bits stores its bytes as they are. A value coded as a difference
+is the value less the value of the frame before, wrapped to the width of its lane, and a keyframe
+stores the value itself. A value coded as a difference of differences takes the difference twice.
+A byte coded as an exclusive or is the byte XOR the byte of the frame before, and a keyframe stores
+the byte itself.
+
+The section holds the runs of lanes in the order of the table, where n is the number of players and
+p the bytes of each of the three byte runs that close a frame. The joints count from 1 to 13 in the
+order of the header, after the root joint `player`. Lanes of the joints go joint by joint, then
+component by component, then player by player, and lanes of the root go component by component,
+then player by player.
+
+| Run | Lanes | Width | Coding | Content |
+| --- | ----- | ----- | ------ | ------- |
+| head | 19 | 32 bits | difference | the 19 words of the frame head, the floats of the ball by their bits |
+| root position | 3 n | 16 bits | difference of differences | x, y and z of the root joint of each player |
+| root rotation | 4 n | 16 bits | difference | the rotation of the root joint of each player |
+| local rotation | 39 n | 16 bits | difference | x, y and z of each joint's rotation relative to its parent |
+| sign | 13 n | 8 bits | exclusive or | 1 where w of the local rotation is negative, else 0 |
+| local offset | 39 n | 16 bits | difference | each joint's position relative to its parent, in the parent's frame |
+| rotation residual | 52 n | 16 bits | none | each joint's rotation less the predicted rotation |
+| position residual | 39 n | 16 bits | none | each joint's position less the predicted position |
+| closing bytes | 3 p | 8 bits | exclusive or | the three byte runs that close a frame |
+
+A reader rebuilds the joints of each player in the order of the header, so a parent comes before
+its children, with `U = 32767`, the parent's decoded rotation `P` and position, the local rotation
+`k` and the local offset `o`, all as integers.
+
+1. `k` takes x, y and z from its lanes, and w is the integer square root of the larger of 0 and
+   `U*U - x*x - y*y - z*z`, negated where the sign lane holds a value other than 0.
+2. The rotation of the joint is the Hamilton product `P k`, each component `c` of it turned into
+   `floor((2*c + U) / (2*U))`, plus the rotation residual, wrapped to 16 bits.
+3. With `a` the x, y and z of `P` and `w` its w, the vector `s = U*U*o + 2*w*cross(a, o) +
+   2*cross(a, cross(a, o))` turns the offset, and the position of the joint is the parent's
+   position plus `floor((2*s + U*U) / (2*U*U))` for each component, plus the position residual,
+   wrapped to 16 bits.
+
+The Hamilton product takes quaternions stored x, y, z and w, as the frame stores them.
+
+```text
+x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+y = w1*y2 + y1*w2 + z1*x2 - x1*z2
+z = w1*z2 + z1*w2 + x1*y2 - y1*x2
+w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+```
+
+Every product and sum of these steps is an integer below `2**53`, so a reader in double precision,
+as JavaScript computes, reaches the same integers as one in 64 bit integers. The writer chooses the
+local rotations and offsets and holds each one where it moves by one step or less, so the lanes
+change slowly and gzip finds them, and the residuals carry whatever the prediction misses, which
+keeps every frame exact. The shipped full match of eleven a side takes 4.4 MB in version 2 and
+11.7 MB in version 1, and the shipped match of five a side 1.1 MB and 2.7 MB.
+
+The section `ANNO` holds the [annotations](#annotations) of a recording that has them, as a UTF 8
+JSON object whose `records` list one record for each frame and player, in the order of the frames.
+A record holds `f`, the index of its frame, and as it needs them `p`, the index of its player in
+the header, absent for the whole match, `v`, an object of named numbers, `t`, the text, `a`, the
+action chosen, and `k`, the likely actions as pairs of an action and its probability, the most
+likely first. A reader that meets a malformed section plays the frames without annotations.
+
 ## Folder and server
 
 The renderer's folder holds six subfolders, `matches` for the recordings, `teams` for the
 submissions, `live` for the announcements of running sources, `requests` for the history of
-requested matches, `tournaments` for the tournaments with their ratings and presets, and
-`scenarios` for the scenario files of set match lengths. The file `samples.json` names the
-sample matches that the library has received. Requested matches play one at a time, and each
-request keeps a small JSON file in the subfolder `requests`, with its teams, scenario, resolved
-seed, ability, state, error and the times it was made, started and finished. The server writes each
-file through a temporary file and removes any temporary file left behind when it starts. A file
-that holds a field of the wrong type, edited by hand or written by a later version, is skipped
-with a warning through the logger `cuju`, and the server starts with the rest of the history.
+requested matches, `tournaments` for the tournaments with their ratings and presets, and `scenarios`
+for the scenario files of set match lengths. A seventh, `videos`, holds the videos that the page
+exports, the three latest of the running server beside the one in progress, and the server empties
+it before its first export. The file `samples.json` names the sample matches that the library has
+received. Requested matches play one at a time, and each request keeps a small JSON file in the
+subfolder `requests`, with its teams, scenario, resolved seed, ability, state, error and the times
+it was made, started and finished. The server writes each file through a temporary file and removes
+any temporary file left behind when it starts. A file that holds a field of the wrong type, edited
+by hand or written by a later version, is skipped with a warning through the logger `cuju`, and the
+server starts with the rest of the history.
 
 A restart of the server marks every request that was waiting or playing as interrupted, and Retry
 queues it again. A match that was playing when the server stopped runs in a process of its own,

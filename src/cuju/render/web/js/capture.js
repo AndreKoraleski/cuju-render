@@ -26,7 +26,9 @@
     Date.now = () => Math.round(epoch + now());
     window.requestAnimationFrame = (fn) => {
         if (!stepped) {
-            return realFrame(fn);
+            // A frame asked for in real time that Chrome draws after the clocks froze waits for
+            // the next step, so its time never runs ahead of the stepped clock.
+            return realFrame((t) => (stepped ? frames.set(++next, fn) : fn(t)));
         }
         frames.set(++next, fn);
         return next;

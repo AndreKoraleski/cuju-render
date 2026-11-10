@@ -30,6 +30,7 @@ from typing import Any
 from cuju import __version__, bundled_scenarios
 from cuju.errors import ArgumentError
 
+from .._export import video_jobs as _video_jobs
 from .._registry import clips as _clips
 from .._registry import teams as _teams
 from .._store import home as _home
@@ -745,6 +746,7 @@ def make_handler(
     requests: _Requests,
     games: _Games | None = None,
     tournaments: _tournament_runner.Tournaments | None = None,
+    videos: _video_jobs.VideoJobs | None = None,
 ) -> type[http.server.BaseHTTPRequestHandler]:
     """Returns the request handler of the server, which serves the loopback interface alone.
 
@@ -760,6 +762,8 @@ def make_handler(
             if held['tournaments'] is None:
                 held['tournaments'] = _tournament_runner.Tournaments(games)
             return held['tournaments']
+
+    videos = videos if videos is not None else _video_jobs.VideoJobs()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = 'cuju-render'
@@ -904,6 +908,18 @@ def make_handler(
                     self._live_grid(parts[2])
                 elif parts == ['api', 'info']:
                     self._json({'version': __version__})
+                elif parts == ['api', 'video']:
+                    self._json(_video_jobs.availability())
+                elif parts == ['api', 'videos']:
+                    self._json(videos.entries())
+                elif len(parts) == 3 and parts[1] == 'videos':
+                    entry = videos.entry(parts[2])
+                    if entry is None:
+                        self._error(404, 'no such video')
+                    else:
+                        self._json(entry)
+                elif len(parts) == 4 and parts[1] == 'videos' and parts[3] == 'file':
+                    self._video(videos.file(parts[2]))
                 elif parts == ['api', 'scenarios']:
                     self._json(_scenarios())
                 elif parts == ['api', 'teams']:
@@ -945,6 +961,8 @@ def make_handler(
             try:
                 if len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'duplicate':
                     self._json(_teams.duplicate(parts[2]), 201)
+                elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'video':
+                    self._json(videos.start(parts[2], self._document()), 201)
                 elif len(parts) == 4 and parts[1] == 'live' and parts[3] == 'environment':
                     self._select_environment(parts[2])
                 elif parts == ['api', 'teams']:
@@ -993,7 +1011,7 @@ def make_handler(
                     self._json(games.send(parts[2], {'paused': paused}))
                 else:
                     self._error(404, 'no such resource')
-            except GameBusyError as error:
+            except (GameBusyError, _video_jobs.BusyError) as error:
                 self._error(409, str(error))
             except NoGameError as error:
                 self._error(404, str(error))
@@ -1079,6 +1097,8 @@ def make_handler(
                 except ArgumentError as error:
                     self._error(409, str(error))
                     return
+            elif len(parts) == 3 and parts[1] == 'videos':
+                removed = videos.cancel(parts[2])
             elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':
                 try:
                     removed = _teams.remove_model(parts[2])
@@ -1246,6 +1266,23 @@ def make_handler(
             self.end_headers()
             self.wfile.write(data)
 
+        def _video(self, found: tuple[Path, str] | None) -> None:
+            """Sends a finished video export as a download, under the name it suggests."""
+            if found is None:
+                self._error(404, 'no such video')
+                return
+            path, filename = found
+            size = path.stat().st_size
+            self.send_response(200)
+            self.send_header('Content-Type', 'video/mp4')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header('Content-Length', str(size))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            with path.open('rb') as stream:
+                while chunk := stream.read(1 << 20):
+                    self.wfile.write(chunk)
+
         def _recording(self, identifier: str) -> None:
             path = _library.path_of(identifier)
             if path is None:
@@ -1363,9 +1400,14 @@ def make_handler(
                 # A batch pauses between steps for as long as training needs, so once connected
                 # the relay waits on the stream without a timeout.
                 connection.sock.settimeout(None)
-                # A page that reconnects asks for numbered frames, and the relay passes that on.
-                sequence = self._route()[1].get('sequence') == '1'
-                connection.request('GET', '/stream?sequence=1' if sequence else '/stream')
+                # A page that reconnects asks for numbered frames, and the relay passes that on,
+                # with the annotations that a page which shows them asks for.
+                query = self._route()[1]
+                sequence = query.get('sequence') == '1'
+                path = '/stream?sequence=1' if sequence else '/stream'
+                if sequence and query.get('annotations') == '1':
+                    path += '&annotations=1'
+                connection.request('GET', path)
                 response = connection.getresponse()
             except OSError as error:
                 connection.close()

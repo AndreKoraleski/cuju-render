@@ -4,9 +4,15 @@
 
 import json
 import os
+import struct
 import threading
 import urllib.request
 
+import torch
+
+import cuju
+import cuju.errors
+import cuju.state
 from cuju.render._format import recording as _recording
 from cuju.render._http import launch as _launch
 from cuju.render._http import server as _server
@@ -131,3 +137,50 @@ def _one_second(monkeypatch):
             return next(source)
 
     monkeypatch.setattr(_home, 'secrets', types.SimpleNamespace(token_hex=token_hex))
+
+
+def _sample_head(name, count):
+    """Returns the header of a shipped sample as `_recording.header` returns it, and its frames."""
+    path = _library._SAMPLES / f'{name}.cjr'
+    document = _recording.read_header(path)
+    document.pop('keyframe_interval', None)
+    document.update(version=1, frame_count=count)
+    return _recording._encode_header(document), list(_recording.frames(path, stop=count))
+
+
+def _filtered_episodes(**filters):
+    """Plays episodes of a scenario under an unfiltered recorder and one with `filters`.
+
+    Returns the frames of every episode, the frames that the filtered recorder saved, the
+    summaries that a function filter saw, and the filtered recorder.
+    """
+    batch = cuju.BatchEnvironment(
+        'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu', seed=11
+    )
+    everything = cuju.render.Recorder(batch)
+    seen = []
+    keep = filters.pop('keep', None)
+    if keep == 'record':
+
+        def keep(summary):
+            seen.append(summary)
+            return summary['length'] % 2 == 0
+
+    filtered = cuju.render.Recorder(batch, keep=keep, **filters)
+    batch.reset()
+    episode = step = 0
+    while everything.episodes < 8:
+        # Even episodes shoot at the goal and score, odd ones shoot over the touchline.
+        action = (12 if step % 3 else 5) if episode % 2 == 0 else (3 if step % 2 else 12)
+        _, _, done, _ = batch.step(torch.tensor([[action]], dtype=torch.int32))
+        step += 1
+        if bool(done[0]):
+            episode, step = episode + 1, 0
+    batch.close()
+    episodes = [list(_recording.frames(path)) for path in everything.saved]
+    kept = [list(_recording.frames(path)) for path in filtered.saved]
+    return episodes, kept, seen, filtered
+
+
+def _goals(frames):
+    return sum(struct.unpack_from('<2i', frames[-1], 8))

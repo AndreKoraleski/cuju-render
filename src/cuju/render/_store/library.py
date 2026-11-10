@@ -84,20 +84,28 @@ def _store(path: Path, summary: dict[str, Any]) -> None:
     temporary.replace(target)
 
 
-def save(head: bytes, frames: list[bytes], identifier: str | None = None) -> Path:
+def save(
+    head: bytes,
+    frames: list[bytes],
+    identifier: str | None = None,
+    version: int = _recording.VERSION,
+    annotations: list[dict[str, Any]] | None = None,
+) -> Path:
     """Writes a recording and its summary into the library and returns the recording's path.
 
     Args:
         head: The magic, length and header, as `_recording.header` returns them.
         frames: The frames.
         identifier: The name of the files, by default a new one that no recording holds.
+        version: The version of the recording file.
+        annotations: The records of the annotations, which version 2 keeps.
     """
     if identifier is None:
-        path = _reserve()
+        path = reserve()
     else:
         path = _home.folder('matches') / f'{identifier}.cjr'
     try:
-        _recording.write(path, head, frames)
+        _recording.write(path, head, frames, version, annotations)
         document = json.loads(head[len(_recording.MAGIC) + 4 :])
         _write_summary(path, document, frames[-1] if frames else None, len(frames))
     except BaseException:
@@ -107,7 +115,7 @@ def save(head: bytes, frames: list[bytes], identifier: str | None = None) -> Pat
     return path
 
 
-def _reserve() -> Path:
+def reserve() -> Path:
     """Returns the path of a new recording under an identifier that no other recording holds.
 
     Identifiers sort by the second they are made in, so recorders of several processes that save
@@ -175,10 +183,11 @@ def _add_sample(name: str) -> Path | None:
     temporary = path.with_name(path.name + '.part')
     shutil.copyfile(_SAMPLES / f'{name}.cjr', temporary)
     temporary.replace(path)
-    last = None
-    for frame in _recording.frames(path):
-        last = frame
     document = _recording.read_header(path)
+    # A file of version 2 decodes its last frame from the keyframe before it.
+    last = None
+    for frame in _recording.frames(path, start=max(0, document['frame_count'] - 1)):
+        last = frame
     _write_summary(path, document, last, document['frame_count'])
     return path
 

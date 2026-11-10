@@ -2022,6 +2022,87 @@ dialog.painter::backdrop {
     background: rgba(0, 0, 0, 0.6);
 }
 
+/* Export video */
+
+dialog.video-export {
+    width: min(560px, calc(100% - 24px));
+    max-height: calc(100% - 24px);
+    padding: 16px 20px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+}
+
+dialog.video-export::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.ve-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.ve-head h2 {
+    margin: 0;
+}
+
+.ve-range,
+.ve-grid {
+    display: grid;
+    gap: 8px 12px;
+    margin: 12px 0;
+}
+
+.ve-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    align-items: end;
+}
+
+.ve-field {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.ve-field > span {
+    min-width: 76px;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.ve-field input[type="text"] {
+    width: 96px;
+}
+
+.ve-grid label.check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ve-note.error {
+    color: var(--danger);
+}
+
+dialog.video-export progress {
+    width: 100%;
+}
+
+.ve-missing li {
+    margin: 6px 0;
+}
+
+.ve-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+
 .painter-box {
     display: flex;
     flex-direction: column;
@@ -6871,3 +6952,87 @@ dialog.painter .toolbar {
         padding: 12px;
     }
 }
+/* Annotations of a recording, under the players, over the controls and as lines on the timeline. */
+
+.annotation-labels {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+}
+
+.annotation-labels span {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transform: translate(-50%, 0);
+    max-width: 180px;
+    padding: 1px 4px;
+    font-size: 10px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+}
+
+.annotation-labels b {
+    max-width: 172px;
+    overflow: hidden;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.annotation-match {
+    position: absolute;
+    left: 12px;
+    bottom: 112px;
+    z-index: 5;
+    max-width: min(360px, calc(100% - 24px));
+    padding: 6px 8px;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    pointer-events: none;
+}
+
+.timeline-series {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -8px;
+    width: 100%;
+    height: 28px;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.timeline-series path {
+    fill: none;
+    stroke-width: 1.5;
+}
+
+#annotations-panel .annotation-series {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+.series-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 3px;
+    margin-left: 4px;
+}
+
+.timeline-series .series-0 { stroke: #e67e22; }
+.timeline-series .series-1 { stroke: #3498db; }
+.timeline-series .series-2 { stroke: #27ae60; }
+.timeline-series .series-3 { stroke: #9b59b6; }
+.series-swatch.series-0 { background: #e67e22; }
+.series-swatch.series-1 { background: #3498db; }
+.series-swatch.series-2 { background: #27ae60; }
+.series-swatch.series-3 { background: #9b59b6; }

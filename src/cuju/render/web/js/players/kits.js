@@ -71,6 +71,12 @@ function celebrationList(value) {
     return Array.isArray(value) ? value.filter(isCelebrationName).slice(0, 32) : [];
 }
 
+// The models on which a team hides its shirt numbers, GRF's player paints its own.
+function hiddenNumbers(value) {
+    const models = Array.isArray(value) ? value.filter((m) => typeof m === 'string' && m && m !== 'grf') : [];
+    return [...new Set(models)].slice(0, 64);
+}
+
 // One to four colors of the fans, or null to wear the kit.
 function crowdColors(value) {
     const list = value && Array.isArray(value.colors) ? value.colors : [];
@@ -331,6 +337,7 @@ export function normalizeStyle(team, side = 0) {
         colors: recolorPairs(s.colors),
         celebrations: celebrationList(s.celebrations),
         crowd: { colors: crowdColors(s.crowd) || [primary, secondary] },
+        hidden_numbers: hiddenNumbers(s.hidden_numbers),
     };
     const gk = s.goalkeeper || {};
     const keeper = contrasting([primary, secondary, out.kit.shorts], side);
@@ -358,6 +365,7 @@ export function serverStyle(style) {
         players: (Array.isArray(style.players) ? style.players : []).map((p, i) => rosterEntry(p, i)),
         colors: recolorPairs(style.colors),
         celebrations: celebrationList(style.celebrations),
+        hidden_numbers: hiddenNumbers(style.hidden_numbers),
     };
     const fans = crowdColors(style.crowd);
     if (fans) {

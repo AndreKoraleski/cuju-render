@@ -159,7 +159,8 @@ def recording_result(identifier: str) -> dict[str, Any]:
         raise ArgumentError(f'expected a recording of the library, found {identifier!r}')
     header = _recording.read_header(path)
     last = None
-    for frame in _recording.frames(path):
+    # A recording of version 2 decodes its last frame from the keyframe before it.
+    for frame in _recording.frames(path, start=max(0, (header.get('frame_count') or 0) - 1)):
         last = frame
     if last is None:
         raise ArgumentError(f'the recording {identifier} holds no frame')

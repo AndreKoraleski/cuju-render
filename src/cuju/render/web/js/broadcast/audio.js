@@ -14,6 +14,8 @@
 // are synthesized too and follow the weather. Switching arenas or weather crossfades over about
 // a second.
 
+import { Voices } from './voices.js';
+
 // The optional files that replace synthesized sounds, by name without the extension. The list
 // in assets/sounds/sounds.json names the files present, so absent ones are never requested, and
 // each sound falls back to its synthesis when its file is absent.
@@ -454,11 +456,12 @@ class Scape {
 
     // Sends a node into the scape, directly and into the echo.
     send(node, dry = 1, wet = 0.3, channel = this.name === 'stadium' ? 'crowd' : 'ambience') {
+        const out = this.sound.voices.tap(this.ctx, node);
         if (dry > 0) {
-            node.connect(makeGain(this.ctx, dry)).connect(channel === 'crowd' ? this.crowdFade : this.fade);
+            out.connect(makeGain(this.ctx, dry)).connect(channel === 'crowd' ? this.crowdFade : this.fade);
         }
         if (wet > 0) {
-            node.connect(makeGain(this.ctx, wet)).connect(channel === 'crowd' ? this.crowdWetFade : this.wetFade);
+            out.connect(makeGain(this.ctx, wet)).connect(channel === 'crowd' ? this.crowdWetFade : this.wetFade);
         }
         return node;
     }
@@ -479,6 +482,7 @@ class Scape {
     }
 
     later(fn, ms) {
+        fn = this.sound.voices.later(fn);
         const id = setTimeout(() => {
             this.timers.delete(id);
             if (this.live) {
@@ -545,6 +549,16 @@ export class Sound {
         this.scapes = new Map();
         this.weather = { rain: null, wind: null };
         this.lastOoh = -Infinity;
+        // The one-shot sounds of the play, each event a voice that a seek fades out.
+        this.voices = new Voices();
+    }
+
+    // Fades every one-shot sound out at once, for a seek, a restart or another match. The beds of
+    // the arena, the crowd's murmur and the weather play on.
+    stopEvents() {
+        if (this.ctx) {
+            this.voices.stopAll(this.ctx);
+        }
     }
 
     setActive(on) {
@@ -615,7 +629,7 @@ export class Sound {
         this.scapes.set('stadium', new Scape(this, 'stadium'));
         this.buildCrowd();
         this.ready = true;
-        this.filesReady = this.loadFiles();
+        this.loadFilesWhenHeard();
         this.loadTeamSounds();
         this.babbleReady = renderBabble(ctx.sampleRate).then((babble) => {
             if (babble && !this.files.has('crowd-loop')) {
@@ -629,6 +643,7 @@ export class Sound {
 
     // Sends a node to the master directly and to the stadium echo.
     route(node, dry = 1, wet = 0.4, channel = 'effects') {
+        node = this.voices.tap(this.ctx, node);
         const d = this.ctx.createGain();
         d.gain.value = dry;
         node.connect(d).connect(this.mix[channel].dry);
@@ -886,6 +901,14 @@ export class Sound {
     setMuted(m) {
         this.muted = m;
         this.applyGain();
+        this.loadFilesWhenHeard();
+    }
+
+    // The sound files load the first time the page may be heard, so a muted page fetches none.
+    loadFilesWhenHeard() {
+        if (this.ready && !this.muted && !this.filesReady) {
+            this.filesReady = this.loadFiles();
+        }
     }
 
     applyGain() {
@@ -1818,9 +1841,10 @@ export class Sound {
         const src = ctx.createBufferSource();
         src.buffer = buffer;
         src.playbackRate.value = rate;
-        const g = ctx.createGain();
-        g.gain.value = gain;
-        src.connect(g);
+        const level = ctx.createGain();
+        level.gain.value = gain;
+        src.connect(level);
+        const g = this.voices.tap(ctx, level, src, when);
         if (position) {
             g.connect(this.panner(position)).connect(this.mix[channel].dry);
             if (wet > 0) {
@@ -1934,7 +1958,7 @@ export class Sound {
         for (let i = 0; i < 6; i++) {
             this.shout(t + 0.2 + Math.random() * 2.5, 1.6);
         }
-        setTimeout(() => this.audible && this.arena === 'stadium' && this.claps(40, 1.2), 1500);
+        setTimeout(this.voices.later(() => this.audible && this.arena === 'stadium' && this.claps(40, 1.2)), 1500);
     }
 
     // A groan at a near miss, the stadium crowd's from a file when one is present, else a
@@ -1983,7 +2007,7 @@ export class Sound {
             return;
         }
         this.claps(60, 1.2);
-        setTimeout(() => this.audible && this.arena === 'stadium' && this.claps(50, 1), 900);
+        setTimeout(this.voices.later(() => this.audible && this.arena === 'stadium' && this.claps(50, 1)), 900);
     }
 
     // A short fanfare like brass for the winners, detuned saws through a swelling low pass, and
@@ -2035,9 +2059,10 @@ export class Sound {
     }
 
     // The two teams of the match, registry entries with an id and their list of sounds, or
-    // null for a team with none. Their sounds load once the audio is unlocked.
+    // null for a team with none. Their sounds load once the audio is unlocked, and load again
+    // when the server's sounds_version of the entry changes, as a replaced sound changes it.
     setTeams(teams) {
-        const key = (t) => (t && t.id ? `${t.id}:${(t.sounds || []).join(',')}:${t.soundsVersion || ''}` : '');
+        const key = (t) => (t && t.id ? `${t.id}:${(t.sounds || []).join(',')}:${t.sounds_version || ''}` : '');
         const same = this.teams.every((t, i) => key(t) === key(teams[i]));
         this.teams = [teams[0] || null, teams[1] || null];
         if (!same) {
@@ -2100,4 +2125,15 @@ export class Sound {
             channel: fans ? 'crowd' : 'effects' });
         return true;
     }
+}
+
+// Each event of the play sounds as one voice, with how long it is taken to last in seconds when
+// its buffers do not tell. A sound an event calls in turn, such as a team's goal sound inside
+// the crowd's goal, joins the same voice.
+const EVENT_LENGTH = { whistle: 4, goal: 9, ooh: 4, applause: 5, fanfare: 6, teamSound: 1 };
+for (const [name, length] of Object.entries(EVENT_LENGTH)) {
+    const play = Sound.prototype[name];
+    Sound.prototype[name] = function event(...args) {
+        return this.voices.run(this.ctx, () => play.apply(this, args), length);
+    };
 }

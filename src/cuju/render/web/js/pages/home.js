@@ -202,6 +202,10 @@ export class HomePage {
 
     show() {
         this.shown = true;
+        // The montage's poster loads once Home shows, so a page opened on a match skips it.
+        for (const video of this.root.querySelectorAll('video[data-poster]:not([poster])')) {
+            video.poster = video.dataset.poster;
+        }
         clearInterval(this.timer);
         this.timer = setInterval(() => {
             if (!document.hidden) {
@@ -259,7 +263,7 @@ export class HomePage {
     // A montage of the viewer, muted until the viewer turns the sound on, and played from its controls.
     reelBand() {
         const video = h('video', {
-            class: 'home-reel-video', src: 'assets/promo.mp4', poster: 'assets/promo-poster.jpg',
+            class: 'home-reel-video', src: 'assets/promo.mp4', 'data-poster': 'assets/promo-poster.jpg',
             controls: true, muted: true, playsinline: true, preload: 'none', width: '1280', height: '720',
             'aria-label': 'A montage of the viewer, from a floodlit goal to the arenas, the team editor, a game, the show at full time and a grid of many matches',
         });

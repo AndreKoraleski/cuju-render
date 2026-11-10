@@ -5,14 +5,17 @@
 // Positions on the timeline are absolute frame numbers, so live frames dropped from the front
 // do not move anything, the first kept frame is just no longer zero.
 
+import { Annotations } from './annotation-data.js';
 import { findGoals, isCut } from './format.js';
 
 // A recording keeps all its frames. A live store is a ring of at most limit frames, so a long
-// stream drops its oldest frames in constant time.
+// stream drops its oldest frames in constant time. annotations, the records of a recording or []
+// for a stream that sends them, become the store's Annotations, null without them.
 export class FrameStore {
-    constructor(header, frames = [], limit = Infinity) {
+    constructor(header, frames = [], limit = Infinity, annotations = null) {
         this.header = header;
         this.limit = limit;
+        this.annotations = annotations ? new Annotations(annotations) : null;
         this.ring = Number.isFinite(limit) ? new Array(limit) : frames;
         this.head = 0;
         this.count = frames.length;

@@ -343,7 +343,7 @@ def import_recording(path: str | os.PathLike) -> str:
             data = data if data is not None else source.read_bytes()
             if other.read_bytes() == data and _library.path_of(other.stem) is not None:
                 return other.stem
-    target = _library._reserve()
+    target = _library.reserve()
     try:
         shutil.copyfile(source, target)
         count, last = 0, None

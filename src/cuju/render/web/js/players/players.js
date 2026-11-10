@@ -15,6 +15,7 @@ import {
 import { Recolor, kitPairs, shownColors } from './recolor.js';
 import { fallbackCelebration, has as hasAnimation, pickCelebration } from './animate.js';
 import { attachKayKitClips } from './kaykit.js';
+import { RigNumbers } from './rig-numbers.js';
 
 // The largest team model read, the server takes at most 30 MB so this only stops a runaway file.
 const MAX_MODEL_BYTES = 64 * 1024 * 1024;
@@ -1052,6 +1053,8 @@ class Rigged {
         parent.add(this.group);
         this.entries = [];
         this.byK = new Map();
+        // Shirt numbers on the backs of the models, as GRF's player wears its own.
+        this.numbers = new RigNumbers(this.group, numberAtlasTexture(), restPoseNodes(0));
         try {
             for (const k of members) {
                 const p = header.players[k];
@@ -1066,7 +1069,9 @@ class Rigged {
                     recolor.apply(instance);
                     entry.recolor = recolor;
                 }
-                rig.dress(instance, style, p.goalkeeper, playerLook(style, p, k));
+                const look = playerLook(style, p, k);
+                rig.dress(instance, style, p.goalkeeper, look);
+                this.numbers.add(entry, style, model, look.number, numberColor(style, !!p.goalkeeper));
                 this.group.add(instance.root);
             }
         } catch (err) {
@@ -1094,6 +1099,7 @@ class Rigged {
                 e.drawnClip = false;
             }
         }
+        this.numbers.update();
         // A clip lasts one drawing, a player whose clip is not asked for again stands on his
         // nodes the next time.
         for (const e of this.entries) {
@@ -1173,6 +1179,7 @@ class Rigged {
             }
             e.rig.release(e.instance);
         }
+        this.numbers.dispose();
         this.entries = [];
         this.byK.clear();
     }
@@ -1537,8 +1544,10 @@ async function loadImageData(url) {
 }
 
 // Loads the assets the converter wrote, see assets/manifest.json. Any failure leaves the simple
-// figures and the procedural ball, goals and stands in place.
-export async function loadAssets(base = 'assets/') {
+// figures and the procedural ball, goals and stands in place. Every file is asked for at once, so
+// the page waits for the slowest file rather than for each in turn, and onProgress, when given,
+// hears the count of files done and asked for.
+export async function loadAssets(base = 'assets/', onProgress = null) {
     const assets = {
         manifest: null, grf: null, ball: null, goals: null, crowd: null, adboards: [], pitch: null, error: null,
     };
@@ -1558,19 +1567,63 @@ export async function loadAssets(base = 'assets/') {
     const byRole = (role) => files.filter((f) => f.role === role);
     const loader = new GLTFLoader();
     const textures = new THREE.TextureLoader();
+    let asked = 0;
+    let done = 0;
+    const counted = (promise) => {
+        asked++;
+        return promise.finally(() => {
+            done++;
+            if (onProgress) {
+                onProgress(done, asked);
+            }
+        });
+    };
     const tryLoad = async (what, fn) => {
         try {
-            return await fn();
+            return await counted(fn());
         } catch (err) {
             console.warn(`${what} not loaded`, err);
             return null;
         }
     };
-    const [ball, goals, crowd, pitch] = await Promise.all([
+    const want = files.map((f) => f.file).filter((n) => /^(skin_|hair_).*\.png$/.test(n) || n === 'shoe_sole.png');
+    const [ball, goals, crowd, pitch, adboards, grf] = await Promise.all([
         tryLoad('ball', async () => (await loader.loadAsync(`${base}ball.glb`)).scene),
         tryLoad('goals', async () => (await loader.loadAsync(`${base}goal.glb`)).scene),
         tryLoad('crowd', () => textures.loadAsync(`${base}crowd.webp`)),
         tryLoad('pitch', () => textures.loadAsync(`${base}pitch.webp`)),
+        Promise.all(byRole('adboard').map((f) => tryLoad(f.file, () => textures.loadAsync(base + f.file)))),
+        tryLoad('player', async () => {
+            const hair = {};
+            // Every kit, the goalkeepers' too, is painted from the mask in the team's colours.
+            const [gltf, loaded, , [mask, kitNormal, shoe]] = await Promise.all([
+                counted(loader.loadAsync(`${base}player.glb`)),
+                Promise.all(want.map((n) => counted(loadTexture(textures, base + n)))),
+                Promise.all(byRole('hair').map(async (f) => {
+                    const h = await tryLoad(f.file, async () => (await loader.loadAsync(base + f.file)).scene);
+                    if (h) {
+                        hair[f.file] = h;
+                    }
+                })),
+                Promise.all([
+                    counted(loadImageData(`${base}kit_mask.png`)),
+                    tryLoad('kit normal', () => loadTexture(textures, `${base}kit_normal.webp`, false)),
+                    tryLoad('shoe', () => loadTexture(textures, `${base}shoe.webp`)),
+                ]),
+            ]);
+            const tex = Object.fromEntries(want.map((n, i) => [n, loaded[i]]));
+            return {
+                scene: gltf.scene,
+                mask,
+                kitNormal,
+                shoe,
+                sole: tex['shoe_sole.png'] || null,
+                textures: tex,
+                hair,
+                appearance: (manifest.appearance && manifest.appearance.players) || [],
+                referenceHeight: (manifest.player_scale && manifest.player_scale.reference_height_m) || 1.92,
+            };
+        }),
     ]);
     assets.ball = ball;
     assets.goals = goals;
@@ -1580,42 +1633,12 @@ export async function loadAssets(base = 'assets/') {
         pitch.anisotropy = 8;
         assets.pitch = pitch;
     }
-    for (const f of byRole('adboard')) {
-        const img = await tryLoad(f.file, () => textures.loadAsync(base + f.file));
+    for (const img of adboards) {
         if (img) {
             assets.adboards.push(img.image);
         }
     }
-    assets.grf = await tryLoad('player', async () => {
-        const gltf = await loader.loadAsync(`${base}player.glb`);
-        const want = files.map((f) => f.file).filter((n) => /^(skin_|hair_).*\.png$/.test(n) || n === 'shoe_sole.png');
-        const loaded = await Promise.all(want.map((n) => loadTexture(textures, base + n)));
-        const tex = Object.fromEntries(want.map((n, i) => [n, loaded[i]]));
-        const hair = {};
-        await Promise.all(byRole('hair').map(async (f) => {
-            const h = await tryLoad(f.file, async () => (await loader.loadAsync(base + f.file)).scene);
-            if (h) {
-                hair[f.file] = h;
-            }
-        }));
-        // Every kit, the goalkeepers' too, is painted from the mask in the team's colours.
-        const [mask, kitNormal, shoe] = await Promise.all([
-            loadImageData(`${base}kit_mask.png`),
-            tryLoad('kit normal', () => loadTexture(textures, `${base}kit_normal.webp`, false)),
-            tryLoad('shoe', () => loadTexture(textures, `${base}shoe.webp`)),
-        ]);
-        return {
-            scene: gltf.scene,
-            mask,
-            kitNormal,
-            shoe,
-            sole: tex['shoe_sole.png'] || null,
-            textures: tex,
-            hair,
-            appearance: (manifest.appearance && manifest.appearance.players) || [],
-            referenceHeight: (manifest.player_scale && manifest.player_scale.reference_height_m) || 1.92,
-        };
-    });
+    assets.grf = grf;
     if (!assets.grf) {
         assets.error = 'The player model did not load, using simple figures.';
     }

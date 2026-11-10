@@ -25,6 +25,10 @@ and sees the frames it missed as a gap.
 
 A viewer that asks for `/grid?first=0&count=16` receives small views of a range of environments
 as JSON, which the source reads at a low and bounded pace while a viewer asks, as `_grid` says.
+
+A viewer of numbered frames that also asks for `annotations=1` receives the annotations of
+`annotate`, each batch of them after the serial `NOTES`, the length of a JSON object and the
+object, before the next frame.
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ from typing import Any
 
 from cuju.errors import ArgumentError
 
+from .._format import annotations as _annotations
 from .._format import recording as _recording
 from .._store import home as _home
 from . import grid as _grid
@@ -65,17 +70,24 @@ _STEPS_PER_SECOND = 10
 _LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 # The serial that ends a numbered stream, which no frame carries.
 END = 2**64 - 1
+# The serial that opens a batch of annotations, which no frame carries either.
+NOTES = 2**64 - 2
 _SERIAL = struct.Struct('<Q')
+_LENGTH = struct.Struct('<I')
 _LOGGER = logging.getLogger('cuju')
 
 
 class _Viewer:
-    """One connected viewer, with its queue of frames, numbered when `sequence` is true."""
+    """One connected viewer, with its queue of frames, numbered when `sequence` is true.
 
-    def __init__(self, sequence: bool = False) -> None:
+    A viewer with `annotations` receives the annotations too, which need numbered frames.
+    """
+
+    def __init__(self, sequence: bool = False, annotations: bool = False) -> None:
         self.frames: queue.Queue[bytes | None] = queue.Queue(_BUFFER)
         self.header: bytes | None = None
         self.sequence = sequence
+        self.annotations = sequence and annotations
 
 
 class LiveSource:
@@ -135,6 +147,10 @@ class LiveSource:
         self._serials: collections.deque[int] = collections.deque(maxlen=_HISTORY)
         self._sequence = 0
         self._generation = 0
+        # The annotations of the frames of the history, by serial and player, and those that the
+        # viewers have not received yet.
+        self._notes: dict[tuple[int, int], dict[str, Any]] = {}
+        self._fresh: dict[tuple[int, int], dict[str, Any]] = {}
         self._lineup: list[dict[str, Any]] | None = None
         self._viewers: list[_Viewer] = []
         self._lock = threading.Lock()
@@ -235,7 +251,8 @@ class LiveSource:
                 if route.path != '/stream':
                     self.send_error(404)
                     return
-                viewer = _Viewer(urllib.parse.parse_qs(route.query).get('sequence') == ['1'])
+                query = urllib.parse.parse_qs(route.query)
+                viewer = _Viewer(query.get('sequence') == ['1'], query.get('annotations') == ['1'])
                 # The history and the registration share the lock, so no step is sent twice.
                 with source._lock:
                     history = list(source._history)
@@ -244,8 +261,10 @@ class LiveSource:
                             _SERIAL.pack(serial) + frame
                             for serial, frame in zip(source._serials, history, strict=True)
                         ]
+                    if viewer.annotations and source._notes:
+                        history.append(_notes_payload(source._notes.values()))
                     if source._lineup is not None:
-                        viewer.header = source._header(viewer.sequence)
+                        viewer.header = source._header(viewer.sequence, viewer.annotations)
                     if source._closed:
                         return
                     source._viewers.append(viewer)
@@ -277,18 +296,21 @@ class LiveSource:
 
         return Handler
 
-    def _header(self, sequence: bool = False) -> bytes:
+    def _header(self, sequence: bool = False, annotations: bool = False) -> bytes:
         """Returns the header of a stream, once a state has given the lineup.
 
         Args:
             sequence: Whether the stream numbers its frames, which the header then announces with
                 the identifier of the stream that the numbers count.
+            annotations: Whether the stream carries annotations, which the header announces.
         """
         fields = dict(self._timing or {})
         fields['environment_count'] = self.environment_count
         if sequence:
             fields['stream_sequence'] = 1
             fields['stream_id'] = f'{self.identifier}:{self._generation}'
+        if sequence and annotations:
+            fields['stream_annotations'] = 1
         return _recording.header(
             self.title,
             self._scenario,
@@ -375,6 +397,8 @@ class LiveSource:
         self._lineup = self._timing = None
         self._history.clear()
         self._serials.clear()
+        self._notes.clear()
+        self._fresh.clear()
         self._sequence = 0
         self._passage = 0
         self._generation += 1
@@ -422,6 +446,52 @@ class LiveSource:
                 raise ArgumentError('expected an open live source, found a closed one')
             self._pending_environment = None if environment == self.environment else environment
 
+    def annotate(
+        self,
+        values: dict[str, Any] | None = None,
+        text: str | None = None,
+        player: Any = None,
+        step: int | None = None,
+        probabilities: Any = None,
+        action: Any = None,
+    ) -> bool:
+        """Attaches numbers or text to a frame that the source streamed, for its viewers.
+
+        The arguments are those of `Recorder.annotate`. The annotation reaches the viewers with
+        the next frame, and a viewer who joins later receives those of the frames of the history.
+        Annotating reads nothing of the batch and changes nothing of it.
+
+        Returns:
+            Whether a frame took the annotation, which an unwatched source, holding no frame of the
+            step, declines.
+
+        Raises:
+            ArgumentError: If a part of the annotation is invalid.
+        """
+        record = _annotations.note([], values, text, None, probabilities, action)
+        with self._lock:
+            lineup = self._lineup
+            frames = list(zip(self._serials, self._history, strict=True))
+        if lineup is None or not frames:
+            return False
+        if player is not None:
+            record['p'] = _annotations.player_index(lineup, player)
+        if step is None:
+            serial = frames[-1][0]
+        else:
+            found = [
+                serial for serial, frame in frames if struct.unpack_from('<i', frame)[0] == step
+            ]
+            if not found:
+                return False
+            serial = found[-1]
+        with self._lock:
+            if not self._serials or serial < self._serials[0]:
+                return False
+            merged = _annotations.merge(self._notes, serial, record)
+            self._fresh[(serial, merged.get('p', -1))] = merged
+        return True
+
     def push(self, frame: bytes, lineup: list[dict[str, Any]]) -> None:
         """Sends a frame that the caller read to every viewer at once, without pacing.
 
@@ -454,10 +524,19 @@ class LiveSource:
             self._sequence += 1
             self._history.append(frame)
             self._serials.append(serial)
+            # The annotations of frames that left the history go with them, and those that the
+            # viewers have not received go before this frame.
+            first = self._serials[0]
+            if any(key[0] < first for key in self._notes):
+                self._notes = {key: note for key, note in self._notes.items() if key[0] >= first}
+            notes = _notes_payload(self._fresh.values()) if self._fresh else b''
+            self._fresh.clear()
             for viewer in viewers:
                 payload = _SERIAL.pack(serial) + frame if viewer.sequence else frame
+                if viewer.annotations:
+                    payload = notes + payload
                 if viewer.header is None:
-                    viewer.header = self._header(viewer.sequence)
+                    viewer.header = self._header(viewer.sequence, viewer.annotations)
                     payload = viewer.header + payload
                 with contextlib.suppress(queue.Full):
                     viewer.frames.put_nowait(payload)
@@ -489,6 +568,12 @@ class LiveSource:
     def __exit__(self, *exception: object) -> None:
         """Closes the source, so that `with cuju.render.watch(batch):` withdraws it at the end."""
         self.close()
+
+
+def _notes_payload(records: Any) -> bytes:
+    """Returns a batch of annotations as a numbered stream carries it."""
+    data = _annotations.encode(records)
+    return _SERIAL.pack(NOTES) + _LENGTH.pack(len(data)) + data
 
 
 def _end(viewer: _Viewer) -> None:

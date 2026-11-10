@@ -4,6 +4,7 @@
 
 import gzip
 import json
+import logging
 import os
 import re
 import struct
@@ -550,7 +551,6 @@ def test_request_identifiers_are_unique_within_a_second(monkeypatch, render_home
 
 
 def test_request_history_skips_invalid_files(monkeypatch, render_home, caplog):
-    import logging
 
     monkeypatch.setattr(_server._Requests, '_run', lambda self: None)
     first = _server._Requests()
@@ -980,6 +980,26 @@ def test_request_history_keeps_the_newest_ended_requests(render_home, monkeypatc
     recovered = _server._Requests()
     assert [entry['id'] for entry in recovered.entries()] == [waiting, ended[4], ended[3]]
     assert len(list(recovered._folder.glob('*.json'))) == 3
+
+
+def test_page_sounds_of_the_play_stop_on_a_seek():
+    """The events of the play sound as voices, which a seek, a restart or a new match fades out.
+
+    tests/web/voices.mjs runs the voices themselves.
+    """
+    scripts = _server._WEB / 'js'
+    audio = (scripts / 'broadcast/audio.js').read_text()
+    main = (scripts / 'main.js').read_text()
+    assert "import { Voices } from './voices.js';" in audio
+    events = re.search(r'const EVENT_LENGTH = \{([^}]*)\}', audio).group(1)
+    for name in ('whistle', 'goal', 'ooh', 'applause', 'fanfare', 'teamSound'):
+        assert re.search(rf'\b{name}: \d', events), name
+    assert 'this.voices.tap(' in audio and 'this.sound.voices.tap(' in audio
+    assert 'this.sound.voices.later(fn)' in audio
+    seek = main[main.index('    afterSeek() {') :]
+    assert 'this.sound.stopEvents();' in seek[: seek.index('\n    }\n')]
+    source = main[main.index('    async setSource(source) {') :]
+    assert 'this.sound.stopEvents();' in source[: source.index('this.source = source;')]
 
 
 def test_page_modules_resolve_and_are_served(render_home):

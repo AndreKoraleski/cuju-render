@@ -3,16 +3,28 @@
 """Checks of the home folder, the library of recordings, its Trash and the samples."""
 
 import json
+import logging
+import threading
 
 import pytest
+import torch
 
 import cuju
 import cuju.errors
 import cuju.state
+from cuju.render._format import recording as _recording
 from cuju.render._http import launch as _launch
 from cuju.render._store import home as _home
 from cuju.render._store import library as _library
-from support.common import _SAMPLES, _library_ids, _serve_once
+from support.common import (
+    _SAMPLES,
+    _filtered_episodes,
+    _goals,
+    _library_ids,
+    _one_second,
+    _sample_head,
+    _serve_once,
+)
 
 
 def test_relative_home_resolves(tmp_path, monkeypatch):
@@ -122,3 +134,86 @@ def test_sample_in_the_trash_comes_back_on_request(render_home, monkeypatch, cap
     assert _library.matches(trash=True) == []
     assert main(['sample', '5v5']) == 0
     assert 'already holds' in capsys.readouterr().out
+
+
+def test_recording_identifiers_are_unique_within_a_second(render_home, monkeypatch):
+    head, frames = _sample_head('sample-5v5', 3)
+    _one_second(monkeypatch)
+    saved = []
+
+    def save_many():
+        for _ in range(10):
+            saved.append(_library.save(head, frames).stem)
+
+    workers = [threading.Thread(target=save_many) for _ in range(4)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(60)
+    assert len(saved) == len(set(saved)) == 40
+    assert sorted(saved) == _library_ids()
+    for name in saved:
+        assert list(_recording.frames(_library.path_of(name))) == frames
+        assert _library.details(name)['steps'] == 3
+
+
+def test_recorder_keeps_episodes_with_goals(render_home):
+    episodes, kept, _, recorder = _filtered_episodes(keep='goals')
+    expected = [frames for frames in episodes if _goals(frames)]
+    assert 0 < len(expected) < len(episodes)
+    assert kept == expected
+    assert recorder.dropped == len(episodes) - len(expected)
+    # A dropped episode writes no file, so the library holds the saved ones alone.
+    assert len(_library.matches()) == len(episodes) + len(kept)
+
+
+def test_recorder_writes_on_a_thread_and_reports_failures(render_home, monkeypatch, caplog):
+    """The step that ends an episode hands its frames over, and a failed write reports itself."""
+    written = _library.save
+    gate = threading.Event()
+
+    def slow(*arguments):
+        gate.wait(30)
+        return written(*arguments)
+
+    monkeypatch.setattr(_library, 'save', slow)
+    batch = cuju.BatchEnvironment(
+        'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu', seed=11
+    )
+    recorder = cuju.render.Recorder(batch)
+    batch.reset()
+    step = 0
+    while not recorder.episodes:
+        batch.step(torch.tensor([[12 if step % 3 else 5]], dtype=torch.int32))
+        step += 1
+    # The writer waits at the gate, so the episode ended and training stepped on without it.
+    assert recorder.saved == [] and recorder._pending == 1
+    gate.set()
+    recorder.flush()
+    assert len(recorder.saved) == 1 and recorder.saved[0].is_file()
+    assert _library.details(recorder.saved[0].stem)['steps'] > 0
+
+    def failing(*arguments):
+        raise OSError('the disk is full')
+
+    monkeypatch.setattr(_library, 'save', failing)
+    with caplog.at_level(logging.WARNING, logger='cuju'):
+        while recorder.episodes < 2:
+            batch.step(torch.tensor([[12 if step % 3 else 5]], dtype=torch.int32))
+            step += 1
+        recorder._wait()
+    assert 'could not write' in caplog.text and 'the disk is full' in caplog.text
+    assert len(recorder.saved) == 1 and len(_library.matches()) == 1
+    assert not list((render_home / 'matches').glob('*.part'))
+    with pytest.raises(OSError, match='the disk is full'):
+        recorder.save()
+    recorder.flush()
+    # Closing the batch waits for the recordings handed over.
+    monkeypatch.setattr(_library, 'save', slow)
+    gate.clear()
+    while recorder.episodes < 3:
+        batch.step(torch.tensor([[12 if step % 3 else 5]], dtype=torch.int32))
+        step += 1
+    threading.Timer(0.5, gate.set).start()
+    batch.close()
+    assert recorder._pending == 0 and len(recorder.saved) == 2

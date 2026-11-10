@@ -13,6 +13,8 @@ that only the mock has let a page check test a viewer's reconnection. `POST /api
 closes every stream of the source without its end marker and loses the next second of frames.
 `POST /api/mock/live/ID/end` closes the source as a process that stops does, so it leaves the
 list and every stream ends with its end marker, and a new source takes its place.
+`GET /api/mock/samples/NAME` returns a sample match that cuju ships, such as `sample-5v5`, as its
+file holds it, so a page check reads a recording of version 2.
 
 Usage:
     python ci/mock_server.py [--port 8765]
@@ -45,6 +47,8 @@ import mock_grid
 import mock_sample
 import mock_tournaments
 
+# The sample matches that cuju ships.
+SAMPLES = Path(__file__).resolve().parents[1] / 'src' / 'cuju' / 'render' / 'samples'
 WEB_ROOT = os.path.realpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'cuju', 'render', 'web')
 )
@@ -218,6 +222,8 @@ def default_style(format='11v11', kit=None):
         'crowd': {'colors': [list(colors['primary']), list(colors['secondary'])]},
         # The celebrations the page picks from after a goal, empty for every one it knows.
         'celebrations': [],
+        # The models on whose backs the page leaves out the shirt numbers.
+        'hidden_numbers': [],
         'players': [player_style(index) for index in range(FORMATS[format])],
     }
 
@@ -351,6 +357,13 @@ def style(changes, base, models=()):
             if not isinstance(value, list) or len(value) > 32:
                 raise ArgumentError('expected a list of at most 32 celebrations')
             result[key] = [celebration(item) for item in value]
+        elif key == 'hidden_numbers':
+            if not isinstance(value, list) or len(value) > 64:
+                raise ArgumentError('expected hidden_numbers as a list of model names')
+            if not all(isinstance(model, str) and len(model) <= 64 for model in value):
+                raise ArgumentError('expected hidden_numbers as a list of model names')
+            known = ('custom', *models)
+            result[key] = list(dict.fromkeys(model for model in value if model in known))
         elif key == 'crowd':
             if not isinstance(value, dict) or set(value) - {'colors'}:
                 raise ArgumentError(f'expected the crowd as {{"colors": [...]}}, found {value!r}')
@@ -1588,6 +1601,13 @@ def make_handler(requests):
                         self._error(404, 'no such clip')
                     else:
                         self._bytes(data, 'model/gltf-binary', no_store=True)
+                elif parts[1:3] == ['mock', 'samples'] and parts[3:] in (
+                    ['sample-5v5'],
+                    ['sample-11v11'],
+                ):
+                    self._bytes(
+                        (SAMPLES / f'{parts[3]}.cjr').read_bytes(), 'application/octet-stream'
+                    )
                 elif parts == ['api', 'models']:
                     self._json(shipped_models())
                 elif parts == ['api', 'requests']:
@@ -1852,7 +1872,11 @@ def make_handler(requests):
 
 
 def load_recordings(folder):
-    """Adds every .cjr file of a folder to the library, oldest first."""
+    """Adds every .cjr file of a folder to the library, oldest first.
+
+    A recording of version 2 keeps its file as it is, with its score left at none, since the mock
+    reads no coded frames.
+    """
     for path in sorted(Path(folder).glob('*.cjr')):
         data = gzip.decompress(path.read_bytes())
         if not data.startswith(mock_sample.MAGIC):
@@ -1860,6 +1884,13 @@ def load_recordings(folder):
         start = len(mock_sample.MAGIC) + 4
         (length,) = struct.unpack_from('<I', data, len(mock_sample.MAGIC))
         header = json.loads(data[start : start + length])
+        if header.get('version') == 2:
+            identifier = save_match(header, [])
+            MATCHES[identifier]['data'] = path.read_bytes()
+            MATCHES[identifier]['summary'].update(
+                steps=header['frame_count'], score=None, bytes=path.stat().st_size
+            )
+            continue
         size = mock_sample.frame_bytes(len(header['players']))
         body = data[start + length :]
         save_match(header, [body[i : i + size] for i in range(0, len(body) - size + 1, size)])

@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import json
 import re
-import shutil
 import struct
 from pathlib import Path
 from typing import Any
@@ -346,41 +345,32 @@ def remove_clip(identifier: str, name: str) -> bool:
 
 
 def import_folder(team_folder: Path) -> None:
-    """Checks the clips of an exported team as uploads are checked, and deletes what fails.
+    """Checks the clips of an exported team as uploads are checked, and sets aside what fails.
 
     The mapping of a clip comes back when it names joints and bones of the clip, and is left to
-    the page's guess otherwise. Clips beyond the limits of a team are left out in name order.
+    the page's guess otherwise. Clips beyond the limits of a team are set aside in name order.
+    A clip set aside keeps its bytes under its name followed by `.rejected`, and files that the
+    page never reads as clips stay as they are.
     """
     folder = team_folder / FOLDER
-    if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
-        folder.unlink()
+    if not (folder.exists() or folder.is_symlink()) or not _teams._kept(folder):
         return
     if not folder.is_dir():
+        _teams.set_aside(folder, 'it is no folder of clips')
         return
     kept = 0
     total = 0
     for path in sorted(folder.iterdir()):
-        if path.suffix == '.json' and _NAME.fullmatch(path.stem) and not path.is_symlink():
+        if not _teams._kept(path) or path.suffix != '.glb' or not _NAME.fullmatch(path.stem):
             continue
-        valid = False
-        if (
-            path.suffix == '.glb'
-            and _NAME.fullmatch(path.stem)
-            and not _DEVICES.fullmatch(path.stem)
-            and path.is_file()
-            and not path.is_symlink()
-        ):
-            try:
-                data = path.read_bytes()
-                found = check(data)
-                valid = kept < MAXIMUM_CLIPS and total + len(data) <= MAXIMUM_TEAM_BYTES
-            except (OSError, ArgumentError):
-                valid = False
+        try:
+            data = path.read_bytes()
+            found = check(data)
+            valid = kept < MAXIMUM_CLIPS and total + len(data) <= MAXIMUM_TEAM_BYTES
+        except (OSError, ArgumentError):
+            valid = False
         if not valid:
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path, ignore_errors=True)
-            else:
-                path.unlink(missing_ok=True)
+            _teams.set_aside(path, 'it fails the checks of a clip or the limits of a team')
             continue
         kept += 1
         total += len(data)
@@ -392,6 +382,3 @@ def import_folder(team_folder: Path) -> None:
         except ArgumentError:
             mapping = {}
         _write_sidecar(path, found['animations'], mapping)
-    for path in folder.glob('*.json'):
-        if not (folder / f'{path.stem}.glb').is_file():
-            path.unlink(missing_ok=True)

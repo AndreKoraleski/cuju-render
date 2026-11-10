@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
 // load from a copy beside a package file that names them modules.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-episodes-'));
-for (const name of ['recording/episodes.js', 'recording/format.js']) {
+for (const name of ['recording/episodes.js', 'recording/format.js', 'recording/codec.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');

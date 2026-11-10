@@ -8,7 +8,8 @@ source, `cuju render team add FOLDER` registers a Kaggle submission folder, `cuj
 records a match between two registered teams, `cuju render tournament` makes, lists, shows, runs
 and cancels tournaments, and `cuju render sample` adds the shipped sample matches to the library
 again, or brings them back from the Trash. `cuju render demo` streams a live match between the
-built-in AIs to the page.
+built-in AIs to the page, and `cuju render video` exports a range of a recording as an MP4 video,
+drawn by the page in a headless Chrome and encoded by ffmpeg.
 """
 
 from __future__ import annotations
@@ -99,6 +100,15 @@ def main(arguments: list[str] | None = None) -> int:
     show.add_argument('--scenario', help='another shipped scenario, such as academy_corner')
     show.add_argument('--seed', type=int, default=None, help='the seed, drawn when absent')
     show.add_argument('--no-open', action='store_true', help='leave the browser closed')
+    from ._export import video as _video
+
+    video = commands.add_parser(
+        'video',
+        help='export a range of a recording as an MP4 video, with Chrome and ffmpeg',
+        description='Draws a range of a recording on the page in a headless Chrome, frame by '
+        'frame, and encodes it with ffmpeg. The video is silent.',
+    )
+    _video.add_arguments(video)
     options = parser.parse_args(arguments)
     if options.home:
         os.environ[_home.HOME_VARIABLE] = str(Path(options.home).expanduser().resolve())
@@ -152,6 +162,10 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         from ._tournaments.tournament_cli import run_command
 
         return run_command(parser, options)
+    if options.command == 'video':
+        from ._export import video as _video
+
+        return _video.run(options)
     if options.command == 'play':
         from ._playing.play import play
 

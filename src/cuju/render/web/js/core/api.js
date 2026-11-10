@@ -93,7 +93,7 @@ export const api = {
     patchMatch: async (id, changes) => (await request('PATCH', `/api/matches/${enc(id)}`, { json: changes })).json().catch(() => null),
     live: () => getJson('/api/live'),
     selectEnvironment: async (id, environment) => (await request('POST', `/api/live/${enc(id)}/environment`, { json: { environment } })).json(),
-    liveStream: (id, signal) => fetch(`/api/live/${enc(id)}/stream?sequence=1`, { signal, cache: 'no-store' }),
+    liveStream: (id, signal) => fetch(`/api/live/${enc(id)}/stream?sequence=1&annotations=1`, { signal, cache: 'no-store' }),
     liveGrid: (id, first, count) => getJson(`/api/live/${enc(id)}/grid?first=${first}&count=${count}`),
     info: () => getJson('/api/info'),
     scenarios: () => getJson('/api/scenarios'),

@@ -4,6 +4,7 @@
 
 import io
 import json
+import logging
 import struct
 import threading
 import urllib.request
@@ -555,8 +556,9 @@ def test_clips_travel_in_export_and_import(render_home):
     assert copy['style']['celebrations'] == ['upload:wave.0']
     assert copy['style']['players'][1]['celebration'] == 'upload:bounce.1'
     assert _clips.clip_path(copy['id'], 'wave').read_bytes() == clip
-    # A tampered archive keeps the sound clips and drops a damaged one, unsafe names, a folder,
-    # another file and a mapping to bones that the clip lacks.
+    # A tampered archive keeps the sound clips, sets a damaged one aside, removes a name that
+    # opens a device on Windows, keeps a folder and other files that the page never reads as
+    # clips, and drops a mapping to bones that the clip lacks.
     buffer = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(buffer, 'w') as out:
         for item in source.infolist():
@@ -576,11 +578,17 @@ def test_clips_travel_in_export_and_import(render_home):
     assert clips['wave']['animations'] == ['Wave', 'Bounce']
     folder = _home.folder('teams') / tampered['id'] / _teams.TEAM_FOLDER / 'clips'
     assert sorted(path.name for path in folder.iterdir()) == [
+        'Upper.glb',
         'bounce.glb',
         'bounce.json',
+        'broken.glb.rejected',
+        'nested',
+        'notes.txt',
         'wave.glb',
         'wave.json',
     ]
+    assert (folder / 'broken.glb.rejected').read_bytes() == b'glTF' + bytes(40)
+    assert (folder / 'nested' / 'inner.glb').read_bytes() == clip
     duplicate = _teams.duplicate(team['id'])
     assert duplicate['clips'] == original['clips']
     # A clip whose JSON file went missing is checked again and maps its bones by their names.
@@ -588,3 +596,113 @@ def test_clips_travel_in_export_and_import(render_home):
     clips = {item['name']: item for item in _teams.entry(tampered['id'])['clips']}
     assert clips['bounce']['animations'] == ['Up', 'Down'] and clips['bounce']['joints'] == {}
     assert (folder / 'bounce.json').is_file()
+
+
+def test_team_import_keeps_unknown_files(render_home, caplog):
+    """An imported team keeps the files the page never reads and sets aside those that fail."""
+    import zipfile
+
+    png = b'\x89PNG\r\n\x1a\n' + bytes(32)
+    ogg = b'OggS' + bytes(60)
+    files = {
+        'main.py': b'def agent(obs):\n    return 0\n',
+        'cuju-team/team.json': json.dumps({'name': 'Keepers', 'format': '5v5'}).encode(),
+        'cuju-team/shirt-front.png': png,
+        'cuju-team/sponsor-1.png': b'not an image',
+        'cuju-team/sound-goal.ogg': ogg,
+        'cuju-team/sound-shot.ogg': b'not a sound',
+        'cuju-team/sound-shot.ogg.rejected': b'an older one',
+        'cuju-team/sound-whistle.ogg': ogg,
+        'cuju-team/notes.md': b'# Our kit',
+        'cuju-team/art/logo.svg': b'<svg/>',
+        'cuju-team/model.glb': b'glTF' + bytes(40),
+        'cuju-team/con.txt': b'a device on Windows',
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    with caplog.at_level(logging.WARNING, logger='cuju'):
+        team = _teams.add('', 'team.zip', buffer.getvalue())
+    assert team['name'] == 'Keepers' and team['format'] == '5v5'
+    assert team['images'] == ['shirt-front'] and team['sounds'] == ['goal']
+    assert team['model'] is None
+    folder = _home.folder('teams') / team['id'] / _teams.TEAM_FOLDER
+    names = sorted(
+        path.relative_to(folder).as_posix() for path in folder.rglob('*') if path.is_file()
+    )
+    assert names == [
+        'art/logo.svg',
+        'model.glb.rejected',
+        'notes.md',
+        'shirt-front.png',
+        'sound-goal.ogg',
+        'sound-shot.ogg.2.rejected',
+        'sound-shot.ogg.rejected',
+        'sound-whistle.ogg',
+        'sponsor-1.png.rejected',
+        'team.json',
+    ]
+    assert (folder / 'notes.md').read_bytes() == b'# Our kit'
+    assert (folder / 'sound-shot.ogg.2.rejected').read_bytes() == b'not a sound'
+    assert (folder / 'sound-shot.ogg.rejected').read_bytes() == b'an older one'
+    logged = caplog.text
+    assert 'sponsor-1.png' in logged and 'model.glb' in logged and 'con.txt' in logged
+    # The kept files travel in the export, and a second import keeps them as they are.
+    filename, data = _teams.export(team['id'])
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        exported = set(archive.namelist())
+    assert {'cuju-team/notes.md', 'cuju-team/art/logo.svg'} <= exported
+    again = _teams.add('', filename, data)
+    folder = _home.folder('teams') / again['id'] / _teams.TEAM_FOLDER
+    assert (
+        sorted(path.relative_to(folder).as_posix() for path in folder.rglob('*') if path.is_file())
+        == names
+    )
+    assert again['images'] == ['shirt-front'] and again['sounds'] == ['goal']
+
+
+def test_team_sounds_version_follows_the_files(render_home):
+    """The version of a team's sounds changes whenever a sound is stored, replaced or removed."""
+    import zipfile
+
+    team = _teams.add('Singers', 'main.py', b'def agent(obs):\n    return 0\n')
+    assert team['sounds'] == [] and team['sounds_version'] == ''
+    first = _teams.set_sound(team['id'], 'goal', b'OggS' + bytes(60))
+    assert first['sounds'] == ['goal'] and first['sounds_version']
+    assert _teams.entry(team['id'])['sounds_version'] == first['sounds_version']
+    # The same slot and kind with other bytes, as a replaced file, makes a new version.
+    second = _teams.set_sound(team['id'], 'goal', b'OggS' + bytes(61))
+    assert second['sounds_version'] not in ('', first['sounds_version'])
+    third = _teams.set_sound(team['id'], 'goal', b'OggS' + bytes(61))
+    assert third['sounds_version'] != second['sounds_version']
+    meta = _home.folder('teams') / team['id'] / _teams.TEAM_FOLDER / 'team.json'
+    assert 'sounds_version' not in json.loads(meta.read_text())
+    _teams.update(team['id'], name='Choir')
+    assert 'sounds_version' not in json.loads(meta.read_text())
+    with zipfile.ZipFile(io.BytesIO(_teams.export(team['id'])[1])) as archive:
+        assert 'sounds_version' not in json.loads(archive.read('cuju-team/team.json'))
+    assert _teams.remove_sound(team['id'], 'goal')
+    assert _teams.entry(team['id'])['sounds_version'] == ''
+
+
+def test_team_hides_numbers_on_chosen_models(render_home):
+    """A team lists the models on which its shirt numbers stay hidden, each a known model."""
+    import zipfile
+
+    team = _teams.add('Numbers', 'main.py', b'def agent(obs):\n    return 0\n')
+    assert team['style']['hidden_numbers'] == []
+    shipped = _teams.shipped_models()[0]['id']
+    changes = {'hidden_numbers': ['custom', shipped, 'custom', 'gone']}
+    team = _teams.update(team['id'], changes=changes)
+    # A repeat and a model that is no longer shipped are left out, so an old style still loads.
+    assert team['style']['hidden_numbers'] == ['custom', shipped]
+    for wrong in ('custom', [1], ['x' * 65], ['grf'] * 65):
+        with pytest.raises(cuju.errors.ArgumentError):
+            _teams.update(team['id'], changes={'hidden_numbers': wrong})
+    assert _teams.entry(team['id'])['style']['hidden_numbers'] == ['custom', shipped]
+    filename, data = _teams.export(team['id'])
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        saved = json.loads(archive.read('cuju-team/team.json'))
+    assert saved['style']['hidden_numbers'] == ['custom', shipped]
+    assert _teams.add('', filename, data)['style']['hidden_numbers'] == ['custom', shipped]
