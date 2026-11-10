@@ -52,6 +52,10 @@ def agent(obs):
     assert len(actions) == obs['controlled_players']
     return actions
 """
+_SINGLE = """
+def agent(obs):
+    return [5 if obs['step'] % 7 else 12]
+"""
 
 
 def _short_matches(monkeypatch, steps):
@@ -184,3 +188,181 @@ def _filtered_episodes(**filters):
 
 def _goals(frames):
     return sum(struct.unpack_from('<2i', frames[-1], 8))
+
+
+def _package_team(name='Test package', extra=None):
+    from support.package import package_zip
+
+    return _teams.add(name, 'team.zip', package_zip(name, extra))
+
+
+# Challenges.
+
+
+# The two players of the recordings of challenge attempts, one a side, which stand still.
+_CHALLENGE_PLAYERS = [
+    {'team': team, 'index': 0, 'goalkeeper': False, 'controlled': team == 0} for team in (0, 1)
+]
+
+
+def _challenge_frame(step, score=(0, 0), flags=0, mode=0):
+    """Returns a frame of a recording of two still players, with its step, score and flags."""
+    head = struct.pack('<8i', step, mode, score[0], score[1], -1, -1, step * 100, flags)
+    frame = head + struct.pack('<7f4i', 0, 0, 0, 0, 0, 0, 1, -1, -1, 0, -1)
+    return frame + bytes(_recording.frame_bytes(len(_CHALLENGE_PLAYERS)) - len(frame))
+
+
+def _challenge_frames(goal_at=None, length=40, finished=True, against_at=None):
+    frames = []
+    for step in range(length):
+        left = int(goal_at is not None and step >= goal_at)
+        right = int(against_at is not None and step >= against_at)
+        flags = 1 if finished and step == length - 1 else 0
+        frames.append(_challenge_frame(step, (left, right), flags))
+    return frames
+
+
+def _person_recording(challenge, index, frames, **changes):
+    """Saves a recording as the Play page saves a person's attempt of a challenge."""
+    provenance = {
+        'source': 'human_game',
+        'seed': challenge['seeds'][index],
+        'scenario': challenge['scenario'],
+        'humans': [True, False],
+        'teams': ['builtin', 'builtin'],
+        'agent_counts': [1, 0],
+        'action_set': 'default',
+        'ability': list(challenge['played_ability']),
+        **changes,
+    }
+    head = _recording.header(
+        'You against the AI',
+        challenge['scenario'],
+        _CHALLENGE_PLAYERS,
+        None,
+        len(frames),
+        {'duration': 400, 'second_half': None, 'full_match': False},
+        provenance,
+    )
+    return _library.save(head, frames).stem
+
+
+def _short_challenges(monkeypatch, steps):
+    """Ends every attempt of a challenge after `steps` steps."""
+    from cuju.render._playing import challenges as _challenges
+
+    real = _challenges.BatchEnvironment
+
+    def short(*arguments, **options):
+        batch = real(*arguments, **options)
+        step, count = batch.step, [0]
+
+        def limited(actions):
+            observation, reward, done, information = step(actions)
+            count[0] += 1
+            return observation, reward, done | (count[0] >= steps), information
+
+        batch.step = limited
+        return batch
+
+    monkeypatch.setattr(_challenges, 'BatchEnvironment', short)
+
+
+# Achievements.
+
+# Two players a side, the goalkeeper first, as a header lists them.
+_ACHIEVEMENT_PLAYERS = [
+    {'team': team, 'index': index, 'goalkeeper': index == 0, 'controlled': False}
+    for team in (0, 1)
+    for index in (0, 1)
+]
+
+
+def _achievement_header(scenario='5_vs_5', full_match=True, ability=1.0, opponent='builtin'):
+    return {
+        'engine_scorer': True,
+        'scenario': scenario,
+        'full_match': full_match,
+        'steps_per_second': 10,
+        'players': _ACHIEVEMENT_PLAYERS,
+        'teams': [{'id': 't-left', 'ability': 1.0}, {'id': opponent, 'ability': ability}],
+    }
+
+
+def _achievement_frames(length, goals=(), modes=(), touches=(), finished=True, minutes=3.0):
+    """Returns frames of four players with goals, restarts and touches at the frames they name.
+
+    Args:
+        goals: `(frame, team, scorer)` for each goal.
+        modes: `(first, last, mode, ball x)` for each restart.
+        touches: `(frame, player, ball x)` for each touch.
+    """
+    frames, score = [], [0, 0]
+    size = _recording.frame_bytes(len(_ACHIEVEMENT_PLAYERS))
+    for step in range(length):
+        flags = 1 if finished and step == length - 1 else 0
+        mode, ball = 0, 0.0
+        for first, last, kind, x in modes:
+            if first <= step <= last:
+                mode, ball = kind, x
+        touched = bytearray(4)
+        for at, player, x in touches:
+            if at == step:
+                touched[player], ball = 1, x
+        for at, team, scorer in goals:
+            if at == step:
+                score[team] += 1
+                flags |= (scorer + 1) << 8
+        clock = int(step * minutes * 60000 / max(1, length - 1))
+        head = struct.pack(
+            '<8i7f4i',
+            step,
+            mode,
+            score[0],
+            score[1],
+            -1,
+            -1,
+            clock,
+            flags,
+            ball,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            -1,
+            -1,
+            0,
+            -1,
+        )
+        body = bytes(size - len(head) - 4) + bytes(touched)
+        frames.append(head + body)
+    return frames
+
+
+def _help_server():
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f'http://127.0.0.1:{server.server_address[1]}'
+
+
+def _help_json(address, path, document=None, headers=None):
+    """Returns the status and JSON body of a request to the server, an error's too."""
+    data = None if document is None else json.dumps(document).encode()
+    request = urllib.request.Request(
+        address + path, data=data, method='GET' if data is None else 'POST', headers=headers or {}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read() or b'null')
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read() or b'null')
+
+
+# The moments of the library, its search and the captions.
+
+_REPOSITORY = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_SAMPLE_FOLDER = os.path.join(_REPOSITORY, 'src', 'cuju', 'render', 'samples')

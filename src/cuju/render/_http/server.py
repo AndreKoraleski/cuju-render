@@ -30,7 +30,14 @@ from typing import Any
 from cuju import __version__, bundled_scenarios
 from cuju.errors import ArgumentError
 
+from .._export import feed as _feed
 from .._export import video_jobs as _video_jobs
+from .._guide import doctor as _doctor
+from .._guide import help as _help
+from .._moments import search as _search
+from .._packages import presentation as _presentation
+from .._playing import achievements as _achievements
+from .._playing import challenges as _challenges
 from .._registry import clips as _clips
 from .._registry import teams as _teams
 from .._store import home as _home
@@ -53,6 +60,7 @@ _TYPES = {
     '.webp': 'image/webp',
     '.png': 'image/png',
     '.svg': 'image/svg+xml',
+    '.webmanifest': 'application/manifest+json',
 }
 
 
@@ -557,6 +565,7 @@ class _Games:
                     'streak',
                     'controlled',
                     'actions',
+                    'achievements',
                 ):
                     if key in report:
                         entry[key] = report[key]
@@ -773,12 +782,17 @@ def make_handler(
             """Adds to every response the headers that keep other sites from framing the page.
 
             A page asked for with the key of the server, which `show` hands to a notebook, may sit
-            in the frame of a notebook on this machine, in VS Code or in Google Colab.
+            in the frame of a notebook on this machine, in VS Code or in Google Colab. The sandbox
+            of team presentation workers sends its own policy, which says who may frame it.
             """
             if getattr(self, '_framed', False):
                 ancestors = _launch.FRAME_ANCESTORS
                 self.send_header('Content-Security-Policy', f'frame-ancestors {ancestors}')
-            else:
+            elif getattr(self, '_feed_frame', False):
+                # The page of a clean feed sits in the frame of /feed, a page of this server.
+                self.send_header('X-Frame-Options', 'SAMEORIGIN')
+                self.send_header('Content-Security-Policy', "frame-ancestors 'self'")
+            elif not getattr(self, 'framable', False):
                 self.send_header('X-Frame-Options', 'DENY')
                 self.send_header('Content-Security-Policy', "frame-ancestors 'none'")
             self.send_header('X-Content-Type-Options', 'nosniff')
@@ -837,6 +851,8 @@ def make_handler(
             except (ArgumentError, ValueError, TypeError, KeyError, AttributeError) as error:
                 self._error(400, f'{type(error).__name__}: {error}')
             except Exception as error:
+                where = self.path.split('?')[0]
+                _doctor.note_error(f'{self.command} {where}, {type(error).__name__}: {error}')
                 self._error(500, f'{type(error).__name__}: {error}')
 
         def _json(self, value: Any, status: int = 200) -> None:
@@ -873,12 +889,24 @@ def make_handler(
         def _get(self) -> None:
             parts, _ = self._route()
             try:
-                if parts[:1] != ['api']:
+                if parts == ['sandbox', 'presentation']:
+                    self._sandbox()
+                elif parts == ['feed']:
+                    self._static(['feed.html'])
+                elif parts[:1] != ['api']:
                     self._static(parts)
                 elif parts == ['api', 'matches']:
                     self._json(_library.matches())
                 elif parts == ['api', 'trash']:
                     self._json(_library.matches(trash=True))
+                elif parts == ['api', 'search']:
+                    query = self._route()[1]
+                    limit = query.get('limit')
+                    self._json(_search.search(query.get('q', ''), int(limit) if limit else None))
+                elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'moments':
+                    self._moments(parts[2], False)
+                elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'captions.vtt':
+                    self._moments(parts[2], True)
                 elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'details':
                     try:
                         self._json(_library.details(parts[2]))
@@ -906,6 +934,11 @@ def make_handler(
                     self._relay(parts[2])
                 elif len(parts) == 4 and parts[1] == 'live' and parts[3] == 'grid':
                     self._live_grid(parts[2])
+                elif parts == ['api', 'feed']:
+                    base = f'http://{self.headers.get("Host") or "127.0.0.1"}/'
+                    self._json(_feed.targets(base, _sources(), cups().entries()))
+                elif parts == ['api', 'feed', 'resolve']:
+                    self._json(self._resolve_feed(self._route()[1].get('source', 'auto')))
                 elif parts == ['api', 'info']:
                     self._json({'version': __version__})
                 elif parts == ['api', 'video']:
@@ -932,16 +965,28 @@ def make_handler(
                     self._sound(parts[2], parts[4])
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
                     self._clip(parts[2], parts[4])
+                elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'presentation':
+                    self._json(_presentation.served(parts[2]))
+                elif len(parts) >= 5 and parts[1] == 'teams' and parts[3] == 'presentation':
+                    self._package_file(parts[2], '/'.join(parts[4:]))
                 elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'export':
                     self._export(parts[2])
                 elif parts == ['api', 'models']:
                     self._json(_teams.shipped_models())
+                elif parts == ['api', 'presentation', 'sides']:
+                    self._json(_presentation.sides())
                 elif parts == ['api', 'requests']:
                     self._json(requests.entries())
                 elif parts == ['api', 'game']:
                     self._json(games.current())
                 elif parts[:2] == ['api', 'tournaments']:
                     self._tournament_get(parts[2:])
+                elif parts[:2] == ['api', 'challenges']:
+                    self._json(*_challenges.get(parts[2:], self._route()[1]))
+                elif parts == ['api', 'achievements']:
+                    self._json(_achievements.public())
+                elif parts[:2] == ['api', 'help']:
+                    self._json(*_help.get(parts[2:], self._route()[1]))
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'stream':
                     port = games.port(parts[2])
                     if port is None:
@@ -979,6 +1024,8 @@ def make_handler(
                         self._json(_library.details(parts[2]))
                     else:
                         self._error(404, 'no such recording in the Trash')
+                elif parts == ['api', 'presentation', 'sides']:
+                    self._json(_presentation.assign(self._document()))
                 elif parts == ['api', 'requests']:
                     document = self._document()
                     entry = requests.add(
@@ -1002,6 +1049,10 @@ def make_handler(
                     self._json(entry, 201)
                 elif parts[:2] == ['api', 'tournaments']:
                     self._tournament_post(parts[2:])
+                elif parts[:2] == ['api', 'challenges']:
+                    self._json(*_challenges.post(parts[2:], self._document()))
+                elif parts[:2] == ['api', 'help']:
+                    self._json(*_help.post(parts[2:], self._document()))
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'input':
                     self._json(games.input(parts[2], self._document()))
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'pause':
@@ -1087,6 +1138,9 @@ def make_handler(
                 except NoGameError:
                     self._error(404, 'no such game')
                 return
+            if parts[:2] == ['api', 'challenges']:
+                self._json(*_challenges.delete(parts[2:]))
+                return
             if len(parts) == 3 and parts[1] == 'requests':
                 removed = requests.cancel(parts[2])
             elif len(parts) == 4 and parts[1:3] == ['tournaments', 'presets']:
@@ -1171,6 +1225,25 @@ def make_handler(
             else:
                 self._error(404, 'no such resource')
 
+        def _resolve_feed(self, source: str) -> dict[str, Any]:
+            """Returns what the source of a feed names now, from this server's own lists."""
+
+            def recording(identifier: str) -> dict[str, Any] | None:
+                try:
+                    return _library.details(identifier)
+                except ArgumentError:
+                    return None
+
+            return _feed.resolve(
+                source,
+                live=_sources,
+                recordings=_library.matches,
+                recording=recording,
+                requests=requests.entries,
+                tournaments=lambda: cups().entries(),
+                tournament=lambda identifier: cups().get(identifier),
+            )
+
         def _static(self, parts: list[str]) -> None:
             relative = Path(*parts) if parts else Path('index.html')
             path = (_WEB / relative).resolve()
@@ -1183,15 +1256,44 @@ def make_handler(
             key = getattr(self.server, 'frame_key', None)
             given = self._route()[1].get('embed', '').encode()
             self._framed = page and bool(key) and secrets.compare_digest(given, key.encode())
+            self._feed_frame = page and not self._framed and 'feed' in self._route()[1]
             self.send_response(200)
             self.send_header('Content-Type', kind or 'application/octet-stream')
             self.send_header('Content-Length', str(len(data)))
+            # The service worker of the installable page is checked anew on every registration.
+            if relative == Path('sw.js'):
+                self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
-            self._framed = False
+            self._framed = self._feed_frame = False
             self.wfile.write(data)
             reached = getattr(self.server, 'on_page', None)
             if page and reached is not None:
                 reached()
+
+        def _sandbox(self) -> None:
+            data, policy = _presentation.sandbox_page(_launch.FRAME_ANCESTORS)
+            self.framable = True
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Content-Security-Policy', policy)
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(data)
+            self.framable = False
+
+        def _package_file(self, identifier: str, name: str) -> None:
+            path = _presentation.file_path(identifier, name)
+            if path is None:
+                self._error(404, 'no such file of the package')
+                return
+            data = path.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', _presentation.CONTENT_TYPES[path.suffix])
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(data)
 
         def _model(self, identifier: str) -> None:
             path = _teams.model_path(identifier)
@@ -1282,6 +1384,23 @@ def make_handler(
             with path.open('rb') as stream:
                 while chunk := stream.read(1 << 20):
                     self.wfile.write(chunk)
+
+        def _moments(self, identifier: str, vtt: bool) -> None:
+            """Sends the moments of a recording of the library, or its captions as WebVTT."""
+            if _library.path_of(identifier) is None:
+                self._error(404, 'no such match')
+                return
+            if not vtt:
+                self._json(_search.moments_of(identifier))
+                return
+            body = _search.captions_vtt(identifier).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/vtt; charset=utf-8')
+            self.send_header('Content-Disposition', f'attachment; filename="{identifier}.vtt"')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
 
         def _recording(self, identifier: str) -> None:
             path = _library.path_of(identifier)
@@ -1433,6 +1552,14 @@ def make_handler(
     return Handler
 
 
+def _warm_index() -> None:
+    """Brings the index of moments up to date, so the first search finds it ready."""
+    try:
+        _search.sync()
+    except Exception as error:
+        _LOGGER.warning('cuju render could not index the moments of the library: %s', error)
+
+
 def serve(
     port: int = 8780,
     open_browser: bool = False,
@@ -1462,6 +1589,8 @@ def serve(
     Raises:
         Error: If the port is in use, with what to do.
     """
+    # The diagnostic report of Help shows the server's recent warnings and errors.
+    _doctor.install_capture()
     games = _Games()
     # The tournaments resume as the server starts, each match where it stopped.
     tournaments = _tournament_runner.Tournaments(games)
@@ -1479,6 +1608,8 @@ def serve(
         _library.add_samples(again=False)
     except OSError as error:
         print(f'cuju render could not add the sample matches: {error}', flush=True)
+    # The index of the moments of the library catches up while the page loads.
+    threading.Thread(target=_warm_index, daemon=True).start()
     port = server.server_address[1]
     address = f'http://127.0.0.1:{port}/'
     print(f'cuju render serves {address} from {_home.home()}', flush=True)

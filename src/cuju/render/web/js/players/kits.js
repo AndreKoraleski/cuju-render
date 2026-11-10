@@ -266,7 +266,7 @@ export function kitDifference(a, b) {
 }
 
 // Kits closer than this look alike on the pitch.
-const KIT_CLASH = 22;
+export const KIT_CLASH = 22;
 const WHITE = [245, 245, 245];
 const BLACK = [24, 24, 28];
 

@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The motion preference and the levels of the crowd, the ambience and the action sounds, in the
-// settings panel and kept in the browser. Reduced motion plays the match without the cinematic
-// sequences, camera flights, transitions, the ball trail and the turning of the editor preview.
+// settings panel and kept in the browser. Reduced motion keeps every sequence of the broadcast and
+// replaces its motion, so camera moves become still shots joined by cuts, wipes become fades, and
+// flashes, confetti, the ball trail and the turning of the editor preview stay out.
 
 import { h } from '../teams/library.js';
 import { enhanceSelect } from './menu.js';
 import { SOUND_CHANNELS, motionChoice, motionReduced, soundLevels } from './comfort.js';
 
-const CHANNEL_LABELS = { crowd: 'Crowd', ambience: 'Ambience', effects: 'Action sounds' };
+const CHANNEL_LABELS = { crowd: 'Crowd', ambience: 'Ambience', effects: 'Action sounds', music: 'Team music' };
 
 function load(key, fallback) {
     try {
@@ -81,19 +82,9 @@ export class AccessibilityControls {
         document.documentElement.classList.toggle('full-motion', this.preference === 'full');
         app.cameras.reducedMotion = app.reducedMotion;
         app.ball.setTrail(app.settings.trail && !app.reducedMotion);
-        if (!app.reducedMotion) {
-            return;
+        // A sequence under way goes on, with its camera still from the next frame on.
+        if (app.reducedMotion) {
+            app.cameras.blend = null;
         }
-        // A sequence under way ends where it stands.
-        if (app.director.running) {
-            app.director.stop(false);
-        }
-        if (app.postMatch.running) {
-            app.postMatch.end({ home: false, restore: false });
-        }
-        if (app.transition.active || app.transition.after) {
-            app.transition.abort(false);
-        }
-        app.cameras.blend = null;
     }
 }

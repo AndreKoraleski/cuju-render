@@ -14,11 +14,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's module
 // loads from a copy beside a package file that names it a module.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-video-'));
-cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/export/video-range.js', import.meta.url)), join(folder, 'export/video-range.js'));
+for (const name of ['export/video-range.js', 'export/sizes.js']) {
+    cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
+}
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const {
-    VIDEO_MAX_SECONDS, checkRange, exportRequest, formatMoment, goalRange, parseMoment, progressText,
+    VIDEO_MAX_SECONDS, checkRange, exportRequest, formatMoment, goalRange, parseMoment, progressText, videoSize,
 } = await import(pathToFileURL(join(folder, 'export/video-range.js')).href);
 
 test('moments read as seconds or as minutes and seconds', () => {
@@ -60,6 +62,22 @@ test('the request names only what the server accepts', () => {
     assert.deepEqual(fallback, {
         start: 0, end: 2, camera: 'broadcast', width: 1280, height: 720, fps: 30, quality: 'standard', score: true,
     });
+});
+
+test('the request takes every shared size, a custom even size, the scale and the safe area', () => {
+    const vertical = exportRequest({ start: 0, end: 2 }, {
+        size: 'vertical', fps: 30, quality: 'standard', camera: 'broadcast', scale: 1.25, safe: 'social',
+    }, null);
+    assert.equal(vertical.width, 1080);
+    assert.equal(vertical.height, 1920);
+    assert.equal(vertical.scale, 1.25);
+    assert.equal(vertical.safe, 'social');
+    const custom = exportRequest({ start: 0, end: 2 }, { size: { width: 1000, height: 1000 }, scale: '1', safe: 'auto' }, null);
+    assert.deepEqual([custom.width, custom.height, 'scale' in custom, 'safe' in custom], [1000, 1000, false, false]);
+    assert.deepEqual(videoSize({ width: 1001, height: 1000 }), videoSize('720p'));
+    assert.deepEqual(videoSize({ width: 3840, height: 3840 }), videoSize('720p'));
+    const odd = exportRequest({ start: 0, end: 2 }, { size: '4k', scale: 9, safe: 'wide' }, null);
+    assert.deepEqual([odd.width, odd.height, 'scale' in odd, 'safe' in odd], [3840, 2160, false, false]);
 });
 
 test('progress reads as a sentence', () => {

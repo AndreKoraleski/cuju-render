@@ -7,8 +7,10 @@ The renderer reads GRF states and never writes one, so a match plays the same bi
 `show` opens the viewer on a batch, a recording or a live source in one call, starting the server
 when none runs. `Recorder` and `record` save the matches of a batch, `watch` streams one
 environment of a running batch, `add_team` registers a Kaggle submission folder, `play` records a
-match between two teams of the registry, and `serve` runs the local page that plays them all.
-The guide is in the repository's `docs/rendering.md`.
+match between two teams of the registry, `challenge` plays a challenge headless with a team or a
+policy, and `serve` runs the local page that plays them all. `feed_url` gives the address of a
+clean feed for a streaming program such as OBS. The guide is in the repository's
+`docs/rendering.md`.
 """
 
 from __future__ import annotations
@@ -40,10 +42,15 @@ __all__ = [
     'Recorder',
     'View',
     'add_team',
+    'captions',
+    'challenge',
+    'challenges',
+    'feed_url',
     'home',
     'on_batch_created',
     'play',
     'record',
+    'search',
     'serve',
     'show',
     'watch',
@@ -460,6 +467,98 @@ def play(
     return run(left, right, scenario, seed, title, device, ability)
 
 
+def challenge(
+    challenge: str,
+    team: str | None = None,
+    policy: Any = None,
+    name: str | None = None,
+    control: dict[str, Any] | None = None,
+    attempts: int | None = None,
+    device: str = 'cpu',
+    progress: Any = None,
+) -> dict[str, Any]:
+    """Plays a challenge headless with a team of the registry or a Python policy, and scores it.
+
+    Every attempt plays the challenge's seed of its index, as fast as the policy answers, and is
+    saved as a recording. A full run reaches the challenge's leaderboard, and a run of fewer
+    attempts is practice. A team of one dynamic agent faces the very episodes that a person faces
+    on the Play page.
+
+    Args:
+        challenge: The challenge, an identifier that `challenges` lists, such as
+            `empty_goal_close`.
+        team: A team of the registry, or `builtin` for GRF's built-in AI on the whole side.
+        policy: A Kaggle agent function, `agent(obs)` or `agent(obs, configuration)`, in place of
+            a team.
+        name: The name of a policy on the leaderboard, by default the function's name.
+        control: The control of a policy, as a team's control settings, by default one player of
+            dynamic assignment.
+        attempts: The attempts to play, by default the challenge's count.
+        device: `cpu` or `cuda`.
+        progress: A function called with the result of each attempt as it ends.
+
+    Returns:
+        A plain dictionary of the run, its `value`, `seconds`, `medal`, `rank`, `personal_best`,
+        whether it was `practice` and the result and recording of each of its `attempts`.
+
+    Raises:
+        ArgumentError: If the challenge, the team, the control or the attempts do not fit.
+    """
+    from ._playing.challenges import run
+
+    return run(challenge, team, policy, name, control, attempts, device, progress)
+
+
+def challenges() -> list[dict[str, Any]]:
+    """Returns the catalog of challenges, each with its goal, measure, targets and seeds."""
+    from ._playing.challenges import challenges as catalog
+
+    return catalog()
+
+
+def search(query: str = '', limit: int | None = None) -> dict[str, Any]:
+    """Finds moments across every recording of the library, as `cuju render search` does.
+
+    The query holds words that name kinds of moments, such as `goal`, `shot` or `corner`, other
+    words that match the title, scenario, teams and players, and filters such as `team:Greens`,
+    `player:9`, `after:60`, `score:trailing` or `source:tournament`, as the guide describes under
+    Searching moments.
+
+    Args:
+        query: The query, such as `goal team:Greens after:60`.
+        limit: The most results, by default the query's `limit:` or 50.
+
+    Returns:
+        The `results`, each with the recording as `match`, the `kind`, the time `t` in seconds of
+        the recording, the `seek` time a few seconds before it that opens Watch, the `minute` of
+        the clock, the team, the player's `number` and `name`, the `score`, a plain line of
+        `text` and the address `url` of the page, and the `total` before the limit.
+    """
+    from ._moments import search as _search
+
+    return _search.search(query, limit)
+
+
+def captions(recording: str | Path, path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Returns the caption cues of a recording and writes them as WebVTT when given a path.
+
+    Args:
+        recording: A recording identifier of the library, such as `sample-5v5`, or a `.cjr` file.
+        path: A file to write the captions to as WebVTT, or `None`.
+
+    Returns:
+        The cues, each with its `start` and `end` in seconds, its message `id` and `params` of
+        the table of captions and its `text`.
+    """
+    from ._moments import captions as _captions
+    from ._moments import search as _search
+
+    cues = _search.captions(recording)
+    if path is not None:
+        Path(path).write_text(_captions.to_vtt(cues), encoding='utf-8', newline='\n')
+    return cues
+
+
 def watch(
     batch: Any,
     environment: int = 0,
@@ -497,6 +596,33 @@ def watch(
     return source
 
 
+def feed_url(source: str = 'auto', *, port: int | None = None, **options: Any) -> str:
+    """Returns the address of a clean feed, a picture of fixed size for a streaming program.
+
+    The address names the page at `/feed` of the renderer's server, the running server of the
+    renderer's folder, or the server on `port`, 8780 by default, when none runs. The feed shows
+    the Watch page with its broadcast graphics alone and follows its source, as `cuju render feed`
+    prints it.
+
+    Args:
+        source: What the feed follows, `auto`, `live`, `latest`, `tournament`, `queue`,
+            `live:NAME`, `tournament:ID` or the identifier of a recording.
+        port: The port of the server, when no server of the renderer's folder runs.
+        **options: The options of the feed's address, such as `size='vertical'`, `width` and
+            `height`, `scale`, `safe`, `bg`, `layer`, `audio`, `volume`, `fps`, `camera`, `loop`,
+            `broadcast`, `show`, `score`, `slate`, `quality`, `theme`, `arena`, `time` and `t`.
+
+    Raises:
+        ArgumentError: If the source or an option is out of place.
+    """
+    from ._export import feed as _feed
+    from ._http import launch as _launch
+
+    server = _launch.running() if port is None else None
+    base = server.url.split('#')[0] if server is not None else f'http://127.0.0.1:{port or 8780}/'
+    return _feed.address(base, source=source, **options)
+
+
 def on_batch_created(batch: Any) -> LiveSource | None:
     """Gives a new batch the live source that `CUJU_RENDER` asks for, and returns it.
 
@@ -530,6 +656,9 @@ for _name in (
     add_team,
     show,
     View,
+    challenge,
+    challenges,
+    feed_url,
 ):
     _name.__module__ = __name__
 del _name

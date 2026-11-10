@@ -9,6 +9,8 @@
 // replay from decisions.js before the restart.
 
 import * as THREE from 'three';
+import { fadeCover } from '../core/comfort.js';
+import { narrowShare, turnBetween } from '../world/framing.js';
 import { NODE_COUNT, NODE_FLOATS, NODE_PARENTS, NODES_FLOAT, PLAYER_FLOATS, episodeBoundary, isCut } from '../recording/format.js';
 import { fullMatch } from '../recording/episodes.js';
 import { teamNames } from './hud.js';
@@ -673,6 +675,17 @@ class Wipe {
         if (label != null && this.label.textContent !== label) {
             this.label.textContent = label;
         }
+        if (document.documentElement.classList.contains('reduced-motion')) {
+            // Reduced motion fades the middle band with the logo in and out in place.
+            this.root.style.opacity = fadeCover(p).toFixed(3);
+            this.bands.forEach((band, i) => {
+                band.style.transform = i === 1 ? 'none' : 'translateX(200vw)';
+            });
+            this.plate.style.opacity = '1';
+            this.plate.style.transform = 'translate(-50%, -50%)';
+            return;
+        }
+        this.root.style.opacity = '';
         const w = this.root.clientWidth || window.innerWidth;
         // The team bands lead and trail the middle band.
         const lags = [0.07, 0, -0.07];
@@ -1189,7 +1202,7 @@ export class Transitions {
 
     enabled() {
         const s = this.app.settings;
-        return !this.app.reducedMotion && s.transitions !== false;
+        return s.transitions !== false;
     }
 
     maybeStart() {
@@ -1229,7 +1242,6 @@ export class Transitions {
 
     // Decision replays and restart transitions each have a setting of their own.
     wanted(ev) {
-        if (this.app.reducedMotion) return false;
         if (ev.decision && this.decisions && this.app.settings.decisionReplays !== false) {
             return true;
         }
@@ -1241,7 +1253,6 @@ export class Transitions {
 
     start(ev, prerollOnly = false) {
         const app = this.app;
-        if (app.reducedMotion) return;
         const tl = app.timeline;
         const store = tl.store;
         const header = app.source.header;
@@ -1623,7 +1634,10 @@ export class Transitions {
         }
         case 'goal_kick': {
             const side = Math.sign(sx) || 1;
-            return { pos: v(side * (HALF_W + 9), sy * 0.3, 4.6), target: v(side * (HALF_W - 30), 0, 0.5), fov: 46 };
+            const shot = { pos: v(side * (HALF_W + 9), sy * 0.3, 4.6), target: v(side * (HALF_W - 30), 0, 0.5), fov: 46 };
+            // A narrow picture turns the camera towards the ball, so the taker stays in it.
+            turnBetween(shot.pos, shot.target, v(sx, sy, 0), shot.target, narrowShare(app.view.aspect));
+            return shot;
         }
         case 'penalty':
         case 'free_kick': {

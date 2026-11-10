@@ -40,11 +40,15 @@ import threading
 import time
 import urllib.parse
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mock_feed
 import mock_grid
+import mock_help
 import mock_sample
+import mock_search
 import mock_tournaments
 
 # The sample matches that cuju ships.
@@ -84,6 +88,7 @@ TYPES = {
     '.webp': 'image/webp',
     '.png': 'image/png',
     '.svg': 'image/svg+xml',
+    '.webmanifest': 'application/manifest+json',
 }
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 MAXIMUM_BODY = 110 * 1024 * 1024
@@ -1002,7 +1007,7 @@ def import_team(files, entry, name_given):
         entry['name'] = saved['name'].strip()[:80]
     children = {path[len(prefix) :].split('/')[0] for path in files if path.startswith(prefix)}
     for name in children:
-        if name in ('team.json', MODEL, CLIPS):
+        if name in ('team.json', MODEL, CLIPS, PRESENTATION_FOLDER):
             continue
         key = prefix + name
         child = PurePosixPath(name)
@@ -1027,6 +1032,7 @@ def import_team(files, entry, name_given):
             for path in [path for path in files if path == key or path.startswith(key + '/')]:
                 del files[path]
     import_clips(files)
+    import_presentation(files)
     joints = (
         (saved.get('model') or {}).get('joints') if isinstance(saved.get('model'), dict) else None
     )
@@ -1050,6 +1056,99 @@ def import_team(files, entry, name_given):
         entry['model'] = None
         if entry['style'].get('model') == 'custom':
             entry['style']['model'] = 'grf'
+
+
+# A team presentation package, the folder presentation with its manifest and files, kept as the
+# real server keeps them. The mock reads the manifest as it is, and the page fills what it lacks.
+PRESENTATION_FOLDER = 'presentation'
+# The registered team whose presentation each side draws, the viewer's choice of section Q11.
+PRESENTATION_SIDES = {'left': None, 'right': None}
+PRESENTATION_MANIFEST = 'presentation.json'
+PRESENTATION_PART = re.compile(r'[a-z0-9][a-z0-9_.-]{0,59}')
+PRESENTATION_TYPES = {
+    '.glb': 'model/gltf-binary',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.ktx2': 'image/ktx2',
+    '.ogg': 'audio/ogg',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.js': 'text/javascript',
+    '.json': 'application/json',
+    '.glsl': 'text/plain',
+    '.wasm': 'application/wasm',
+}
+SANDBOX_POLICY = (
+    "default-src 'none'; script-src '{hash}' blob: 'wasm-unsafe-eval'; worker-src blob:; "
+    "connect-src 'none'; img-src blob: data:; frame-ancestors 'self'; base-uri 'none'; "
+    "form-action 'none'"
+)
+
+
+def presentation_path(name):
+    """Returns whether a path inside a package is one the real server keeps."""
+    parts = name.split('/')
+    return (
+        0 < len(parts) <= 4
+        and all(PRESENTATION_PART.fullmatch(part) and '..' not in part for part in parts)
+        and PurePosixPath(name).suffix in PRESENTATION_TYPES
+    )
+
+
+def import_presentation(files):
+    """Keeps the files of a package of the right paths and sizes."""
+    prefix = f'{TEAM_FOLDER}/{PRESENTATION_FOLDER}/'
+    for path in [path for path in files if path.startswith(prefix)]:
+        if not presentation_path(path[len(prefix) :]) or len(files[path]) > 30 * 1024 * 1024:
+            del files[path]
+
+
+def presentation(identifier):
+    """Returns what the page reads of a team's package."""
+    files = FOLDERS.get(identifier, {})
+    prefix = f'{TEAM_FOLDER}/{PRESENTATION_FOLDER}/'
+    out = {
+        'manifest': None,
+        'warnings': [],
+        'files': [],
+        'developer': False,
+        'contract': '1.1',
+        'features': [],
+        'missing': [],
+    }
+    data = files.get(prefix + PRESENTATION_MANIFEST)
+    if data is None:
+        return out
+    out['files'] = sorted(
+        path[len(prefix) :]
+        for path in files
+        if path.startswith(prefix) and path != prefix + PRESENTATION_MANIFEST
+    )
+    with contextlib.suppress(ValueError):
+        document = json.loads(data)
+        if isinstance(document, dict) and document.get('contract') in ('1.0', '1.1'):
+            out['manifest'] = document
+    return out
+
+
+def presentation_file(identifier, name):
+    """Returns the bytes of a file of a team's package, or None."""
+    if not presentation_path(name):
+        return None
+    return FOLDERS.get(identifier, {}).get(f'{TEAM_FOLDER}/{PRESENTATION_FOLDER}/{name}')
+
+
+def sandbox_page():
+    """Returns the sandbox page of team workers and its policy, as the real server makes them."""
+    import base64
+    import hashlib
+
+    path = Path(WEB_ROOT) / 'js' / 'presentation' / 'sandbox.js'
+    script = path.read_text(encoding='utf-8')
+    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+    page = f'<!doctype html><meta charset="utf-8"><title>sandbox</title><script>{script}</script>'
+    return page.encode(), SANDBOX_POLICY.format(hash=f'sha256-{digest}')
 
 
 @locked
@@ -1451,6 +1550,347 @@ class LiveSource:
         }
 
 
+# Challenges, as cuju.render._playing.challenges keeps them. The catalog copies part of the real
+# one, and the mock scores each attempt from the frames of its recording by the same rules, without
+# the checks of provenance, since its recordings are synthetic. A run of a team plays no match, it
+# advances one attempt every 0.3 seconds and lands on the board with a value drawn from the seeds.
+CHALLENGES = [
+    {
+        'id': cid,
+        'title': title,
+        'scenario': scenario,
+        'ability': [None, None],
+        'attempts': attempts,
+        'measure': measure,
+        'targets': list(targets),
+        'limit': limit,
+        'goal': goal,
+        'played_ability': list(played),
+        'seeds': [(zlib.crc32(cid.encode()) + 7919 * i) % 2**31 for i in range(attempts)],
+    }
+    for cid, title, scenario, attempts, measure, targets, limit, goal, played in (
+        (
+            'empty_goal_close',
+            'Empty goal from close range',
+            'academy_empty_goal_close',
+            5,
+            'within',
+            (3, 4, 5),
+            3.0,
+            'Score into the empty goal within 3 seconds of play in each attempt.',
+            (1.0, 0.6),
+        ),
+        (
+            'corner',
+            'Corner',
+            'academy_corner',
+            5,
+            'scored',
+            (1, 2, 4),
+            None,
+            'Score from the corner before the ball goes out or the clock runs down.',
+            (1.0, 0.6),
+        ),
+        (
+            'one_on_one',
+            'One on one',
+            '1_vs_1_easy',
+            3,
+            'margin',
+            (1, 3, 6),
+            None,
+            'Outscore a single opponent over three short matches, goals for minus against.',
+            (0.0, 0.0),
+        ),
+    )
+]
+BOARDS = {challenge['id']: [] for challenge in CHALLENGES}
+# The catalog of achievements, as cuju.render._playing.achievements lists it, with no team's earned.
+ACHIEVEMENTS = [
+    {'id': aid, 'name': name, 'glyph': glyph, 'description': description}
+    for aid, name, glyph, description in (
+        ('off_the_mark', 'Off the mark', 'OM', 'Score a goal.'),
+        ('hat_trick', 'Hat trick', 'HT', 'One player scores three goals or more in one recording.'),
+        ('clean_sheet', 'Clean sheet', 'CS', 'Finish a full match without conceding.'),
+        ('podium', 'On the podium', 'MD', 'Win a medal in a challenge.'),
+        ('gold_standard', 'Gold standard', 'AU', 'Win a gold medal in a challenge.'),
+    )
+]
+JOBS = []
+MEDALS = ('bronze', 'silver', 'gold')
+SHORT = ('rank', 'kind', 'name', 'team', 'value', 'seconds', 'medal')
+
+
+def find_challenge(identifier):
+    """Returns the challenge of an identifier, or raises KeyError."""
+    challenge = next((item for item in CHALLENGES if item['id'] == identifier), None)
+    if challenge is None:
+        raise KeyError(identifier)
+    return challenge
+
+
+def challenge_medal(challenge, value):
+    won = None
+    for name, target in zip(MEDALS, challenge['targets'], strict=True):
+        if value >= target:
+            won = name
+    return won
+
+
+def score_frames(frames):
+    """Scores the frames of one attempt for the left side, as score_attempt does."""
+    if not frames:
+        return {'finished': False, 'goals': [0, 0], 'scored': False, 'seconds': None}
+    first = struct.unpack_from('<2i', frames[0], 8)
+    last = struct.unpack_from('<2i', frames[-1], 8)
+    finished = bool(struct.unpack_from('<i', frames[-1], 28)[0] & 1)
+    goals = max(0, last[0] - first[0]) if finished else 0
+    seconds = None
+    if goals:
+        seconds = next(
+            round(i / 10, 1)
+            for i, frame in enumerate(frames)
+            if struct.unpack_from('<2i', frame, 8)[0] > first[0]
+        )
+    against = max(0, last[1] - first[1])
+    return {
+        'finished': finished,
+        'goals': [goals, against],
+        'scored': goals > 0,
+        'seconds': seconds,
+    }
+
+
+def attempt_result(challenge, index, match, scored):
+    counts = scored['scored'] and (
+        challenge['measure'] != 'within' or scored['seconds'] <= challenge['limit']
+    )
+    return {
+        'index': index,
+        'seed': challenge['seeds'][index],
+        'match': match,
+        **scored,
+        'counts': counts,
+    }
+
+
+def run_totals(challenge, results):
+    if challenge['measure'] == 'margin':
+        value = sum(r['goals'][0] - r['goals'][1] for r in results)
+        counted = [r for r in results if r['scored']]
+    else:
+        counted = [r for r in results if r['counts']]
+        value = len(counted)
+    seconds = round(sum(r['seconds'] for r in counted), 1)
+    return {'value': value, 'seconds': seconds, 'medal': challenge_medal(challenge, value)}
+
+
+def competitor(entry):
+    if entry['kind'] == 'agent' and entry['team']:
+        return ('team', entry['team'])
+    return (entry['kind'], entry['name'])
+
+
+def rank_key(entry):
+    return (-entry['value'], entry['seconds'], entry['time'])
+
+
+@locked
+def record_run(identifier, kind, name, team, totals, results):
+    """Keeps each competitor's best run on the board, as record does."""
+    board = BOARDS[identifier]
+    entry = {
+        'kind': kind,
+        'name': name,
+        'team': team,
+        **totals,
+        'time': time.time(),
+        'attempts': results,
+        'cuju_version': 'mock',
+    }
+    who = competitor(entry)
+    before = next((e for e in board if competitor(e) == who), None)
+    improved = before is None or rank_key(entry) < rank_key(before)
+    if improved:
+        kept = [e for e in board if competitor(e) != who] + [entry]
+        board[:] = sorted(kept, key=rank_key)[:100]
+    rank = next((i for i, e in enumerate(board, 1) if competitor(e) == who), None)
+    best = next((e for e in board if competitor(e) == who), entry)
+    return {'personal_best': {**best, 'rank': rank}, 'rank': rank, 'improved': improved}
+
+
+def recording_frames(identifier):
+    item = MATCHES.get(identifier)
+    if item is None or 'deleted_at' in item['summary']:
+        raise ArgumentError(f'expected a recording of the library, found {identifier!r}')
+    data = gzip.decompress(item['data'])
+    start = len(mock_sample.MAGIC) + 4
+    (length,) = struct.unpack_from('<I', data, len(mock_sample.MAGIC))
+    header = json.loads(data[start : start + length])
+    size = header['frame_bytes']
+    body = data[start + length :]
+    return [body[i : i + size] for i in range(0, len(body) - size + 1, size)]
+
+
+def board_entries(identifier):
+    return [{**entry, 'rank': rank} for rank, entry in enumerate(BOARDS[identifier], 1)]
+
+
+def challenge_list(person):
+    listed = []
+    for challenge in CHALLENGES:
+        entries = board_entries(challenge['id'])
+        mine = next((e for e in entries if competitor(e) == ('person', person)), None)
+        board = {
+            'entries': len(entries),
+            'people': sum(e['kind'] == 'person' for e in entries),
+            'agents': sum(e['kind'] == 'agent' for e in entries),
+            'top': [{k: e[k] for k in SHORT} for e in entries[:3]],
+            'mine': {k: mine[k] for k in SHORT} if mine else None,
+        }
+        listed.append({**challenge, 'board': board})
+    return listed
+
+
+def person_run(identifier, person, matches):
+    challenge = find_challenge(identifier)
+    if not isinstance(person, str) or not 0 < len(person.strip()) <= 40:
+        raise ArgumentError(f'expected a name of 1 to 40 characters, found {person!r}')
+    if not isinstance(matches, list) or len(matches) != challenge['attempts']:
+        raise ArgumentError(f'expected the {challenge["attempts"]} recordings of the attempts')
+    named = [m for m in matches if m is not None]
+    if len(set(named)) != len(named):
+        raise ArgumentError('expected a distinct recording for each attempt')
+    results = []
+    for index, match in enumerate(matches):
+        missed = {'finished': False, 'goals': [0, 0], 'scored': False, 'seconds': None}
+        scored = missed if match is None else score_frames(recording_frames(match))
+        results.append(attempt_result(challenge, index, match, scored))
+    totals = run_totals(challenge, results)
+    name = person.strip()
+    outcome = {
+        'challenge': identifier,
+        'kind': 'person',
+        'name': name,
+        'team': None,
+        'practice': False,
+        'attempts': results,
+        **totals,
+    }
+    outcome.update(record_run(identifier, 'person', name, None, totals, results))
+    medal = totals['medal']
+    outcome['achievements'] = (['podium'] if medal else []) + (
+        ['gold_standard'] * (medal == 'gold')
+    )
+    return outcome
+
+
+@locked
+def advance_jobs():
+    """Moves each mock run on by the time since its start, one attempt every 0.3 seconds."""
+    for job in JOBS:
+        if job['state'] not in ('queued', 'running'):
+            continue
+        challenge = find_challenge(job['challenge'])
+        done = min(job['attempts'], int((time.time() - job['created']) / 0.3))
+        job['state'] = 'running'
+        while len(job['results']) < done:
+            index = len(job['results'])
+            seconds = round(1.5 + (challenge['seeds'][index] % 20) / 10, 1)
+            scored = {'finished': True, 'goals': [1, 0], 'scored': True, 'seconds': seconds}
+            job['results'] = [*job['results'], attempt_result(challenge, index, None, scored)]
+        job['progress'] = len(job['results']) / job['attempts']
+        if len(job['results']) < job['attempts']:
+            continue
+        totals = run_totals(challenge, job['results'])
+        practice = job['attempts'] < challenge['attempts']
+        result = {
+            'challenge': challenge['id'],
+            'kind': 'agent',
+            'name': job['name'],
+            'team': job['team'],
+            'practice': practice,
+            'attempts': job['results'],
+            **totals,
+            'achievements': [],
+        }
+        if practice:
+            result.update(medal=None, rank=None, personal_best=None, improved=False)
+        else:
+            board = record_run(
+                challenge['id'], 'agent', job['name'], job['team'], totals, job['results']
+            )
+            result.update(board)
+        job.update(state='done', result=result)
+
+
+def challenges_get(parts, query):
+    """Answers GET /api/challenges/..., with a status."""
+    if not parts:
+        return challenge_list(query.get('person') or None), 200
+    if parts == ['jobs']:
+        advance_jobs()
+        return [dict(job) for job in reversed(JOBS)], 200
+    if parts[0] not in BOARDS:
+        return {'error': f'no challenge {parts[0]!r}'}, 404
+    if len(parts) == 1:
+        return {'challenge': find_challenge(parts[0]), 'entries': board_entries(parts[0])}, 200
+    if parts[1:] == ['score']:
+        challenge = find_challenge(parts[0])
+        index = int(query.get('attempt', ''))
+        if not 0 <= index < challenge['attempts']:
+            raise ArgumentError(f'expected an attempt from 0 to {challenge["attempts"] - 1}')
+        try:
+            frames = recording_frames(query.get('match', ''))
+        except ArgumentError as error:
+            return {'error': str(error)}, 404
+        result = attempt_result(challenge, index, query['match'], score_frames(frames))
+        return {'challenge': parts[0], 'result': result, 'problem': None}, 200
+    return {'error': 'no such resource'}, 404
+
+
+def challenges_post(parts, document):
+    """Answers POST /api/challenges/ID/runs, with a status."""
+    if len(parts) != 2 or parts[1] != 'runs' or parts[0] not in BOARDS:
+        return {'error': 'no such resource'}, 404
+    if 'person' in document:
+        return person_run(parts[0], document['person'], document.get('matches')), 201
+    challenge = find_challenge(parts[0])
+    team = entry(str(document.get('team')))
+    attempts = document.get('attempts')
+    if attempts is not None and not (
+        isinstance(attempts, int) and 1 <= attempts <= challenge['attempts']
+    ):
+        raise ArgumentError(f'expected from 1 to {challenge["attempts"]} attempts')
+    job = {
+        'id': new_identifier('j'),
+        'challenge': parts[0],
+        'team': team['id'],
+        'name': team['name'],
+        'attempts': attempts or challenge['attempts'],
+        'state': 'queued',
+        'progress': 0.0,
+        'results': [],
+        'result': None,
+        'error': None,
+        'created': time.time(),
+    }
+    with LOCK:
+        JOBS.append(job)
+    return dict(job), 201
+
+
+def challenges_delete(parts):
+    """Answers DELETE /api/challenges/jobs/ID, with a status."""
+    with LOCK:
+        wanted = parts[1] if len(parts) == 2 and parts[0] == 'jobs' else None
+        job = next((j for j in JOBS if j['id'] == wanted), None)
+        if job is None or job['state'] not in ('queued', 'running'):
+            return {'error': 'no such run'}, 404
+        job.update(state='failed', error='cancelled')
+    return {'cancelled': job['id']}, 200
+
+
 def make_handler(requests):
     """Returns the request handler, the real server's checks and routes on the data above."""
     allowed_hosts = set(LOOPBACK)
@@ -1518,12 +1958,14 @@ def make_handler(requests):
         def _error(self, status, message):
             self._json({'error': message}, status)
 
-        def _bytes(self, data, kind, no_store=False):
+        def _bytes(self, data, kind, no_store=False, policy=None):
             self.send_response(200)
             self.send_header('Content-Type', kind)
             self.send_header('Content-Length', str(len(data)))
             if no_store:
                 self.send_header('Cache-Control', 'no-store')
+            if policy:
+                self.send_header('Content-Security-Policy', policy)
             self.end_headers()
             self.wfile.write(data)
 
@@ -1549,7 +1991,17 @@ def make_handler(requests):
         def _get(self):
             parts, query = self._route()
             try:
-                if parts[:1] != ['api']:
+                if parts == ['sandbox', 'presentation']:
+                    page, policy = sandbox_page()
+                    self._bytes(page, 'text/html; charset=utf-8', no_store=True, policy=policy)
+                elif parts == ['feed']:
+                    self._static(['feed.html'])
+                elif parts == ['api', 'feed']:
+                    base = f'http://{self.headers.get("Host")}/'
+                    self._json(mock_feed.targets(base, [s.describe() for s in LIVE.values()]))
+                elif parts == ['api', 'feed', 'resolve']:
+                    self._feed(query.get('source', 'auto'))
+                elif parts[:1] != ['api']:
                     self._static(parts)
                 elif parts[:2] == ['api', 'tournaments']:
                     self._tournaments('GET')
@@ -1557,6 +2009,22 @@ def make_handler(requests):
                     self._json(matches())
                 elif parts == ['api', 'trash']:
                     self._json(matches(trash=True))
+                elif parts == ['api', 'search']:
+                    try:
+                        limit = int(query['limit']) if query.get('limit') else None
+                        found = mock_search.search(
+                            query.get('q', ''), limit, matches(), recording, recording_frames
+                        )
+                    except ValueError as error:
+                        self._error(400, str(error))
+                    else:
+                        self._json(found)
+                elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'captions.vtt':
+                    if recording(parts[2]) is None:
+                        self._error(404, 'no such match')
+                    else:
+                        text = mock_search.captions_vtt(parts[2], recording, recording_frames)
+                        self._bytes(text.encode(), 'text/vtt; charset=utf-8', no_store=True)
                 elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'details':
                     try:
                         self._json(details(parts[2]))
@@ -1576,6 +2044,12 @@ def make_handler(requests):
                     self._relay(parts[2], query.get('sequence') == '1')
                 elif parts == ['api', 'scenarios']:
                     self._json(SCENARIOS)
+                elif parts[:2] == ['api', 'challenges']:
+                    self._json(*challenges_get(parts[2:], query))
+                elif parts == ['api', 'achievements']:
+                    self._json({'catalog': ACHIEVEMENTS, 'teams': {}})
+                elif parts[:2] == ['api', 'help']:
+                    self._json(*mock_help.get(parts[2:], query))
                 elif parts == ['api', 'teams']:
                     self._json(teams())
                 elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':
@@ -1595,6 +2069,16 @@ def make_handler(requests):
                         self._bytes(data, SOUND_TYPES[PurePosixPath(path).suffix], no_store=True)
                 elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'export':
                     self._export(parts[2])
+                elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'presentation':
+                    self._json(presentation(parts[2]))
+                elif len(parts) >= 5 and parts[1] == 'teams' and parts[3] == 'presentation':
+                    name = '/'.join(parts[4:])
+                    data = presentation_file(parts[2], name)
+                    if data is None:
+                        self._error(404, 'no such file of the package')
+                    else:
+                        kind = PRESENTATION_TYPES[PurePosixPath(name).suffix]
+                        self._bytes(data, kind, no_store=True)
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
                     data = clip_bytes(parts[2], parts[4])
                     if data is None:
@@ -1610,6 +2094,8 @@ def make_handler(requests):
                     )
                 elif parts == ['api', 'models']:
                     self._json(shipped_models())
+                elif parts == ['api', 'presentation', 'sides']:
+                    self._json(PRESENTATION_SIDES)
                 elif parts == ['api', 'requests']:
                     self._json(requests.entries())
                 else:
@@ -1634,8 +2120,9 @@ def make_handler(requests):
                         self._error(404, 'no such recording in the Trash')
                 elif parts[1:3] == ['mock', 'live'] and parts[4:] in (['drop'], ['end']):
                     source = LIVE.get(parts[3])
-                    if source is None:
-                        self._error(404, 'no such live source')
+                    if not isinstance(source, LiveSource):
+                        # The grid's source has no process to drop or end.
+                        self._error(404, 'no such live source of a process')
                     else:
                         if parts[4] == 'drop':
                             source.drop()
@@ -1648,6 +2135,10 @@ def make_handler(requests):
                             source.end()
                         self.send_response(204)
                         self.end_headers()
+                elif parts[:2] == ['api', 'challenges']:
+                    self._json(*challenges_post(parts[2:], self._document()))
+                elif parts[:2] == ['api', 'help']:
+                    self._json(*mock_help.post(parts[2:], self._document()))
                 elif parts == ['api', 'teams']:
                     team = add(
                         query.get('name', ''),
@@ -1656,6 +2147,16 @@ def make_handler(requests):
                         query.get('format', '11v11'),
                     )
                     self._json(team, 201)
+                elif parts == ['api', 'presentation', 'sides']:
+                    document = self._document()
+                    for side in ('left', 'right'):
+                        if side in document:
+                            team = document[side]
+                            if team is not None and team not in FOLDERS:
+                                self._error(400, 'expected a registered team')
+                                return
+                            PRESENTATION_SIDES[side] = team
+                    self._json(PRESENTATION_SIDES)
                 elif parts == ['api', 'requests']:
                     document = self._document()
                     seed = document.get('seed')
@@ -1738,6 +2239,9 @@ def make_handler(requests):
             if parts[:2] == ['api', 'tournaments']:
                 self._tournaments('DELETE')
                 return
+            if parts[:2] == ['api', 'challenges']:
+                self._json(*challenges_delete(parts[2:]))
+                return
             if len(parts) == 3 and parts[1] == 'requests':
                 removed = requests.cancel(parts[2])
             elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':
@@ -1766,6 +2270,34 @@ def make_handler(requests):
             else:
                 self._error(404, 'no such item')
 
+        def _feed(self, source):
+            """Answers what the source of a feed names, as the real server does."""
+
+            def recording_of(identifier):
+                try:
+                    return details(identifier)
+                except ArgumentError:
+                    return None
+
+            def read(*rest):
+                status, body = cups.respond('GET', list(rest), {})
+                return body if status == 200 else None
+
+            try:
+                self._json(
+                    mock_feed.resolve(
+                        source,
+                        live=lambda: [s.describe() for s in list(LIVE.values())],
+                        recordings=matches,
+                        recording=recording_of,
+                        requests=requests.entries,
+                        tournaments=lambda: read() or [],
+                        tournament=lambda identifier: read(identifier),
+                    )
+                )
+            except mock_feed.FeedError as error:
+                self._error(400, f'ArgumentError: {error}')
+
         def _static(self, parts):
             path = os.path.realpath(os.path.join(WEB_ROOT, *(parts or ['index.html'])))
             try:
@@ -1778,6 +2310,10 @@ def make_handler(requests):
             with open(path, 'rb') as f:
                 data = f.read()
             kind = TYPES.get(os.path.splitext(path)[1]) or mimetypes.guess_type(path)[0]
+            # The service worker is checked anew on every registration, as the server sends it.
+            if parts == ['sw.js']:
+                self._bytes(data, kind, no_store=True)
+                return
             self._bytes(data, kind or 'application/octet-stream')
 
         def _image(self, identifier, slot):
@@ -1918,6 +2454,16 @@ def main():
     source = LiveSource(11)
     LIVE[source.id] = source
     mock_grid.start(LIVE, new_identifier('live'))
+    mock_help.bind(
+        matches=matches,
+        matches_store=MATCHES,
+        save_match=save_match,
+        trash=trash,
+        teams=teams,
+        add_team=add,
+        lock=LOCK,
+        magic=mock_sample.MAGIC,
+    )
     server = http.server.ThreadingHTTPServer(('127.0.0.1', args.port), make_handler(Requests()))
     server.daemon_threads = True
     print(f'serving {WEB_ROOT} on http://127.0.0.1:{server.server_address[1]}/', flush=True)

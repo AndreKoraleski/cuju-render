@@ -260,6 +260,9 @@ export class CommandPalette {
         const app = this.app;
         const list = [];
         const add = (group, title, run, keywords = '', hint = '') => list.push({ group, title, run, keywords, hint });
+        if (app.moments) {
+            list.push(...app.moments.paletteActions(this.input.value, () => this.isOpen && this.render(true)));
+        }
         const watch = () => {
             if (app.page !== 'watch') {
                 app.showPage('watch');
@@ -308,6 +311,16 @@ export class CommandPalette {
             watch();
             app.setTvMode(!app.tvMode);
         }, 'tv television picture alone');
+        if (app.captions) {
+            add('Settings', app.captions.enabled ? 'Turn captions off' : 'Turn captions on',
+                () => app.captions.setEnabled(!app.captions.enabled), 'subtitles text events accessibility');
+        }
+        if (app.feedDialog) {
+            add('View', 'Copy feed address', () => {
+                watch();
+                app.feedDialog.open();
+            }, 'obs stream streaming browser source clean feed url size vertical');
+        }
         const labels = document.getElementById('labels-on');
         if (labels) {
             add('Settings', labels.checked ? 'Hide player labels' : 'Show player labels', () => labels.click(), 'names numbers');

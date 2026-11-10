@@ -12,6 +12,7 @@ import { HALF_H, HALF_W } from '../world/pitch.js';
 import { restPoseNodes, walkPoseNodes } from '../players/players.js';
 import { KAYKIT_CELEBRATIONS, KAYKIT_ROLES } from '../players/kaykit.js';
 import { hasUpload, poseUpload } from '../players/retarget.js';
+import { stillRole } from '../presentation/contract.js';
 
 // The library loads on its own, a page without it still celebrates with the simple poses.
 let lib = null;
@@ -156,7 +157,11 @@ export function stillClip(group, k, still) {
     }
     let out = null;
     try {
-        if (still.startsWith('clip:')) {
+        // A team presentation package plays its clip of the pose's semantic role first.
+        const semantic = stillRole(still);
+        if (semantic && group.hasClip(k, `role:${semantic}`)) {
+            out = `role:${semantic}`;
+        } else if (still.startsWith('clip:')) {
             out = group.hasClip(k, still) ? still : null;
         } else {
             const role = CLIP_ROLES[still];

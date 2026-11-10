@@ -4,12 +4,12 @@
 // The range and settings of a video export, as the Export video dialog of the Watch page reads
 // them and the server's endpoint POST /api/matches/{id}/video takes them.
 
-// The sizes, frame rates, qualities and cameras that the server accepts from the page.
-export const VIDEO_SIZES = [
-    { id: '480p', label: '854 by 480', width: 854, height: 480 },
-    { id: '720p', label: '1280 by 720', width: 1280, height: 720 },
-    { id: '1080p', label: '1920 by 1080', width: 1920, height: 1080 },
-];
+import { SIZE_PRESETS, checkSize, parseGraphicsScale, parseSafe } from './sizes.js';
+
+// The sizes, frame rates, qualities and cameras that the server accepts from the page. The sizes
+// are the shared presets of sizes.js, and a custom size takes any even width and height within
+// their limits.
+export const VIDEO_SIZES = SIZE_PRESETS;
 export const VIDEO_RATES = [24, 25, 30, 50, 60];
 export const VIDEO_QUALITIES = [
     { id: 'draft', label: 'Draft' },
@@ -81,7 +81,7 @@ export function checkRange(startText, endText, duration) {
 // The body of an export request, from a checked range and the choices of the dialog. The arena
 // and time of day come from the field settings of the page.
 export function exportRequest(range, choices, field) {
-    const size = VIDEO_SIZES.find((s) => s.id === choices.size) || VIDEO_SIZES[1];
+    const size = videoSize(choices.size);
     const body = {
         start: Math.round(range.start * 1000) / 1000,
         end: Math.round(range.end * 1000) / 1000,
@@ -92,6 +92,14 @@ export function exportRequest(range, choices, field) {
         quality: VIDEO_QUALITIES.some((q) => q.id === choices.quality) ? choices.quality : 'standard',
         score: choices.score !== false,
     };
+    const graphics = graphicsScale(choices.scale);
+    if (graphics !== 1) {
+        body.scale = graphics;
+    }
+    const safe = safeChoice(choices.safe);
+    if (safe !== 'auto') {
+        body.safe = safe;
+    }
     if (field && typeof field.arena === 'string') {
         body.arena = field.arena;
     }
@@ -99,6 +107,39 @@ export function exportRequest(range, choices, field) {
         body.time = Math.min(24, Math.max(0, field.time));
     }
     return body;
+}
+
+// The size of a choice, a preset's identifier or a width and height, which a video needs even.
+// Anything else falls back to 720p.
+export function videoSize(choice) {
+    const preset = VIDEO_SIZES.find((s) => s.id === choice);
+    if (preset) {
+        return preset;
+    }
+    if (choice && typeof choice === 'object') {
+        try {
+            return checkSize(choice.width, choice.height, { even: true });
+        } catch {
+            // A size out of range falls back below.
+        }
+    }
+    return VIDEO_SIZES.find((s) => s.id === '720p');
+}
+
+function graphicsScale(value) {
+    try {
+        return parseGraphicsScale(value);
+    } catch {
+        return 1;
+    }
+}
+
+function safeChoice(value) {
+    try {
+        return parseSafe(value);
+    } catch {
+        return 'auto';
+    }
 }
 
 // The line of progress of an export entry from the server.

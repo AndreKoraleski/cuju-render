@@ -27,14 +27,15 @@ from cuju.errors import ArgumentError
 
 from .._store import home as _home
 from .._store import library as _library
+from . import sizes as _sizes
 from . import video as _video
 
 # The videos that the folder keeps, the latest ones, beside the export that runs.
 KEPT = 3
 # An export ends after this many seconds, longer than the longest range takes on a slow machine.
 _EXPORT_SECONDS = 3 * 60 * 60
-# The sizes, frame rates and qualities that the page offers.
-SIZES = ((854, 480), (1280, 720), (1920, 1080))
+# The frame rates that the page offers. The page offers the sizes of `_sizes`, and any other size
+# with even sides within its limits.
 RATES = (24, 25, 30, 50, 60)
 
 
@@ -52,8 +53,9 @@ def _seconds(value: Any, name: str) -> float:
 def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
     """Returns the command line arguments of an export that the page asks for, and its options.
 
-    The page names the start and end in seconds, the camera, the size and frame rate from those it
-    offers, the quality, whether the scoreboard shows and the arena and hour of its field.
+    The page names the start and end in seconds, the camera, the size, the frame rate from those
+    it offers, the quality, the scale and safe area of the graphics, whether the scoreboard shows
+    and the arena and hour of its field.
 
     Raises:
         ArgumentError: If a field is missing, unknown or invalid.
@@ -69,6 +71,8 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
         'score',
         'arena',
         'time',
+        'scale',
+        'safe',
     }
     unknown = set(document) - known
     if unknown:
@@ -79,9 +83,13 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
     end = _seconds(document.get('end'), 'end')
     if end <= start:
         raise ArgumentError(f'expected an end after the start, found {start:g} to {end:g}')
-    size = (document.get('width', 1280), document.get('height', 720))
-    if size not in SIZES:
-        raise ArgumentError(f'expected a size of {", ".join(f"{w}x{h}" for w, h in SIZES)}')
+    size = _sizes.check_size(document.get('width', 1280), document.get('height', 720), even=True)
+    graphics = document.get('scale', 1.0)
+    if isinstance(graphics, bool) or not isinstance(graphics, (int, float)):
+        raise ArgumentError(f'expected the scale of the graphics as a number, found {graphics!r}')
+    safe = document.get('safe', 'auto')
+    if isinstance(safe, bool) or not isinstance(safe, (str, int, float)):
+        raise ArgumentError(f'expected the safe area as text or a percentage, found {safe!r}')
     fps = document.get('fps', _video.DEFAULT_FPS)
     if fps not in RATES or isinstance(fps, bool):
         raise ArgumentError(f'expected a frame rate of {", ".join(map(str, RATES))}, found {fps!r}')
@@ -99,6 +107,8 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
         score=score,
         arena=None if document.get('arena') is None else str(document['arena']),
         hour=document.get('time'),
+        graphics=graphics,
+        safe=safe,
     ).check()
     arguments = [
         '--start',
@@ -114,6 +124,10 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
         '--quality',
         options.quality,
     ]
+    if options.graphics != 1:
+        arguments += ['--scale', f'{options.graphics:g}']
+    if options.safe != 'auto':
+        arguments += ['--safe', str(options.safe)]
     if not options.score:
         arguments.append('--no-score')
     if options.arena is not None:

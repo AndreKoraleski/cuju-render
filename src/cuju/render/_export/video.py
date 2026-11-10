@@ -42,6 +42,8 @@ from typing import Any
 
 from cuju.errors import ArgumentError, Error
 
+from . import sizes as _sizes
+
 # The cameras that follow the match by themselves, as the page names them.
 CAMERAS = ('broadcast', 'tactical', 'goal', 'ball', 'owner')
 # The arenas of the page, as `web/js/world/arenas.js` lists them.
@@ -56,9 +58,7 @@ QUALITIES = {
 }
 DEFAULT_SIZE = (1280, 720)
 DEFAULT_FPS = 30
-# The largest picture, the frame rates and the limits of an export.
-MAX_SIZE = (3840, 2160)
-MIN_SIZE = (160, 90)
+# The frame rates and the limits of an export. The sizes follow `_sizes`, with even sides.
 MAX_FPS = 60
 DEFAULT_MAX_SECONDS = 600.0
 LIMIT_SECONDS = 3600.0
@@ -68,8 +68,6 @@ LIMIT_MEGABYTES = 16384
 GOAL_BEFORE, GOAL_AFTER = 8.0, 4.0
 # The page plays this long before the first frame, so the camera and graphics have settled.
 WARMUP = 1.0
-# The page lays out at this height in CSS pixels, and a taller picture scales it up.
-_CSS_HEIGHT = 720
 # The identifier under which the export's server offers a recording file outside the library.
 _FILE_IDENTIFIER = 'video-source'
 
@@ -121,6 +119,8 @@ class Options:
     arena: str | None = None
     hour: float | None = None
     broadcast: bool = False
+    graphics: float = 1.0
+    safe: str | float = 'auto'
     max_seconds: float = DEFAULT_MAX_SECONDS
     max_megabytes: int = DEFAULT_MAX_MEGABYTES
     chrome: str | None = None
@@ -143,6 +143,10 @@ class Options:
             raise ArgumentError(f'expected an arena of {", ".join(ARENAS)}, found {self.arena!r}')
         if self.hour is not None and not (_number(self.hour) and 0 <= self.hour <= 24):
             raise ArgumentError(f'expected an hour from 0 to 24, found {self.hour!r}')
+        if not _number(self.graphics):
+            raise ArgumentError(f'expected a scale of the graphics, found {self.graphics!r}')
+        self.graphics = _sizes.parse_graphics(self.graphics)
+        self.safe = _sizes.parse_safe(self.safe)
         if self.goal is not None and (
             isinstance(self.goal, bool) or not isinstance(self.goal, int) or self.goal < 1
         ):
@@ -170,15 +174,8 @@ def _number(value: Any) -> bool:
 
 
 def check_size(width: Any, height: Any) -> None:
-    """Checks a picture size, whose sides must be even for the encoder, or raises."""
-    for value, low, high, name in (
-        (width, MIN_SIZE[0], MAX_SIZE[0], 'width'),
-        (height, MIN_SIZE[1], MAX_SIZE[1], 'height'),
-    ):
-        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
-            raise ArgumentError(f'expected a {name} from {low} to {high}, found {value!r}')
-        if value % 2:
-            raise ArgumentError(f'expected an even {name}, found {value}')
+    """Checks a picture size as `_sizes.check_size` does, with even sides for the encoder."""
+    _sizes.check_size(width, height, even=True)
 
 
 _SECONDS = r'\d+(?:\.\d+)?'
@@ -221,18 +218,11 @@ def parse_moment(text: str) -> Moment:
 
 
 def parse_size(text: str) -> tuple[int, int]:
-    """Returns the width and height of a size such as `1280x720`, or of `720p` and the like."""
-    value = str(text).strip().lower()
-    named = {'360p': (640, 360), '480p': (854, 480), '720p': (1280, 720), '1080p': (1920, 1080)}
-    named.update({'1440p': (2560, 1440), '2160p': (3840, 2160), '4k': (3840, 2160)})
-    if value in named:
-        return named[value]
-    match = re.fullmatch(r'(\d+)\s*x\s*(\d+)', value)
-    if not match:
-        raise ArgumentError(f'expected a size such as 1280x720 or 1080p, found {text!r}')
-    width, height = int(match[1]), int(match[2])
-    check_size(width, height)
-    return width, height
+    """Returns the width and height of a size such as `1280x720`, `1080p` or `vertical`.
+
+    The sizes are those of `_sizes`, shared with the feed and the page, with even sides.
+    """
+    return _sizes.parse_size(text, even=True)
 
 
 def parse_hour(text: str) -> float:
@@ -407,14 +397,14 @@ def tools(options: Options) -> tuple[str | None, str | None, list[str]]:
     return chrome, ffmpeg, missing
 
 
-def view(width: int, height: int) -> tuple[int, int, float]:
+def view(width: int, height: int, graphics: float = 1.0) -> tuple[int, int, float]:
     """Returns the page's width and height in CSS pixels and the scale that gives the picture.
 
-    The page lays out at a height of 720 CSS pixels, so its graphics keep their proportion at every
-    size, and a picture below that height lays out at the picture's own size.
+    The page lays out with its shorter side at 720 CSS pixels, so its graphics keep their
+    proportion at every size and shape, and a smaller picture lays out at its own size, as
+    `_sizes.layout` gives it with the scale of the graphics.
     """
-    scale = max(1.0, height / _CSS_HEIGHT)
-    return max(1, round(width / scale)), max(1, round(height / scale)), scale
+    return _sizes.layout(width, height, graphics)
 
 
 def chrome_command(
@@ -425,7 +415,7 @@ def chrome_command(
     Chrome picks a free port for the protocol and writes it into the profile. A proxy that answers
     nothing keeps every address other than the loopback server out of reach.
     """
-    css_width, css_height, _ = view(options.width, options.height)
+    css_width, css_height, _ = view(options.width, options.height, options.graphics)
     flags = [
         chrome,
         '--headless=new',
@@ -907,7 +897,7 @@ def export(
             client.call(
                 'Page.addScriptToEvaluateOnNewDocument', {'source': preload_script(options)}
             )
-            css_width, css_height, scale = view(options.width, options.height)
+            css_width, css_height, scale = view(options.width, options.height, options.graphics)
             client.call(
                 'Emulation.setDeviceMetricsOverride',
                 {
@@ -926,7 +916,8 @@ def export(
                     ]
                 },
             )
-            target = f'{address}?capture=1#match={urllib.parse.quote(page_id)}'
+            safe = urllib.parse.quote(str(options.safe))
+            target = f'{address}?capture=1&safe={safe}#match={urllib.parse.quote(page_id)}'
             client.call('Page.navigate', {'url': target})
             _wait_ready(client, page_id)
             client.evaluate(
@@ -1072,7 +1063,21 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         '--size',
         type=_size,
         default=DEFAULT_SIZE,
-        help='the picture size, as 1280x720 or 1080p, 1280x720 by default',
+        help='the picture size, as 1280x720 or a preset such as 1080p or vertical, '
+        '1280x720 by default',
+    )
+    parser.add_argument(
+        '--scale',
+        type=_graphics,
+        dest='graphics',
+        default=1.0,
+        help='the scale of the graphics, from 0.5 to 2, 1 by default',
+    )
+    parser.add_argument(
+        '--safe',
+        type=_safe,
+        default='auto',
+        help='the safe area of the graphics, auto, none, social or a percentage, auto by default',
     )
     parser.add_argument(
         '--fps', type=int, default=DEFAULT_FPS, help=f'frames a second, {DEFAULT_FPS} by default'
@@ -1135,6 +1140,20 @@ def _size(text: str) -> tuple[int, int]:
         raise argparse.ArgumentTypeError(str(error)) from None
 
 
+def _graphics(text: str) -> float:
+    try:
+        return _sizes.parse_graphics(text)
+    except ArgumentError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+
+
+def _safe(text: str) -> str | float:
+    try:
+        return _sizes.parse_safe(text)
+    except ArgumentError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+
+
 def _hour(text: str) -> float:
     try:
         return parse_hour(text)
@@ -1158,6 +1177,8 @@ def options_from(namespace: argparse.Namespace) -> Options:
         arena=namespace.arena,
         hour=namespace.hour,
         broadcast=namespace.broadcast,
+        graphics=namespace.graphics,
+        safe=namespace.safe,
         max_seconds=namespace.max_seconds,
         max_megabytes=namespace.max_megabytes,
         chrome=namespace.chrome,

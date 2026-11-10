@@ -3,6 +3,7 @@
 """Checks of the HTTP server, its routes and its checks, and the installable app."""
 
 import gzip
+import hashlib
 import json
 import logging
 import os
@@ -20,13 +21,28 @@ import torch
 import cuju
 import cuju.errors
 import cuju.state
+from conftest import actions_at, tensor_bytes
 from cuju.render._format import recording as _recording
 from cuju.render._http import launch as _launch
 from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
 from cuju.render._store import home as _home
 from cuju.render._store import library as _library
-from support.common import _CRASH, _fake_server, _get, _send, _toy_team
+from cuju.render._watch import live as _live
+from support.common import (
+    _CRASH,
+    _achievement_frames,
+    _achievement_header,
+    _challenge_frames,
+    _fake_server,
+    _get,
+    _help_json,
+    _help_server,
+    _package_team,
+    _person_recording,
+    _send,
+    _toy_team,
+)
 
 
 def test_server_api(render_home):
@@ -388,6 +404,8 @@ def test_game_through_the_server(render_home, monkeypatch):
             steps.append(struct.unpack_from('<i', frame)[0])
         entry = _until_ended(address, deadline)
         assert entry['state'] == 'ended', entry
+        # The person's achievements of the game, by the rules that teams earn by.
+        assert isinstance(entry['achievements'][0], list) and entry['achievements'][1] is None
         assert len(steps) > 5 and steps == list(range(1, len(steps) + 1))
         # The engine's action of the person, sampled, and none for the built-in AI's side.
         assert entry['actions'][0] in range(19) and entry['actions'][1] is None
@@ -657,6 +675,10 @@ def test_api_methods_and_request_boundaries(render_home):
         '/api/game/missing/stream',
         '/api/game/missing/input',
         '/api/game/missing/pause',
+        '/api/help/samples',
+        '/api/help/tutorial',
+        '/api/help/doctor',
+        '/api/help/app',
     ]
     server = _server.http.server.ThreadingHTTPServer(
         ('127.0.0.1', 0), _server.make_handler(_server._Requests())
@@ -1159,3 +1181,268 @@ def test_grid_through_the_server(render_home):
         old.server_close()
         source.close()
         batch.close()
+
+
+def test_presentation_routes_and_sandbox_policy(render_home):
+    """The server serves a package and a framable sandbox whose policy keeps it off the network."""
+    import base64
+
+    team = _package_team()
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+    try:
+        status, body = _get(address, f'/api/teams/{team["id"]}/presentation')
+        served = json.loads(body)
+        assert status == 200 and served['manifest']['name'] == 'Test package'
+        prefix = f'{address}/api/teams/{team["id"]}/presentation'
+        with urllib.request.urlopen(f'{prefix}/worker.js', timeout=10) as response:
+            assert response.headers['Content-Type'] == 'text/javascript'
+            assert b'export function frame' in response.read()
+        with urllib.request.urlopen(f'{prefix}/models/halo.glb', timeout=10) as response:
+            assert response.headers['Content-Type'] == 'model/gltf-binary'
+        for path in ('presentation/missing.js', 'presentation/..%2Fteam.json', 'presentation/../x'):
+            with pytest.raises(urllib.error.HTTPError) as error:
+                _get(address, f'/api/teams/{team["id"]}/{path}')
+            assert error.value.code in (403, 404)
+        plain = _teams.add('Plain', 'main.py', b'def agent(obs):\n    return [0]\n')
+        assert (
+            json.loads(_get(address, f'/api/teams/{plain["id"]}/presentation')[1])['manifest']
+            is None
+        )
+        with urllib.request.urlopen(f'{address}/sandbox/presentation', timeout=10) as reply:
+            page = reply.read().decode()
+            policy = reply.headers.get_all('Content-Security-Policy')
+            framing = reply.headers.get('X-Frame-Options')
+        assert len(policy) == 1 and framing is None
+        assert "connect-src 'none'" in policy[0]
+        # A viewer in the frame of a notebook starts its sandbox there too.
+        assert f'frame-ancestors {_launch.FRAME_ANCESTORS};' in policy[0]
+        script = page.split('<script>', 1)[1].rsplit('</script>', 1)[0]
+        digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+        assert f"script-src 'sha256-{digest}' blob:" in policy[0]
+        # Every other response still refuses framing.
+        with urllib.request.urlopen(f'{address}/js/presentation/host.js', timeout=10) as reply:
+            assert reply.headers.get('X-Frame-Options') == 'DENY'
+            assert reply.headers.get_all('Content-Security-Policy') == ["frame-ancestors 'none'"]
+        request = urllib.request.Request(
+            f'{address}/api/teams/{team["id"]}/presentation', headers={'Host': 'example.com'}
+        )
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=10)
+        assert error.value.code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_engine_outputs_stay_identical_while_a_package_plays(render_home):
+    """A batch played by a package team and watched while its package is served stays exact."""
+    team = _package_team()
+    agent = _teams.load_agent(team['id'])
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+    stop = threading.Event()
+
+    def page():
+        # A page that plays the package reads its manifest, files and sandbox again and again.
+        while not stop.is_set():
+            for path in (
+                f'/api/teams/{team["id"]}/presentation',
+                f'/api/teams/{team["id"]}/presentation/worker.js',
+                f'/api/teams/{team["id"]}/presentation/models/halo.glb',
+                '/sandbox/presentation',
+            ):
+                _get(address, path)
+
+    outputs = []
+    try:
+        for watched in (False, True):
+            stop.clear()
+            batch = cuju.BatchEnvironment(
+                '5_vs_5_l4_r0', environment_count=2, seed=11, device='cpu'
+            )
+            viewer = None
+            if watched:
+                source = cuju.render.watch(batch, environment=1)
+                viewer = _live._Viewer()
+                source._viewers.append(viewer)
+                threading.Thread(target=page, daemon=True).start()
+            seen = [tensor_bytes(batch.reset())]
+            for step in range(80):
+                if viewer is not None:
+                    while not viewer.frames.empty():
+                        viewer.frames.get_nowait()
+                actions = actions_at(step, 2, 4, 19)
+                actions[:, 0] = int(agent({})[0])
+                observation, reward, done, _ = batch.step(actions)
+                seen += [tensor_bytes(observation), tensor_bytes(reward), tensor_bytes(done)]
+            seen += [batch.get_state(0), batch.get_state(1)]
+            outputs.append(seen)
+            stop.set()
+            batch.close()
+    finally:
+        stop.set()
+        server.shutdown()
+        server.server_close()
+    assert outputs[0] == outputs[1]
+
+
+def test_challenge_server_routes(render_home, tmp_path):
+    from cuju.render._playing import challenges as _challenges
+
+    challenge = _challenges.find('one_on_one')
+    first = _person_recording(challenge, 0, _challenge_frames(goal_at=12, length=30))
+    second = _person_recording(challenge, 1, _challenge_frames())
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    address = f'http://127.0.0.1:{port}'
+    try:
+        listed = json.loads(_get(address, '/api/challenges?person=Ana')[1])
+        assert [entry['id'] for entry in listed] == [entry['id'] for entry in _challenges.CATALOG]
+        assert listed[0]['seeds'] and listed[0]['board'] == {
+            'entries': 0,
+            'people': 0,
+            'agents': 0,
+            'top': [],
+            'mine': None,
+        }
+        score = json.loads(
+            _get(address, f'/api/challenges/one_on_one/score?match={first}&attempt=0')[1]
+        )
+        assert score['result']['seconds'] == 1.2 and score['problem'] is None
+        for path, code in (
+            ('/api/challenges/no_such', 404),
+            ('/api/challenges/one_on_one/score?match=m-missing&attempt=0', 404),
+            (f'/api/challenges/one_on_one/score?match={first}&attempt=7', 400),
+        ):
+            with pytest.raises(urllib.error.HTTPError) as refused:
+                _get(address, path)
+            assert refused.value.code == code
+        run = json.dumps({'person': 'Ana', 'matches': [first, second, None]}).encode()
+        for headers in ({'Origin': 'https://example.com'}, {'Host': f'evil.example:{port}'}):
+            other = _server.http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+            other.request('POST', '/api/challenges/one_on_one/runs', body=run, headers=headers)
+            assert other.getresponse().status == 403
+            other.close()
+        for wrong in (
+            {'person': 'Ana', 'matches': [first, first, None]},
+            {'person': 'Ana'},
+            {'team': 'builtin', 'attempts': 9},
+            {'team': 'no-such-team'},
+            {'person': 'Ana', 'matches': [first, second, None], 'extra': 1},
+        ):
+            with pytest.raises(urllib.error.HTTPError) as refused:
+                _send(address, '/api/challenges/one_on_one/runs', json.dumps(wrong).encode())
+            assert refused.value.code == 400, wrong
+        outcome = _send(address, '/api/challenges/one_on_one/runs', run)
+        assert outcome['rank'] == 1 and outcome['value'] == 1
+        board = json.loads(_get(address, '/api/challenges/one_on_one')[1])
+        assert [entry['name'] for entry in board['entries']] == ['Ana']
+        mine = json.loads(_get(address, '/api/challenges?person=Ana')[1])
+        assert next(e for e in mine if e['id'] == 'one_on_one')['board']['mine']['rank'] == 1
+        # A team's run plays in a child process, and the page follows it.
+        job = _send(address, '/api/challenges/corner/runs', b'{"team": "builtin", "attempts": 1}')
+        waiting = _send(address, '/api/challenges/one_on_one/runs', b'{"team": "builtin"}')
+        request = urllib.request.Request(
+            f'{address}/api/challenges/jobs/{waiting["id"]}', method='DELETE'
+        )
+        with urllib.request.urlopen(request, timeout=10) as answer:
+            assert answer.status == 200
+        deadline = time.monotonic() + 240
+        while time.monotonic() < deadline:
+            jobs = {
+                entry['id']: entry for entry in json.loads(_get(address, '/api/challenges/jobs')[1])
+            }
+            if jobs[job['id']]['state'] in ('done', 'failed'):
+                break
+            time.sleep(0.5)
+        done = jobs[job['id']]
+        assert done['state'] == 'done', done
+        assert done['result']['practice'] and len(done['results']) == 1
+        assert (
+            jobs[waiting['id']]['state'] == 'failed' and jobs[waiting['id']]['error'] == 'cancelled'
+        )
+        recording = render_home / 'matches' / f'{done["results"][0]["match"]}.cjr'
+        assert _recording.read_header(recording)['provenance']['source'] == 'challenge'
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            request = urllib.request.Request(
+                f'{address}/api/challenges/jobs/j-none', method='DELETE'
+            )
+            urllib.request.urlopen(request, timeout=10)
+        assert refused.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_achievements_through_the_server(render_home):
+    from cuju.render._playing import achievements as _achievements
+
+    frames = _achievement_frames(60, goals=[(10, 0, 1)])
+    _achievements.award_match(_achievement_header(), frames, ['t-left', 't-right'], 'm-x')
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        address = f'http://127.0.0.1:{server.server_address[1]}'
+        listed = json.loads(_get(address, '/api/achievements')[1])
+        assert len(listed['catalog']) == len(_achievements.CATALOG)
+        assert set(listed['teams']) == {'t-left'}
+        assert set(listed['teams']['t-left']) == {'off_the_mark', 'giant_slayer', 'clean_sheet'}
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_installable_page_files_build_and_routes(render_home, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from cuju.render._http import pwa as _pwa
+
+    web = _server._WEB
+    manifest = json.loads((web / 'manifest.webmanifest').read_text())
+    assert manifest['display'] == 'standalone' and manifest['start_url'] == './#page=home'
+    for icon in manifest['icons']:
+        data = (web / icon['src']).read_bytes()
+        assert data[:8] == b'\x89PNG\r\n\x1a\n'
+        assert '{}x{}'.format(*struct.unpack('>II', data[16:24])) == icon['sizes']
+    assert '<link rel="manifest" href="manifest.webmanifest">' in (web / 'index.html').read_text()
+    script = Path(__file__).resolve().parents[1] / 'ci' / 'make_app_icons.py'
+    assert subprocess.run([sys.executable, str(script), '--check'], timeout=300).returncode == 0
+    # The build follows every file of the page.
+    copy = tmp_path / 'web'
+    copy.mkdir()
+    (copy / 'index.html').write_text('one')
+    monkeypatch.setattr(_pwa, '_WEB', copy)
+    monkeypatch.setitem(_pwa._HELD, 'at', -10.0)
+    first = _pwa.build()
+    assert _pwa.build() == first
+    (copy / 'index.html').write_text('two!')
+    monkeypatch.setitem(_pwa._HELD, 'at', -10.0)
+    assert _pwa.build() != first
+    monkeypatch.setattr(_pwa, '_WEB', web)
+    monkeypatch.setitem(_pwa._HELD, 'at', -10.0)
+    server, address = _help_server()
+    try:
+        status, info = _help_json(address, '/api/help/app')
+        assert status == 200 and info['version'] == cuju.__version__ and len(info['build']) == 16
+        with urllib.request.urlopen(address + '/manifest.webmanifest', timeout=10) as response:
+            assert response.headers['Content-Type'] == 'application/manifest+json'
+        with urllib.request.urlopen(address + '/sw.js', timeout=10) as response:
+            assert response.headers['Cache-Control'] == 'no-cache'
+            assert b'cuju-page-' in response.read()
+        with urllib.request.urlopen(address + '/index.html', timeout=10) as response:
+            assert response.headers.get('Cache-Control') is None
+    finally:
+        server.shutdown()
+        server.server_close()

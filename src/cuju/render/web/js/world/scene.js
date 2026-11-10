@@ -186,7 +186,9 @@ export class View {
     setQuality(name) {
         const q = QUALITIES[name] || QUALITIES.medium;
         this.quality = name;
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.maxRatio));
+        // A feed at high quality draws at the pixels of its picture, however large.
+        const cap = window.cujuFeed && name === 'high' ? Infinity : q.maxRatio;
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
         this.sun.shadow.mapSize.set(q.shadow, q.shadow);
         this.sun.shadow.radius = q.shadowRadius;
         if (this.sun.shadow.map) {
@@ -245,6 +247,10 @@ export class View {
         this.renderer.render(this.scene, this.camera);
         if (this.bloom && this.frame) {
             this.renderBloom();
+        }
+        // Team packages draw their passes over the picture and read its brightness.
+        if (this.afterRender) {
+            this.afterRender(this.renderer, this.scene, this.camera);
         }
     }
 

@@ -3,6 +3,8 @@
 """Checks of requested matches, games, the demo, challenges and achievements."""
 
 import json
+import logging
+import struct
 import time
 
 import pytest
@@ -13,8 +15,23 @@ import cuju.errors
 import cuju.state
 from cuju.render._format import recording as _recording
 from cuju.render._http import server as _server
+from cuju.render._registry import teams as _teams
+from cuju.render._store import home as _home
 from cuju.render._store import library as _library
-from support.common import _CRASH, _frames, _short_matches, _toy_team
+from support.common import (
+    _ACHIEVEMENT_PLAYERS,
+    _CRASH,
+    _SINGLE,
+    _achievement_frames,
+    _achievement_header,
+    _challenge_frame,
+    _challenge_frames,
+    _frames,
+    _person_recording,
+    _short_challenges,
+    _short_matches,
+    _toy_team,
+)
 
 
 def test_game_controller_follows_grf():
@@ -440,3 +457,419 @@ def test_demo_command_options(render_home, monkeypatch):
         with pytest.raises(SystemExit) as error:
             __main__.main(['demo', *arguments])
         assert error.value.code == 2
+
+
+def test_challenge_catalog_and_seeds():
+    import zlib
+
+    from cuju.render._playing import challenges as _challenges
+
+    catalog = _challenges.challenges()
+    academies = {name for name in cuju.bundled_scenarios() if name.startswith('academy_')}
+    assert {entry['scenario'] for entry in catalog if entry['scenario'].startswith('academy_')} == (
+        academies
+    )
+    ids = [entry['id'] for entry in catalog]
+    assert len(set(ids)) == len(ids) and {'one_on_one', 'one_on_one_hard'} <= set(ids)
+    for entry in catalog:
+        assert _home.valid_identifier(entry['id']) and entry['measure'] in _challenges.MEASURES
+        assert (
+            entry['targets'] == sorted(entry['targets'])
+            and len(entry['seeds']) == entry['attempts']
+        )
+        base = zlib.crc32(entry['id'].encode())
+        assert entry['seeds'] == [(base + 7919 * i) % 2**31 for i in range(entry['attempts'])]
+        assert entry['seeds'] == _challenges.seeds(entry['id'], entry['attempts'])
+    hard = _challenges.find('one_on_one_hard')
+    assert hard['ability'] == [None, 1.0] and hard['played_ability'] == [0.0, 1.0]
+    assert _challenges.find('empty_goal_close')['played_ability'] == [1.0, 0.6]
+    with pytest.raises(cuju.errors.ArgumentError, match='expected a challenge'):
+        _challenges.find('no_such_drill')
+
+
+def test_challenge_scoring_reads_the_frames():
+    from cuju.render._playing import challenges as _challenges
+
+    header = {'steps_per_second': 10}
+    scored = _challenges.score_attempt(header, _challenge_frames(goal_at=24))
+    assert scored == {'finished': True, 'goals': [1, 0], 'scored': True, 'seconds': 2.4}
+    missed = _challenges.score_attempt(header, _challenge_frames())
+    assert missed == {'finished': True, 'goals': [0, 0], 'scored': False, 'seconds': None}
+    # An attempt that ends before its episode counts its goals against and no goals for.
+    quit = _challenges.score_attempt(header, _challenge_frames(10, finished=False, against_at=5))
+    assert quit == {'finished': False, 'goals': [0, 1], 'scored': False, 'seconds': None}
+    within = _challenges.find('empty_goal_close')
+    results = [
+        _challenges._attempt_result(within, index, None, score)
+        for index, score in enumerate([scored, missed, quit, dict(scored, seconds=3.5), scored])
+    ]
+    assert [result['counts'] for result in results] == [True, False, False, False, True]
+    assert _challenges.score_run(within, results) == {'value': 2, 'seconds': 4.8, 'medal': None}
+    counted = _challenges.find('run_to_score_with_keeper')
+    assert _challenges.score_run(counted, results) == {
+        'value': 3,
+        'seconds': 8.3,
+        'medal': 'silver',
+    }
+    margin = _challenges.find('one_on_one')
+    two = _challenges.score_attempt(header, _challenge_frames(goal_at=5, against_at=30))
+    assert two['goals'] == [1, 1]
+    runs = [
+        _challenges._attempt_result(margin, i, None, s) for i, s in enumerate([scored, two, quit])
+    ]
+    assert _challenges.score_run(margin, runs) == {'value': 0, 'seconds': 2.9, 'medal': None}
+    assert [_challenges.medal(margin, value) for value in (0, 1, 3, 6, 9)] == [
+        None,
+        'bronze',
+        'silver',
+        'gold',
+        'gold',
+    ]
+
+
+def test_challenge_person_run_checks_each_recording(render_home):
+    from cuju.render._playing import challenges as _challenges
+
+    challenge = _challenges.find('one_on_one')
+    goal = _challenge_frames(goal_at=12, length=30)
+    first = _person_recording(challenge, 0, goal)
+    second = _person_recording(challenge, 1, _challenge_frames(goal_at=20, against_at=25))
+    scored = _challenges.score_recording('one_on_one', first, 0)
+    assert scored['problem'] is None and scored['result']['seconds'] == 1.2
+    assert 'seed' in _challenges.score_recording('one_on_one', first, 1)['problem']
+    for changes, word in (
+        ({'seed': 5}, 'seed'),
+        ({'scenario': 'academy_corner'}, 'scenario'),
+        ({'source': 'requested_match'}, 'source'),
+        ({'humans': [True, True]}, 'humans'),
+        ({'teams': ['t-other', 'builtin']}, 'teams'),
+        ({'ability': [0.5, 0.0]}, 'ability'),
+    ):
+        wrong = _person_recording(challenge, 2, goal, **changes)
+        with pytest.raises(cuju.errors.ArgumentError, match=word):
+            _challenges.person_run('one_on_one', 'Ana', [first, second, wrong])
+    with pytest.raises(cuju.errors.ArgumentError, match='distinct'):
+        _challenges.person_run('one_on_one', 'Ana', [first, first, second])
+    with pytest.raises(cuju.errors.ArgumentError, match='recordings of the attempts'):
+        _challenges.person_run('one_on_one', 'Ana', [first, second])
+    with pytest.raises(cuju.errors.ArgumentError, match='name'):
+        _challenges.person_run('one_on_one', '  ', [first, second, None])
+    with pytest.raises(cuju.errors.ArgumentError, match='recording of the library'):
+        _challenges.person_run('one_on_one', 'Ana', [first, second, 'm-missing'])
+    assert _challenges.board('one_on_one') == []
+    # A missed attempt has no recording and counts nothing.
+    outcome = _challenges.person_run('one_on_one', 'Ana', [first, second, None])
+    assert (outcome['value'], outcome['seconds'], outcome['medal']) == (1, 3.2, 'bronze')
+    assert outcome['rank'] == 1 and outcome['improved'] and not outcome['practice']
+    assert [result['match'] for result in outcome['attempts']] == [first, second, None]
+    board = _challenges.board('one_on_one')
+    assert [(entry['kind'], entry['name'], entry['value']) for entry in board] == [
+        ('person', 'Ana', 1)
+    ]
+
+
+def test_challenge_headless_run_with_a_registered_team(render_home, tmp_path, monkeypatch):
+    from cuju.render._playing import challenges as _challenges
+
+    team = _toy_team(tmp_path, 'toy', _SINGLE, '11v11')
+    _short_challenges(monkeypatch, 6)
+    seen = []
+    practice = _challenges.run(
+        'empty_goal_close', team=team['id'], attempts=2, progress=seen.append
+    )
+    assert practice['practice'] and practice['medal'] is None and practice['rank'] is None
+    assert [result['index'] for result in seen] == [0, 1]
+    assert _challenges.board('empty_goal_close') == []
+    seeds = _challenges.find('empty_goal_close')['seeds']
+    for result in practice['attempts']:
+        document, frames = _frames(render_home / 'matches' / f'{result["match"]}.cjr')
+        provenance = document['provenance']
+        assert provenance['source'] == 'challenge' and provenance['challenge'] == 'empty_goal_close'
+        assert (
+            provenance['attempt'] == result['index']
+            and provenance['seed'] == seeds[result['index']]
+        )
+        assert provenance['teams'] == [team['id'], 'builtin'] and provenance['agent_counts'] == [
+            1,
+            0,
+        ]
+        assert provenance['ability'] == [1.0, 0.6] and provenance['competitor'] == 'toy'
+        assert len(frames) == 7 and struct.unpack_from('<i', frames[-1], 28)[0] & 1
+        assert document['teams'][0]['id'] == team['id']
+    outcome = _challenges.run('empty_goal_close', team=team['id'])
+    assert not outcome['practice'] and len(outcome['attempts']) == 5 and outcome['rank'] == 1
+    board = _challenges.board('empty_goal_close')
+    assert [(entry['kind'], entry['team'], entry['name']) for entry in board] == [
+        ('agent', team['id'], 'toy')
+    ]
+    assert [attempt['match'] for attempt in board[0]['attempts']] == [
+        result['match'] for result in outcome['attempts']
+    ]
+
+
+def test_challenge_person_and_agent_face_the_same_episode(render_home, tmp_path, monkeypatch):
+    """A team of one dynamic agent plays the very episode of a person's game of the attempt."""
+    from cuju.render._playing import challenges as _challenges
+    from cuju.render._playing import game as _game
+
+    idle = _toy_team(tmp_path, 'idle', 'def agent(obs):\n    return [0]\n', '11v11')
+    _short_challenges(monkeypatch, 12)
+    outcome = _challenges.run('run_to_score', team=idle['id'], attempts=1)
+    _, agent_frames = _frames(render_home / 'matches' / f'{outcome["attempts"][0]["match"]}.cjr')
+    challenge = _challenges.find('run_to_score')
+    game = _game.Game(
+        challenge['scenario'], (True, False), tuple(challenge['ability']), challenge['seeds'][0]
+    )
+    try:
+        for _ in range(12):
+            game.step({0: (frozenset(), frozenset())})
+        # The last frame of the attempt carries the end of its shortened episode as well.
+        assert len(game.frames) == len(agent_frames) == 13
+        assert game.frames[:12] == agent_frames[:12]
+        assert game.frames[12][32:] == agent_frames[12][32:]
+    finally:
+        game.close()
+
+
+def test_challenge_policy_runs_and_failures(render_home, monkeypatch):
+    from cuju.render._playing import challenges as _challenges
+    from cuju.render._playing import play as _play
+
+    _short_challenges(monkeypatch, 4)
+    calls = []
+
+    def striker(obs):
+        calls.append(obs['step'])
+        return [12]
+
+    outcome = cuju.render.challenge('corner', policy=striker, attempts=1)
+    assert outcome['name'] == 'striker' and outcome['team'] is None and outcome['practice']
+    assert calls == [0, 1, 2, 3]
+    document = _recording.read_header(
+        render_home / 'matches' / f'{outcome["attempts"][0]["match"]}.cjr'
+    )
+    assert (
+        document['provenance']['policy'] == 'striker' and document['teams'][0]['name'] == 'striker'
+    )
+    full = cuju.render.challenge('one_on_one', policy=striker, name='Striker bot')
+    assert full['rank'] == 1 and _challenges.board('one_on_one')[0]['name'] == 'Striker bot'
+
+    def broken(obs):
+        raise RuntimeError('no idea')
+
+    with pytest.raises(_play.PolicyError, match='no idea'):
+        cuju.render.challenge('corner', policy=broken)
+    with pytest.raises(_play.PolicyError):
+        cuju.render.challenge('corner', policy=lambda obs: [99], name='wild')
+    assert _challenges.board('corner') == []
+    for options in (
+        {},
+        {'team': 'builtin', 'policy': striker},
+        {'team': 'no-such-team'},
+        {'policy': striker, 'attempts': 6},
+        {'policy': striker, 'attempts': 0},
+    ):
+        with pytest.raises(cuju.errors.ArgumentError):
+            cuju.render.challenge('corner', **options)
+
+
+@pytest.mark.parametrize(
+    ('frames', 'header', 'left', 'right'),
+    [
+        # Player 1 scores three, a win at ability 1.0 in a full match without a goal conceded.
+        (
+            dict(length=60, goals=[(10, 0, 1), (20, 0, 1), (30, 0, 1)]),
+            {},
+            ['off_the_mark', 'hat_trick', 'giant_slayer', 'clean_sheet'],
+            [],
+        ),
+        # Two scorers make no hat trick, an opponent at 0.6 no giant, a conceded goal no clean
+        # sheet, and the loser comes back from nothing.
+        (
+            dict(length=60, goals=[(10, 0, 1), (20, 0, 1), (30, 0, 0), (40, 1, 3)]),
+            {'ability': 0.6},
+            ['off_the_mark', 'keeper_goal'],
+            ['off_the_mark'],
+        ),
+        # The right side leads, then the left side wins late after trailing.
+        (
+            dict(length=100, goals=[(10, 1, 3), (50, 0, 1), (95, 0, 1)]),
+            {'full_match': False},
+            ['off_the_mark', 'giant_slayer', 'comeback', 'last_gasp'],
+            ['off_the_mark'],
+        ),
+        # A goal from the own corner, within ten seconds and with play running on.
+        (
+            dict(length=100, goals=[(60, 0, 1)], modes=[(40, 45, 4, 54.0)]),
+            {'scenario': 'academy_corner', 'full_match': False},
+            ['off_the_mark', 'corner_goal'],
+            [],
+        ),
+        # The corner of the other side, a free kick in between, or a goal too late count none.
+        (
+            dict(length=100, goals=[(60, 0, 1)], modes=[(40, 45, 4, -54.0)]),
+            {'scenario': 'academy_corner', 'full_match': False},
+            ['off_the_mark'],
+            [],
+        ),
+        (
+            dict(length=100, goals=[(60, 0, 1)], modes=[(30, 35, 4, 54.0), (50, 52, 3, 30.0)]),
+            {'scenario': 'academy_corner', 'full_match': False},
+            ['off_the_mark'],
+            [],
+        ),
+        (
+            dict(length=200, goals=[(160, 0, 1)], modes=[(40, 45, 4, 54.0)]),
+            {'scenario': 'academy_corner', 'full_match': False},
+            ['off_the_mark'],
+            [],
+        ),
+        # A penalty of the right side, which attacks the goal at negative x.
+        (
+            dict(length=60, goals=[(30, 1, 3)], modes=[(10, 20, 6, -44.0)]),
+            {},
+            [],
+            ['off_the_mark', 'penalty_goal', 'clean_sheet'],
+        ),
+        # The scorer's last touch 35 meters out is a screamer, one 5 meters out is not.
+        (
+            dict(length=60, goals=[(30, 0, 1)], touches=[(20, 1, 20.0)]),
+            {'scenario': 'academy_run_to_score', 'full_match': False},
+            ['off_the_mark', 'screamer'],
+            [],
+        ),
+        (
+            dict(length=60, goals=[(30, 0, 1)], touches=[(10, 1, 20.0), (25, 1, 50.0)]),
+            {'scenario': 'academy_run_to_score', 'full_match': False},
+            ['off_the_mark'],
+            [],
+        ),
+        # An own goal counts for the other side, but for nobody's hat trick or keeper.
+        (
+            dict(length=60, goals=[(10, 0, 2), (20, 0, 3), (30, 0, 3)]),
+            {'ability': 0.5},
+            ['off_the_mark', 'clean_sheet'],
+            [],
+        ),
+        # Five ahead is a rout, and an episode cut short wins nothing.
+        (
+            dict(length=60, goals=[(5 * k, 0, 1) for k in range(1, 6)]),
+            {'opponent': 't-other'},
+            ['off_the_mark', 'hat_trick', 'clean_sheet', 'rout'],
+            [],
+        ),
+        (
+            dict(length=60, goals=[(5 * k, 0, 1) for k in range(1, 6)], finished=False),
+            {},
+            ['off_the_mark', 'hat_trick'],
+            [],
+        ),
+    ],
+)
+def test_achievements_from_frames(frames, header, left, right):
+    from cuju.render._playing import achievements as _achievements
+
+    document = _achievement_header(**header)
+    built = _achievement_frames(**frames)
+    assert _achievements.detect(document, built, 0) == left
+    assert _achievements.detect(document, built, 1) == right
+    # Without the engine's scorer the scorers stay unknown.
+    unknown = {**document, 'engine_scorer': False}
+    assert 'hat_trick' not in _achievements.detect(unknown, built, 0)
+
+
+def test_achievements_of_teams_stay_on_disk(render_home, caplog):
+
+    from cuju.render._playing import achievements as _achievements
+
+    header = _achievement_header()
+    frames = _achievement_frames(60, goals=[(10, 0, 1), (20, 0, 1), (30, 0, 1)])
+    timing = {'duration': 3000, 'second_half': None, 'full_match': True}
+    head = _recording.header('Match', '5_vs_5', _ACHIEVEMENT_PLAYERS, None, len(frames), timing, {})
+    awarded = _achievements.award_match(head, frames, ['t-left', 'builtin'], 'm-first')
+    assert awarded == {'t-left': ['off_the_mark', 'hat_trick', 'clean_sheet']}
+    again = _achievements.award_match(header, frames, ['t-left', None], 'm-second')
+    assert again['t-left'][0] == 'off_the_mark'
+    kept = _achievements.earned('t-left')
+    assert kept['off_the_mark']['count'] == 2 and kept['off_the_mark']['match'] == 'm-first'
+    assert kept['giant_slayer'] == {**kept['giant_slayer'], 'count': 1, 'match': 'm-second'}
+    folder = render_home / 'achievements'
+    assert sorted(path.name for path in folder.iterdir()) == ['t-left.json']
+    public = _achievements.public()
+    assert [entry['id'] for entry in public['catalog']] == list(_achievements.IDENTIFIERS)
+    assert set(public['teams']) == {'t-left'}
+    document = json.loads((folder / 't-left.json').read_text())
+    document['earned']['rout'] = {'first': 'today', 'count': 1}
+    document['earned']['flying'] = {'first': 1, 'count': 1}
+    (folder / 't-left.json').write_text(json.dumps(document))
+    (folder / 't-broken.json').write_text('[')
+    with caplog.at_level(logging.WARNING, logger='cuju'):
+        assert set(_achievements.earned('t-left')) == set(kept)
+        assert _achievements.earned('t-broken') == {}
+    warnings = [record.getMessage() for record in caplog.records if record.name == 'cuju']
+    assert len(warnings) == 2 and '2 invalid entries' in warnings[0]
+
+
+def test_requested_match_awards_its_teams(render_home, tmp_path, monkeypatch, caplog):
+
+    from cuju.render._playing import achievements as _achievements
+    from cuju.render._playing import play as _play
+
+    team = _toy_team(tmp_path, 'toy', _SINGLE, '5v5')
+    _short_matches(monkeypatch, 3)
+    seen = []
+    real = _achievements.detect
+
+    def detect(header, frames, side):
+        seen.append((header['provenance']['source'], len(frames), side))
+        return ['rout'] if side == 0 else real(header, frames, side)
+
+    monkeypatch.setattr(_achievements, 'detect', detect)
+    path = _play.play(team['id'], 'builtin', '5_vs_5', seed=3)
+    assert seen == [('requested_match', 4, 0)]
+    assert _achievements.earned(team['id'])['rout']['match'] == path.stem
+
+    # A failed write leaves the recording saved, with a warning.
+    def full(target, data):
+        raise OSError('disk full')
+
+    monkeypatch.setattr(_teams, '_replace', full)
+    with caplog.at_level(logging.WARNING, logger='cuju'):
+        second = _play.play(team['id'], 'builtin', '5_vs_5', seed=4)
+    assert second.is_file()
+    assert any('achievements' in record.getMessage() for record in caplog.records)
+
+
+def test_challenge_runs_award_achievements(render_home, tmp_path, monkeypatch):
+    from cuju.render._playing import achievements as _achievements
+    from cuju.render._playing import challenges as _challenges
+
+    challenge = _challenges.find('one_on_one')
+    goals = [_challenge_frames(goal_at=5 + index, length=30) for index in range(3)]
+    for frames in goals:
+        for step in range(15, 30):
+            frames[step] = _challenge_frame(step, (2, 0) if step < 29 else (3, 0), frames[step][28])
+    matches = [_person_recording(challenge, index, frames) for index, frames in enumerate(goals)]
+    outcome = _challenges.person_run('one_on_one', 'Ana', matches)
+    assert outcome['medal'] == 'gold'
+    assert outcome['achievements'] == ['off_the_mark', 'podium', 'gold_standard']
+    # A team earns the achievements of its attempts and medals on disk, a policy only in its run.
+    team = _toy_team(tmp_path, 'toy', _SINGLE, '11v11')
+    _short_challenges(monkeypatch, 4)
+    monkeypatch.setattr(_challenges, 'medal', lambda challenge, value: 'gold')
+    run = _challenges.run('corner', team=team['id'])
+    assert run['achievements'] == ['podium', 'gold_standard']
+    assert set(_achievements.earned(team['id'])) == {'podium', 'gold_standard'}
+    policy = _challenges.run('corner', policy=lambda obs: [0], name='calm')
+    assert policy['achievements'] == ['podium', 'gold_standard']
+    assert set(_achievements.public()['teams']) == {team['id']}
+    practice = _challenges.run('corner', team=team['id'], attempts=1)
+    assert practice['achievements'] == []
+    monkeypatch.setattr(
+        _challenges,
+        'personal_bests',
+        lambda *arguments: {entry['id']: {'medal': 'gold'} for entry in _challenges.CATALOG},
+    )
+    graduate = _challenges.run('corner', team=team['id'])
+    assert graduate['achievements'] == ['podium', 'gold_standard', 'academy_graduate']
+    assert _achievements.earned(team['id'])['podium']['count'] == 2

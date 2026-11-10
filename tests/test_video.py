@@ -308,7 +308,10 @@ def test_page_request_options():
     for wrong in (
         {'end': 5, 'start': 5},
         {'end': 'soon'},
-        {'end': 5, 'width': 1000, 'height': 500},
+        {'end': 5, 'width': 1001, 'height': 500},
+        {'end': 5, 'width': 3840, 'height': 3840},
+        {'end': 5, 'scale': 3},
+        {'end': 5, 'safe': 'wide'},
         {'end': 5, 'fps': 29},
         {'end': 5, 'fps': True},
         {'end': 5, 'score': 'yes'},
@@ -406,7 +409,7 @@ def test_server_exports(render_home, monkeypatch):
         assert not list(_home.folder('videos').glob(f'{entry["id"]}*'))
         for path, document, code in (
             ('/api/matches/no-match/video', {'start': 0, 'end': 2}, 400),
-            ('/api/matches/sample-5v5/video', {'start': 0, 'end': 2, 'width': 640}, 400),
+            ('/api/matches/sample-5v5/video', {'start': 0, 'end': 2, 'width': 641}, 400),
             ('/api/matches/sample-5v5/video', {'start': 0, 'end': 2, 'fps': 7}, 400),
             ('/api/matches/sample-5v5/video', {'start': 400, 'end': 500}, 400),
         ):

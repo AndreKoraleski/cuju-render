@@ -25,7 +25,7 @@ const SORTS = [
     ['score:-1', 'Most goals'], ['teams:1', 'Teams, A to Z'], ['steps:-1', 'Longest'], ['bytes:-1', 'Largest'],
 ];
 const RANGES = [['any', 'Any date'], ['today', 'Today'], ['week', 'Last 7 days'], ['month', 'Last 30 days'], ['year', 'This year']];
-const SOURCES = { requested_match: 'Requested match', human_game: 'Played game', recorder: 'Recorder', live: 'Live source', unknown: 'Unknown source' };
+const SOURCES = { requested_match: 'Requested match', human_game: 'Played game', challenge: 'Challenge', recorder: 'Recorder', live: 'Live source', unknown: 'Unknown source' };
 const RESULTS = [['all', 'Every result'], ['left', 'Left won'], ['right', 'Right won'], ['draw', 'Draw'], ['unknown', 'Unknown result']];
 const DEFAULT_FILTERS = { scenario: 'all', team: 'all', range: 'any', favorite: 'all', source: 'all', result: 'all' };
 // The provenance fields in the order and with the names the details panel shows.
@@ -309,6 +309,10 @@ export class RecordingsPage {
             h('button', { class: 'btn danger', type: 'button', disabled: true, 'data-act': 'delete', onclick: () => this.deleteSelected() }, this.trash ? 'Delete permanently' : 'Move to Trash'),
             h('button', { class: 'btn ghost', type: 'button', title: this.trash ? 'Read the Trash again' : 'Read the library again', onclick: () => this.refresh() }, 'Refresh'));
         this.detailsHost = h('div', { class: 'details-host' });
+        // The search of moments across every recording, a panel above the table.
+        this.momentsHost = h('div', { class: 'moments-host' });
+        const momentsToggle = this.app.moments && !this.trash
+            ? this.app.moments.mount(this.momentsHost, scenarios.map((s) => [s, scenarioName(s)]), teams) : null;
         this.tableHost = h('div', { class: 'table-host' });
         this.treeHost = h('div', { class: 'tree-host' }, tree);
         this.root.replaceChildren(h('div', { class: 'explorer' },
@@ -316,7 +320,7 @@ export class RecordingsPage {
                 h('div', { class: 'pane-head' }, h('span', { class: 'label' }, 'Folders'),
                     h('button', { class: 'btn small', type: 'button', onclick: () => this.newFolder() }, 'New folder')),
                 this.treeHost),
-            h('div', { class: 'files' }, h('div', { class: 'toolbar' }, search, filters), actions, this.detailsHost, this.tableHost)));
+            h('div', { class: 'files' }, h('div', { class: 'toolbar' }, search, filters, momentsToggle), this.momentsHost, actions, this.detailsHost, this.tableHost)));
         this.renderTable();
         this.renderDetails();
     }

@@ -10,6 +10,7 @@ import {
 } from '../core/api.js';
 import { normalizeStyle } from '../players/kits.js';
 import { kitShirt } from '../pages/matches.js';
+import { addFormSurprise } from './surprise-ui.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -222,6 +223,7 @@ export class TeamsPage {
         const fileInput = h('input', { type: 'file', accept: '.py,.gz,.tgz,.zip', hidden: true });
         const summary = h('div', { class: 'upload-summary muted' }, 'No folder chosen.');
         const send = h('button', { class: 'btn primary', type: 'submit', disabled: true }, 'Upload team');
+        const surprise = addFormSurprise(this.app, name, format);
         let pending = null;
         const choose = (p) => {
             pending = p;
@@ -289,7 +291,7 @@ export class TeamsPage {
             }
         });
         const form = h('form', { class: 'form' }, h('div', { class: 'grid2' }, h('label', {}, 'Name', name), h('label', {}, 'Format', format)),
-            h('div', {}, control), dropZone, summary,
+            surprise.element, h('div', {}, control), dropZone, summary,
             h('div', { class: 'form-actions' }, send));
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -300,12 +302,14 @@ export class TeamsPage {
             send.disabled = true;
             send.textContent = 'Uploading';
             try {
+                let added;
                 if (pending.kind === 'folder') {
                     const blob = await packFolder(pending.files);
-                    await api.uploadTeam(name.value.trim(), pending.label, blob, format.value, controlChanged ? controlFromValue(control.value) : null);
+                    added = await api.uploadTeam(name.value.trim(), pending.label, blob, format.value, controlChanged ? controlFromValue(control.value) : null);
                 } else {
-                    await api.uploadTeam(name.value.trim(), pending.label, pending.file, format.value, controlChanged ? controlFromValue(control.value) : null);
+                    added = await api.uploadTeam(name.value.trim(), pending.label, pending.file, format.value, controlChanged ? controlFromValue(control.value) : null);
                 }
+                await surprise.apply(added);
                 this.app.hud.toast(`Team ${name.value.trim()} added.`);
                 // The form outlives refreshes, so it is emptied here for the next team.
                 controlChanged = false;

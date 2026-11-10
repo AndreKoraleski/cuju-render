@@ -1319,7 +1319,7 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
         entry['name'] = saved['name'].strip()[:80]
     for path in list(team_folder.iterdir()):
         slot, suffix = path.stem, path.suffix
-        if path.name in ('team.json', _MODEL, 'clips') or not _kept(path):
+        if path.name in ('team.json', _MODEL, 'clips', 'presentation') or not _kept(path):
             continue
         sound = slot.startswith('sound-')
         if sound and not (slot[len('sound-') :] in SOUND_SLOTS and suffix in _SOUND_SUFFIXES):
@@ -1338,9 +1338,11 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
             valid = False
         if not valid:
             set_aside(path, 'it fails the checks of an upload')
+    from .._packages import presentation as _presentation
     from . import clips as _clips
 
     _clips.import_folder(team_folder)
+    _presentation.import_folder(team_folder)
     model = team_folder / _MODEL
     joints = (
         (saved.get('model') or {}).get('joints') if isinstance(saved.get('model'), dict) else None
@@ -1397,6 +1399,10 @@ def export(identifier: str) -> tuple[str, bytes]:
     root = _meta_path(identifier).parent.parent
     meta = _meta_path(identifier)
     stored = {key: value for key, value in team.items() if key not in _IMPLIED}
+    from .._packages import presentation as _presentation
+
+    # A package's files go out only as they pass their check again.
+    failing = _presentation.left_out(root) if root.is_dir() else set()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(f'{TEAM_FOLDER}/team.json', json.dumps(stored))
@@ -1404,6 +1410,7 @@ def export(identifier: str) -> tuple[str, bytes]:
             if (
                 path.is_file()
                 and path != meta
+                and path not in failing
                 and not path.name.endswith('.part')
                 and '__pycache__' not in path.parts
             ):

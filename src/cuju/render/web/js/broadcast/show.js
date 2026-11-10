@@ -13,6 +13,7 @@ import {
 } from './celebrate.js';
 import { ACTION, NODES_FLOAT, PLAYER_FLOATS, TOUCH, isCut } from '../recording/format.js';
 import { fullMatch, summaryRange } from '../recording/episodes.js';
+import { aspectFov, narrowShare, turnBetween } from '../world/framing.js';
 import { bareTeamName, kitSwatch, teamNames } from './hud.js';
 import { HALF_H, HALF_W } from '../world/pitch.js';
 import { Players } from '../players/players.js';
@@ -918,9 +919,6 @@ export class Director {
     // before the goal can hold while the scorer celebrates.
     goalScored(index, team, early = false) {
         const app = this.app;
-        if (app.reducedMotion) {
-            return;
-        }
         const tl = app.timeline;
         if (!tl || this.running || this.handled === index || app.postMatch.running) {
             return;
@@ -1088,7 +1086,8 @@ export class Director {
             const right = new THREE.Vector3(-face.z, 0, face.x);
             const sh = this.shot;
             if (stage !== c.stage) {
-                sh.snap = !!shot.snap;
+                // Reduced motion cuts to each shot.
+                sh.snap = !!shot.snap || app.reducedMotion;
                 if (shot.kind === 'orbit') {
                     const from = app.cameras.camera ? app.cameras.camera.position : p;
                     c.orbit = Math.atan2(from.z - p.z, from.x - p.x);
@@ -1249,6 +1248,8 @@ export class Director {
     // A single replay on request, the chosen angle.
     start(goal) {
         this.recent = null;
+        // The replay plays, so a pause of the viewer before it ends here.
+        this.app.userPaused = false;
         this.play([{ goal, shot: 'auto' }]);
     }
 
@@ -1299,18 +1300,6 @@ export class Director {
             if (options.onDone) {
                 options.onDone();
             }
-            return;
-        }
-        // With reduced motion a replay plays the goal again from three seconds before it, in the
-        // view of the moment, without the wipe or the replay cameras.
-        if (app.reducedMotion && tl && queue.length) {
-            tl.seek(Math.max(tl.store.first, queue[0].goal.index - 3 * tl.sps));
-            app.lastIndex = tl.index;
-            app.afterSeek();
-            // The replay plays, so a pause of the viewer before it ends here.
-            app.userPaused = false;
-            tl.play(1);
-            app.updatePlayUi();
             return;
         }
         if (!tl || !queue.length) {
@@ -1411,6 +1400,10 @@ export class Director {
         if (plan.angle === 'high') {
             sh.pos.set(b[0] - dir * 24, 24, -b[1] * 0.55 + 14);
             sh.target.set(b[0] + dir * 8, 0, -b[1] * 0.85);
+            // A narrow picture turns the camera towards the goal as the ball nears it, so the ball
+            // and the goal both stay in it.
+            const near = THREE.MathUtils.clamp((60 - Math.hypot(goal.x - ball.x, goal.z - ball.z)) / 40, 0, 1);
+            turnBetween(sh.pos, sh.target, ball, goal, narrowShare(app.view.aspect) * near);
             sh.fov = 44;
             sh.rate = 2.2;
         } else if (plan.angle === 'reverse') {
@@ -1582,9 +1575,6 @@ export class Director {
     // Team sheets before kick-off over a slow pan of the ground, while play waits.
     showLineups() {
         const app = this.app;
-        if (app.reducedMotion) {
-            return;
-        }
         const tl = app.timeline;
         if (!tl || !app.source || app.source.kind === 'live' || !app.settings.lineups || this.running
             || tl.t > tl.first + 1 || app.postMatch.running) {
@@ -1603,7 +1593,8 @@ export class Director {
     }
 
     lineupShot(clock) {
-        const u = clock / LINEUP_LENGTH;
+        // Reduced motion holds the middle of the pan.
+        const u = this.app.reducedMotion ? 0.5 : clock / LINEUP_LENGTH;
         const sh = this.shot;
         sh.pos.set(-38 + 76 * u, 26 - 6 * u, 58);
         sh.target.set(-14 + 28 * u, 0, 0);
@@ -2416,13 +2407,6 @@ export class PostMatch {
 
     start() {
         const app = this.app;
-        if (app.reducedMotion) {
-            // Reduced motion leaves out the show and opens the statistics alone.
-            if (app.timeline && app.source && app.settings.podium) {
-                this.openStats();
-            }
-            return;
-        }
         if (this.running || !app.source || !app.settings.podium || !app.timeline) {
             return;
         }
@@ -2954,7 +2938,9 @@ export class Podium {
         app.hud.freeze(last);
         const winner = honour ? honour.team : last.scoreLeft === last.scoreRight ? -1 : (last.scoreLeft > last.scoreRight ? 0 : 1);
         const best = (team) => stats.filter((s) => s.team === team).sort((a, b) => b.score - a.score);
-        app.sound.fanfare();
+        if (!(app.presentation && app.presentation.reveal('winner', winner))) {
+            app.sound.fanfare();
+        }
         this.previousCamera = app.cameras.mode === 'scripted' ? (app.settings.camera || 'broadcast') : app.cameras.mode;
         if (winner >= 0) {
             this.buildScene(header, best(winner), winner);
@@ -3169,7 +3155,8 @@ export class Podium {
         const sh = director.shot;
         const aspect = Math.max(0.5, app.view.aspect || 16 / 9);
         const fov = 40;
-        const half = Math.tan(THREE.MathUtils.degToRad(fov / 2));
+        // The camera widens the field of view of a narrow picture, so the distance is for that.
+        const half = Math.tan(THREE.MathUtils.degToRad(aspectFov(fov, aspect) / 2));
         const tall = top + height * 1.15;
         const dist = Math.max(10, (width / 2 + 1) / (half * aspect), (tall / 2 + 1) / half);
         // The card of the MVP sits on the right, so the podium moves left of it.
@@ -3231,6 +3218,12 @@ export class Podium {
         }
         this.clock += dt;
         this.dance(this.clock);
+        // Reduced motion keeps the dances and leaves the confetti out.
+        const still = !!this.app.reducedMotion;
+        this.confettiMesh.visible = !still;
+        if (still) {
+            return;
+        }
         const m = new THREE.Matrix4();
         const q = new THREE.Quaternion();
         const one = new THREE.Vector3(1, 1, 1);
@@ -3378,7 +3371,9 @@ export class Spotlight {
         document.getElementById('watch').appendChild(this.overlay);
         document.getElementById('app').classList.add('spot-show');
         this.buildStage(stage, s);
-        app.sound.fanfare();
+        if (!(app.presentation && app.presentation.reveal('mvp', s.team))) {
+            app.sound.fanfare();
+        }
         this.overlay.querySelector('button').focus();
         this.overlay.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {

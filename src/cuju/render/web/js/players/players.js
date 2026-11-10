@@ -1090,6 +1090,11 @@ class Rigged {
             }
             const base = e.k * PLAYER_FLOATS;
             e.hideHead = mode === HIDE_HEAD;
+            // A team presentation package poses its own players, see presentation/index.js.
+            if (this.presentation && this.presentation.pose(e, nodes, base)) {
+                e.drawnClip = true;
+                continue;
+            }
             const r = e.request;
             if (r && r.weight > 0) {
                 e.rig.poseClip(e.instance, r.clip, r.t, r.weight, nodes, base, e.hideHead);
@@ -1164,7 +1169,8 @@ class Rigged {
     }
 
     size(k) {
-        return this.byK.get(k).rig.size();
+        const e = this.byK.get(k);
+        return (this.presentation && this.presentation.size(e)) || e.rig.size();
     }
 
     dispose() {
@@ -1172,6 +1178,9 @@ class Rigged {
         for (const e of this.entries) {
             if (e.recolor) {
                 e.recolor.forget(e.instance);
+            }
+            if (this.presentation) {
+                this.presentation.release(e);
             }
             if (e.instance.mixer) {
                 e.instance.mixer.stopAllAction();
@@ -1961,6 +1970,8 @@ export class Players {
         this.header = header;
         this.styles = styles;
         this.count = header.players.length;
+        // A team's presentation package, which may pick models and pose its players.
+        this.presentation = options.presentation || null;
         this.visible = new Uint8Array(this.count).fill(1);
         this.hidden = new Uint8Array(this.count);
         this.group = new THREE.Group();
@@ -1968,7 +1979,7 @@ export class Players {
         const tables = rigTables(rigs, styles);
         this.choice = header.players.map((p) => {
             const style = styles[p.team] || styles[0];
-            const wanted = playerModel(style, p.index);
+            const wanted = (this.presentation && this.presentation.modelFor(p, style)) || playerModel(style, p.index);
             const rig = wanted !== 'grf' && tables[p.team] ? tables[p.team].get(wanted) || null : null;
             return { model: rig ? wanted : 'grf', wanted, rig };
         });
@@ -2006,6 +2017,7 @@ export class Players {
             try {
                 this.rigged = new Rigged(this.group, header, styles, custom,
                     (k) => this.choice[k], (team, model, rig, gk) => this.recolorFor(team, model, rig, gk));
+                this.rigged.presentation = this.presentation;
                 this.parts.push(this.rigged);
                 custom.forEach((k) => {
                     this.where[k] = this.rigged;
@@ -2202,6 +2214,13 @@ export class Players {
         const rig = this.rigOf(k);
         if (!rig || typeof rig.clip !== 'function' || !name) {
             return null;
+        }
+        // A semantic role plays the clip a team's presentation package gives it.
+        if (String(name).startsWith('role:')) {
+            name = this.presentation ? this.presentation.roleClip(k, String(name).slice(5)) : null;
+            if (!name) {
+                return null;
+            }
         }
         const parts = String(name).replace(/^clip:/, '').split('>');
         const first = rig.clip(parts[0]);

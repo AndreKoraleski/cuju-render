@@ -10,6 +10,8 @@ import * as THREE from 'three';
 import { FULL_HALF_H, FULL_HALF_W, HALF_W } from './pitch.js';
 import { NODE_FLOATS, PLAYER_FLOATS } from '../recording/format.js';
 import * as stadium from './stadium.js';
+import { stillCut } from '../core/comfort.js';
+import { aspectFov, leadScale, narrowShare, trackRate } from './framing.js';
 
 export const CAMERA_MODES = [
     { id: 'broadcast', label: 'Broadcast', key: 'V' },
@@ -329,6 +331,8 @@ export class CameraRig {
         if (mode === old) {
             return;
         }
+        // A scripted shot under reduced motion starts from a still of its own.
+        this.still = null;
         const cam = this.camera;
         if (mode !== 'scripted') {
             // The view glides from where it is, carrying on with its own motion as it fades, so a
@@ -516,7 +520,7 @@ export class CameraRig {
 
     // Follow modes. The target glides to the wanted point, the offset stays as the user set it,
     // and W, A, S, D, E and Q nudge the offset within the box.
-    followUpdate(dt, want) {
+    followUpdate(dt, want, aspect) {
         const move = this.keyMove(new THREE.Vector3(-this.offset.x, 0, -this.offset.z).normalize());
         const moved = move.lengthSq() > 0;
         if (moved) {
@@ -538,7 +542,7 @@ export class CameraRig {
             this.limitOffset();
         }
         this.rawQuat.setFromRotationMatrix(new THREE.Matrix4().lookAt(this.rawPos, this.target, UP));
-        this.rawFov += (40 - this.rawFov) * ease(3, dt);
+        this.rawFov += (aspectFov(40, aspect) - this.rawFov) * ease(3, dt);
     }
 
     flyUpdate(dt) {
@@ -598,8 +602,8 @@ export class CameraRig {
 
     // The ball on the ground, followed by a critically damped spring so bounces and the corners
     // of the interpolation between frames never reach the broadcast camera, with a lead in the
-    // direction of play and a zoom with its speed.
-    trackBall(ball, dt) {
+    // direction of play and a zoom with its speed. A narrower picture follows faster.
+    trackBall(ball, dt, aspect) {
         const g = [ball.x, 0, ball.z];
         if (this.snap || !this.haveBall) {
             this.ballSpring.reset(g);
@@ -608,11 +612,12 @@ export class CameraRig {
             this.haveBall = true;
             return;
         }
-        this.ballSpring.step(g, 3, dt);
+        const rate = trackRate(aspect);
+        this.ballSpring.step(g, 3 * rate, dt);
         const v = this.ballSpring.v;
         const speed = Math.hypot(v[0], v[2]);
         const lead = Math.min(1, 9 / Math.max(1e-6, speed * 0.6));
-        this.leadSpring.step([v[0] * 0.6 * lead, v[2] * 0.6 * lead], 1.4, dt);
+        this.leadSpring.step([v[0] * 0.6 * lead, v[2] * 0.6 * lead], 1.4 * rate, dt);
         this.zoomSpring.step([THREE.MathUtils.clamp((speed - 3) / 14, 0, 1)], 1.2, dt);
     }
 
@@ -621,7 +626,7 @@ export class CameraRig {
         if (!(dt > 0)) {
             dt = 1 / 60;
         }
-        this.trackBall(ball, dt);
+        this.trackBall(ball, dt, aspect);
         if (this.snap) {
             this.blend = null;
         }
@@ -632,7 +637,7 @@ export class CameraRig {
             const want = this.mode === 'owner' && follow
                 ? new THREE.Vector3(follow.x, 1, follow.z)
                 : new THREE.Vector3(b[0], 0.3, b[2]);
-            this.followUpdate(dt, want);
+            this.followUpdate(dt, want, aspect);
         } else if (this.mode === 'fpp' && pose.nodes && this.focusIndex >= 0 && this.focusIndex < pose.players) {
             this.playerUpdate(dt, players, pose);
         } else {
@@ -645,27 +650,40 @@ export class CameraRig {
     framedUpdate(dt, ball, players, pose, aspect, follow) {
         let fov = 30;
         let omega = 3.5;
+        // The field of view of the shot is widened for a narrow picture, but for the tactical
+        // view, which fits the pitch itself, and a shot kept from before, which has it already.
+        let fit = true;
         const b = this.ballSpring.x;
         if (this.mode === 'broadcast') {
             // A TV camera on a gantry of the main stand, panning with the play and leading it,
-            // wider when play is fast and a little closer near the goals.
+            // wider when play is fast and a little closer near the goals. A narrower picture
+            // leads by less and follows faster, so the ball keeps to the same part of it.
             const lead = this.leadSpring.x;
             const zoom = this.zoomSpring.x[0];
-            const tx = THREE.MathUtils.clamp(b[0] + lead[0], -HALF_W + 4, HALF_W - 4);
-            const tz = THREE.MathUtils.clamp(b[2] + lead[1], -26, 26);
+            const share = leadScale(aspect);
+            const tx = THREE.MathUtils.clamp(b[0] + lead[0] * share, -HALF_W + 4, HALF_W - 4);
+            const tz = THREE.MathUtils.clamp(b[2] + lead[1] * share, -26, 26);
             this.wantTarget.set(tx, 0, tz * 0.75);
-            this.wantPos.set(tx * 0.8, 20 + zoom * 3, 63 + zoom * 4);
+            // A tall picture comes closer and a little higher, under the roof of the main stand, so
+            // the taller view holds more of the pitch and less of the stands.
+            const tall = narrowShare(aspect);
+            this.wantPos.set(tx * 0.8, 20 + zoom * 3 + tall * 3, 63 + zoom * 4 - tall * 6);
             fov = 26 + zoom * 6 - Math.max(0, Math.abs(tx) - 30) * 0.08;
-            omega = 3.2;
+            omega = 3.2 * trackRate(aspect);
         } else if (this.mode === 'tactical') {
             const halfFov = THREE.MathUtils.degToRad(17);
-            const needW = (FULL_HALF_W + 2) / Math.max(0.5, aspect);
+            const wide = Math.max(0.5, aspect);
+            const needW = (FULL_HALF_W + 2) / wide;
             const need = Math.max(needW, FULL_HALF_H + 2);
             const height = need / Math.tan(halfFov);
-            this.wantTarget.set(b[0] * 0.15, 0, 0);
-            this.wantPos.set(b[0] * 0.15, height, 6);
+            // The view drifts with the ball only as far as the width of the picture leaves room.
+            const room = Math.max(0, need * wide - FULL_HALF_W - 2);
+            const drift = THREE.MathUtils.clamp(b[0] * 0.15, -room, room);
+            this.wantTarget.set(drift, 0, 0);
+            this.wantPos.set(drift, height, 6);
             fov = 34;
             omega = 2.4;
+            fit = false;
         } else if (this.mode === 'goal') {
             // Behind the goal the ball is nearer to, with hysteresis so it does not flip often.
             if (b[0] > 12) {
@@ -682,13 +700,18 @@ export class CameraRig {
             // A shot that a transition, a replay or a celebration sets each frame, with the wanted
             // position, target, field of view and easing rate, or snap for a hard cut.
             const s = this.scripted;
+            if (this.reducedMotion) {
+                this.stillShot(s, aspect, dt);
+                return;
+            }
+            this.still = null;
             if (s.snap) {
                 this.snap = true;
                 this.blend = null;
                 s.snap = false;
             }
             const k = this.snap ? 1 : ease(s.rate || 3, dt);
-            this.lerpShot(s.pos, s.target, s.fov || 40, k);
+            this.lerpShot(s.pos, s.target, aspectFov(s.fov || 40, aspect), k);
             this.finishShot();
             return;
         } else if (this.mode === 'lowside') {
@@ -697,7 +720,11 @@ export class CameraRig {
             fov = 34;
             omega = 4.5;
         } else if (this.mode === 'orbit' && follow) {
-            const a = performance.now() / 1000 * 0.35;
+            // Reduced motion holds the angle the orbit had.
+            if (!this.reducedMotion || this.orbitAngle == null) {
+                this.orbitAngle = performance.now() / 1000 * 0.35;
+            }
+            const a = this.orbitAngle;
             this.wantPos.set(follow.x + Math.cos(a) * 9, 3.2, follow.z + Math.sin(a) * 9);
             this.wantTarget.set(follow.x, 1.1, follow.z);
             confine(pushOutOfPlayers(this.wantPos, pose, players, -1));
@@ -727,6 +754,10 @@ export class CameraRig {
             this.wantPos.set(this.shotPos.x[0], this.shotPos.x[1], this.shotPos.x[2]);
             this.wantTarget.set(this.shotTarget.x[0], this.shotTarget.x[1], this.shotTarget.x[2]);
             fov = this.shotFov.x[0];
+            fit = false;
+        }
+        if (fit) {
+            fov = aspectFov(fov, aspect);
         }
         if (this.snap || this.shotCut) {
             this.shotCut = false;
@@ -738,6 +769,23 @@ export class CameraRig {
             this.shotTarget.step(arr3(this.wantTarget), omega * 1.15, dt);
             this.shotFov.step([fov], 2.5, dt);
         }
+        this.finishShot();
+    }
+
+    // A scripted shot under reduced motion. It holds one still framing and changes by a cut, when
+    // the shot asks for a cut, a new shot takes over or its subject nears the edge of the frame.
+    stillShot(s, aspect, dt) {
+        const held = this.still;
+        if (s.snap || this.snap || !held || held.shot !== s || stillCut(held, s.target, aspect, held.age)) {
+            this.still = { shot: s, pos: s.pos.clone(), target: s.target.clone(), fov: aspectFov(s.fov || 40, aspect), age: 0 };
+            this.snap = true;
+            this.blend = null;
+            s.snap = false;
+        } else {
+            held.age += dt;
+        }
+        const v = this.still;
+        this.lerpShot(v.pos, v.target, v.fov, 1);
         this.finishShot();
     }
 
@@ -759,6 +807,14 @@ export class CameraRig {
         const t = this.shotTarget.x;
         this.rawPos.set(p[0], p[1], p[2]);
         this.target.set(t[0], t[1], t[2]);
+        // A team's camera suggestion leans the target toward its subject and tightens the framing.
+        const lean = this.adjust && (this.mode === 'broadcast' || this.mode === 'scripted') ? this.adjust() : null;
+        if (lean) {
+            this.target.lerp(lean.target, lean.amount);
+            this.rawFov = this.shotFov.x[0] * lean.fov;
+            this.rawQuat.setFromRotationMatrix(new THREE.Matrix4().lookAt(this.rawPos, this.target, UP));
+            return;
+        }
         this.rawQuat.setFromRotationMatrix(new THREE.Matrix4().lookAt(this.rawPos, this.target, UP));
         this.rawFov = this.shotFov.x[0];
     }

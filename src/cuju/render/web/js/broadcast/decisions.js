@@ -287,9 +287,10 @@ export class Decisions {
                 this.dressReplay(pose, seq, l);
             },
             enter: () => this.showBanner(d, kind),
-            // The flash follows the sequence's clock, so a pause or the speed holds it too.
+            // The flash follows the sequence's clock, so a pause or the speed holds it too, and
+            // reduced motion leaves it out.
             update: (s, l) => {
-                this.flash.style.opacity = (0.85 * (1 - smooth(l / 0.5))).toFixed(3);
+                this.flash.style.opacity = app.reducedMotion ? '0' : (0.85 * (1 - smooth(l / 0.5))).toFixed(3);
             },
             exit: () => {
                 this.flash.style.opacity = '0';
@@ -462,7 +463,8 @@ export class Decisions {
         const tl = app.timeline;
         const color = COLORS[d.type] || COLORS.foul;
         const nodes = pose.nodes;
-        const pulse = performance.now() / 1000;
+        // The rings pulse, and hold their size under reduced motion.
+        const pulse = app.reducedMotion ? 0 : performance.now() / 1000;
         if (d.offender >= 0) {
             this.marks.ring(0, nodes[d.offender * PLAYER_FLOATS], nodes[d.offender * PLAYER_FLOATS + 1], color, pulse);
         }

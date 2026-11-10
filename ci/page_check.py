@@ -28,7 +28,10 @@ import time
 import urllib.request
 from pathlib import Path
 
+import page_feed
 import page_grid
+import page_help
+import page_search
 
 
 class CDP:
@@ -38,7 +41,8 @@ class CDP:
         from urllib.parse import urlsplit
 
         address = urlsplit(url)
-        self.socket = socket.create_connection((address.hostname, address.port), timeout=30)
+        # A check may wait the better part of a minute on a loaded machine before Chrome answers.
+        self.socket = socket.create_connection((address.hostname, address.port), timeout=300)
         key = base64.b64encode(os.urandom(16)).decode()
         request = (
             f'GET {address.path} HTTP/1.1\r\nHost: {address.netloc}\r\n'
@@ -67,9 +71,12 @@ class CDP:
         data = json.dumps({'id': self.sequence, 'method': method, 'params': params or {}}).encode()
         mask = os.urandom(4)
         size = len(data)
-        header = (
-            bytes([129, 128 | size]) if size < 126 else bytes([129, 254]) + struct.pack('!H', size)
-        )
+        if size < 126:
+            header = bytes([129, 128 | size])
+        elif size < 65536:
+            header = bytes([129, 254]) + struct.pack('!H', size)
+        else:
+            header = bytes([129, 255]) + struct.pack('!Q', size)
         self.socket.sendall(
             header + mask + bytes(value ^ mask[index % 4] for index, value in enumerate(data))
         )
@@ -419,6 +426,114 @@ def tournament_checks(client):
     """)
     assert result is True, f'Trophy ceremony {result}'
     return 2
+
+
+def surprise_checks(client):
+    """Checks Surprise me in the team editor, in the form that adds a team and for scripts."""
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const { api } = await import('./js/core/api.js');
+            cuju.showPage('teams');
+            const source = 'def agent(obs):\\n    return [0]\\n';
+            const team = await api.uploadTeam('Plain', 'main.py', source, '5v5');
+            await cuju.library.refresh();
+            cuju.library.root.querySelector(`li[data-id="${team.id}"]`).click();
+            const editor = cuju.editor;
+            for (let i = 0; i < 200 && !(editor.team && editor.team.id === team.id
+                && editor.initial !== undefined); i++) {
+                await wait(50);
+            }
+            editor.showSection('kit');
+            const panel = editor.formHost.querySelector('.surprise-panel');
+            const seedField = panel.querySelector('.surprise-seed');
+            const styleField = panel.querySelector('.surprise-style');
+            seedField.value = 'harbor';
+            seedField.dispatchEvent(new Event('input', { bubbles: true }));
+            styleField.value = 'stripes';
+            styleField.dispatchEvent(new Event('change', { bubbles: true }));
+            panel.querySelector('.surprise-go').click();
+            await wait(0);
+            const kit = JSON.stringify(editor.style.kit);
+            const filled = editor.style.kit.pattern === 'stripes' && editor.name !== 'Plain'
+                && /^[A-Z]{1,3}$/.test(editor.style.badge) && editor.style.players.length === 5
+                && editor.style.players.every((p) => p.name.length > 1);
+            const dirty = editor.dirty && !editor.dirtyNote.hidden;
+            const focused = !!document.activeElement
+                && document.activeElement.classList.contains('surprise-go');
+            const note = editor.formHost.querySelector('.surprise-note').textContent
+                .includes('seed harbor');
+            editor.showSection('identity');
+            const again = editor.formHost.querySelector('.surprise-panel');
+            const kept = again.querySelector('.surprise-seed').value === 'harbor'
+                && again.querySelector('.surprise-style').value === 'stripes';
+            const named = editor.formHost.querySelector('.grid2 input[type=text]').value
+                === editor.name;
+            editor.style.kit.primary = [1, 2, 3];
+            again.querySelector('.surprise-go').click();
+            await wait(0);
+            const same = JSON.stringify(editor.style.kit) === kit;
+            const scripted = cuju.surprise({ seed: 'harbor', style: 'stripes' });
+            const matches = JSON.stringify(scripted.style.kit) === kit
+                && scripted.name === editor.name && scripted.style.players.length === 5
+                && scripted.kitStyle === 'stripes';
+            const neon = cuju.surprise({ seed: 'agent', style: 'neon', apply: true });
+            await wait(0);
+            const applied = editor.style.kit.pattern === 'plain'
+                && JSON.stringify(editor.style.kit) === JSON.stringify(neon.style.kit)
+                && editor.dirty;
+            const closed = editor.close(true) && !editor.isOpen;
+            const unsaved = (await api.teams()).find((t) => t.id === team.id).name === 'Plain';
+            const refused = (() => {
+                try {
+                    cuju.surprise({ seed: 1, apply: true });
+                    return false;
+                } catch (err) {
+                    return /editor/.test(err.message);
+                }
+            })();
+            const other = cuju.surprise({ seed: 'script', style: 'sash', format: '5v5' });
+            const saved = await api.updateTeam(team.id, { name: other.name, style: other.style });
+            const stored = saved.name === other.name
+                && JSON.stringify(saved.style.kit) === JSON.stringify(other.style.kit)
+                && JSON.stringify(saved.style.goalkeeper) === JSON.stringify(other.style.goalkeeper)
+                && saved.style.badge === other.badge && saved.style.number === other.style.number
+                && saved.style.players[0].name === other.style.players[0].name;
+            const form = cuju.library.upload;
+            const name = form.querySelector('input[type=text]');
+            name.value = '';
+            form.querySelector('.surprise-add .surprise-go').click();
+            const told = form.querySelector('.surprise-add .surprise-note').textContent;
+            const add = name.value.length > 2 && !!form.querySelector('.surprise-add .kit-shirt')
+                && /seed \\d{6}/.test(told);
+            const seed = told.match(/seed (\\d{6})/)[1];
+            const expected = JSON.stringify(cuju.surprise({ seed }).style.kit);
+            const file = form.querySelector('input[type=file][accept]');
+            const transfer = new DataTransfer();
+            transfer.items.add(new File([source], 'main.py'));
+            file.files = transfer.files;
+            file.dispatchEvent(new Event('change'));
+            const chosen = name.value;
+            form.requestSubmit();
+            let added = null;
+            for (let i = 0; i < 100 && !added; i++) {
+                await wait(50);
+                added = (await api.teams()).find((t) => t.name === chosen
+                    && JSON.stringify(t.style.kit) === expected);
+            }
+            const reset = !form.querySelector('.surprise-add .kit-shirt') && name.value === '';
+            if (added) {
+                await api.deleteTeam(added.id);
+            }
+            await api.deleteTeam(team.id);
+            await cuju.library.refresh();
+            const all = { filled, dirty, focused, note, kept, named, same, matches, applied, closed,
+                unsaved, refused, stored, add, added: !!added, reset };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'Surprise me {result}'
+    return 1
 
 
 def reconnection_checks(client):
@@ -933,6 +1048,953 @@ def loading_checks(client, port):
     assert opened and opened['page'] == 'watch' and opened['decoder'] == 'worker', opened
     assert opened['players'] and opened['frames'] > 0, opened
     return 3
+
+
+def presentation_checks(client, port):
+    """Imports the test package, plays a match of it and checks its sandbox, epochs and bounds."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests'))
+    from support.package import package_zip
+
+    address = f'http://127.0.0.1:{port}'
+    upload = urllib.request.Request(
+        f'{address}/api/teams?name=Test%20package&filename=team.zip&format=5v5',
+        data=package_zip(),
+        method='POST',
+    )
+    with urllib.request.urlopen(upload, timeout=30) as response:
+        team = json.load(response)
+    match = client.evaluate(f"""
+        (async () => {{
+            const {{ api }} = await import('./js/core/api.js');
+            const spec = {{ left: '{team['id']}', right: 'builtin', scenario: '5_vs_5' }};
+            const request = await api.requestMatch(spec);
+            let match = null;
+            for (let i = 0; i < 200 && !match; i++) {{
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                const items = await (await fetch('/api/requests')).json();
+                const item = items.find((r) => r.id === request.id);
+                match = item && item.state === 'done' ? (item.match.id || item.match) : null;
+            }}
+            return match;
+        }})()
+    """)
+    # A slow headless browser loads a package for a while, so the match opens in a call of its own.
+    client.evaluate(f"""
+        (async () => {{
+            // A headless browser draws slowly, so the team's time budget stays out of the check.
+            cuju.presentation.settings.metering = false;
+            await cuju.openMatch('{match}');
+            return true;
+        }})()
+    """)
+    result = client.evaluate(f"""
+        (async () => {{
+            const served = await (await fetch('/api/teams/{team['id']}/presentation')).json();
+            cuju.showPage('watch');
+            cuju.director.stop(false);
+            cuju.timeline.play(1);
+            const status = () => cuju.presentation.status();
+            for (let i = 0; i < 300; i++) {{
+                const p = status().packages[0];
+                if (p && p.lastResponse && p.answered > 3) {{
+                    break;
+                }}
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }}
+            const before = status();
+            const epoch = before.epoch;
+            cuju.timeline.t = cuju.timeline.first + 40;
+            cuju.afterSeek();
+            await new Promise((resolve) => setTimeout(resolve, 600));
+            const after = status();
+            const keeper = after.entities.find((e) => e.goalkeeper);
+            const field = after.entities.find((e) => !e.goalkeeper);
+            const k = Number(field.id.slice(1));
+            return {{
+                served: !!served.manifest,
+                pkg: before.packages[0],
+                epochs: [epoch, after.epoch, after.reset.reason],
+                drivers: [keeper && keeper.driver, field.driver],
+                attachments: field.attachments,
+                bounds: field.bounds,
+                height: cuju.players.height(k),
+                frames: after.packages[0].answered,
+                log: after.packages[0].log,
+                sandboxes: document.querySelectorAll('iframe[sandbox="allow-scripts"]').length,
+                commands: after.dropped.commands,
+            }};
+        }})()
+    """)
+    pkg = result['pkg']
+    assert result['served'] and pkg and pkg['status'] == 'ready', result
+    assert pkg['sealed'] == {'network': 'blocked', 'storage': 'blocked'}, result
+    assert pkg['level'] == 'worker' and pkg['lacking'] == ['audio.spatial'], result
+    assert result['epochs'][1] > result['epochs'][0] and result['epochs'][2] == 'seek', result
+    assert result['drivers'] == ['grf+layers', 'team'], result
+    assert result['attachments'] == ['halo'], result
+    assert result['bounds'] == {'radius': 0.5, 'height': 2.0}, result
+    assert result['frames'] > 3 and result['sandboxes'] == 1, result
+    assert any('seek' in line for line in result['log']) or result['log'], result
+    extra = effects_checks(client, team)
+    # The worker gone, the page keeps drawing its manifest's look.
+    result = client.evaluate("""
+        (async () => {
+            const pkg = cuju.presentation.packages[0];
+            pkg.host.fail('test', true);
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const s = cuju.presentation.status();
+            return { status: s.packages[0].status, level: s.packages[0].budget.level,
+                entities: s.entities.length,
+                sandboxes: document.querySelectorAll('iframe[sandbox="allow-scripts"]').length };
+        })()
+    """)
+    assert result == {'status': 'failed', 'level': 'noWorker', 'entities': 5, 'sandboxes': 0}, (
+        result
+    )
+    return 9 + extra
+
+
+def effects_checks(client, team):
+    """Plays the effects, passes, moments, reach, slots and sides of contract 1.1 on the page.
+
+    Each step is a call of its own, since a headless browser draws a frame in a second or more.
+    """
+    wait = 'const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));'
+    first = client.evaluate(f"""
+        (async () => {{
+            {wait}
+            const p = cuju.presentation;
+            cuju.timeline.play(1);
+            let s = p.status();
+            for (let i = 0; i < 100 && !(s.geometries.length && s.moments.slots.length); i++) {{
+                await wait(100);
+                s = p.status();
+            }}
+            return {{ geometries: s.geometries, slots: s.moments.slots, layer: s.post.layers[0],
+                keeper: s.entities.find((e) => e.goalkeeper).driver }};
+        }})()
+    """)
+    assert first['geometries'] == ['0:shard'] and first['layer'] == 'outline', first
+    assert first['keeper'] == 'grf+layers', first
+    assert any(slot['slot'] == 'badge' for slot in first['slots']), first
+    # The badge drawn white and black in turn at 30 Hz hides at its third flash, its sixth
+    # drawing, as the worker's bitmaps reach it, while a steady badge shows.
+    flashing = client.evaluate("""
+        (async () => {
+            const { SlotGuard } = await import('./js/presentation/flash.js');
+            const p = cuju.presentation;
+            const pkg = p.packages[0];
+            const s = p.moments.slot(pkg, 'badge');
+            s.guard = new SlotGuard();
+            const draw = (colour) => {
+                const canvas = new OffscreenCanvas(96, 96);
+                const g = canvas.getContext('2d');
+                g.fillStyle = colour;
+                g.fillRect(0, 0, 96, 96);
+                const bitmap = canvas.transferToImageBitmap();
+                p.moments.overlay(pkg, { slot: 'badge', op: 'draw' }, bitmap);
+                p.clocks.cosmetic += 1 / 30;
+                p.moments.updateSlots();
+                return !s.canvas.hidden;
+            };
+            const steady = [0, 1, 2, 3, 4, 5].map(() => draw('#808080')).every(Boolean);
+            const shown = [];
+            for (let i = 0; i < 30; i++) {
+                shown.push(draw(i % 2 ? '#000000' : '#ffffff'));
+            }
+            const at = shown.indexOf(false);
+            const after = p.status().moments;
+            return { steady, at, stays: at > 0 && !shown.slice(at).some(Boolean),
+                trips: after.slots.find((x) => x.team === 0 && x.slot === 'badge').trips,
+                refused: after.refused.some((r) => r.includes('badge flashed past the limit')) };
+        })()
+    """)
+    assert flashing['steady'] and flashing['at'] == 5, flashing
+    assert flashing['stays'] and flashing['trips'] == 1 and flashing['refused'], flashing
+    touch = client.evaluate(f"""
+        (async () => {{
+            {wait}
+            const p = cuju.presentation;
+            p.inject(0, 'touch');
+            let s = p.status();
+            for (let i = 0; i < 50 && !s.effects[0].particles; i++) {{
+                await wait(100);
+                s = p.status();
+            }}
+            return {{ particles: s.effects[0].particles, kinds: s.effects[0].kinds }};
+        }})()
+    """)
+    assert touch['particles'] > 0 and {'particles', 'trail'} <= set(touch['kinds']), touch
+    goal = client.evaluate(f"""
+        (async () => {{
+            {wait}
+            const p = cuju.presentation;
+            p.inject(0, 'goal');
+            let s = p.status();
+            for (let i = 0; i < 50 && !(s.effects[0].localLights && s.moments.environment); i++) {{
+                await wait(100);
+                s = p.status();
+            }}
+            const out = {{ kinds: s.effects[0].kinds, moments: s.post.moments.length,
+                postRefused: s.post.refused,
+                quality: s.packages[0].budget.quality,
+                environment: s.moments.environment, accepted: s.moments.accepted,
+                refused: s.moments.refused, local: s.effects[0].localLights }};
+            // An opponent's goal starts nothing of the team's own moments.
+            const before = s.moments.accepted.environment;
+            p.inject(1, 'goal');
+            out.foreign = p.status().moments.accepted.environment === before;
+            // Reduced motion refuses camera and time suggestions.
+            cuju.reducedMotion = true;
+            p.moments.lastTime = [-Infinity, -Infinity];
+            const shot = p.inject(0, 'shot');
+            const time = {{ event: shot.id, freeze: 0.2 }};
+            out.refusedMotion = p.moments.suggestTime(p.packages[0], time) === false;
+            cuju.reducedMotion = false;
+            out.flash = p.status().flash;
+            out.safety = p.status().safety.version;
+            return out;
+        }})()
+    """)
+    assert {'light', 'mesh'} <= set(goal['kinds']), goal
+    # A pass plays from medium quality up, and low quality records why it refused one.
+    assert goal['moments'] >= 1 or (goal['quality'] == 'low' and goal['postRefused']), goal
+    assert goal['accepted']['environment'] >= 1 and goal['environment'], goal
+    assert goal['local'] >= 1 and goal['foreign'] and goal['refusedMotion'], goal
+    assert goal['flash']['factor'] <= 1 and 'counts' in goal['flash'] and goal['safety'] == 2, goal
+    bent = client.evaluate(f"""
+        (async () => {{
+            {wait}
+            const p = cuju.presentation;
+            cuju.timeline.play(1);
+            for (let i = 0; i < 200; i++) {{
+                if (p.status().bent) {{
+                    return true;
+                }}
+                await wait(100);
+            }}
+            return false;
+        }})()
+    """)
+    assert bent, 'the drawn ball bends through a contact'
+    preview = client.evaluate(f"""
+        (async () => {{
+            {wait}
+            const p = cuju.presentation;
+            p.preview.open(0);
+            const panel = !!document.getElementById('presentation-preview');
+            document.querySelector('#presentation-preview [data-event="touch"]').click();
+            await wait(600);
+            const lines = document.querySelectorAll('#presentation-preview .preview-line').length;
+            p.preview.close();
+            return {{ panel, lines, closed: !document.getElementById('presentation-preview') }};
+        }})()
+    """)
+    assert preview['panel'] and preview['lines'] > 5 and preview['closed'], preview
+    sides = []
+    for chosen in (team['id'], None):
+        value = 'null' if chosen is None else f"'{chosen}'"
+        sides.append(
+            client.evaluate(f"""
+            (async () => {{
+                await fetch('/api/presentation/sides', {{ method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ right: {value} }}) }});
+                await cuju.rebuildPlayers();
+                const pkg = cuju.presentation.packages[1];
+                return pkg ? pkg.teamId : null;
+            }})()
+        """)
+        )
+    assert sides == [team['id'], None], sides
+    assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
+    return 10
+
+
+def motion_follows(client, reduced):
+    """Waits a moment for the page to take up the system's motion preference and returns it."""
+    want = 'true' if reduced else 'false'
+    return client.evaluate(f"""
+        (async () => {{
+            for (let i = 0; i < 100 && cuju.reducedMotion !== {want}; i++) {{
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }}
+            return cuju.reducedMotion;
+        }})()
+    """)
+
+
+def motion_checks(client):
+    """Checks that reduced motion keeps every show of a match with still cameras and fades."""
+    import mock_sample
+
+    # The waits are long because a loaded machine draws few frames a second and the shows move on
+    # by their frames, and they end as soon as what they wait for happens.
+    # A short 5 on 5 match with one goal near its end, so the lineups, the celebration and the
+    # replays of the goal and the show after the match all play within a few seconds each. Where
+    # the page draws few frames a second, the checks move the clock of a show on to its next shot.
+    data = mock_sample.build_cjr(5, 300, 1, ('Greens', 'Golds'))[0]
+    client.call(
+        'Emulation.setEmulatedMedia',
+        {'features': [{'name': 'prefers-reduced-motion', 'value': 'reduce'}]},
+    )
+    assert motion_follows(client, True), 'Reduced motion from the system'
+    # Every frame of reduced motion, the log counts the frames of scripted shots, those that show
+    # anything but the still the camera holds, and the stills, the frames of wipes and of fades,
+    # and any flash, trail or confetti in sight.
+    result = client.evaluate(
+        f"const motionBytes = '{base64.b64encode(data).decode()}';"
+        + """
+        // A stinger moves on by the page's frames, so on a page that draws few frames a second
+        // the checks move its clock on to the moment it covers the view.
+        window.motionCover = () => {
+            const sting = cuju.director.stingState;
+            if (sting) sting.clock = Math.max(sting.clock, sting.seconds * 0.5);
+            return false;
+        };
+        window.motionWait = async (test, ms = 30000) => {
+            const end = performance.now() + ms;
+            while (!test() && performance.now() < end) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            return !!test();
+        };
+        (async () => {
+            const system = cuju.reducedMotion
+                && document.getElementById('motion').value === 'system';
+            const log = window.motionLog = {
+                frames: 0, scripted: 0, eased: 0, stills: 0, sweeps: 0, fades: 0, flashes: 0,
+                trails: 0, confetti: 0,
+            };
+            let held = null;
+            const cams = cuju.cameras;
+            const update = cams.update;
+            cams.update = function (...args) {
+                update.apply(this, args);
+                // The frames between the two ways of reducing motion move in full.
+                if (!cuju.reducedMotion) return;
+                log.frames++;
+                if (this.mode === 'scripted') {
+                    log.scripted++;
+                    const still = this.still;
+                    if (!still || this.camera.position.distanceToSquared(still.pos) > 1e-8) {
+                        log.eased++;
+                    }
+                    if (still !== held) {
+                        log.stills++;
+                        held = still;
+                    }
+                }
+                const wipe = cuju.transition.wipe;
+                if (wipe.shown) {
+                    const fade = wipe.bands[1].style.transform === 'none'
+                        && wipe.root.style.opacity !== '';
+                    log[fade ? 'fades' : 'sweeps']++;
+                }
+                if (Number(cuju.decisions.flash.style.opacity || 0) > 0) log.flashes++;
+                if (cuju.ball.trail.visible) log.trails++;
+                const bits = cuju.podium.confettiMesh;
+                if (bits && bits.visible) log.confetti++;
+            };
+            const bytes = Uint8Array.from(atob(motionBytes), (c) => c.charCodeAt(0));
+            await cuju.openFile(new File([bytes], 'motion.cjr'));
+            const lineups = await motionWait(() => !!cuju.director.lineup
+                && !!document.getElementById('lineups') && cuju.cameras.mode === 'scripted');
+            const frames = log.frames;
+            await motionWait(() => log.frames > frames + 2, 5000);
+            cuju.director.skip();
+            return { system, lineups };
+        })()
+    """
+    )
+    assert all(result.values()), f'Reduced motion lineups {result}'
+    result = client.evaluate("""
+        (async () => {
+            const director = cuju.director;
+            const played = await motionWait(() => !director.running && cuju.timeline.playing,
+                45000);
+            const tl = cuju.timeline;
+            const goal = window.motionGoal = tl.store.goals[0];
+            if (!goal) return { played, goal: false };
+            tl.seek(goal.index - 25);
+            cuju.afterSeek();
+            cuju.act('play');
+            const scored = await motionWait(() => !!director.cel, 45000);
+            return { played, goal: true, scored };
+        })()
+    """)
+    assert all(result.values()), f'Reduced motion goal {result}'
+    result = client.evaluate("""
+        (async () => {
+            const director = cuju.director;
+            const shot = async (clock, stage) => {
+                if (!director.cel) return false;
+                director.cel.clock = Math.max(director.cel.clock, clock);
+                return motionWait(() => !!director.cel && director.cel.stage >= stage
+                    && cuju.cameras.mode === 'scripted');
+            };
+            // The close shot of the scorer and the orbit, each a still of its own.
+            const close = await shot(1.35, 1);
+            const seen = JSON.stringify({
+                cel: director.cel ? [director.cel.stage, director.cel.clock] : null,
+                mode: cuju.cameras.mode, seq: !!cuju.transition.seq, frames: motionLog.frames,
+                t: cuju.timeline.t, speed: cuju.timeline.speed, playing: cuju.timeline.playing,
+            });
+            const stills = motionLog.stills;
+            const orbit = await shot(3.95, 2);
+            // The camera takes up the new still on its next frame, which comes late when slow.
+            const cut = await motionWait(() => motionLog.stills > stills);
+            return close ? { close, orbit, cut } : { close, orbit, cut, seen };
+        })()
+    """)
+    assert all(result.values()), f'Reduced motion celebration {result}'
+    result = client.evaluate("""
+        (async () => {
+            const director = cuju.director;
+            director.skip();
+            const replay = await motionWait(() => window.motionCover() || !!director.active
+                && !!director.active.plan
+                && director.active.phase === 'play' && cuju.timeline.playing, 100000);
+            const frames = motionLog.frames;
+            await motionWait(() => motionLog.frames > frames + 2, 5000);
+            director.skip();
+            return { replay };
+        })()
+    """)
+    assert all(result.values()), f'Reduced motion replay {result}'
+    result = client.evaluate("""
+        (async () => {
+            const show = cuju.postMatch;
+            const running = await motionWait(() => show.running && !!show.react, 45000);
+            return { running };
+        })()
+    """)
+    assert all(result.values()), f'Reduced motion show {result}'
+    result = client.evaluate("""
+        (async () => {
+            const show = cuju.postMatch;
+            const r = show.react;
+            if (!r) return { reactions: false };
+            r.clock = Math.max(r.clock, r.titleAt + 0.7);
+            const reactions = await motionWait(() => !!show.react && show.react.stage >= 1
+                && cuju.cameras.mode === 'scripted');
+            show.advance();
+            const facts = await motionWait(() => show.steps[show.step] === 'facts'
+                && !show.wiping, 15000);
+            return { reactions, facts };
+        })()
+    """)
+    assert all(result.values()), f'Reduced motion reactions and facts {result}'
+    result = client.evaluate("""
+        (async () => {
+            const show = cuju.postMatch;
+            show.advance();
+            const reel = await motionWait(() => !!cuju.director.active
+                && !!cuju.director.active.plan && cuju.timeline.playing, 45000);
+            show.skip();
+            return { reel };
+        })()
+    """)
+    assert all(result.values()), f'Reduced motion reel {result}'
+    result = client.evaluate("""
+        (async () => {
+            const show = cuju.postMatch;
+            const spotlight = await motionWait(() => cuju.spotlight.showing && !show.wiping,
+                45000);
+            const flash = document.querySelector('#spotlight .mvp-flash');
+            const unlit = !!flash && getComputedStyle(flash).display === 'none';
+            show.skip();
+            return { spotlight, unlit };
+        })()
+    """)
+    assert all(result.values()), f'Reduced motion spotlight {result}'
+    result = client.evaluate("""
+        (async () => {
+            const show = cuju.postMatch;
+            const podium = await motionWait(() => cuju.podium.showing
+                && !!cuju.podium.confettiMesh && !show.wiping, 45000);
+            const frames = motionLog.frames;
+            await motionWait(() => motionLog.frames > frames + 2, 5000);
+            const still = !!cuju.podium.confettiMesh && !cuju.podium.confettiMesh.visible;
+            show.end({ home: false, restore: false });
+            return { podium, still, ended: !show.running };
+        })()
+    """)
+    assert all(result.values()), f'Reduced motion podium {result}'
+    client.call('Emulation.setEmulatedMedia', {'features': []})
+    assert not motion_follows(client, False), 'Full motion from the system'
+    result = client.evaluate("""
+        (async () => {
+            const motion = document.getElementById('motion');
+            const choose = (value) => {
+                motion.value = value;
+                motion.dispatchEvent(new Event('change'));
+            };
+            choose('reduce');
+            const tl = cuju.timeline;
+            cuju.act('pause');
+            const paused = cuju.userPaused;
+            // R plays the last goal again as a replay with its still angles.
+            cuju.replayGoal(window.motionGoal);
+            const playing = cuju.director.running && !cuju.userPaused;
+            const replay = await motionWait(() => window.motionCover() || !!cuju.director.active
+                && !!cuju.director.active.plan && tl.playing, 100000);
+            cuju.director.stop(true);
+            cuju.act('pause');
+            choose('system');
+            delete cuju.cameras.update;
+            const log = window.motionLog;
+            const all = {
+                paused, playing, replay, system: !cuju.reducedMotion,
+                shots: log.scripted >= 5 && log.stills >= 4, still: log.eased === 0,
+                fades: log.fades > 0 && log.sweeps === 0,
+                plain: log.flashes === 0 && log.trails === 0 && log.confetti === 0,
+                muted: localStorage.getItem('cuju.muted') === 'true',
+            };
+            return Object.values(all).every(Boolean) || JSON.stringify({ ...all, log });
+        })()
+    """)
+    assert result is True, f'Reduced motion replay on R and the log {result}'
+    return 10
+
+
+def photo_checks(client):
+    """Checks photo mode, its keys, settings, guides, saved photos and the return from it."""
+
+    def key(name, code, kinds=('keyDown', 'keyUp'), shift=False):
+        for kind in kinds:
+            client.call(
+                'Input.dispatchKeyEvent',
+                {'type': kind, 'key': name, 'code': code, 'modifiers': 8 if shift else 0},
+            )
+
+    checks = 0
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const { api } = await import('./js/core/api.js');
+            const entries = await api.matches();
+            await cuju.openMatch(entries[0].id);
+            for (let i = 0; i < 100 && !cuju.photo; i++) {
+                await wait(20);
+            }
+            cuju.director.stop(true);
+            cuju.timeline.seek(cuju.timeline.first + 30);
+            cuju.act('play');
+            await wait(300);
+            if (document.activeElement) {
+                document.activeElement.blur();
+            }
+            // The state just after photo mode opens and just after it closes, read inside the
+            // same key press, before any frame moves the camera on.
+            window.photoSeen = {};
+            window.addEventListener('keydown', () => {
+                const p = cuju.photo;
+                const camera = cuju.view.camera;
+                if (p.isOpen && !window.photoSeen.opened) {
+                    window.photoSeen.opened = {
+                        position: p.saved.position.toArray(), fov: p.saved.fov, mode: p.saved.mode,
+                        playing: p.saved.playing,
+                    };
+                } else if (!p.isOpen && window.photoSeen.opened && !window.photoSeen.closed) {
+                    window.photoSeen.closed = {
+                        position: camera.position.toArray(), fov: camera.fov,
+                        mode: cuju.cameras.mode, playing: cuju.timeline.playing,
+                        material: p.material, panel: !!document.getElementById('photo-panel'),
+                    };
+                }
+            }, true);
+            return {
+                ready: !!cuju.photo && !cuju.photo.isOpen,
+                item: !!document.querySelector('#view-photo [role="menuitem"]'),
+                playing: cuju.timeline.playing,
+            };
+        })()
+    """)
+    assert all(result.values()), f'Photo mode ready {result}'
+    checks += 1
+    key('o', 'KeyO')
+    result = client.evaluate("""
+        (() => {
+            const panel = document.getElementById('photo-panel');
+            const topbar = document.getElementById('topbar');
+            return {
+                open: cuju.photo.isOpen,
+                paused: !cuju.timeline.playing,
+                free: cuju.cameras.mode === 'free',
+                panel: !!panel && !panel.hidden && panel.getClientRects().length > 0,
+                bars: topbar.getClientRects().length === 0
+                    && document.getElementById('controls').getClientRects().length === 0,
+                saved: !!window.photoSeen.opened && window.photoSeen.opened.playing === true,
+            };
+        })()
+    """)
+    assert all(result.values()), f'Photo mode opens by key {result}'
+    checks += 1
+    key('l', 'KeyL')
+    key('l', 'KeyL')
+    key('g', 'KeyG')
+    result = client.evaluate("""
+        (() => {
+            const p = cuju.photo;
+            const vignette = document.getElementById('photo-vignette');
+            vignette.value = '0.6';
+            vignette.dispatchEvent(new Event('input', { bubbles: true }));
+            const after = p.set({ grain: 0.3 });
+            let refused = '';
+            try {
+                p.set({ look: 'sepia' });
+            } catch (err) {
+                refused = err.message;
+            }
+            const layer = document.querySelector('.photo-guides');
+            return {
+                look: after.look === 'cold'
+                    && document.getElementById('photo-look').value === 'cold',
+                vignette: after.vignette === 0.6,
+                grain: after.grain === 0.3
+                    && document.getElementById('photo-grain').value === '0.3',
+                guide: after.guide === 'thirds' && layer.dataset.lines === '4'
+                    && layer.querySelectorAll('line').length === 8,
+                refused: refused.startsWith('Unknown look') && p.state().look === 'cold',
+            };
+        })()
+    """)
+    assert all(result.values()), f'Photo looks and guides {result}'
+    checks += 1
+    key('u', 'KeyU')
+    hidden = client.evaluate("""
+        ({
+            hidden: document.getElementById('photo-panel').hidden
+                && cuju.photo.state().interface === false,
+            open: cuju.photo.isOpen,
+        })
+    """)
+    key('u', 'KeyU')
+    shown = client.evaluate("!document.getElementById('photo-panel').hidden")
+    key('u', 'KeyU')
+    key('Escape', 'Escape')
+    again = client.evaluate("cuju.photo.isOpen && !document.getElementById('photo-panel').hidden")
+    assert all(hidden.values()) and shown and again, f'Photo interface {hidden} {shown} {again}'
+    checks += 1
+    start = client.evaluate('cuju.photo.camera().position')
+    key('w', 'KeyW', ('keyDown',))
+    client.evaluate('new Promise((resolve) => setTimeout(resolve, 600))')
+    key('w', 'KeyW', ('keyUp',))
+    key('ArrowLeft', 'ArrowLeft', ('keyDown',))
+    client.evaluate('new Promise((resolve) => setTimeout(resolve, 300))')
+    key('ArrowLeft', 'ArrowLeft', ('keyUp',))
+    result = client.evaluate(f"""
+        (() => {{
+            const start = {start};
+            const now = cuju.photo.camera();
+            const moved = Math.hypot(...now.position.map((v, i) => v - start[i]));
+            return {{
+                moved: moved > 0.5,
+                paused: !cuju.timeline.playing,
+                free: cuju.cameras.mode === 'free',
+            }};
+        }})()
+    """)
+    assert all(result.values()), f'Photo camera by key {result}'
+    checks += 1
+    client.evaluate("""
+        (() => {
+            const p = cuju.photo;
+            window.photoSize = (url) => {
+                const b = atob(url.split(',')[1].slice(0, 44));
+                const n = (i) => ((b.charCodeAt(i) << 24) | (b.charCodeAt(i + 1) << 16)
+                    | (b.charCodeAt(i + 2) << 8) | b.charCodeAt(i + 3)) >>> 0;
+                return [n(16), n(20)];
+            };
+            p.set({ aperture: 0 });
+            p.camera({ position: [0, 12, 40], target: [0, 0, 0], fov: 40, roll: 0 });
+        })()
+    """)
+    full = client.evaluate("""
+        (async () => {
+            const win = cuju.photo.state().windowSize;
+            const url = await cuju.photo.capture();
+            const stage = document.getElementById('stage');
+            return url.startsWith('data:image/png;base64,')
+                && JSON.stringify(photoSize(url)) === JSON.stringify([win.width, win.height])
+                && win.width === stage.clientWidth * devicePixelRatio;
+        })()
+    """)
+    small = client.evaluate("""
+        (async () => {
+            const url = await cuju.photo.capture({ width: 320, height: 200 });
+            return JSON.stringify(photoSize(url));
+        })()
+    """)
+    chosen = client.evaluate("""
+        (async () => {
+            const p = cuju.photo;
+            p.set({ resolution: { width: 240, height: 300 } });
+            const blob = await p.capture({ as: 'blob' });
+            const c = p.state().lastCapture;
+            p.set({ resolution: 'window' });
+            return blob instanceof Blob && blob.type === 'image/png' && c.width === 240
+                && c.height === 300 && c.bytes === blob.size;
+        })()
+    """)
+    assert full and small == '[320,200]' and chosen, f'Photo capture {full} {small} {chosen}'
+    checks += 1
+    result = client.evaluate("""
+        (async () => {
+            const p = cuju.photo;
+            // The same photo with and without a guide, with grain off, is the same picture.
+            p.set({ grain: 0, guide: 'off', aperture: 0.3, look: 'noir' });
+            const plain = await p.capture({ width: 320, height: 200 });
+            p.set({ guide: 'center' });
+            const guided = await p.capture({ width: 320, height: 200 });
+            p.set({ guide: 'crop-4-5' });
+            const cropped = await p.capture({ width: 320, height: 200 });
+            return {
+                guides: plain === guided && plain === cropped
+                    && document.querySelectorAll('.photo-guides line').length === 0
+                    && document.querySelectorAll('.photo-guides rect').length === 2,
+                still: p.isOpen && !cuju.timeline.playing,
+            };
+        })()
+    """)
+    assert all(result.values()), f'Photo guides stay out of photos {result}'
+    checks += 1
+    result = client.evaluate("""
+        (async () => {
+            window.photoLinks = [];
+            const click = HTMLAnchorElement.prototype.click;
+            HTMLAnchorElement.prototype.click = function () {
+                window.photoLinks.push(this.download);
+            };
+            window.restoreLinkClick = () => {
+                HTMLAnchorElement.prototype.click = click;
+            };
+            return cuju.photo.fileName();
+        })()
+    """)
+    key('p', 'KeyP')
+    result = client.evaluate(f"""
+        (async () => {{
+            for (let i = 0; i < 100 && !window.photoLinks.length; i++) {{
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }}
+            window.restoreLinkClick();
+            const name = window.photoLinks[0] || '';
+            return {{
+                name: name === {result!r} && /^cuju-photo-[a-z0-9._-]+-[0-9]+\\.png$/.test(name),
+                status: document.querySelector('#photo-panel .photo-status')
+                    .textContent.startsWith('Saved'),
+            }};
+        }})()
+    """)
+    assert all(result.values()), f'Photo saves by key {result}'
+    checks += 1
+    key('o', 'KeyO')
+    result = client.evaluate("""
+        (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            const seen = window.photoSeen;
+            const o = seen.opened;
+            const c = seen.closed;
+            const same = !!c && o.position.every((v, i) => Math.abs(v - c.position[i]) < 1e-6);
+            const result = {
+                camera: same && Math.abs(o.fov - c.fov) < 1e-6 && c.mode === o.mode,
+                playback: !!c && c.playing === true && cuju.timeline.playing && !cuju.userPaused,
+                freed: !!c && c.material === null && !c.panel && !cuju.photo.isOpen,
+                page: !document.documentElement.classList.contains('cuju-photo')
+                    && document.getElementById('topbar').getClientRects().length > 0
+                    && !document.querySelector('.photo-guides'),
+                lock: !document.pointerLockElement,
+            };
+            cuju.act('pause');
+            return result;
+        })()
+    """)
+    assert all(result.values()), f'Photo mode leaves {result}'
+    checks += 1
+    return checks
+
+
+def challenge_checks(client):
+    """Checks the Challenges section of Play, a person's run, a headless run and achievements."""
+    key = {'key': 'Enter', 'code': 'Enter', 'windowsVirtualKeyCode': 13}
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const { api } = await import('./js/core/api.js');
+            localStorage.removeItem('cuju.achievements');
+            localStorage.setItem('cuju.challengeName', 'Page check');
+            const sources = await api.live();
+            const ids = (await api.matches()).map((m) => m.id);
+            window.pageCheckApi = Object.fromEntries(
+                ['startGame', 'gameStream', 'pauseGame', 'gameInput', 'quitGame', 'game']
+                    .map((name) => [name, api[name]])
+            );
+            const state = { specs: [], entry: null, ends: [
+                { match: ids[0], score: [1, 0], achievements: [['off_the_mark'], null] },
+                { match: null, score: [0, 0], achievements: [[], null] },
+                { match: ids[1], score: [0, 0], achievements: [['off_the_mark'], null] },
+            ] };
+            window.pageCheckChallenge = state;
+            api.startGame = async (spec) => {
+                state.specs.push(spec);
+                state.entry = { id: sources[0].id, state: 'paused', score: [0, 0] };
+                return state.entry;
+            };
+            api.gameStream = (id, signal) => api.liveStream(id, signal);
+            api.pauseGame = async (id, paused) => {
+                state.entry = { ...state.entry, state: paused ? 'paused' : 'playing' };
+                return state.entry;
+            };
+            api.gameInput = async () => state.entry;
+            api.game = async () => state.entry;
+            api.quitGame = async () => {
+                state.entry = { ...state.entry, state: 'ended', ending: 'episode',
+                    ...state.ends[state.specs.length - 1] };
+                return state.entry;
+            };
+            cuju.showPage('play');
+            for (let i = 0; i < 100 && !document.querySelector('.challenge-item'); i++) {
+                await wait(50);
+            }
+            const items = [...document.querySelectorAll('.challenge-item')];
+            const titles = items.map((item) => item.querySelector('h3').textContent);
+            const named = titles.join() === 'Empty goal from close range,Corner,One on one'
+                && !/_/.test(document.querySelector('.challenges').innerText);
+            const start = document.querySelector(
+                '.challenge-item[data-id="one_on_one"] [data-action="start"]');
+            start.focus();
+            return { named, focused: document.activeElement === start,
+                scripted: typeof cuju.challenges.start === 'function' };
+        })()
+    """)
+    assert all(result.values()), f'Challenges list {result}'
+    client.call('Input.dispatchKeyEvent', {'type': 'keyDown', 'text': '\r', **key})
+    client.call('Input.dispatchKeyEvent', {'type': 'keyUp', **key})
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const state = window.pageCheckChallenge;
+            for (let i = 0; i < 100 && !(cuju.play.game && cuju.play.game.started); i++) {
+                await wait(100);
+            }
+            const spec = state.specs[0];
+            const seeds = cuju.challenges.state().run && (await cuju.challenges.list())
+                .find((c) => c.id === 'one_on_one').seeds;
+            const started = !!spec && spec.seed === seeds[0] && spec.record === true
+                && spec.teams.join() === 'builtin,builtin' && spec.humans.join() === 'true,false'
+                && spec.scenario === '1_vs_1_easy';
+            await cuju.play.quit();
+            for (let i = 0; i < 50 && !/Scored|No goal/.test(cuju.play.endPanel.innerText); i++) {
+                await wait(50);
+            }
+            const card = cuju.play.endPanel.innerText;
+            const ended = /attempt 1 of 3/.test(card) && /No goal|Scored/.test(card)
+                && /New achievement, Off the mark/.test(card) && /Next attempt/.test(card);
+            return { started, ended, live: !cuju.play.end.hidden };
+        })()
+    """)
+    assert all(result.values()), f'Challenge attempt {result}'
+    # With the focus outside the end card, one controller press focuses its main action, Next
+    # attempt, and the next one picks it.
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const state = window.pageCheckChallenge;
+            const readPads = navigator.getGamepads;
+            const pad = { index: 0, connected: true, mapping: 'standard', axes: [0, 0],
+                buttons: Array.from({ length: 16 }, () => ({ pressed: false })) };
+            Object.defineProperty(navigator, 'getGamepads', { configurable: true,
+                value: () => [pad] });
+            try {
+                const press = async () => {
+                    pad.buttons[0].pressed = true;
+                    cuju.play.pollPads();
+                    await wait(30);
+                    pad.buttons[0].pressed = false;
+                    cuju.play.pollPads();
+                    await wait(30);
+                };
+                cuju.play.pollPads();
+                document.activeElement.blur();
+                await press();
+                const focused = document.activeElement.textContent === 'Next attempt';
+                await press();
+                for (let i = 0; i < 100 && state.specs.length < 2; i++) await wait(50);
+                for (let i = 0; i < 100 && !cuju.play.game.started; i++) await wait(100);
+                const second = state.specs.length === 2
+                    && state.specs[1].seed !== state.specs[0].seed;
+                await cuju.play.quit();
+                await wait(300);
+                const missed = /counts as missed/.test(cuju.play.endPanel.innerText);
+                await cuju.challenges.next();
+                for (let i = 0; i < 100 && !cuju.play.game.started; i++) await wait(100);
+                await cuju.play.quit();
+                for (let i = 0; i < 100 && !/personal best/i.test(cuju.play.endPanel.innerText);
+                    i++) {
+                    await wait(50);
+                }
+                const card = cuju.play.endPanel.innerText;
+                const run = cuju.challenges.state().run;
+                const finished = /attempt 3 of 3/.test(card) && /rank 1/.test(card)
+                    && /Try again/.test(card) && run.outcome && run.outcome.kind === 'person'
+                    && run.matches.length === 3 && run.matches[1] === null;
+                return { focused, second, missed, finished };
+            } finally {
+                Object.defineProperty(navigator, 'getGamepads', { configurable: true,
+                    value: readPads });
+            }
+        })()
+    """)
+    assert all(result.values()), f'Challenge run by controller {result}'
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const { api } = await import('./js/core/api.js');
+            try {
+                if (cuju.play.game?.source) cuju.play.game.source.live.stop();
+                cuju.challenges.leave();
+                await wait(100);
+                const job = await cuju.challenges.run('one_on_one', { team: 'builtin' });
+                const line = () => document.querySelector('.challenge-job').innerText;
+                for (let i = 0; i < 100 && !/finished/.test(line()); i++) await wait(100);
+                const headless = job.state === 'queued' && /finished One on one/.test(line());
+                for (let i = 0; i < 50 && !document.querySelector(
+                    '.challenge-item[data-id="one_on_one"] [data-action="board"]'); i++) {
+                    await wait(50);
+                }
+                await wait(300);
+                const toggle = document.querySelector(
+                    '.challenge-item[data-id="one_on_one"] [data-action="board"]');
+                toggle.click();
+                const board = () => document.querySelector(
+                    '.challenge-item[data-id="one_on_one"] .challenge-board');
+                for (let i = 0; i < 50 && !board().querySelector('table'); i++) await wait(50);
+                const kinds = [...board().querySelectorAll('.challenge-kind')]
+                    .map((mark) => mark.textContent);
+                const marked = kinds.includes('Person') && kinds.includes('Agent')
+                    && toggle.getAttribute('aria-expanded') === 'true';
+                const entries = await cuju.challenges.board('one_on_one');
+                const ranked = entries.map((e) => e.kind).join() === 'agent,person';
+                const listed = [...document.querySelectorAll('.achievement-list li')];
+                const earned = listed.filter((li) => li.classList.contains('earned'))
+                    .map((li) => li.dataset.id);
+                const scripted = await cuju.challenges.achievements();
+                const achievements = earned.join() === 'off_the_mark'
+                    && scripted.person.off_the_mark.count === 2 && scripted.catalog.length > 3
+                    && listed.length === scripted.catalog.length;
+                return { headless, marked, ranked, achievements };
+            } finally {
+                Object.assign(api, window.pageCheckApi);
+                localStorage.removeItem('cuju.achievements');
+                localStorage.removeItem('cuju.challengeName');
+                cuju.play.showSetup();
+            }
+        })()
+    """)
+    assert all(result.values()), f'Challenges headless run and achievements {result}'
+    return 4
 
 
 def main():
@@ -1689,22 +2751,18 @@ def main():
                     const start = motion.value === 'system' && !cuju.reducedMotion
                         && !root.contains('reduced-motion');
                     choose('reduce');
-                    const tl = cuju.timeline;
-                    const goal = tl.first + 80;
-                    tl.pause();
-                    cuju.director.play([{ goal: { index: goal, team: 0 }, shot: 'auto' }]);
+                    cuju.timeline.pause();
                     const reduced = cuju.reducedMotion && root.contains('reduced-motion')
                         && cuju.cameras.reducedMotion && !cuju.ball.trailOn
-                        && !cuju.transition.enabled()
                         && JSON.parse(localStorage.getItem('cuju.motion')) === 'reduce';
-                    const replay = !cuju.director.running && tl.playing
-                        && Math.abs(tl.t - (goal - 3 * tl.sps)) < 2;
-                    tl.pause();
+                    // Reduced motion keeps the restart transitions under their own setting.
+                    const kept = cuju.transition.enabled()
+                        === (cuju.settings.transitions !== false);
                     choose('full');
                     const full = !cuju.reducedMotion && root.contains('full-motion')
                         && cuju.ball.trailOn === cuju.settings.trail;
                     choose('system');
-                    return { start, reduced, replay, full };
+                    return { start, reduced, kept, full };
                 })()
             """)
             assert all(result.values()), f'Motion preference {result}'
@@ -1912,28 +2970,10 @@ def main():
             """)
             assert all(result.values()), f'Controls with keyboard focus {result}'
             checks += 1
-            result = client.evaluate("""
-                (() => {
-                    const motion = document.getElementById('motion');
-                    const choose = (value) => {
-                        motion.value = value;
-                        motion.dispatchEvent(new Event('change'));
-                    };
-                    choose('reduce');
-                    const tl = cuju.timeline;
-                    cuju.act('pause');
-                    const paused = cuju.userPaused;
-                    cuju.replayGoal({ index: tl.first + 80, team: 0 });
-                    const playing = tl.playing && !cuju.userPaused;
-                    cuju.act('pause');
-                    choose('system');
-                    return { paused, playing };
-                })()
-            """)
-            assert all(result.values()), f'Reduced motion replay {result}'
-            checks += 1
+            checks += motion_checks(client)
             checks += library_checks(client)
             checks += tournament_checks(client)
+            checks += surprise_checks(client)
             checks += reconnection_checks(client)
             checks += palette_checks(client)
             checks += presets_checks(client)
@@ -1944,6 +2984,13 @@ def main():
             checks += loading_checks(client, port)
             checks += format_checks(client)
             checks += annotation_checks(client)
+            checks += presentation_checks(client, port)
+            checks += photo_checks(client)
+            checks += challenge_checks(client)
+            checks += page_help.help_checks(client, port)
+            checks += page_search.check_search(client)
+            checks += page_search.check_captions(client)
+            checks += page_feed.check_feed(client, f'http://127.0.0.1:{port}/', debug, CDP)
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
             assert not client.evaluate('!!document.pointerLockElement')
             assert not client.errors, client.errors

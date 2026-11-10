@@ -1,0 +1,237 @@
+/*
+Copyright 2026 The cuju Authors
+SPDX-License-Identifier: Apache-2.0
+*/
+
+/* A picture of fixed size, the clean feed and the video export. js/export/safe-frame.js marks the app as
+   framed, sets the margins of the safe area as --safe-top, --safe-right, --safe-bottom and
+   --safe-left, and names the shape of the picture as shape-wide, shape-square or shape-tall. The
+   graphics then keep inside the safe area at every size and shape. */
+
+#app.framed[data-page] #scoreboard {
+    top: var(--safe-top);
+    left: var(--safe-left);
+    max-width: calc(100% - var(--safe-left) - var(--safe-right));
+}
+
+#app.framed[data-page] #mode-banner {
+    top: calc(var(--safe-top) + 44px);
+    max-width: calc(100% - var(--safe-left) - var(--safe-right));
+}
+
+#app.framed[data-page] #replay-badge {
+    top: var(--safe-top);
+    right: var(--safe-right);
+}
+
+#app.framed[data-page] #goal-banner,
+#app.framed[data-page] #follow-label {
+    left: var(--safe-left);
+    bottom: var(--safe-bottom);
+    max-width: calc(100% - var(--safe-left) - var(--safe-right));
+}
+
+#app.framed[data-page] .captions {
+    left: var(--safe-left);
+    right: var(--safe-right);
+    bottom: calc(var(--safe-bottom) + 56px);
+}
+
+#app.framed[data-page] .decision-banner,
+#app.framed[data-page] .card-third {
+    left: var(--safe-left);
+    bottom: calc(var(--safe-bottom) + 10px);
+    max-width: calc(100% - var(--safe-left) - var(--safe-right));
+}
+
+#app.framed[data-page] .title-card {
+    padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+    box-sizing: border-box;
+}
+
+#app.framed[data-page] .tc-inner {
+    box-sizing: border-box;
+    min-width: min(720px, 100%);
+    max-width: 100%;
+}
+
+/* The team sheets take the band under the scoreboard and the banner of the kick off, centered
+   in it, so they cover neither at any shape. */
+#app.framed[data-page] #lineups {
+    --lineups-top: calc(var(--safe-top) + 80px);
+    box-sizing: border-box;
+    top: var(--lineups-top);
+    bottom: var(--safe-bottom);
+    width: min(860px, calc(100% - var(--safe-left) - var(--safe-right)));
+    height: fit-content;
+    max-height: calc(100% - var(--lineups-top) - var(--safe-bottom));
+    margin: auto 0;
+    transform: translateX(-50%);
+    animation-name: lineups-in-framed;
+}
+
+@keyframes lineups-in-framed {
+    from {
+        opacity: 0;
+        transform: translate(-50%, 4%);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%);
+    }
+}
+
+#app.framed.shape-tall[data-page] #lineups,
+#app.framed.shape-square[data-page] #lineups {
+    --lineups-top: calc(var(--safe-top) + 124px);
+}
+
+/* A square or tall picture keeps the badge of a replay under the scoreboard, which takes most of
+   the width, and gives the lower thirds the whole width of the safe area. */
+#app.framed.shape-tall[data-page] #replay-badge,
+#app.framed.shape-square[data-page] #replay-badge {
+    top: calc(var(--safe-top) + 44px);
+}
+
+#app.framed.shape-tall[data-page] #mode-banner,
+#app.framed.shape-square[data-page] #mode-banner {
+    top: calc(var(--safe-top) + 88px);
+}
+
+#app.framed.shape-tall[data-page] #goal-banner,
+#app.framed.shape-tall[data-page] #follow-label,
+#app.framed.shape-tall[data-page] .decision-banner,
+#app.framed.shape-tall[data-page] .card-third {
+    right: var(--safe-right);
+    min-width: 0;
+}
+
+/* The clean feed shows the picture and its broadcast graphics alone, with no pointer, no
+   controls, no messages and no buttons, over the background that its address names. */
+
+html.cuju-feed,
+html.cuju-feed body {
+    background: var(--feed-background, #000);
+    cursor: none;
+}
+
+html.cuju-feed #app,
+html.cuju-feed #pages,
+html.cuju-feed #page-watch,
+html.cuju-feed #watch {
+    background: transparent;
+}
+
+html.cuju-feed #app {
+    pointer-events: none;
+    cursor: none;
+    user-select: none;
+}
+
+html.cuju-feed .skip-link,
+html.cuju-feed #topbar,
+html.cuju-feed #watch-bar,
+html.cuju-feed #controls,
+html.cuju-feed #watch-empty,
+html.cuju-feed #drop-hint,
+html.cuju-feed #toast,
+html.cuju-feed #tv-hint,
+html.cuju-feed #loading,
+html.cuju-feed #waiting,
+html.cuju-feed #fatal,
+html.cuju-feed #settings,
+html.cuju-feed #match-menu,
+html.cuju-feed #view-menu,
+html.cuju-feed #tip,
+html.cuju-feed #help-tip,
+html.cuju-feed #flat-suggest,
+html.cuju-feed .touch-pad,
+html.cuju-feed .player-labels,
+html.cuju-feed dialog,
+html.cuju-feed #watch button,
+html.cuju-feed .post-hint,
+html.cuju-feed #cuju-home-veil {
+    display: none !important;
+}
+
+html.cuju-feed.feed-no-score #scoreboard {
+    display: none !important;
+}
+
+/* While nothing shows, and in a feed of the graphics alone, the background takes the picture's
+   place. */
+html.cuju-feed #app.no-source #stage,
+html.cuju-feed #app.feed-idle #stage,
+html.cuju-feed #app.feed-idle #hud,
+html.cuju-feed[data-feed-layer="graphics"] #stage,
+html.cuju-feed[data-feed-layer="graphics"] #flat-view {
+    visibility: hidden;
+}
+
+#feed-slate {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: var(--safe-top, 5%) var(--safe-right, 5%) var(--safe-bottom, 5%) var(--safe-left, 5%);
+    color: #f4f4f4;
+    font: 600 20px/1.3 var(--broadcast-font, var(--font));
+    letter-spacing: 0.02em;
+    text-align: center;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.6s, visibility 0s linear 0.6s;
+}
+
+#feed-slate.show {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.6s;
+}
+
+#feed-slate img {
+    width: 72px;
+    height: 72px;
+    filter: brightness(0) invert(1) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+}
+
+/* The Copy feed address dialog of the Watch page. */
+dialog.feed-address {
+    width: min(600px, calc(100% - 24px));
+    max-height: calc(100% - 24px);
+    padding: 16px 20px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+}
+
+dialog.feed-address::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+dialog.feed-address #fa-url {
+    box-sizing: border-box;
+    width: 100%;
+    font-family: var(--mono, monospace);
+    font-size: 13px;
+}
+
+/* The fields of a custom size in the dialogs that take a size. */
+.size-custom {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.size-custom[hidden] {
+    display: none;
+}
+
+.size-custom input {
+    width: 84px;
+}

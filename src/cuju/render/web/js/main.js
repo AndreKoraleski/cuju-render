@@ -19,6 +19,7 @@ import { Hud, formatSeconds } from './broadcast/hud.js';
 import { modelChoice, normalizeStyle, separateKeepers } from './players/kits.js';
 import { loadTeamArt } from './teams/art.js';
 import { TeamsPage } from './teams/library.js';
+import { surpriseFor } from './teams/surprise-ui.js';
 import { RecordingsPage } from './pages/recordings.js';
 import { FieldPage } from './pages/fieldpage.js';
 import { loadField, loadImages } from './world/field.js';
@@ -31,6 +32,9 @@ import { GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_W, Pitch } from './world
 import { Players, loadAssets, loadTeamRig, playerModel } from './players/players.js';
 import { loadTeamClips, qualifyStyle } from './players/clips.js';
 import { Pose } from './recording/pose.js';
+import { Presentation } from './presentation/index.js';
+import { SideChoices } from './presentation/assign.js';
+import { Preview } from './presentation/preview.js';
 import { Director, Podium, PostMatch, Spotlight, playerInfo, scorerAt } from './broadcast/show.js';
 import { Environment, View, defaultQuality } from './world/scene.js';
 import { Stadium } from './world/stadium.js';
@@ -46,6 +50,9 @@ import { TouchControls } from './play/touch.js';
 import { FlatMode, headlessView } from './watch/flat.js';
 import { EnvironmentGrid } from './watch/grid.js';
 import { VideoExport } from './export/video-export.js';
+import { CaptionsOverlay } from './recording/captions.js';
+import { MomentSearch } from './pages/moments-ui.js';
+import { FeedDialog } from './export/feed-dialog.js';
 
 const $ = (id) => document.getElementById(id);
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
@@ -158,6 +165,10 @@ class App {
         this.podium = new Podium(this);
         this.spotlight = new Spotlight(this);
         this.postMatch = new PostMatch(this);
+        // Team presentation packages, see presentation/index.js.
+        this.presentation = new Presentation(this);
+        this.view.afterRender = (renderer, scene, camera) => this.presentation.afterRender(renderer, scene, camera);
+        this.cameras.adjust = () => this.presentation.moments.cameraAdjust();
         this.lastTime = performance.now();
         this.poseHooks = [];
         // Restarts, half time and the referee's decisions, presented as on television.
@@ -165,9 +176,14 @@ class App {
         this.decisions = new Decisions(this, this.transition);
         this.playerTools = new PlayerTools(this);
         this.annotationOverlay = new AnnotationOverlay(this);
+        this.captions = new CaptionsOverlay(this);
+        this.moments = new MomentSearch(this);
         this.accessibility = new AccessibilityControls(this);
+        this.sideChoices = new SideChoices(this);
+        this.presentation.preview = new Preview(this);
         this.palette = new CommandPalette(this, { CAMERA_MODES, api });
         this.videoExport = new VideoExport(this);
+        this.feedDialog = new FeedDialog(this);
         this.clock = 0;
         this.idleTimer = null;
         this.hashTimer = null;
@@ -181,6 +197,11 @@ class App {
                 this.home.show();
             }
         }).catch((err) => console.warn('home page not loaded', err));
+        // Photo mode, its own module as well, reached by scripts as cuju.photo.
+        this.photo = null;
+        import('./export/photo.js').then((m) => {
+            this.photo = new m.PhotoMode(this);
+        }).catch((err) => console.warn('photo mode not loaded', err));
         this.bindControls();
         this.bindPages();
         this.bindAddress();
@@ -196,6 +217,12 @@ class App {
         this.grid = new EnvironmentGrid(this);
         this.presets = new SettingsPresets(this);
         this.firstRun = new FirstRun(this);
+        // The tour, the lessons, the samples, the report and the installable page of Help, which
+        // scripts reach as cuju.tour, cuju.tutorial, cuju.samples, cuju.doctor and cuju.install.
+        this.helpCenter = null;
+        import('./help/help-center.js').then((m) => {
+            this.helpCenter = new m.HelpCenter(this);
+        }).catch((err) => console.warn('help center not loaded', err));
         this.touch = new TouchControls(this);
         this.showEmpty(true);
         this.applyField(this.field);
@@ -635,6 +662,7 @@ class App {
                     table.set(m, rig);
                 }
             }));
+            await this.presentation.prepare(side, known, style, table);
             rigs.push(table);
         }
         this.sponsors = sponsors;
@@ -658,7 +686,8 @@ class App {
         }
         this.styles = styles;
         this.teamRigs = rigs;
-        this.players = new Players(this.view.scene, source.header, styles, this.assets, rigs);
+        this.players = new Players(this.view.scene, source.header, styles, this.assets, rigs, { presentation: this.presentation });
+        this.presentation.attach(this.players, source.header, styles);
         this.hud.setTeams(source.header, styles);
         this.applyBoards();
         this.stadium.setFans(styles[0].fans, styles[1].fans);
@@ -722,6 +751,12 @@ class App {
 
     editTeam(team) {
         this.editor.open(team);
+    }
+
+    // Surprise me for scripts, a seeded team from surprise.js, which apply also gives the open
+    // team editor as unsaved changes.
+    surprise(options = {}) {
+        return surpriseFor(this, options);
     }
 
     // Pages, as tabs in the top bar, with the logo at its left for the Home page.
@@ -906,26 +941,33 @@ class App {
 
     tick(now) {
         requestAnimationFrame((t) => this.tick(t));
+        // A feed with a frame rate of its own skips the frames between, at an even pace.
+        if (this.frameGate && !this.frameGate(now)) {
+            return;
+        }
         const dt = Math.min(0.1, (now - this.lastTime) / 1000);
         // Playback takes the whole time step up to a second, so a slow device still plays in real
         // time, while the cameras and the easing take the short one and stay steady.
         this.playDt = Math.min(1, Math.max(0, (now - this.lastTime) / 1000));
         this.lastTime = now;
+        // Photo mode holds the moment and draws the view itself.
+        if (this.photo && this.photo.isOpen && this.photo.frame(dt)) {
+            return;
+        }
         this.clock += dt;
         const tl = this.timeline;
         let ballPos = this.ballFocus || (this.ballFocus = new THREE.Vector3(0, 0, 0));
         if (tl && tl.store.size > 0 && this.players) {
             const before = tl.t;
-            tl.update(this.playDt);
+            // A team's time suggestion freezes or slows play for a moment.
+            tl.update(this.playDt * this.presentation.timeScale(this.playDt));
             // The card at the end of a recording goes once the view leaves the last frame, by a
             // seek, a step back or playing backwards.
             if (this.endCard && tl.t < tl.store.last - 0.5) {
                 this.endCard = false;
                 this.transition.title.hide();
             }
-            if (!this.reducedMotion) {
-                this.director.update();
-            }
+            this.director.update();
             this.transition.update(this.playDt);
             const s = tl.sample();
             if (s.index !== this.lastIndex) {
@@ -939,8 +981,10 @@ class App {
             for (const hook of this.poseHooks) {
                 hook(this.pose, s, dt);
             }
+            this.presentation.update(dt, s);
             this.players.update(this.pose, s.a);
             this.ball.update(this.pose, dt * (tl.playing ? tl.speed : 1));
+            this.presentation.afterPose(dt);
             this.hud.update(s.a);
             ballPos = this.ball.mesh.position;
             this.updateExcitement(s.a, dt);
@@ -981,6 +1025,7 @@ class App {
         this.sound.setListener(this.view.camera);
         this.playerTools.update();
         this.annotationOverlay.update();
+        this.captions.update();
         // Sound plays on the pages that show a match, while it plays or while a show runs that the
         // viewer has not paused, and stops on every other page.
         const onStage = this.page === 'watch' || this.page === 'play';
@@ -1233,7 +1278,10 @@ class App {
     }
 
     afterSeek() {
+        this.lastTransport = performance.now();
         this.sound.stopEvents();
+        this.presentation.reset('seek');
+        this.captions?.seeked();
         this.ball.reset();
         this.cameras.jump();
         this.hud.hideGoal();
@@ -1502,6 +1550,12 @@ class App {
             tl.seek(tl.first + f * (tl.last - tl.first));
             this.afterSeek();
         };
+        // The viewer's own use of the transport, which a team's camera and time suggestions yield to.
+        for (const type of ['pointerdown', 'keydown']) {
+            $('controls').addEventListener(type, () => {
+                this.lastTransport = performance.now();
+            }, true);
+        }
         track.addEventListener('pointerdown', (e) => {
             if (!this.timeline) {
                 return;
@@ -2324,3 +2378,10 @@ class App {
 }
 
 window.cuju = new App();
+// A clean feed follows the source of its address, and a feed or a video export keeps the graphics
+// inside the safe area of the picture.
+if (window.cujuFeed) {
+    import('./export/feed.js').then((m) => m.startFeed(window.cuju));
+} else if (new URLSearchParams(location.search).has('capture')) {
+    import('./export/safe-frame.js').then((m) => m.watchSafeArea($('app'), m.safeMode(location.search)));
+}

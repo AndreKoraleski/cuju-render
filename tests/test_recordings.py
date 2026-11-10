@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import struct
 import threading
 
@@ -22,6 +23,7 @@ from cuju.render._http import server as _server
 from cuju.render._store import library as _library
 from cuju.render._watch import live as _live
 from support.common import (
+    _SAMPLE_FOLDER,
     _SAMPLES,
     _SEVERAL,
     _frames,
@@ -661,3 +663,21 @@ def test_live_source_streams_annotations(render_home):
         for connection in connections:
             connection.close()
         batch.close()
+
+
+def test_moments_of_the_samples():
+    from cuju.render._moments import events as _events
+
+    file = os.path.join(_SAMPLE_FOLDER, 'sample-11v11.cjr')
+    header = _recording.read_header(file)
+    found = _events.moments(header, _recording.frames(file), timing=True)
+    goals = [moment for moment in found if moment['kind'] == 'goal']
+    assert [goal['score'] for goal in goals] == [[1, 0], [1, 1]]
+    assert [goal['team'] for goal in goals] == [0, 1]
+    assert all(goal['data']['scorer'] == goal['player'] for goal in goals)
+    assert all(goal['id'].startswith(f'goal:{goal["step"]}:') for goal in goals)
+    penalty = next(m for m in found if m['kind'] == 'restart' and m['data']['restart'] == 'penalty')
+    assert penalty['step'] < goals[0]['step']
+    assert [moment['step'] for moment in found] == sorted(moment['step'] for moment in found)
+    assert {moment['kind'] for moment in found} <= set(_events.KINDS)
+    assert _events.event_id('goal', goals[0]['step'], ['team0']) == goals[0]['id']

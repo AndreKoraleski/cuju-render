@@ -45,6 +45,7 @@ from .._format import recording as _recording
 from .._registry import teams as _teams
 from .._store import library as _library
 from .._watch import live as _live
+from . import achievements as _achievements
 from .play import Policies, PolicyError, PolicyRunner
 
 # The names of the inputs that the page sends, four directions on the screen and the buttons.
@@ -366,8 +367,8 @@ class Game:
                 self._failure = error
         return frame
 
-    def save(self) -> Path:
-        """Saves the game so far as a recording in the library and returns its path."""
+    def header(self) -> bytes:
+        """Returns the header of the game so far, as its recording holds it."""
         provenance = {
             'source': 'human_game',
             'seed': self.seed,
@@ -384,7 +385,7 @@ class Game:
             provenance['length'] = self.length
         if self.tournament is not None:
             provenance['tournament'] = self.tournament
-        head = _recording.header(
+        return _recording.header(
             self.title,
             self.scenario,
             self.lineup,
@@ -393,7 +394,10 @@ class Game:
             _recording.scenario_timing(self.batch.get_state(0)),
             provenance,
         )
-        return _library.save(head, self.frames)
+
+    def save(self) -> Path:
+        """Saves the game so far as a recording in the library and returns its path."""
+        return _library.save(self.header(), self.frames)
 
     def close(self) -> None:
         """Frees the environment and lets the thread of the submissions end."""
@@ -557,12 +561,17 @@ def main(arguments: list[str] | None = None) -> None:
         ending = run(game, commands, source, max(0.1, options.pace))
         if options.record and len(game.frames) > 1:
             saved = game.save().stem
+        # The people's achievements, by the rules that teams earn by, saved or not.
+        earned = None
+        with contextlib.suppress(Exception):
+            earned = _achievements.for_game(game.header(), game.frames, game.sides)
         _report(
             state='ended',
             ending=ending,
             step=len(game.actions),
             match=saved,
             error=game.error,
+            achievements=earned,
             **_status(game),
         )
         # The page reads the last frames before the stream closes.

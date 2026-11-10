@@ -419,7 +419,11 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
                     hint: 'Only the picture and its graphics, as on television',
                     checked: !!app.tvMode, check: true, kbd: 'T', onSelect: () => app.setTvMode(!app.tvMode),
                 }),
-                menuItem('Fullscreen', { checked: !!document.fullscreenElement, check: true, kbd: 'F', onSelect: () => app.toggleFullscreen() }));
+                menuItem('Fullscreen', { checked: !!document.fullscreenElement, check: true, kbd: 'F', onSelect: () => app.toggleFullscreen() }),
+                ...(app.feedDialog ? [menuItem('Copy feed address', {
+                    hint: 'The address of a clean feed for OBS and other streaming programs',
+                    onSelect: () => setTimeout(() => app.feedDialog.open(), 0),
+                })] : []));
         }
         if ($('view-drawing') && app.flat) {
             $('view-drawing').replaceChildren(...app.flat.menuItems(menuItem), ...(app.grid ? app.grid.menuItems(menuItem) : []));
@@ -507,6 +511,19 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
                         app.postMatch.openStats();
                     },
                 }));
+                if (app.captions) {
+                    stats.body.append(menuItem('Save captions', {
+                        hint: 'The captions of the events as a WebVTT file',
+                        onSelect: () => app.captions.download(),
+                    }));
+                }
+                if (app.moments && app.source.kind === 'match' && app.source.id) {
+                    const id = app.source.id;
+                    stats.body.append(menuItem('Moments of this match', {
+                        hint: 'Goals, shots, cards and more, on the Recordings page',
+                        onSelect: () => app.moments.show(`match:${id}`),
+                    }));
+                }
                 parts.push(stats.head, stats.body);
             }
         }

@@ -1,0 +1,202 @@
+{
+    "contract": "1.1",
+    "name": "Test package",
+    "requires": ["drivers.team", "lookahead"],
+    "prefers": [
+        "audio.worklet", "audio.music", "shader.custom", "shader.sceneColor", "post.layer",
+        "post.fullscreen", "ik.fabrik", "bend.ball", "camera.suggest", "time.suggest",
+        "environment.sky", "environment.lightning", "fans.tifo", "geometry.worker",
+        "overlay.offscreen", "drivers.grf+layers", "audio.spatial"
+    ],
+    "models": {"goalkeeper": "models/keeper.glb"},
+    "rig": {
+        "driver": {"outfield": "team", "goalkeeper": "grf+layers"},
+        "joints": {
+            "body": "mixamorig:Hips",
+            "neck": "mixamorig:Neck",
+            "left_shoulder": "mixamorig:LeftArm",
+            "left_elbow": "mixamorig:LeftForeArm",
+            "right_shoulder": "mixamorig:RightArm",
+            "right_elbow": "mixamorig:RightForeArm",
+            "left_thigh": "mixamorig:LeftUpLeg",
+            "left_knee": "mixamorig:LeftLeg",
+            "left_ankle": "mixamorig:LeftFoot",
+            "right_thigh": "mixamorig:RightUpLeg",
+            "right_knee": "mixamorig:RightLeg",
+            "right_ankle": "mixamorig:RightFoot"
+        },
+        "sockets": {
+            "halo": {"node": "mixamorig:Halo"},
+            "gaze": {"node": "mixamorig:Head", "forward": [0, 0, 1]},
+            "foot": {"node": "mixamorig:RightFoot"},
+            "root": {"offset": [0, 1.0, 0]}
+        },
+        "bounds": {"radius": 0.6, "height": 2.2, "clearance": 0},
+        "rootMotion": "ignore",
+        "blend": 0.2,
+        "attachments": {
+            "halo": {"file": "models/halo.glb", "socket": "halo", "shadows": false}
+        },
+        "ik": {
+            "kick": {
+                "chain": ["mixamorig:RightUpLeg", "mixamorig:RightLeg", "mixamorig:RightFoot"],
+                "socket": "foot",
+                "window": 0.15,
+                "weight": 0.8
+            }
+        },
+        "layers": [
+            {"mask": ["mixamorig:LeftArm", "mixamorig:RightArm"], "role": "celebration", "weight": 0.5}
+        ]
+    },
+    "clips": {
+        "idle.calm": "Idle",
+        "move": {"space": "speed", "clips": [["Run", 5]]},
+        "kick": "Kick",
+        "celebration": "Cheer",
+        "lineup": "Cheer",
+        "lament": "Idle"
+    },
+    "behaviours": [
+        {
+            "id": "spin",
+            "type": "spin",
+            "node": "mixamorig:Halo",
+            "axis": [0, 1, 0],
+            "rate": {"input": "speed", "keys": [[0, 1], [7, 4]]},
+            "phaseFrom": "both",
+            "perMetre": 0.5,
+            "seed": "number"
+        },
+        {"id": "hover", "type": "oscillate", "channel": "y", "amp": 0.03, "freq": 0.8, "offset": 0.02},
+        {"id": "bank", "type": "bank", "gain": 0.02, "limit": 0.2},
+        {
+            "id": "look",
+            "type": "lookAt",
+            "node": "mixamorig:Head",
+            "target": "ball",
+            "rate": 10,
+            "slew": 6,
+            "pitchLimit": 0.5,
+            "weight": {"input": "ceremony.amount", "keys": [[0, 1], [1, 0]]}
+        },
+        {
+            "id": "glow",
+            "type": "materialParam",
+            "material": "Body",
+            "uniform": "emissiveIntensity",
+            "value": {"input": "excitement", "keys": [[0, 0], [1, 0.5]]}
+        },
+        {"id": "bob", "type": "oscillate", "attachment": "halo", "channel": "y", "amp": 0.02, "freq": 1.1},
+        {
+            "id": "beat",
+            "type": "lightParam",
+            "light": "core",
+            "param": "intensity",
+            "value": {"input": "ballDistance", "keys": [[0, 3], [20, 0.5]]}
+        },
+        {
+            "id": "awake",
+            "type": "materialParam",
+            "material": "Body",
+            "uniform": "wake",
+            "value": {"input": "speed", "keys": [[0, 0.2], [6, 1]]}
+        }
+    ],
+    "materials": {
+        "keeper": {
+            "when": {"role": "goalkeeper"},
+            "match": "Body",
+            "baseColor": [120, 60, 160],
+            "emissive": [40, 0, 60],
+            "emissiveIntensity": 0.5
+        },
+        "eyes": {
+            "match": "Body",
+            "shader": "shaders/blink.glsl",
+            "mode": "chunks",
+            "uniforms": {"blinkSeed": {"seed": "entity"}, "wake": 0.5}
+        }
+    },
+    "lights": {
+        "core": {
+            "socket": "root",
+            "offset": [0, 0.2, 0.3],
+            "color": [255, 190, 120],
+            "intensity": 2,
+            "distance": 3,
+            "kind": "local"
+        }
+    },
+    "effects": {
+        "spark": {
+            "type": "particles",
+            "count": 40,
+            "life": [0.3, 0.8],
+            "speed": [2, 6],
+            "spread": 0.9,
+            "gravity": -6,
+            "size": [0.12, 0.02],
+            "color": [[255, 240, 190], [255, 110, 30]],
+            "opacity": [1, 0]
+        },
+        "streak": {
+            "type": "trail",
+            "length": 0.5,
+            "width": [0.22, 0],
+            "color": [[255, 220, 150], [255, 80, 20]],
+            "duration": 1.5
+        },
+        "scorch": {"type": "decal", "size": 1.4, "color": [40, 25, 10], "opacity": 0.6, "life": 8, "fade": 2},
+        "flare": {"type": "light", "color": [255, 210, 140], "intensity": 8, "distance": 10, "duration": 0.8, "release": 0.4},
+        "ring": {"type": "mesh", "file": "models/halo.glb", "scale": 3, "duration": 1.2, "spin": 3, "fade": 0.4},
+        "pulse": {"type": "post", "pass": "glow", "scope": "layer", "color": [255, 200, 90], "strength": 1.2, "duration": 1.5},
+        "grade": {"type": "post", "pass": "tint", "scope": "fullscreen", "color": [255, 220, 170], "strength": 0.4, "duration": 2}
+    },
+    "post": {"layer": {"pass": "outline", "color": [255, 220, 120], "strength": 0.6}},
+    "overlays": {"badge": {}},
+    "audio": {
+        "cues": {"strike": ["audio/strike.wav"]},
+        "music": {"anthem": {"stems": ["audio/strike.wav", "audio/strike.wav"], "bpm": 120, "beats": 4, "gain": 0.6}},
+        "worklet": "audio/hum.js",
+        "processors": {"hum": {"processor": "test-hum", "bus": "effects", "parameters": {"level": 0}}}
+    },
+    "reflexes": [
+        {
+            "on": "touch",
+            "where": {"team": "self"},
+            "do": [
+                {"audio": "strike", "at": "contact", "replay": "quiet"},
+                {"effect": "spark", "attach": "ball", "claim": "ball"},
+                {"effect": "streak", "attach": "ball"}
+            ]
+        },
+        {"on": "slide", "where": {"team": "self"}, "do": [{"effect": "scorch", "attach": "self"}]},
+        {"on": "shot", "where": {"team": "self"}, "do": [{"camera": {"shot": "closeup", "duration": 1.2}}]},
+        {"on": "winner.reveal", "where": {"team": "self"}, "do": [{"audio": "strike", "class": "moment"}]},
+        {
+            "on": "goal",
+            "where": {"team": "self"},
+            "do": [
+                {"clip": "celebration", "on": "team"},
+                {"effect": "flare", "attach": "ball"},
+                {"effect": "ring", "attach": "ball"},
+                {"effect": "pulse"},
+                {"effect": "grade"},
+                {"music": "anthem", "stems": [0], "fade": 1},
+                {"time": {"freeze": 0.2}},
+                {
+                    "environment": {
+                        "sky": {"tint": [255, 170, 90], "amount": 0.5},
+                        "lightning": {"target": "goal"},
+                        "tifo": "textures/tifo.png",
+                        "duration": 4
+                    }
+                }
+            ]
+        }
+    ],
+    "worker": "worker.js",
+    "reducedMotion": {"amplitude": 0.3},
+    "quality": {"low": {"drop": ["particles"]}}
+}

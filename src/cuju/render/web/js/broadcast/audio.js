@@ -530,7 +530,7 @@ export class Sound {
         this.base = base;
         this.ctx = null;
         this.volume = 0.5;
-        this.levels = { crowd: 1, ambience: 1, effects: 1 };
+        this.levels = { crowd: 1, ambience: 1, effects: 1, music: 0.8 };
         this.muted = true;
         this.intensity = 0.3;
         this.ready = false;
@@ -610,6 +610,8 @@ export class Sound {
         comp.threshold.value = -14;
         comp.ratio.value = 3;
         this.master.connect(comp).connect(ctx.destination);
+        // Team sound puts a true peak limiter between the compressor and the device.
+        this.comp = comp;
         // The crowd and its echo share a bus, the echo comes back quieter than the direct sound.
         this.reverb = ctx.createConvolver();
         this.reverb.buffer = stadiumImpulse(ctx);

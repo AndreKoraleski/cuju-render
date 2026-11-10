@@ -19,12 +19,15 @@ from cuju.render._format import recording as _recording
 from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
 from cuju.render._store import home as _home
+from cuju.render._store import library as _library
 from support.common import (
     _SEVERAL,
+    _SINGLE,
     _control,
     _frames,
     _get,
     _one_second,
+    _package_team,
     _send,
     _short_matches,
     _toy_team,
@@ -37,12 +40,6 @@ from support.common import (
 def test_hostile_member_names_are_refused(name):
     with pytest.raises(cuju.ArgumentError):
         _teams._check_member(name)
-
-
-_SINGLE = """
-def agent(obs):
-    return [5 if obs['step'] % 7 else 12]
-"""
 
 
 def test_team_control_is_checked_and_travels(render_home, tmp_path):
@@ -706,3 +703,243 @@ def test_team_hides_numbers_on_chosen_models(render_home):
         saved = json.loads(archive.read('cuju-team/team.json'))
     assert saved['style']['hidden_numbers'] == ['custom', shipped]
     assert _teams.add('', filename, data)['style']['hidden_numbers'] == ['custom', shipped]
+
+
+def _package_manifest():
+    from pathlib import Path
+
+    path = Path(__file__).parent / 'support/team/cuju-team/presentation/presentation.json'
+    return json.loads(path.read_text())
+
+
+def test_presentation_package_imports_checks_and_exports(render_home):
+    """A team's presentation package arrives checked, is served whole and travels in exports."""
+    import zipfile
+
+    from cuju.render._packages import presentation as _presentation
+
+    team = _package_team()
+    served = _presentation.served(team['id'])
+    assert served['warnings'] == [] and served['developer'] is False
+    assert served['files'] == [
+        'audio/hum.js',
+        'audio/strike.wav',
+        'models/halo.glb',
+        'models/keeper.glb',
+        'shaders/blink.glsl',
+        'textures/tifo.png',
+        'worker.js',
+    ]
+    assert served['contract'] == '1.1' and served['missing'] == []
+    manifest = served['manifest']
+    assert manifest['rig']['driver'] == {'outfield': 'team', 'goalkeeper': 'grf+layers'}
+    assert manifest['clips']['move'] == {'space': 'speed', 'clips': [{'clip': 'Run', 'speed': 5.0}]}
+    assert manifest['rig']['sockets']['gaze']['forward'] == [0.0, 0.0, 1.0]
+    assert manifest['rig']['bounds'] == {'radius': 0.6, 'height': 2.2, 'clearance': 0.0}
+    assert [b['id'] for b in manifest['behaviours']] == [
+        'spin',
+        'hover',
+        'bank',
+        'look',
+        'glow',
+        'bob',
+        'beat',
+        'awake',
+    ]
+    assert manifest['audio']['cues'] == {'strike': ['audio/strike.wav']}
+    assert manifest['reflexes'][3] == {
+        'on': 'winner.reveal',
+        'phase': 'occur',
+        'where': {'team': 'self'},
+        'do': [{'audio': 'strike', 'class': 'moment'}],
+    }
+    _, data = _teams.export(team['id'])
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = set(archive.namelist())
+    assert {
+        'cuju-team/presentation/presentation.json',
+        'cuju-team/presentation/worker.js',
+        'cuju-team/presentation/models/halo.glb',
+    } <= names
+    copy = _teams.add('', 'copy.zip', data)
+    assert _presentation.served(copy['id'])['manifest'] == manifest
+    # The engine never reads a package, so the team's entry holds the same keys as without one.
+    plain = _teams.add('Plain', 'main.py', b'def agent(obs):\n    return [0]\n')
+    assert set(_teams.entry(team['id'])) == set(_teams.entry(plain['id']))
+
+
+def test_presentation_package_refuses_bad_files_and_parts(render_home):
+    """Files of a wrong path, kind or size go, and a failing part leaves the rest standing."""
+    import zipfile
+
+    from cuju.render._packages import presentation as _presentation
+
+    manifest = _package_manifest()
+    manifest['rig']['sockets']['bad'] = {'forward': [0, 1, 0], 'up': [0, 2, 0]}
+    manifest['unknown'] = 1
+    manifest['behaviours'].append({'id': 'x', 'type': 'teleport'})
+    manifest['reflexes'].append({'on': 'touch', 'do': [{'audio': 'missing'}]})
+    manifest['requires'].append('future.feature')
+    folder = 'cuju-team/presentation/'
+    extra = {
+        f'{folder}presentation.json': json.dumps(manifest).encode(),
+        f'{folder}models/halo.glb': b'not a glb',
+        f'{folder}Upper.js': b'export {}',
+        f'{folder}con.js': b'export {}',
+        f'{folder}a/b/c/d/deep.js': b'export {}',
+        f'{folder}notes.txt': b'hello',
+        f'{folder}big.js': b'/' * (3 * 1024 * 1024),
+        f'{folder}sound.wav': b'OggS' + bytes(60),
+        f'{folder}uses.js': b"import x from './y.js';\nexport function frame() {}\n",
+        f'{folder}shaders/ok.glsl': b'void main() {}\n',
+    }
+    team = _package_team('Tampered', extra)
+    root = _home.folder('teams') / team['id'] / _teams.TEAM_FOLDER / 'presentation'
+    kept = sorted(p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file())
+    assert kept == [
+        'audio/hum.js',
+        'audio/strike.wav',
+        'models/keeper.glb',
+        'presentation.json',
+        'shaders/blink.glsl',
+        'shaders/ok.glsl',
+        'textures/tifo.png',
+        'worker.js',
+    ]
+    served = _presentation.served(team['id'])
+    warnings = ' | '.join(served['warnings'])
+    assert 'socket bad left out' in warnings and 'the manifest ignores unknown' in warnings
+    assert 'attachment halo left out' in warnings and 'behaviour 8 left out' in warnings
+    assert 'reflex 5 left out' in warnings
+    assert served['missing'] == ['future.feature']
+    # The parts that passed stay.
+    assert 'bad' not in served['manifest']['rig']['sockets']
+    assert served['manifest']['rig']['attachments'] == {}
+    assert served['manifest']['clips']['kick'] == [{'clip': 'Kick'}]
+    assert len(served['manifest']['behaviours']) == 8 and len(served['manifest']['reflexes']) == 4
+    # A manifest of a newer contract stays on disk and the team is drawn without it.
+    newer = {f'{folder}presentation.json': json.dumps({'contract': '1.9'}).encode()}
+    later = _package_team('Later', newer)
+    path = _home.folder('teams') / later['id'] / _teams.TEAM_FOLDER / 'presentation'
+    assert json.loads((path / 'presentation.json').read_text()) == {'contract': '1.9'}
+    assert _presentation.served(later['id'])['manifest'] is None
+    assert 'contract 1.9' in _presentation.served(later['id'])['warnings'][0]
+    # A manifest that is no JSON goes on import.
+    broken = _package_team('Broken', {f'{folder}presentation.json': b'{not json'})
+    assert _presentation.served(broken['id'])['manifest'] is None
+    # A file changed on disk after import fails its check again before it is served or exported.
+    (root / 'worker.js').write_bytes(b'\xff\xfe')
+    assert _presentation.file_path(team['id'], 'worker.js') is None
+    assert _presentation.file_path(team['id'], '../team.json') is None
+    _, data = _teams.export(team['id'])
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        assert f'{folder}worker.js' not in archive.namelist()
+        assert f'{folder}models/keeper.glb' in archive.namelist()
+
+
+def _board_entry(name, value, seconds, when, kind='person', team=None):
+    from cuju.render._playing import challenges as _challenges
+
+    return {
+        'kind': kind,
+        'name': name,
+        'team': team,
+        'value': value,
+        'seconds': seconds,
+        'medal': _challenges.medal(_challenges.find('corner'), value),
+        'attempts': [],
+        'time': when,
+        'cuju_version': cuju.__version__,
+    }
+
+
+def test_challenge_leaderboard_ranks_and_keeps_personal_bests(render_home, monkeypatch, caplog):
+
+    from cuju.render._playing import challenges as _challenges
+
+    record = _challenges.record
+    assert record('corner', _board_entry('Ana', 2, 9.0, 1))['rank'] == 1
+    assert record('corner', _board_entry('Bo', 2, 7.0, 2))['rank'] == 1
+    # The tie on value and seconds goes to the earlier run.
+    assert record('corner', _board_entry('Cy', 2, 9.0, 3))['rank'] == 3
+    worse = record('corner', _board_entry('Ana', 1, 1.0, 4))
+    assert not worse['improved'] and worse['personal_best']['value'] == 2 and worse['rank'] == 2
+    better = record('corner', _board_entry('Ana', 4, 20.0, 5))
+    assert better['improved'] and better['rank'] == 1
+    agent = _board_entry('Toy', 3, 5.0, 6, kind='agent', team='t-toy')
+    assert record('corner', agent)['rank'] == 2
+    # An agent keeps its runs under its team, whatever name the team has now.
+    renamed = record('corner', {**_board_entry('Toy renamed', 5, 5.0, 7, 'agent', 't-toy')})
+    assert renamed['rank'] == 1
+    board = _challenges.board('corner')
+    assert [(entry['name'], entry['rank']) for entry in board] == [
+        ('Toy renamed', 1),
+        ('Ana', 2),
+        ('Bo', 3),
+        ('Cy', 4),
+    ]
+    assert _challenges.personal_bests('person', 'Ana') == {'corner': {**board[1]}}
+    path = render_home / 'challenges' / 'corner.json'
+    assert not list(path.parent.glob('*.part')) and not (path.parent / '.lock').exists()
+    # A failed write leaves the board as it was.
+    before = path.read_bytes()
+
+    def broken(target, data):
+        raise OSError('disk full')
+
+    with monkeypatch.context() as patch, pytest.raises(OSError):
+        patch.setattr(_teams, '_replace', broken)
+        record('corner', _board_entry('Dee', 9, 1.0, 8))
+    assert path.read_bytes() == before and not (path.parent / '.lock').exists()
+    # The board keeps the best 100 competitors.
+    for number in range(120):
+        record('empty_goal', _board_entry(f'P{number}', number % 6, number / 10, number))
+    kept = _challenges.board('empty_goal')
+    assert len(kept) == _challenges.BOARD_SIZE and kept[0]['value'] == 5
+    assert kept[-1]['value'] == 1 and all(entry['value'] >= 1 for entry in kept)
+    late = record('empty_goal', _board_entry('Late', 0, 0.0, 999))
+    assert late['rank'] is None and late['personal_best']['rank'] is None
+    # Invalid entries and files are skipped with one warning each.
+    document = json.loads(path.read_text())
+    document['entries'].append({**document['entries'][0], 'value': 'many'})
+    document['entries'].append({**document['entries'][0], 'kind': 'robot'})
+    path.write_text(json.dumps(document))
+    (path.parent / 'run_to_score.json').write_text('{')
+    (path.parent / 'counterattack_easy.json').write_text('{"challenge": "corner", "entries": []}')
+    with caplog.at_level(logging.WARNING, logger='cuju'):
+        assert len(_challenges.board('corner')) == 4
+        assert _challenges.board('run_to_score') == []
+        assert _challenges.board('counterattack_easy') == []
+    warnings = [record.getMessage() for record in caplog.records if record.name == 'cuju']
+    assert len(warnings) == 3 and '2 invalid entries' in warnings[0]
+
+
+def test_samples_add_restore_and_register_the_starter_team(render_home):
+    from cuju.render._store import samples as _samples
+
+    listed = {entry['id']: entry for entry in _samples.listing()}
+    assert list(listed) == ['sample-11v11', 'sample-5v5', 'starter-team']
+    assert {entry['state'] for entry in listed.values()} == {'missing'}
+    added = _samples.add(['sample-5v5'])
+    assert added['changes'] == [{'id': 'sample-5v5', 'change': 'added'}]
+    assert _library.trash('sample-5v5')
+    assert {e['id']: e['state'] for e in _samples.listing()}['sample-5v5'] == 'trash'
+    assert _samples.add(['sample-5v5'])['changes'] == [{'id': 'sample-5v5', 'change': 'restored'}]
+    team = _samples.add(['starter-team'])
+    entry = next(item for item in team['samples'] if item['id'] == 'starter-team')
+    assert team['changes'] == [{'id': 'starter-team', 'change': 'added'}]
+    registered = _teams.entry(entry['target'])
+    assert (registered['name'], registered['format'], entry['state']) == (
+        'Starter team',
+        '11v11',
+        'library',
+    )
+    assert (render_home / 'teams' / entry['target'] / 'main.py').is_file()
+    # A sample that the library holds stays as it is, and a removed team comes back as new.
+    assert _samples.add(['starter-team', 'sample-5v5'])['changes'] == []
+    assert _teams.remove(entry['target'])
+    assert {e['id']: e['state'] for e in _samples.listing()}['starter-team'] == 'missing'
+    every = _samples.add()
+    assert {change['id'] for change in every['changes']} == {'sample-11v11', 'starter-team'}
+    with pytest.raises(cuju.errors.ArgumentError):
+        _samples.add(['sample-3v3'])

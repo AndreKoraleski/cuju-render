@@ -1,0 +1,137 @@
+{
+    "version": 1,
+    "lessons": [
+        {
+            "id": "open_sample",
+            "title": "Open a recording",
+            "page": "watch",
+            "needs": "recording",
+            "ask": "Open a recording on Watch. The Match menu lists the recordings of the library, and a file dropped on the page opens too.",
+            "praise": "The recording plays. Space pauses it and plays it again.",
+            "agent": {
+                "check": "recording",
+                "goal": "The library holds a recording outside the Trash.",
+                "steps": [
+                    {"say": "Add the five a side sample to the library.", "run": "cuju render sample sample-5v5"},
+                    {"say": "List the recordings of the library with the server running.", "http": "GET /api/matches"},
+                    {"say": "Open it in the browser, which a person sees.", "run": "cuju render open sample-5v5"}
+                ]
+            }
+        },
+        {
+            "id": "seek_goal",
+            "title": "Jump to a goal",
+            "page": "watch",
+            "needs": "recording",
+            "ask": "Jump to a goal of the recording. N goes to the next goal, the Match menu lists every goal, and a click on the timeline seeks.",
+            "praise": "There is the goal. R replays it from other angles.",
+            "agent": {
+                "check": "page",
+                "goal": "A page that a script drives jumps to a goal, and the page reports the lesson.",
+                "steps": [
+                    {"say": "Open the sample on the page.", "script": "await cuju.openMatch('sample-5v5')"},
+                    {"say": "Jump to the next goal, as N does.", "script": "cuju.act('next-goal')"},
+                    {"say": "Read the moment from the address of the page.", "script": "location.hash"}
+                ]
+            }
+        },
+        {
+            "id": "switch_camera",
+            "title": "Switch the camera",
+            "page": "watch",
+            "needs": "recording",
+            "ask": "Switch to another camera. V cycles the cameras, and the View menu lists them all.",
+            "praise": "A new angle. V again cycles on, and the free camera flies with W, A, S and D.",
+            "agent": {
+                "check": "page",
+                "goal": "A page that a script drives shows another camera, and the page reports the lesson.",
+                "steps": [
+                    {"say": "Choose the tactical camera.", "script": "cuju.setCamera('tactical')"},
+                    {"say": "Read the camera that shows.", "script": "cuju.cameras.mode"}
+                ]
+            }
+        },
+        {
+            "id": "follow_player",
+            "title": "Follow a player",
+            "page": "watch",
+            "needs": "recording",
+            "ask": "Follow one player. A number key from 1 to 0 picks a player of the left team, P follows the player on the ball, and the View menu has Follow player.",
+            "praise": "The camera stays with the player. Esc returns to the broadcast camera.",
+            "agent": {
+                "check": "page",
+                "goal": "A page that a script drives follows a player, and the page reports the lesson.",
+                "steps": [
+                    {"say": "Pick the first player of the left team.", "script": "cuju.cameras.followIndex = 0"},
+                    {"say": "Follow that player.", "script": "cuju.setCamera('player')"}
+                ]
+            }
+        },
+        {
+            "id": "play_game",
+            "title": "Play for 30 seconds",
+            "page": "play",
+            "needs": null,
+            "ask": "Start a game on Play and play 30 seconds of match time. Arrow keys move, D shoots, and a controller works too.",
+            "praise": "Thirty seconds played. Esc pauses the game, and Quit saves it to Recordings.",
+            "agent": {
+                "check": "match_played",
+                "goal": "The library holds a game or a requested match of at least 300 steps, 30 seconds of match time.",
+                "steps": [
+                    {"say": "Record a short match of five a side between the built in AIs, or name registered teams with --left and --right.", "run": "cuju render play --scenario 5_vs_5 --seed 1"},
+                    {"say": "From Python, play two teams of the registry.", "python": "cuju.render.play('builtin', 'builtin', '5_vs_5', seed=1)"}
+                ]
+            }
+        },
+        {
+            "id": "register_team",
+            "title": "Register a team",
+            "page": "teams",
+            "needs": null,
+            "ask": "Register a team on the Teams page. Upload a submission folder with a main.py, or add the starter team that cuju ships.",
+            "praise": "The team joins the lists of Play, Matches and Tournaments. Choose it on Teams to dress it.",
+            "agent": {
+                "check": "team",
+                "goal": "The registry holds a team besides the built in AI.",
+                "steps": [
+                    {"say": "Register the starter team that cuju ships.", "run": "cuju render sample starter-team"},
+                    {"say": "Or register a submission folder of your own.", "run": "cuju render team add path/to/submission --name \"My team\""},
+                    {"say": "List the teams.", "run": "cuju render team list"}
+                ]
+            }
+        },
+        {
+            "id": "start_challenge",
+            "title": "Start a challenge",
+            "page": "play",
+            "needs": null,
+            "ask": "Start a challenge from the Challenges section of Play, under the Play button. Start challenge plays it yourself, and Run headless plays it with a team.",
+            "praise": "The challenge is on. Every attempt plays a fixed seed, so every result compares.",
+            "agent": {
+                "check": "challenge",
+                "goal": "The library holds an attempt of a headless challenge, or a leaderboard holds a run.",
+                "steps": [
+                    {"say": "List the challenges.", "run": "cuju render challenge list"},
+                    {"say": "Play one attempt with the built in AI as practice.", "run": "cuju render challenge empty_goal_close --team builtin --attempts 1"}
+                ]
+            }
+        },
+        {
+            "id": "make_photo",
+            "title": "Make a photo",
+            "page": "watch",
+            "needs": "recording",
+            "ask": "Make a photo of a moment. Photo mode opens from the View menu, P saves the photo, and Esc leaves.",
+            "praise": "A photo of the match. The looks and the guides of photo mode change its style.",
+            "agent": {
+                "check": "page",
+                "goal": "A page that a script drives captures a photo, and the page reports the lesson.",
+                "steps": [
+                    {"say": "Open photo mode.", "script": "cuju.photo.open()"},
+                    {"say": "Capture a photo as a PNG data URL.", "script": "await cuju.photo.capture({ width: 640, height: 360 })"},
+                    {"say": "Leave photo mode.", "script": "cuju.photo.close()"}
+                ]
+            }
+        }
+    ]
+}

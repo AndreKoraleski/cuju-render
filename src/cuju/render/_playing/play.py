@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import queue
 import sys
@@ -38,6 +39,7 @@ from cuju.kaggle import (
 from .._format import recording as _recording
 from .._registry import teams as _teams
 from .._store import library as _library
+from . import achievements as _achievements
 
 # The channel of the reports, standard output until `main` moves the submissions' prints away.
 _reports: TextIO = sys.stdout
@@ -172,7 +174,12 @@ def play(
     if tournament is not None:
         provenance['tournament'] = tournament
     head = _recording.header(title, scenario, lineup, teams, len(frames), timing, provenance)
-    return _library.save(head, frames)
+    path = _library.save(head, frames)
+    try:
+        _achievements.award_match(head, frames, [left, right], path.stem)
+    except Exception as error:
+        logging.getLogger('cuju').warning('cuju render could not record achievements, %s', error)
+    return path
 
 
 class PolicyError(Exception):

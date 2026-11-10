@@ -25,6 +25,7 @@ import { Players, Rig, clipNames, fileBoneNames, guessJoints, parseModel, restPo
 import { animationLibrary, danceNames, posePlayer } from '../broadcast/celebrate.js';
 import { attachKayKitClips, kaykitLabel, menuClips } from '../players/kaykit.js';
 import { clipMoveLabel, clipMoves, clipsPanel, openClips, previewMove } from './clip-editor.js';
+import { surprisePanel } from './surprise-ui.js';
 
 const LABELS = {
     plain: 'Plain', stripes: 'Stripes', hoops: 'Hoops', halves: 'Halves', sash: 'Sash', checkers: 'Checkers',
@@ -665,6 +666,7 @@ export class TeamEditor {
             this.refreshPreview();
         });
         return h('div', { class: 'sec-body' },
+            surprisePanel(this),
             h('div', { class: 'grid2' },
                 h('label', { class: 'field' }, 'Team name', nameInput),
                 h('label', { class: 'field' }, 'Format', format)),
@@ -697,6 +699,7 @@ export class TeamEditor {
         const lockNote = this.grf ? null : h('p', { class: 'note' },
             `This team plays as ${this.modelName(s.model)}, which wears the kit below, its main colors taking the shirt, trim, shorts and socks. Model and colors shows which color follows which part and takes colors of the team's own. The pattern, the artwork and the numbers dress GRF players.`);
         return h('div', { class: 'sec-body' },
+            surprisePanel(this),
             lockNote,
             h('h4', {}, 'Shirt pattern'),
             this.chips(PATTERNS, s.kit.pattern, (v) => {

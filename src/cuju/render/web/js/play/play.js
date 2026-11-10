@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import { api } from '../core/api.js';
+import { ChallengesPanel } from './challenges.js';
 import { LiveSource } from '../recording/live.js';
 import { el as h } from '../core/menu.js';
 import { PLAYER_FLOATS } from '../recording/format.js';
@@ -320,6 +321,7 @@ export class PlayPage {
         setInterval(() => this.heartbeat(), HEARTBEAT_MS);
         this.marker = this.makeMarker();
         app.poseHooks.push((pose, s) => this.placeMarker(pose, s));
+        this.challenges = new ChallengesPanel(this);
     }
 
     get visible() {
@@ -390,7 +392,8 @@ export class PlayPage {
                 this.padTable),
             this.padNote,
             this.inputSettings(),
-            h('div', { class: 'play-row' }, this.startButton));
+            h('div', { class: 'play-row' }, this.startButton),
+            this.challenges.element());
         this.view = h('div', { class: 'play-view', tabindex: '0', 'aria-label': 'Game, Escape opens the pause menu' });
         this.view.addEventListener('focusout', () => this.releaseKeys());
         this.status = h('div', { class: 'play-status', 'aria-live': 'polite' });
@@ -444,6 +447,7 @@ export class PlayPage {
         }
         this.syncTeams();
         this.updatePadNote();
+        this.challenges.show(this.teamList);
         if (this.game) {
             this.enterStage();
             if (!this.game.ended && this.app.source !== this.game.source) {
@@ -533,26 +537,27 @@ export class PlayPage {
 
     // A game.
 
-    async start() {
-        const s = this.setup;
+    // A spec in place of the setup starts a game of a challenge, with its own seed.
+    async start(spec = null) {
+        const s = spec || this.setup;
         const humans = [s.side !== 'right', s.side !== 'left'];
         this.startButton.disabled = true;
         let entry;
         try {
-            entry = await api.startGame({ scenario: s.scenario, humans, ability: s.ability.slice(), record: s.record, teams: s.teams.slice() });
+            entry = await api.startGame({ scenario: s.scenario, humans, ability: s.ability.slice(), record: s.record, teams: s.teams.slice(), ...(s.seed != null ? { seed: s.seed } : {}) });
         } catch (err) {
             this.app.hud.toast(err.status === 409 ? 'A game is already playing. Quit it first.' : err.message, 'error', 7000);
             this.startButton.disabled = false;
             return;
         }
         this.startButton.disabled = false;
-        this.begin(entry, humans);
+        this.begin(entry, humans, null, s);
     }
 
     // Shows a game that the server started, from the setup or as a match of a tournament, whose
     // context names it and leads back to the tournament at the end.
-    begin(entry, humans, context = null) {
-        this.game = { id: entry.id, humans, entry, started: false, paused: false, ended: false, source: null, sent: {}, busy: false, behind: false, context };
+    begin(entry, humans, context = null, spec = null) {
+        this.game = { id: entry.id, humans, entry, started: false, paused: false, ended: false, source: null, sent: {}, busy: false, behind: false, context, spec };
         if (!this.built) {
             return;
         }
@@ -769,7 +774,7 @@ export class PlayPage {
                 h('button', { type: 'button', class: 'btn', onclick: () => this.showSetup() }, 'New game'));
         }
         lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, 'Home'));
-        this.endPanel.replaceChildren(...lines);
+        this.endPanel.replaceChildren(...this.challenges.endCard(entry, game, lines));
         this.end.hidden = false;
     }
 

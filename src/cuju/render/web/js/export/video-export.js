@@ -8,8 +8,9 @@
 
 import { ARENA_LABELS } from '../world/arenas.js';
 import { h } from '../teams/library.js';
+import { sizeFields } from './size-fields.js';
 import {
-    VIDEO_CAMERAS, VIDEO_QUALITIES, VIDEO_RATES, VIDEO_SIZES, checkRange, exportRequest, formatMoment,
+    VIDEO_CAMERAS, VIDEO_QUALITIES, VIDEO_RATES, checkRange, exportRequest, formatMoment,
     goalRange, progressText,
 } from './video-range.js';
 
@@ -170,6 +171,7 @@ export class VideoExport {
         this.exportButton = h('button', { class: 'btn primary', type: 'button', onclick: () => this.start() }, 'Export');
         this.cancelButton = h('button', { class: 'btn', type: 'button', hidden: true, onclick: () => this.cancel() }, 'Cancel export');
         this.download = h('a', { class: 'btn primary', hidden: true }, 'Download video');
+        this.sizes = sizeFields('ve', { value: '720p', limits: { even: true } });
         d.append(
             h('div', { class: 've-range' },
                 h('label', { class: 've-field' }, h('span', {}, 'Start'), start,
@@ -179,7 +181,7 @@ export class VideoExport {
                 h('label', { class: 've-field' }, h('span', {}, 'Goal'), goal)),
             this.note,
             h('div', { class: 've-grid' },
-                select('ve-size', 'Size', VIDEO_SIZES, '720p'),
+                ...this.sizes.fields,
                 h('label', { class: 've-field' }, h('span', {}, 'Frame rate'),
                     h('select', { id: 've-fps' }, VIDEO_RATES.map((r) => h('option', { value: String(r), selected: r === 30 }, `${r} a second`)))),
                 select('ve-quality', 'Quality', VIDEO_QUALITIES, 'standard'),
@@ -196,8 +198,11 @@ export class VideoExport {
 
     choices() {
         const value = (id) => this.dialog.querySelector(`#${id}`).value;
+        const size = this.sizes.read();
         return {
-            size: value('ve-size'),
+            size: { width: size.width, height: size.height },
+            scale: size.scale,
+            safe: size.safe,
             fps: Number(value('ve-fps')),
             quality: value('ve-quality'),
             camera: value('ve-camera'),
@@ -216,10 +221,18 @@ export class VideoExport {
             this.note.classList.add('error');
             return;
         }
+        let choices;
+        try {
+            choices = this.choices();
+        } catch (err) {
+            this.note.textContent = err.message;
+            this.note.classList.add('error');
+            return;
+        }
         this.note.classList.remove('error');
         this.exportButton.disabled = true;
         try {
-            const entry = await call('POST', `/api/matches/${encodeURIComponent(source.id)}/video`, exportRequest(range, this.choices(), this.app.field));
+            const entry = await call('POST', `/api/matches/${encodeURIComponent(source.id)}/video`, exportRequest(range, choices, this.app.field));
             this.follow(entry);
         } catch (err) {
             this.exportButton.disabled = false;
