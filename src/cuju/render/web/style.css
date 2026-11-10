@@ -645,6 +645,17 @@ fieldset.plain:disabled {
     color: var(--live);
 }
 
+.live-env,
+.live-env label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.live-env input {
+    width: 6em;
+}
+
 #live-box.at-edge #live-state::before {
     content: "";
     display: inline-block;
@@ -1199,8 +1210,8 @@ body.offline .offline-note {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    #stinger.in .stinger-band,
-    #stinger.out .stinger-band {
+    :root:not(.full-motion) #stinger.in .stinger-band,
+    :root:not(.full-motion) #stinger.out .stinger-band {
         animation-duration: 0.01s;
     }
 }
@@ -2682,9 +2693,9 @@ dialog.painter::backdrop {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
+    :root:not(.full-motion) *,
+    :root:not(.full-motion) *::before,
+    :root:not(.full-motion) *::after {
         animation-duration: 0.01ms !important;
         transition-duration: 0.01ms !important;
     }
@@ -4246,6 +4257,47 @@ canvas.stands {
     align-items: center;
 }
 
+.favorite-mark {
+    flex: none;
+    margin-right: 6px;
+    color: var(--accent);
+}
+
+.recording-details {
+    display: grid;
+    gap: 8px;
+    margin: 8px 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+}
+
+.recording-details h3,
+.recording-details h4 {
+    margin: 0;
+}
+
+.recording-details textarea {
+    resize: vertical;
+}
+
+.recording-details dl {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 2px 12px;
+    margin: 6px 0;
+    font-size: 13px;
+}
+
+.recording-details dt {
+    color: var(--muted);
+}
+
+.recording-details dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
 table.grid tbody tr {
     transition: background-color 0.1s;
 }
@@ -5072,6 +5124,37 @@ dialog.painter .toolbar {
     margin-top: 12px;
 }
 
+.input-settings {
+    margin-top: 12px;
+}
+
+.input-settings summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.input-settings h3 {
+    margin: 12px 0 6px;
+    font-size: 15px;
+}
+
+.key-bindings th {
+    font-weight: normal;
+}
+
+.key-bind {
+    min-width: 72px;
+}
+
+.input-tester {
+    min-height: 64px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .play-tables h3,
 .play-card h3 {
     margin: 0 0 6px;
@@ -5358,7 +5441,7 @@ dialog.painter .toolbar {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .pad-sketch .on {
+    :root:not(.full-motion) .pad-sketch .on {
         animation: none;
     }
 }
@@ -6158,10 +6241,10 @@ dialog.painter .toolbar {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .mvp-medal, .mvp-rays, #spotlight .nameplate, .medal-shine {
+    :root:not(.full-motion) :is(.mvp-medal, .mvp-rays, #spotlight .nameplate, .medal-shine) {
         animation: none;
     }
-    .mvp-flash {
+    :root:not(.full-motion) .mvp-flash {
         display: none;
     }
 }
@@ -6260,4 +6343,47 @@ dialog.painter .toolbar {
     border-style: dashed;
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* Player labels over the Watch view, placed by script, never in the way of the pointer. */
+
+.player-labels {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+}
+
+.player-labels span {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 2px 4px;
+    font-size: 11px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+}
+
+/* Reduced motion chosen on the page, whatever the system prefers. */
+
+.reduced-motion *,
+.reduced-motion *::before,
+.reduced-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+}
+
+.reduced-motion .pad-sketch .on,
+.reduced-motion :is(.mvp-medal, .mvp-rays, #spotlight .nameplate, .medal-shine) {
+    animation: none;
+}
+
+.reduced-motion .mvp-flash {
+    display: none;
 }

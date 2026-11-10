@@ -544,7 +544,7 @@ export class CameraRig {
     flyUpdate(dt) {
         const f = this.flight;
         if (f) {
-            f.t += dt;
+            f.t = this.reducedMotion ? f.dur : f.t + dt;
             const s = smoother(f.t / f.dur);
             this.freePos.lerpVectors(f.fromPos, f.toPos, s);
             // A gentle arc over the pitch on longer glides.
@@ -574,7 +574,7 @@ export class CameraRig {
         }
         this.rawPos.copy(this.freePos);
         this.rawQuat.setFromEuler(new THREE.Euler(this.viewPitch, this.viewYaw, 0, 'YXZ'));
-        this.rawFov += (this.freeFov - this.rawFov) * ease(5, dt);
+        this.rawFov = this.reducedMotion ? this.freeFov : this.rawFov + (this.freeFov - this.rawFov) * ease(5, dt);
         this.target.copy(this.rawPos).addScaledVector(new THREE.Vector3(0, 0, -1).applyQuaternion(this.rawQuat), 20);
         if (this.idleSeconds > 0 && !f && this.keys.size === 0 && !this.dragging) {
             this.idle += dt;
@@ -885,6 +885,7 @@ export class CameraRig {
     }
 
     output(dt, players, pose) {
+        if (this.reducedMotion) this.blend = null;
         const cam = this.camera;
         const b = this.blend;
         let fov = this.rawFov;

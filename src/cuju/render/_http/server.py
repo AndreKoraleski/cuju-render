@@ -3,34 +3,41 @@
 
 """The local server of the renderer, which serves the page and its API on the loopback interface.
 
-It lists, sends and deletes recordings, lists and relays live sources, keeps the team registry and
-plays requested matches, each in a process of its own. It uses only Python's standard library.
+It lists, sends and annotates recordings, moves them to the Trash and back and deletes them from
+there, lists and relays live sources, keeps the team registry and plays requested matches, each in
+a process of its own. It uses only Python's standard library.
 """
 
 from __future__ import annotations
 
 import collections
+import contextlib
 import http.client
 import http.server
 import json
+import logging
 import mimetypes
 import os
+import secrets
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from cuju import bundled_scenarios
-from cuju._version import __version__
+from cuju import __version__, bundled_scenarios
 from cuju.errors import ArgumentError
 
+from .._registry import clips as _clips
 from .._registry import teams as _teams
 from .._store import home as _home
 from .._store import library as _library
+from .._watch import grid as _grid
 
 _WEB = Path(__file__).parents[1] / 'web'
+_LOGGER = logging.getLogger('cuju')
 # A requested match ends after this many seconds, a full match plays in a few minutes.
 _MATCH_SECONDS = 30 * 60
 _TYPES = {
@@ -46,15 +53,145 @@ _TYPES = {
 }
 
 
+# The states of a request, and the error of one that a restart of the server interrupted.
+_STATES = ('queued', 'running', 'done', 'failed')
+_INTERRUPTED = 'interrupted by a server restart'
+_INTERRUPTED_PLAYING = (
+    'interrupted by a server restart while playing, its recording may still appear in the library'
+)
+# The history keeps this many finished requests, the newest, with every waiting or playing one.
+_KEPT_REQUESTS = 200
+
+
+def _number(value: Any) -> bool:
+    """Returns whether `value` is a JSON number, which excludes true and false."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+# Every field of a stored request with its check, so that a file edited by hand or written by
+# a later version is skipped with a warning and the server starts all the same.
+_REQUEST_FIELDS: dict[str, Any] = {
+    'id': lambda value: isinstance(value, str) and _home.valid_identifier(value),
+    'left': lambda value: isinstance(value, str),
+    'right': lambda value: isinstance(value, str),
+    'scenario': lambda value: isinstance(value, str),
+    'seed': lambda value: (
+        isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2**64
+    ),
+    'ability': lambda value: (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(item is None or (_number(item) and 0 <= item <= 1) for item in value)
+    ),
+    'state': lambda value: value in _STATES,
+    'progress': _number,
+    'match': lambda value: value is None or isinstance(value, str),
+    'error': lambda value: value is None or isinstance(value, str),
+    'created': _number,
+    'started': lambda value: value is None or _number(value),
+    'finished': lambda value: value is None or _number(value),
+}
+
+
+def _stored_request(path: Path) -> dict[str, Any] | None:
+    """Returns the request that a file of the history holds, or `None` with a warning."""
+    try:
+        entry = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        _LOGGER.warning('cuju render skips the request file %s, %s', path.name, error)
+        return None
+    if not isinstance(entry, dict):
+        _LOGGER.warning('cuju render skips the request file %s, which holds no object', path.name)
+        return None
+    wrong = [
+        key for key, check in _REQUEST_FIELDS.items() if key not in entry or not check(entry[key])
+    ]
+    if wrong or entry['id'] != path.stem:
+        _LOGGER.warning(
+            'cuju render skips the request file %s, whose fields %s are missing or invalid',
+            path.name,
+            ', '.join(wrong or ['id']),
+        )
+        return None
+    return {key: entry[key] for key in _REQUEST_FIELDS}
+
+
 class _Requests:
-    """The queue of requested matches, played one at a time in child processes."""
+    """The queue of requested matches, played one at a time in child processes.
+
+    Each request lives in a JSON file of the folder `requests`, so the history outlasts the server.
+    A request that waited or played when the server stopped is marked as interrupted on the next
+    start. A match that was playing then may still finish in its own process and save its
+    recording, which then appears in the library while its request stays interrupted.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._entries: list[dict[str, Any]] = []
         self._processes: dict[str, subprocess.Popen] = {}
         self._wake = threading.Event()
+        self._folder = _home.folder('requests')
+        # A write that stopped halfway leaves a temporary file, which holds nothing to keep.
+        for path in self._folder.glob('*.part'):
+            with contextlib.suppress(OSError):
+                path.unlink()
+        for path in sorted(self._folder.glob('*.json')):
+            entry = _stored_request(path)
+            if entry is None:
+                continue
+            if entry['state'] in ('queued', 'running'):
+                error = _INTERRUPTED_PLAYING if entry['state'] == 'running' else _INTERRUPTED
+                entry.update(state='failed', error=error, finished=time.time())
+                self._checkpoint(entry)
+            self._entries.append(entry)
+        self._entries.sort(key=lambda entry: entry['created'])
+        self._trim()
         threading.Thread(target=self._run, daemon=True).start()
+
+    def _trim(self) -> None:
+        """Forgets the oldest finished requests beyond the newest 200, with the lock held.
+
+        A request that waits or plays always stays, and the file of a forgotten request is deleted,
+        so the history and the list of the page stay small however many matches were requested.
+        """
+        finished = [entry for entry in self._entries if entry['state'] not in ('queued', 'running')]
+        for entry in finished[: max(0, len(finished) - _KEPT_REQUESTS)]:
+            self._entries.remove(entry)
+            with contextlib.suppress(OSError):
+                (self._folder / f'{entry["id"]}.json').unlink()
+
+    def _persist(self, entry: dict[str, Any]) -> None:
+        """Writes a request to its file through a temporary file, with the lock held."""
+        path = self._folder / f'{entry["id"]}.json'
+        temporary = path.with_name(path.name + '.part')
+        stored = {key: entry[key] for key in _REQUEST_FIELDS}
+        try:
+            temporary.write_text(json.dumps(stored), encoding='utf-8')
+            os.replace(temporary, path)
+        except OSError:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+            raise
+
+    def _checkpoint(self, entry: dict[str, Any]) -> None:
+        """Writes a request, and notes a failed write on the entry instead of stopping the queue."""
+        entry.pop('persistence_error', None)
+        try:
+            self._persist(entry)
+        except OSError as error:
+            entry['persistence_error'] = f'could not save the request history, {error}'
+
+    def _new_identifier(self) -> str:
+        """Draws an identifier that no request and no file of the history holds, with the lock held.
+
+        Identifiers sort by the second they are made in, so requests of the same second differ by
+        their random end alone, and a draw that is taken is drawn again.
+        """
+        taken = {entry['id'] for entry in self._entries}
+        while True:
+            identifier = _home.new_identifier('r')
+            if identifier not in taken and not (self._folder / f'{identifier}.json').exists():
+                return identifier
 
     def add(
         self,
@@ -64,32 +201,52 @@ class _Requests:
         seed: int | None,
         ability: Any = (None, None),
     ) -> dict[str, Any]:
-        """Queues a match and returns its entry."""
+        """Queues a match and returns its entry, with its seed drawn when none is given.
+
+        Raises:
+            ArgumentError: If the scenario, a team, the seed or an ability is invalid.
+            OSError: If the request cannot be written to the history, and then it is not queued.
+        """
         if scenario not in _scenarios():
             raise ArgumentError(f'expected a shipped scenario, found {scenario!r}')
         _teams.check_scenario([_teams.entry(left), _teams.entry(right)], scenario)
         ability = list(_teams.check_ability(ability))
+        seed = _seed(seed)
         entry = {
-            'id': _home.new_identifier('r'),
+            'id': '',
             'left': left,
             'right': right,
             'scenario': scenario,
-            'seed': seed,
+            'seed': secrets.randbelow(2**31) if seed is None else seed,
             'ability': ability,
             'state': 'queued',
             'progress': 0.0,
             'match': None,
             'error': None,
+            'created': 0.0,
+            'started': None,
+            'finished': None,
         }
         with self._lock:
+            entry['id'] = self._new_identifier()
+            entry['created'] = time.time()
+            self._persist(entry)
             self._entries.append(entry)
+            self._trim()
         self._wake.set()
-        return dict(entry)
+        return self._public(entry)
+
+    @staticmethod
+    def _public(entry: dict[str, Any]) -> dict[str, Any]:
+        """Returns a copy of a request for the page, with a seed beyond JavaScript's as text."""
+        result = dict(entry)
+        result['seed'] = _public_seed(result.get('seed'))
+        return result
 
     def entries(self) -> list[dict[str, Any]]:
         """Returns a copy of every request, newest first."""
         with self._lock:
-            return [dict(entry) for entry in reversed(self._entries)]
+            return [self._public(entry) for entry in reversed(self._entries)]
 
     def _run(self) -> None:
         while True:
@@ -110,6 +267,8 @@ class _Requests:
                 return False
             process = self._processes.get(identifier)
             entry['state'], entry['error'] = 'failed', 'cancelled'
+            entry['finished'] = time.time()
+            self._checkpoint(entry)
         if process is not None:
             process.kill()
         return True
@@ -121,6 +280,8 @@ class _Requests:
         except Exception as error:
             with self._lock:
                 entry['state'], entry['error'] = 'failed', f'{type(error).__name__}: {error}'
+                entry['finished'] = time.time()
+                self._checkpoint(entry)
 
     def _play_child(self, entry: dict[str, Any]) -> None:
         command = [
@@ -143,6 +304,8 @@ class _Requests:
             if entry['state'] != 'queued':
                 return
             entry['state'] = 'running'
+            entry['started'] = time.time()
+            self._checkpoint(entry)
             # Starting and registering the child share the cancellation lock. The child runs in the
             # renderer's folder, so no module beside the server's working folder shadows cuju or
             # torch, and it reads nothing from the server's terminal.
@@ -201,6 +364,8 @@ class _Requests:
                     entry['error'] = f'the match ended with exit code {code}' + (
                         f', {tail}' if tail else ''
                     )
+            entry['finished'] = time.time()
+            self._checkpoint(entry)
 
 
 class GameBusyError(Exception):
@@ -240,12 +405,22 @@ class _Games:
         ability: Any = (None, None),
         seed: int | None = None,
         record: bool = True,
+        teams: Any = (_teams.BUILTIN, _teams.BUILTIN),
     ) -> dict[str, Any]:
         """Starts a game and returns its entry.
 
+        Args:
+            scenario: A shipped scenario.
+            humans: Whether a person plays the left side and the right side.
+            ability: The ability of the built-in AI on each side.
+            seed: The seed, or `None` to draw one.
+            record: Whether the game goes to the library.
+            teams: The registry team of each side, which plays a side without a person and joins a
+                person as teammates.
+
         Raises:
-            ArgumentError: If the scenario is not shipped, the sides name no person or an ability
-                lies outside 0 to 1.
+            ArgumentError: If the scenario is not shipped, the sides name no person, an ability
+                lies outside 0 to 1 or a team cannot play its side.
             GameBusyError: If another game still plays.
         """
         if scenario not in _scenarios():
@@ -262,10 +437,19 @@ class _Games:
         ability = list(_teams.check_ability(ability))
         if not isinstance(record, bool):
             raise ArgumentError(f'expected record as true or false, found {record!r}')
+        if (
+            not isinstance(teams, (list, tuple))
+            or len(teams) != 2
+            or not all(isinstance(value, str) for value in teams)
+        ):
+            raise ArgumentError(f'expected two registry teams, left and right, found {teams!r}')
+        teams = [str(value) for value in teams]
+        _teams.game_agents([_teams.entry(value) for value in teams], scenario, humans)
         entry = {
             'id': _home.new_identifier('g'),
             'scenario': scenario,
             'humans': list(humans),
+            'team_ids': teams,
             'ability': ability,
             'seed': seed,
             'record': record,
@@ -277,6 +461,8 @@ class _Games:
             'teams': None,
             'match': None,
             'error': None,
+            'late': 0,
+            'streak': 0,
         }
         command = [
             sys.executable,
@@ -288,6 +474,10 @@ class _Games:
             'person' if humans[0] else 'builtin',
             '--right',
             'person' if humans[1] else 'builtin',
+            '--left-team',
+            teams[0],
+            '--right-team',
+            teams[1],
             '--pace',
             repr(float(_GAME_PACE)),
         ]
@@ -316,7 +506,7 @@ class _Games:
             )
             self._entry, self._process = entry, process
         threading.Thread(target=self._watch, args=(entry, process), daemon=True).start()
-        return dict(entry)
+        return self._public(entry)
 
     def current(self) -> dict[str, Any] | None:
         """Returns a copy of the latest game's entry, or `None` before the first."""
@@ -325,7 +515,9 @@ class _Games:
 
     @staticmethod
     def _public(entry: dict[str, Any]) -> dict[str, Any]:
-        return {key: value for key, value in entry.items() if key != 'port'}
+        result = {key: value for key, value in entry.items() if key != 'port'}
+        result['seed'] = _public_seed(result.get('seed'))
+        return result
 
     def _watch(self, entry: dict[str, Any], process: subprocess.Popen) -> None:
         """Follows the reports of a game's process until it ends."""
@@ -349,6 +541,10 @@ class _Games:
                     'error',
                     'seed',
                     'teams',
+                    'late',
+                    'streak',
+                    'controlled',
+                    'actions',
                 ):
                     if key in report:
                         entry[key] = report[key]
@@ -459,6 +655,13 @@ def _seed(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 2**64:
         raise ArgumentError(f'expected a seed from 0 to 2**64 - 1, found {value!r}')
     return value
+
+
+def _public_seed(seed: Any) -> Any:
+    """Returns a seed for the page, as text when JavaScript's numbers cannot hold it exactly."""
+    if isinstance(seed, int) and not isinstance(seed, bool) and seed > 2**53 - 1:
+        return str(seed)
+    return seed
 
 
 def _control(query: dict[str, str]) -> dict[str, Any] | None:
@@ -625,17 +828,35 @@ def make_handler(
                     self._static(parts)
                 elif parts == ['api', 'matches']:
                     self._json(_library.matches())
+                elif parts == ['api', 'trash']:
+                    self._json(_library.matches(trash=True))
+                elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'details':
+                    try:
+                        self._json(_library.details(parts[2]))
+                    except ArgumentError as error:
+                        self._error(404, str(error))
                 elif len(parts) == 3 and parts[1] == 'matches':
                     self._recording(parts[2])
                 elif parts == ['api', 'live']:
+                    # A source of 0.2.0 announces neither the number of environments nor the
+                    # stream, so those fields read one and zero.
                     self._json(
                         [
-                            {key: source[key] for key in ('id', 'title', 'scenario', 'environment')}
+                            {
+                                **{
+                                    key: source[key]
+                                    for key in ('id', 'title', 'scenario', 'environment')
+                                },
+                                'environment_count': source.get('environment_count', 1),
+                                'generation': source.get('generation', 0),
+                            }
                             for source in _sources()
                         ]
                     )
                 elif len(parts) == 4 and parts[1] == 'live' and parts[3] == 'stream':
                     self._relay(parts[2])
+                elif len(parts) == 4 and parts[1] == 'live' and parts[3] == 'grid':
+                    self._live_grid(parts[2])
                 elif parts == ['api', 'info']:
                     self._json({'version': __version__})
                 elif parts == ['api', 'scenarios']:
@@ -648,6 +869,8 @@ def make_handler(
                     self._image(parts[2], parts[4])
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'sounds':
                     self._sound(parts[2], parts[4])
+                elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
+                    self._clip(parts[2], parts[4])
                 elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'export':
                     self._export(parts[2])
                 elif parts == ['api', 'models']:
@@ -673,7 +896,11 @@ def make_handler(
         def _post(self) -> None:
             parts, query = self._route()
             try:
-                if parts == ['api', 'teams']:
+                if len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'duplicate':
+                    self._json(_teams.duplicate(parts[2]), 201)
+                elif len(parts) == 4 and parts[1] == 'live' and parts[3] == 'environment':
+                    self._select_environment(parts[2])
+                elif parts == ['api', 'teams']:
                     entry = _teams.add(
                         query.get('name', ''),
                         query.get('filename', 'main.py'),
@@ -682,6 +909,11 @@ def make_handler(
                         _control(query),
                     )
                     self._json(entry, 201)
+                elif len(parts) == 4 and parts[1] == 'trash' and parts[3] == 'restore':
+                    if _library.trash(parts[2], restore=True):
+                        self._json(_library.details(parts[2]))
+                    else:
+                        self._error(404, 'no such recording in the Trash')
                 elif parts == ['api', 'requests']:
                     document = self._document()
                     entry = requests.add(
@@ -700,6 +932,7 @@ def make_handler(
                         document.get('ability', [None, None]),
                         _seed(document.get('seed')),
                         document.get('record', True),
+                        document.get('teams', [_teams.BUILTIN, _teams.BUILTIN]),
                     )
                     self._json(entry, 201)
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'input':
@@ -731,6 +964,9 @@ def make_handler(
                     self._json(_teams.set_image(parts[2], parts[4], self._body()))
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'sounds':
                     self._json(_teams.set_sound(parts[2], parts[4], self._body()))
+                elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
+                    joints = json.loads(query['joints']) if 'joints' in query else None
+                    self._json(_clips.set_clip(parts[2], parts[4], self._body(), joints))
                 else:
                     self._error(404, 'no such resource')
             except (ArgumentError, ValueError) as error:
@@ -745,8 +981,18 @@ def make_handler(
                 if len(parts) == 3 and parts[1] == 'matches':
                     document = self._document()
                     self._json(
-                        _library.update(parts[2], document.get('title'), document.get('folder'))
+                        _library.update(
+                            parts[2],
+                            document.get('title'),
+                            document.get('folder'),
+                            document.get('favorite'),
+                            document.get('tags'),
+                            document.get('notes'),
+                        )
                     )
+                elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
+                    joints = self._document().get('joints')
+                    self._json(_clips.set_joints(parts[2], parts[4], joints))
                 elif len(parts) == 3 and parts[1] == 'teams':
                     document = self._document()
                     self._json(
@@ -785,8 +1031,13 @@ def make_handler(
                 removed = _teams.remove_image(parts[2], parts[4])
             elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'sounds':
                 removed = _teams.remove_sound(parts[2], parts[4])
+            elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
+                removed = _clips.remove_clip(parts[2], parts[4])
             elif len(parts) == 3 and parts[1] == 'matches':
-                removed = _library.remove(parts[2])
+                # A deleted recording goes to the Trash, and only the Trash deletes it for good.
+                removed = _library.trash(parts[2])
+            elif len(parts) == 3 and parts[1] == 'trash':
+                removed = _library.purge(parts[2])
             elif len(parts) == 3 and parts[1] == 'teams':
                 removed = _teams.remove(parts[2])
             else:
@@ -816,6 +1067,19 @@ def make_handler(
             path = _teams.model_path(identifier)
             if path is None:
                 self._error(404, 'no such model')
+                return
+            data = path.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'model/gltf-binary')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _clip(self, identifier: str, name: str) -> None:
+            path = _clips.clip_path(identifier, name)
+            if path is None:
+                self._error(404, 'no such clip')
                 return
             data = path.read_bytes()
             self.send_response(200)
@@ -886,6 +1150,94 @@ def make_handler(
                 while chunk := stream.read(1 << 20):
                     self.wfile.write(chunk)
 
+        def _select_environment(self, identifier: str) -> None:
+            """Passes a viewer's choice of environment on to the live source `identifier`."""
+            source = next((entry for entry in _sources() if entry['id'] == identifier), None)
+            if source is None:
+                self._error(404, 'no such live source')
+                return
+            environment = self._document().get('environment')
+            count = source.get('environment_count', 1)
+            if (
+                isinstance(environment, bool)
+                or not isinstance(environment, int)
+                or not 0 <= environment < count
+            ):
+                raise ArgumentError(
+                    f'expected an environment from 0 to {count - 1}, found {environment!r}'
+                )
+            connection = http.client.HTTPConnection('127.0.0.1', int(source['port']), timeout=10)
+            try:
+                connection.request(
+                    'POST',
+                    '/environment',
+                    json.dumps({'environment': environment}),
+                    {'Content-Type': 'application/json'},
+                )
+                response = connection.getresponse()
+                response.read()
+            except OSError as error:
+                self._error(502, f'the live source did not answer, {error}')
+                return
+            finally:
+                connection.close()
+            if response.status != 202:
+                self._error(502, f'the live source answered {response.status}')
+                return
+            self._json({'environment': environment, 'generation': source.get('generation', 0)}, 202)
+
+        def _live_grid(self, identifier: str) -> None:
+            """Relays a viewer's request for the grid of the live source `identifier`.
+
+            Each request makes the source read states for a few seconds, so a page of another
+            origin is refused here as for requests that change data.
+            """
+            origin = self.headers.get('Origin')
+            if origin is not None and origin != f'http://{self.headers.get("Host")}':
+                self._error(403, 'expected a request from the page of this server')
+                return
+            source = next((entry for entry in _sources() if entry['id'] == identifier), None)
+            if source is None:
+                self._error(404, 'no such live source')
+                return
+            query = self._route()[1]
+            count = source.get('environment_count', 1)
+            values = []
+            for name in ('first', 'count'):
+                text = query.get(name, '')
+                if not text.isdigit() or len(text) > 9:
+                    raise ArgumentError(f'expected a whole number for {name}, found {text!r}')
+                values.append(int(text))
+            first, size = values
+            if not 0 <= first < count or not 1 <= size <= _grid.MAXIMUM:
+                raise ArgumentError(
+                    f'expected a first environment from 0 to {count - 1} and a count from 1 to '
+                    f'{_grid.MAXIMUM}, found {first} and {size}'
+                )
+            connection = http.client.HTTPConnection('127.0.0.1', int(source['port']), timeout=10)
+            try:
+                connection.request('GET', f'/grid?first={first}&count={size}')
+                response = connection.getresponse()
+                body = response.read()
+            except OSError as error:
+                self._error(502, f'the live source did not answer, {error}')
+                return
+            finally:
+                connection.close()
+            if response.status == 404:
+                # A source of 0.2.0 has no grid.
+                self._error(404, 'this live source offers no grid, it comes from an older cuju')
+                return
+            if response.status != 200:
+                self._error(502, f'the live source answered {response.status}')
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+
         def _relay(self, identifier: str) -> None:
             source = next((entry for entry in _sources() if entry['id'] == identifier), None)
             if source is None:
@@ -901,7 +1253,9 @@ def make_handler(
                 # A batch pauses between steps for as long as training needs, so once connected
                 # the relay waits on the stream without a timeout.
                 connection.sock.settimeout(None)
-                connection.request('GET', '/stream')
+                # A page that reconnects asks for numbered frames, and the relay passes that on.
+                sequence = self._route()[1].get('sequence') == '1'
+                connection.request('GET', '/stream?sequence=1' if sequence else '/stream')
                 response = connection.getresponse()
             except OSError as error:
                 connection.close()

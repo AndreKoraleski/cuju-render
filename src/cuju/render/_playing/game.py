@@ -1,7 +1,7 @@
 # Copyright 2026 The cuju Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Plays a game in which a person controls one player of a side, against GRF's built-in AI.
+"""Plays a game in which a person controls one player of a side, against a team of the registry.
 
 The server runs this module in a process of its own for the page's Play a game. The process steps
 one environment at real time, ten steps a second, and streams every frame to the page through a
@@ -14,11 +14,18 @@ one player and the engine hands that control to the designated player as play mo
 nearest the ball among them, as GRF does for its own human players. The keys and buttons that
 the page reads become GRF's 19 default actions through GRF's own controller logic, so a person's
 actions are actions like any agent's and the match stays the match the engine would play for them.
+
+The other team, and the person's teammates, are the built-in AI or a submission of the registry.
+A submission loads and plays in this process from its own folder, as in a requested match, and its
+calls run on a thread of their own, `PolicyRunner`, so it never holds the game back. A step whose
+answer comes late goes to the built-in AI, and a submission that fails or stops answering ends the
+game, which keeps its recording.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import queue
@@ -38,6 +45,7 @@ from .._format import recording as _recording
 from .._registry import teams as _teams
 from .._store import library as _library
 from .._watch import live as _live
+from .play import Policies, PolicyError, PolicyRunner
 
 # The names of the inputs that the page sends, four directions on the screen and the buttons.
 DIRECTIONS = ('left', 'right', 'up', 'down')
@@ -73,6 +81,18 @@ STEPS_PER_SECOND = 10
 # Without any message from the server for this long the game pauses, and after this long it ends.
 PAUSE_AFTER_SECONDS = 8.0
 END_AFTER_SECONDS = 120.0
+# A submission answers each step within this share of the step's time, measured from when its
+# observation is read, or the built-in AI plays its players for the step.
+POLICY_BUDGET = 0.9
+# Loading the submissions, and their first answer, each get this long, since a Kaggle agent often
+# loads its model on the first call. Both together stay well within the server's two minutes for
+# the start of a game.
+LOAD_SECONDS = 45.0
+FIRST_CALL_SECONDS = 45.0
+# A submission that has not answered for this long counts as stuck, and the game ends.
+HANG_SECONDS = 10.0
+# After this many steps in a row without an answer in time, the page hears of it.
+LATE_STREAK = 10
 _SCORE = struct.Struct('<2i')
 
 # The channel of the reports, standard output until `main` moves everything else away.
@@ -152,10 +172,18 @@ class Game:
 
     Attributes:
         humans: Whether a person plays the left side and the right side.
-        actions: The actions of every step so far, one list per step, the left agent first.
+        team_ids: The registry team of each side, the person's teammates on a person's side.
+        counts: The agents of each side, a person's first.
+        action_set: `v2` when a submission plays, so the built-in AI may stand in for it, or
+            `default`.
+        actions: The actions of every step so far, one list per step, the left agents first.
         frames: The frames of every step so far, the reset first.
         lineup: The header entry of each player.
         teams: The left and right team, as a recording's header holds them.
+        runner: The runner of the submissions, or `None` when the built-in AI plays every player.
+        error: Why a submission ended the game, or `None`.
+        controlled: The player in its team that each person controls, on a side shared with a
+            submission, where the frames mark every player of the side's agents, or `None`.
     """
 
     def __init__(
@@ -165,8 +193,11 @@ class Game:
         ability: tuple[float | None, float | None] = (None, None),
         seed: int | None = None,
         device: str = 'cpu',
+        teams: tuple[str, str] = (_teams.BUILTIN, _teams.BUILTIN),
+        load_seconds: float | None = LOAD_SECONDS,
+        first_call_seconds: float | None = FIRST_CALL_SECONDS,
     ) -> None:
-        """Creates and resets the environment.
+        """Creates and resets the environment, and loads the submissions that play.
 
         Args:
             scenario: A shipped scenario, without agent counts.
@@ -175,40 +206,83 @@ class Game:
                 1, or `None` for the scenario's.
             seed: The seed of the game, or `None` for one drawn from the clock.
             device: `cpu` or `cuda`.
+            teams: The registry team of each side. A side without a person is that team, and a
+                person's side takes it as the person's teammates, the built-in AI by default.
+            load_seconds: How long the submissions may take to load, or `None` without a limit.
+            first_call_seconds: How long the submissions may take to answer the first
+                observation, or `None` without a limit.
 
         Raises:
-            ArgumentError: If the scenario is not shipped, no side has a person or an ability lies
-                outside 0 to 1.
+            ArgumentError: If the scenario is not shipped, no side has a person, an ability lies
+                outside 0 to 1, or a team cannot play its side.
+            PolicyError: If a submission fails to load, fails on its first observation or misses
+                its allowance for either.
         """
         ability = _teams.check_ability(ability)
         if scenario not in [*bundled_scenarios(), *_teams.renderer_scenarios()]:
             raise ArgumentError(f'expected a shipped scenario, found {scenario!r}')
         if not any(humans):
             raise ArgumentError('expected a person on at least one side')
+        if (
+            not isinstance(teams, (tuple, list))
+            or len(teams) != 2
+            or not all(isinstance(value, str) for value in teams)
+        ):
+            raise ArgumentError(f'expected two registry teams, found {teams!r}')
         self.humans = (bool(humans[0]), bool(humans[1]))
         self.scenario = scenario
         self.seed = int(time.time()) % 2**31 if seed is None else int(seed)
-        counts = [1 if human else 0 for human in self.humans]
+        self.team_ids = [str(teams[0]), str(teams[1])]
+        entries = [_teams.entry(identifier) for identifier in self.team_ids]
+        agents = _teams.game_agents(entries, scenario, self.humans)
+        self.counts = [int(self.humans[side]) + agents[side] for side in (0, 1)]
+        self.action_set = 'v2' if any(agents) else 'default'
         self.batch = BatchEnvironment(
             (
                 str(_teams.scenario_path(scenario))
                 if scenario in _teams.renderer_scenarios()
-                else f'{scenario}_l{counts[0]}_r{counts[1]}'
+                else f'{scenario}_l{self.counts[0]}_r{self.counts[1]}'
             ),
-            agent_counts=[tuple(counts)],
+            agent_counts=[tuple(self.counts)],
             environment_count=1,
             representation='raw',
             seed=self.seed,
             auto_reset=False,
             device=device,
             difficulty=None if ability == (None, None) else [ability],
+            action_set=self.action_set,
         )
         self.sides = [side for side in (0, 1) if self.humans[side]]
+        # A person's agent comes first on the side, and the teammates' agents follow it.
+        self.person_column = {0: 0, 1: self.counts[0]}
+        self.shared = [side for side in self.sides if self.counts[side] > 1]
+        self.controlled: list[int | None] = [None, None]
         self.controllers = {side: Controller() for side in self.sides}
         self.reader = _recording.StateReader(
             int(self.batch.left_players[0] + self.batch.right_players[0])
         )
         self.batch.reset()
+        self.runner: PolicyRunner | None = None
+        self.error: str | None = None
+        self._failure: PolicyError | None = None
+        if any(agents):
+            firsts = [int(self.humans[0]), self.counts[0] + int(self.humans[1])]
+            batch, runner = self.batch, PolicyRunner(hang=HANG_SECONDS)
+            try:
+                runner.load(
+                    lambda: Policies(batch, entries, scenario, agents, True, firsts), load_seconds
+                )
+                runner.request()
+                if not runner.wait(first_call_seconds):
+                    raise PolicyError(
+                        f'the policy did not answer its first observation within '
+                        f'{first_call_seconds:g} seconds'
+                    )
+            except BaseException:
+                runner.close()
+                self.batch.close()
+                raise
+            self.runner = runner
         state = self.batch.get_state(0)
         self.lineup = self.reader.lineup(state)
         self.frames = [self.reader.frame(state)]
@@ -217,8 +291,11 @@ class Game:
         played = [round(float(value), 4) for value in self.batch.difficulty[0].tolist()]
         two = all(self.humans)
         self.teams = []
-        for side, team in enumerate(_teams.match_teams(_teams.BUILTIN, _teams.BUILTIN)):
-            name = (f'Player {side + 1}' if two else 'You') if self.humans[side] else team['name']
+        for side, team in enumerate(_teams.match_teams(*self.team_ids)):
+            name = team['name']
+            if self.humans[side]:
+                person = f'Player {side + 1}' if two else 'You'
+                name = person if team['id'] == _teams.BUILTIN else f'{person} with {name}'
             self.teams.append(
                 {**team, 'name': name, 'ability': played[side], 'person': self.humans[side]}
             )
@@ -228,25 +305,66 @@ class Game:
         """Returns the title of the game, its teams by name."""
         return f'{self.teams[0]["name"]} against {self.teams[1]["name"]}'
 
-    def step(self, inputs: dict[int, tuple[frozenset[str], frozenset[str]]]) -> bytes:
+    def step(
+        self,
+        inputs: dict[int, tuple[frozenset[str], frozenset[str]]],
+        budget: float | None = None,
+    ) -> bytes:
         """Plays one step with the held and pressed inputs of each person's side, on the screen.
+
+        Args:
+            inputs: The held inputs and the pressed buttons of each person's side.
+            budget: The seconds that the submissions have for their answer from when they saw the
+                step, or `None` to wait for it however long it takes.
 
         Returns:
             The frame of the step.
+
+        Raises:
+            PolicyError: If a submission failed or stopped answering, before the step is played.
         """
-        row = []
+        if self._failure is not None:
+            raise self._failure
+        if self.runner is not None:
+            row = self.runner.actions(budget)[0].tolist()
+        else:
+            row = [0] * sum(self.counts)
         for side in self.sides:
             held, pressed = inputs.get(side, (frozenset(), frozenset()))
-            row.append(self.controllers[side].act(own_frame(held, side), pressed))
+            row[self.person_column[side]] = self.controllers[side].act(
+                own_frame(held, side), pressed
+            )
         self.actions.append(row)
         _, _, finished, _ = self.batch.step(torch.tensor([row], dtype=torch.int32))
         self.done = bool(finished[0])
         frame = self.reader.frame(self.batch.get_state(0), 1 if self.done else 0)
         self.frames.append(frame)
+        if self.shared:
+            active = self.batch.raw()['active'][0].tolist()
+            for side in self.shared:
+                self.controlled[side] = int(active[self.person_column[side]])
+        if self.runner is not None and not self.done:
+            # The submissions see the new step at once, and answer while the game waits for it.
+            try:
+                self.runner.request()
+            except PolicyError as error:
+                self._failure = error
         return frame
 
     def save(self) -> Path:
         """Saves the game so far as a recording in the library and returns its path."""
+        provenance = {
+            'source': 'human_game',
+            'seed': self.seed,
+            'scenario': self.scenario,
+            'humans': list(self.humans),
+            'teams': list(self.team_ids),
+            'agent_counts': list(self.counts),
+            'action_set': self.action_set,
+            'ability': [team['ability'] for team in self.teams],
+        }
+        if self.runner is not None:
+            provenance['late_steps'] = self.runner.late
         head = _recording.header(
             self.title,
             self.scenario,
@@ -254,11 +372,14 @@ class Game:
             self.teams,
             len(self.frames),
             _recording.scenario_timing(self.batch.get_state(0)),
+            provenance,
         )
         return _library.save(head, self.frames)
 
     def close(self) -> None:
-        """Frees the environment."""
+        """Frees the environment and lets the thread of the submissions end."""
+        if self.runner is not None:
+            self.runner.close()
         self.batch.close()
 
 
@@ -285,7 +406,8 @@ def run(game: Game, commands: _Commands, source: _live.LiveSource, pace: float) 
     """Steps the game at `pace` steps a second while it plays, and returns why it ended.
 
     The game waits for its first resume, so the page sees the kick-off. Each step takes the inputs
-    that arrived last, together with every button pressed since the step before.
+    that arrived last, together with every button pressed since the step before. A submission that
+    fails or stops answering ends the game, with the reason in `game.error`.
     """
     held: dict[int, frozenset[str]] = {side: frozenset() for side in game.sides}
     pressed: dict[int, set[str]] = {side: set() for side in game.sides}
@@ -293,6 +415,7 @@ def run(game: Game, commands: _Commands, source: _live.LiveSource, pace: float) 
     contact = time.monotonic()
     due = contact
     score = None
+    controlled = list(game.controlled)
     _report(state='ready', step=0, score=[0, 0])
     while not game.done:
         timeout = max(0.0, due - time.monotonic()) if not paused else 0.25
@@ -329,17 +452,42 @@ def run(game: Game, commands: _Commands, source: _live.LiveSource, pace: float) 
         inputs = {side: (held[side], frozenset(pressed[side])) for side in game.sides}
         for side in game.sides:
             pressed[side].clear()
-        frame = game.step(inputs)
+        try:
+            frame = game.step(inputs, POLICY_BUDGET / pace)
+        except PolicyError as error:
+            game.error = str(error)
+            return 'policy'
         source.push(frame, game.lineup)
         # A late step starts the clock again, so a slow moment never brings a burst of steps.
         due = max(due + 1 / pace, time.monotonic() - 2 / pace)
         now_score = list(_SCORE.unpack_from(frame, 8))
-        if now_score != score or len(game.actions) % 10 == 0:
-            score = now_score
-            _report(state='playing', step=len(game.actions), score=score)
+        streak = game.runner.streak if game.runner is not None else 0
+        moved = game.controlled != controlled
+        if now_score != score or len(game.actions) % 10 == 0 or streak == LATE_STREAK or moved:
+            score, controlled = now_score, list(game.controlled)
+            _report(state='playing', step=len(game.actions), score=score, **_status(game))
     # A full match ends at full time, and any other scenario at the end of its episode.
     timing = _recording.scenario_timing(game.batch.get_state(0))
     return 'full time' if timing['full_match'] else 'episode'
+
+
+def _status(game: Game) -> dict[str, Any]:
+    """Returns what a report says of the play, the people's actions, players and late steps.
+
+    The actions are those that the engine took for each person's agent on the last step, as GRF's
+    controller logic turned the keys and buttons into them, and `None` on a side without a person.
+    """
+    report: dict[str, Any] = {}
+    if game.actions:
+        report['actions'] = [
+            game.actions[-1][game.person_column[side]] if side in game.sides else None
+            for side in (0, 1)
+        ]
+    if game.shared:
+        report['controlled'] = game.controlled
+    if game.runner is not None:
+        report.update(late=game.runner.late, streak=game.runner.streak)
+    return report
 
 
 def main(arguments: list[str] | None = None) -> None:
@@ -349,6 +497,8 @@ def main(arguments: list[str] | None = None) -> None:
     parser.add_argument('--scenario', default='11_vs_11_kaggle')
     parser.add_argument('--left', choices=('person', 'builtin'), default='person')
     parser.add_argument('--right', choices=('person', 'builtin'), default='builtin')
+    parser.add_argument('--left-team', default=_teams.BUILTIN)
+    parser.add_argument('--right-team', default=_teams.BUILTIN)
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--left-ability', type=float, default=None)
     parser.add_argument('--right-ability', type=float, default=None)
@@ -368,23 +518,38 @@ def main(arguments: list[str] | None = None) -> None:
             (options.left == 'person', options.right == 'person'),
             (options.left_ability, options.right_ability),
             options.seed,
+            teams=(options.left_team, options.right_team),
         )
+    except PolicyError as error:
+        _report(error=str(error))
+        sys.exit(1)
     except Exception as error:
         _report(error=f'{type(error).__name__}: {error}')
         sys.exit(1)
     source = _live.LiveSource(game.batch, 0, game.title, game.teams, game.scenario, announce=False)
+    saved = None
     try:
         source.push(game.frames[0], game.lineup)
         _report(port=source.port, seed=game.seed, teams=[team['name'] for team in game.teams])
         ending = run(game, commands, source, max(0.1, options.pace))
-        saved = None
         if options.record and len(game.frames) > 1:
             saved = game.save().stem
-        _report(state='ended', ending=ending, step=len(game.actions), match=saved)
+        _report(
+            state='ended',
+            ending=ending,
+            step=len(game.actions),
+            match=saved,
+            error=game.error,
+            **_status(game),
+        )
         # The page reads the last frames before the stream closes.
         time.sleep(0.5)
     except Exception as error:
-        _report(error=f'{type(error).__name__}: {error}')
+        # A game that stops for any other reason still keeps what it played.
+        if options.record and saved is None and len(game.frames) > 1:
+            with contextlib.suppress(Exception):
+                saved = game.save().stem
+        _report(error=f'{type(error).__name__}: {error}', match=saved)
         sys.exit(1)
     finally:
         source.close()

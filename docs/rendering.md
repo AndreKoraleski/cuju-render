@@ -34,15 +34,38 @@ accepts ports from zero to 65535, with zero choosing a free port. The option `--
 `CUJU_RENDER` set appears in the page's list of live sources when the list next refreshes, every
 eight seconds, and saved recordings appear on the next library refresh.
 
+The quickest first look is the demo, which needs no script at all.
+
+```sh
+cuju render demo
+```
+
+The demo starts the server, or uses the server that already answers on its port, and plays a
+match between the built in AIs in a process of its own, five a side by default. It opens the page
+on that match as a live source, so play shows within seconds of the command, and one match follows
+another until Ctrl+C, which ends the match, any server that the demo started and the command
+itself. The option `--eleven` plays eleven a side, `--scenario` plays another shipped scenario,
+such as `academy_corner`, `--port` names the port of the server, `--seed` fixes the seed and
+`--no-open` leaves the browser as it is. A server that keeps another folder lists other sources,
+so the demo then says so and opens the page at its start, and the option `--home` of
+`cuju render` gives both the same folder.
+
+cuju imports the renderer only when a command, a script or `CUJU_RENDER` asks for it, so a program
+that only trains loads none of it. Where the renderer is missing, `cuju render`,
+`python -m cuju.render` and `import cuju.render` each end with one message naming
+`pip install 'cuju[render]'`, which installs it. `CUJU_RENDER` then gives one warning through the
+logger `cuju`, and every batch of the process runs on as it would without the variable.
+
 ## Recordings
 
 A recording holds the captured steps of one episode, each as the world position and rotation of
 every joint
 of every player, the position and rotation of the ball, the score, the clock, the game mode, the
 owner of the ball, and the action and touches of every player. `cuju.render.Recorder` captures one
-environment of a batch and saves one recording per episode into the library. The recorder is called
-after `reset` and after each `step`, with the done flags of the step, and returns the path of a
-recording when an episode ends.
+environment of a batch and saves one recording per episode into the library. The recorder is a
+[step observer](api.md#step-observers) of its batch, so from its creation on it captures every
+reset of its environment and every step by itself, and saves a recording when an episode ends.
+The training loop stays as it was.
 
 ```python
 import cuju
@@ -56,12 +79,17 @@ recorder = cuju.render.Recorder(
     teams=[{'name': 'Agent', 'color': [214, 48, 49]}, {'name': 'Built-in AI'}],
 )
 observation = batch.reset()
-recorder.capture()
 for step in range(3001):
     actions = policy(observation)
     observation, reward, done, information = batch.step(actions)
-    recorder.capture(done)
+print(recorder.saved)
 ```
+
+Programs written for cuju 0.2.0 call `recorder.capture()` after `reset` and
+`recorder.capture(done)` after each step, and they keep working. The first call of `capture` turns
+the automatic capture off for good and drops the frames that it took and has not saved, so such a
+program records the same frames as before. `capture` returns the path of a recording when its call
+ends an episode, and it also suits a program that records chosen steps only.
 
 Each capture reads the state of one environment and keeps about 4 KB of it, at a cost of about
 5 milliseconds on one core of a laptop processor, more than two steps of an eleven a side match on
@@ -75,29 +103,39 @@ and the recording ends on it.
 Call `recorder.save()` to keep an episode before it ends, for example when a training run stops.
 It returns the saved path, or `None` when there are no captured frames, and starts a fresh
 recording on the next capture. The list `recorder.saved` holds the paths written so far.
-Capture after every step to preserve consecutive motion. Each recorder takes one batch of a
-`MultiDeviceBatch`, as a live source does.
+A recorder that captures by hand does so after every step to preserve consecutive motion. Each
+recorder takes one batch of a `MultiDeviceBatch`, as a live source does. A recorder that fails
+while it captures by itself, from a full disk for example, leaves its batch with one warning
+through the logger `cuju`, and the batch steps on.
 
 A full match of eleven a side takes 3001 frames with automatic resets and 3002 without, about 12 MB
 on disk, and one of five a side about 1 MB with the built in AI on both sides and up to about 5 MB
 when agents keep the players moving. A full match of
 eleven a side plays and records in about half a minute on one core of a laptop processor. The
-library keeps each recording as a `.cjr` file beside a small summary that the page lists, and the
-page deletes both together.
+library keeps each recording as a `.cjr` file beside a small summary that the page lists. The
+summary also holds the favorite mark, tags and notes that the page edits, and the time a recording
+went to the Trash, so every one of these changes rewrites the small file and leaves the frames as
+they are. Deleting a recording on the page moves it to the Trash, which keeps both files on disk
+until a recording is deleted from there for good.
 
 Two sample matches ship with the renderer, a full match of eleven a side and one of five a side,
 both played by the built-in AI. The first start of the server copies each into the library as
 `sample-11v11` and `sample-5v5`, where they appear on Home and in Recordings and open in Watch like
 any other recording. The folder notes each sample it has received in `samples.json`, so a deleted
-sample stays deleted, and a recording of the same name stays as it is. The command
-`cuju render sample` adds both samples again, and `cuju render sample 11v11` or
-`cuju render sample 5v5` adds one.
+sample stays deleted, and a recording of the same name stays as it is. A sample in the Trash stays
+there when the server starts, and Restore brings it back. The command `cuju render sample` adds
+both samples again, and `cuju render sample 11v11` or `cuju render sample 5v5` adds one. A sample
+that sits in the Trash comes back from there with its folder, tags and notes, and the command says
+which samples it restored and which it added.
 
 ## Live sources
 
 A live source streams one environment of a running batch to the page. The environment variable
 `CUJU_RENDER` gives every batch of a process a source, with `on` for environment 0 or an index for
-another environment, and the call `cuju.render.watch` gives one batch a source from code.
+another environment, and the call `cuju.render.watch` gives one batch a source from code. Every
+batch that cuju creates while the variable is set calls `cuju.render.on_batch_created`, which
+gives it a source, and either way the source joins the [step observers](api.md#step-observers) of
+its batch.
 
 ```python
 source = cuju.render.watch(batch, environment=0, title='Self-play, league match')
@@ -109,8 +147,9 @@ source reads passages of 50 consecutive steps, five seconds of play, and starts 
 when the wall clock has caught up. A batch that runs faster than real time therefore reaches the
 page as continuous passages, which the page joins with cuts, and pays for about ten state reads per
 second of wall time, about 5 milliseconds each. A batch that runs slower than real time is shown
-step by step. Each step checks whether a live source is attached. An attached source also checks
-its viewers under a lock and reads states for viewers or the backlog.
+step by step. Each step checks whether the batch has step observers, and a batch without any
+does nothing more. An attached source also checks its viewers under a lock and reads states for
+viewers or the backlog.
 On the GPU, each read also waits for the step in flight, as `get_state` does, and a GPU batch that
 queues many steps ahead of the device may take tens of seconds to send its first frame.
 
@@ -120,13 +159,70 @@ source starts at the present. The variable `CUJU_RENDER_BACKLOG`, or `backlog=Tr
 makes the source read every step, watched or not, at the cost of one state read per step, so that
 every viewer starts 10 seconds back.
 
+A source shows one environment at a time, and a viewer may switch it to any other environment of
+the batch, from the Watch page or from code.
+
+```python
+source.select_environment(3)
+```
+
+The switch takes effect when the batch next finishes a step, so a batch that waits between steps
+keeps the choice until it steps again, and the last choice before that step wins. The source then
+reads the new environment and nothing else changes, so every observation, reward and state of
+the batch stays as it was, bit for bit. The stream of the old environment ends, and the source
+starts a new stream with a header of its own, since the new environment may field other players.
+Its history starts afresh, and the default title and the entry in the list of sources name the
+new environment, while a title given to `watch` stays. A source that cannot rewrite its entry,
+from a full disk for example, keeps running on the new environment with one warning through the
+logger `cuju`, and the list shows its old entry until the next switch succeeds.
+
+The page asks a source for numbered frames, each after a serial number, and a source that closes
+sends an end marker last. When the connection drops before that marker, the page keeps the frames
+it holds and reconnects, waiting one, two and then four seconds between attempts. Each outage has
+three attempts, and a connection that sends its header again ends the outage, so a stream that
+drops now and then reconnects every time. The source sends its history again on every
+connection, and the page drops the frames it already holds. Frames that the source captured
+during the outage and no longer holds are lost, and the page shows the place where they are
+missing as a cut. A source that the server no longer lists ends reconnection at once, and so does
+a stream that comes back with another identifier, such as one from a switched environment. A
+stream that closes before its header ends at once as well, as the stream of a game that ends
+early does, and a stream on another server whose header has no serial numbers ends when its
+connection closes.
+
 The batch keeps stepping through any trouble of watching. A source that fails, from a full disk or
-a closed port among other causes, turns itself off with one warning through the logger `cuju`, and
-the batch steps on. A step
+a closed port among other causes, closes itself, and the batch removes it from its observers with
+one warning through the logger `cuju` and steps on. A step
 captured into a CUDA graph and a step of a compiled function under `torch.compile` run without
 Python, so a source shows the steps that the batch takes outside them. Each batch of a
 `MultiDeviceBatch` announces a source of its own under `CUJU_RENDER`, with the index counted within
 that batch, and `watch` takes one of those batches.
+
+### The grid of environments
+
+A source also answers for many environments at once, for the grid of environments on the Watch
+page. The page asks the server for a range of up to 64 environments, with
+`GET /api/live/<id>/grid?first=0&count=16`, about once a second while the grid shows, and the
+server passes the request to the source. The source answers at once with what it holds for each
+environment of the range, the step, the score, the clock, the game mode, the ball and the position,
+team and state of every player, and an empty entry for an environment it has not read yet. The
+server checks the host of every request, refuses a page of another origin, and checks the range
+against the source's number of environments. The source answers the server alone, and refuses any
+request that carries an origin or a body. A source of cuju 0.2.0 has no grid, and the server then
+answers 404 with a message that says so.
+
+The grid reads states only while a viewer asks for it, and stops 3 seconds after the last request,
+so an unwatched source pays one attribute check per step for it. While it reads, the reads stay
+small and bounded four ways. They happen at the end of a step of the batch, as the stream's do,
+and no step reads more than 4 states for the grid. The grid reads at most 10 states a second of
+wall time, the pace at which a watched stream reads its own, and starts a pass over the range at
+most twice a second, so a grid of 4 environments refreshes twice a second, one of 16 about every
+1.6 seconds and one of 64 about every 6.4 seconds. After each step that read, the grid also waits
+until its reads amount to at most a twentieth of the wall time, which a slow machine reaches first.
+Each read leaves every observation, reward, done flag and state of the batch as it was, bit for
+bit, and consumes no random numbers. On a laptop with 64 environments of eleven a side, a state
+read and the gathering of its fields took about 2 milliseconds on the CPU and 3.5 milliseconds on
+CUDA, and a watched grid took about 3.5 percent of the wall time on either. The stream of the
+source goes on beside the grid at its own cost.
 
 ## Teams and requested matches
 
@@ -296,9 +392,9 @@ exactly
 the matches it would play in its plain kit. The editor on the Teams page groups the look into nine
 sections, identity, kit, roster, model and colors, fans, celebrations, sounds, sponsors and export,
 with a preview of a player that idles, walks or keeps goal. The section menu and its previous
-and next buttons move between sections. Changes wait for Save, except artwork and sound uploads
-and removals, which save immediately. The identity holds the team name, its format and a badge of
-up to three characters.
+and next buttons move between sections. Changes wait for Save, except artwork, sound and clip
+uploads and removals, which save immediately. The identity holds the team name, its format and a
+badge of up to three characters.
 
 The look starts from the **player model**, which is GRF's own skinned player by default. A team may
 instead take one of the characters that ship with the renderer, the skeletons and adventurers of Kay
@@ -345,8 +441,9 @@ move when it ticks none, and each player of the roster may take a celebration of
 include arms up, a knee slide, a jump and punch, dances, the airplane, a backflip, a salute, the
 shush, heart hands, the robot, a bow and the worm, and on KayKit's characters the clips of KayKit's
 animations, such as cheering, waving to the fans, jumps, taunts, push ups, an air punch, a forward
-roll and sitting or lying on the grass, together with the clips of a custom model. Each move plays
-in the editor before it is chosen.
+roll and sitting or lying on the grass, together with the clips of a custom model and the
+animations of the team's own celebration clips, as described under Celebration clips. Each move
+plays in the editor before it is chosen.
 
 A team may also bring sounds of its own, in Ogg, MP3 or WAV files of up to 2 MB, for eight moments,
 a goal, a shot, a pass, a tackle, a save, any kick, the scorer's celebration and a chant that the
@@ -372,20 +469,129 @@ applied to the bone's own rest pose, and keeps the bone lengths of the model, so
 proportions or another rest pose moves as GRF's player does without stretching. The pelvis follows
 GRF's pelvis, scaled to the model's own height.
 
+### Celebration clips
+
+A team may bring celebrations of its own as clips, binary glTF 2.0 files, `.glb`, that each hold
+one or more animations of a skinned skeleton. The Celebrations section of the editor lists the
+team's clips below the moves, and Upload a clip, or a file dropped beside it, adds one. Each
+animation of a clip joins the moves of the section under its own name, marked as a clip of the
+team, where Play previews it on the team's model and a tick puts it among the team's celebrations.
+The roster offers the same animations, so each player may take one as a celebration of its own.
+Clips save immediately, as sounds do, and removing a clip takes its animations out of the team's
+celebrations and the roster.
+
+A clip plays on every model of the team, GRF's player, a shipped character or a custom model. The
+page maps the joints of GRF's skeleton onto the bones of the clip as it does for a custom model, by
+name and by the conventions of common rigs such as Mixamo's, and Joint mapping under each clip
+shows that mapping and lets it change. Save mapping keeps a mapping chosen by hand, and Map by bone
+names returns to the mapping by names. The pelvis, GRF's joint `body`, is required, and a clip
+whose bone names leave the pelvis unmapped joins the moves once Joint mapping names it.
+
+The page reads each animation thirty times a second on the clip's own skeleton and gives every
+mapped joint the rotation of its bone relative to the bone's rest pose, the inverse of the way a
+custom model follows GRF's joints, and a joint without a bone keeps its rest turn from its parent.
+The poses then drive the team's model as the built in moves do, at the model's own bone lengths,
+so a clip made for a tall or a short figure suits every player. The height of the pelvis above
+the floor is scaled from the clip's figure to GRF's player, so crouches, kneels and jumps keep
+their depth.
+
+Movement of the whole figure stays near the scorer. A clip whose pelvis ends more than a quarter of
+a meter from where it began walks or runs, and that steady travel is taken out, so the clip plays
+in place and loops smoothly. The movement that remains stays within a meter and a half of the
+spot, and the scorer stays inside the touch lines and the goal lines. Teammates who join the move,
+and players on the podium of the show after the match, keep to their own places. A clip loops for
+as long as the celebration lasts, and the first thirty seconds of a longer animation play.
+
+A clip holds at most 10 MB, and a team holds at most 16 clips and 40 MB of them. The server checks
+each upload as it checks other uploads, a binary glTF 2.0 file whose header and chunks fit
+together, with a skin, at least one animation and every buffer and image inside the file. A file
+that requires Draco or meshopt compression or Basis Universal textures is refused, since the page
+reads none of them. The page names a clip after its file, in lowercase letters, digits and
+underscores, so a clip of the same file name replaces the earlier one. The clips travel in the
+team's export, in the folder `clips` of `cuju-team`, and an import checks each one again.
+
+The animation packs of KayKit's Character Animations that ship with the renderer, in the folder
+`assets/animations` of the page, upload as clips as they are, which makes a quick first test.
+
+#### Making a clip in Blender
+
+Blender, free from blender.org, turns animations of other formats into clips. Characters and
+animations from Mixamo suit it well, since the page knows Mixamo's bone names, and the same steps
+from the second onwards serve an FBX file of any other source.
+
+1. On Mixamo, choose a character and an animation, and download it as FBX Binary, With Skin. In
+   Place keeps a walk or a run on the spot, and the page takes steady travel out in any case.
+2. In Blender, start a General file, delete the default cube, camera and light, and choose File,
+   Import, FBX on the downloaded file. Blender keeps Mixamo's centimeters as a scale on the
+   armature, and the page reads centimeters and meters alike.
+3. For a clip of several animations, import each further file of the same character in turn.
+   Keep one armature with its mesh and delete the others, give the remaining armature each
+   action in turn in the Action Editor of the Dope Sheet, and press Push Down after each one, so
+   every action sits on a track of the Nonlinear Animation editor. A clip of one animation needs
+   none of this.
+4. Name each action as the editor should show it, such as `Victory dance`, in the Action Editor.
+5. Choose File, Export, glTF 2.0. Set Format to glTF Binary, keep Skinning checked under Data,
+   and under Animation keep Animation checked with its mode set to Actions or NLA Tracks, so every
+   action leaves as an animation of its own.
+6. Upload the `.glb` file under Celebrations, open Joint mapping when a joint looks wrong, and
+   press Play on each new move to preview it.
+
+A clip needs its mesh as well as its bones, since a skin binds the two, and any mesh skinned to
+the armature serves. The page plays the bones alone, so the mesh of the clip stays out of sight
+and the team's own model performs the move.
+
 ### Export
 
 A team leaves the page as its submission folder, a zip archive with `main.py` and the submission's
 files at its top, as Kaggle reads them, and a folder `cuju-team` that holds the team's format,
-style, roster, images, sponsors and model. Kaggle ignores the extra folder, and a submission folder
-that holds one brings the whole look back when it is added to a registry again, on the page or from
-the command line, each file checked as an upload is. The built in AI exports its look alone.
+style, roster, images, sponsors, model and celebration clips. Kaggle ignores the extra folder, and a
+submission folder that holds one brings the whole look back when it is added to a registry again,
+on the page or from the command line, each file checked as an upload is. The built in AI exports its
+look alone.
+
+Duplicate saved team, in the same section, makes a new team of the registry from a submission
+team as it was last saved, with the submission's files, its format, controls, style, roster,
+images, sounds, model and clips, under the team's name followed by `copy`. The two teams change
+independently from then on, so a copy is a starting point for trying other controls or another look
+while the original keeps playing as before. Changes that wait for Save stay out of the copy, so
+saving first carries them over. The built in AI is one shared entry of the registry and offers
+Export alone.
 
 ## Page layout
 
 The page holds eight pages, chosen from the bar along its top. The cuju logo at the left of the bar
 opens Home, and tabs open Watch, Play, Recordings, Matches, Teams, Field and Help.
-Settings and Fullscreen sit at the right end of the bar. On a narrow screen the tabs fold into
-one menu of pages.
+Commands, Settings and Fullscreen sit at the right end of the bar. On a narrow screen the tabs
+fold into one menu of pages.
+
+Commands, or Ctrl K on any page, opens the **command palette**, a search field over a list of
+everything the page does. The list holds every page, the live sources and the eight newest
+recordings, a game on Play in each listed scenario, a request for a match, the settings of sound,
+theme, broadcast mode, player labels, motion and the presets of the presentation, the choices of
+the View menu, which are the cameras, the arenas, the four times of day, the weather and
+fullscreen, every player of the open match to follow with the Follow player camera, and the topics
+of the Help page. Typing narrows the list, with the letters of each word in order anywhere in a
+name, so `gotm` finds Go to Teams and `follow 10` finds the player with that number. Words that
+belong to an action also find it, such as `volume` for Mute. The arrows move through the list,
+Page Up and Page Down move further, Enter runs the chosen action, a click runs any action and Esc
+closes the palette. Focus then returns to the control that held it before. Ctrl K reaches the
+palette from everywhere except a text field, which keeps its own keys, and an open palette
+releases a captured pointer as any dialog does.
+
+A first visit finds help along the way. Each page but Help shows a short tip in its lower left
+corner after a moment, which points to the next thing to try, such as the command palette on Home
+or the camera keys on Watch once a match is open. Got it puts that tip away for good, the button
+No more tips turns every tip off, and the setting Tips for new visitors turns them on again with
+every tip back. The browser keeps each dismissal. The main controls carry a short line of help,
+which shows beside a control when keyboard focus reaches it, and under the pointer for a control
+without a tooltip of its own. Esc, a click or leaving the control hides it.
+
+A page with nothing to show says what to do next. Watch without a match names the command
+`cuju render demo` and opens a sample match in one click. Recordings without a recording names
+`cuju render sample`, which brings the samples back, and `cuju.render.Recorder`, which records
+the matches of a script, beside Play a match and How to record. Teams with the built in AI alone
+points to the topic Making a team of the Help page, and Matches before its first request says
+that the built in AI plays every scenario.
 
 The address follows each page change and names what it shows, so a page or a moment reopens as a
 link on the same machine. The address `#page=teams` opens the Teams page, `#match=` with the
@@ -415,8 +621,9 @@ recording file from the computer, takes an address, leads to the Recordings and 
 the goals of the open match, each of which jumps to six seconds before it, and lists the live
 sources and the six newest recordings, with a count of the live sources on the menu's button. The
 address field takes the identifier of a live source or of a recording, such as
-`m-20261106-105640-3a3f`. The View menu chooses the camera, turns broadcast mode and fullscreen on
-and off, sets the hour, the weather and the arena, and sets the quality and the theme. A recording
+`m-20261106-105640-3a3f`. The View menu chooses the camera, turns broadcast mode, fullscreen and
+the 2D view on and off, sets the hour, the weather and the arena, and sets the quality and the
+theme. A recording
 also opens when its file is dropped anywhere on the page. The view shows a spinner while it waits
 for a live source to send its first step, and a bar of progress while a recording downloads.
 
@@ -426,7 +633,9 @@ one frame either way, play backwards, pause and play, a speed of a quarter to fo
 and the mute button and the volume. The timeline seeks on a click or a drag, and marks each goal,
 which a click on its mark reaches six seconds early. While the match plays, the controls and the
 bar fade after a few seconds without input, together with the pointer, and return when the pointer
-moves.
+moves. On a touch screen the buttons take the size of a finger and the timeline a taller strip. A
+swipe along the timeline moves through the match from where the view stands, its whole width being
+the whole match, and a tap on it seeks to the place tapped.
 
 **Recordings** lists the library like a file explorer. A pane of folders holds every recording
 under All recordings and the folders in a tree with their counts, where folders are made, renamed
@@ -437,7 +646,28 @@ folder, scenario, team and date, and the list sorts by date, title, goals, teams
 The columns show the title, the teams, the score, the scenario, the steps, the date and the size,
 and a click on a header sorts by it. Recordings are selected one at a time, several at once with
 Ctrl or a range with Shift, and opened, renamed, moved or deleted, with the arrows, Enter, Delete
-and F2 at hand. Deletion removes the file from the server for good, after a question.
+and F2 at hand. The count above the list gives the total size of the recordings of the library,
+or of the Trash in the Trash view.
+
+The search also reads the tags and notes of each recording. Three more filters narrow the list,
+Favorites to the recordings marked as favorites, Source to requested matches, played games,
+recorders, live sources or recordings of unknown source, and Result to the matches the left team
+won, those the right team won, draws and recordings whose score is unknown. Details opens a panel
+above the list for the selected recording, with a Favorite mark, tags separated by commas, up to
+twenty of at most forty characters each, and notes of up to ten thousand characters, which Save
+details keeps and Close or Esc leaves. The panel also lists the provenance of the recording, the
+source, the version of cuju and, where they are known, the seed, scenario, teams, controls, agent
+counts, action set, ability and environment, as described under Recording format. A field that the
+panel leaves out is unknown. Favorites show a star beside their title, and the first three tags
+follow it.
+
+Delete moves the selected recordings to the Trash at once, and a message says where they went. The
+View filter switches between the library and the Trash, which lists the recordings deleted from the
+library with the same search, filters and sorting. In the Trash, Restore returns the selected
+recordings to the library with their folder, details and frames as they were, and Delete
+permanently removes their files from the disk after a question, which cannot be undone. Only a
+recording already in the Trash can be deleted for good. A recording of the Trash opens in Watch
+once it is restored, and the Trash keeps using disk space until its recordings are deleted.
 
 **Matches** requests a match between two teams of the registry. Two cards pick the left team,
 which plays at home, and the right team, which plays away. Each card shows the count, assignment,
@@ -450,6 +680,16 @@ queue. Teams of different formats can meet in academy scenarios when both settin
 Below, the list of requested matches shows each match with its teams, state, scenario, seed and
 progress, filtered by state, team, scenario and date, with controls to cancel a waiting or playing
 match and watch a finished one. A message announces each match that is ready.
+
+The list is the history of requested matches, kept across restarts of the server. It holds the
+newest 200 requests that have ended and every waiting or playing one, and the server deletes the
+files of older ones. The page shows 50 entries at first, and Show more at the end of the list adds
+50 more each time. Each entry shows the seed that the match plays with, which the server draws when
+the seed field is empty, the time the request was made and how many seconds the match played. Retry
+on a failed, canceled or interrupted match and Repeat on a finished one queue a new request with the
+same teams, scenario, seed and ability. The new request plays the teams as the registry holds them
+at that moment, so a team whose files changed since the first match plays its new files. A seed
+above `2**53 - 1` keeps its exact value on the page and in a retry.
 
 **Teams** lists the registry on its left, with a form that adds a team from a submission folder or
 a single file, and opens the editor of the chosen team on its right, as described under
@@ -500,8 +740,18 @@ A drag of the mouse turns the free camera and orbits the cameras that follow the
 and the wheel sets the flying speed or the distance of those cameras. A click on the view skips the
 current sequence. The setting for capturing the mouse lets a right click in the free camera capture
 the pointer for looking around, and Esc releases it. The setting is off by default, and the page
-releases the pointer whenever a dialog, a menu or a card opens, the window loses focus or the page
-hides.
+releases the pointer whenever a dialog, a menu, a panel, a details section or a card opens, focus
+moves to a control, the window loses focus or the page hides.
+
+The setting Player labels puts the number and the name of each player above that player on the
+Watch page, together with the name of the team. A label shows only while the player is in sight,
+so a player behind the stands, a goal post or the roof loses the label until the view finds the
+player again. Where two labels would meet, the player nearer the camera keeps the label, and the
+labels leave the top edge of the view and the controls clear. They give way to replays, shows and
+transitions and return after them. The setting Click a player to follow lets a short click on a
+player who is in sight put the Follow player camera behind that player, and the name of the
+player shows for a moment. A drag still turns the camera, and the brackets choose the followed
+player from the keyboard.
 
 A live source plays like a digital video recorder, three seconds behind the newest step, and keeps
 up to 30 minutes within an 80 MiB memory budget, about 15 minutes for eleven a side.
@@ -509,6 +759,41 @@ The view pauses, rewinds and scrubs while the stream continues. The controls sho
 lies behind, and a button returns to the present. A viewer who joins
 late starts with the history that the source holds, up to 10 seconds, and a speed other than real
 time leaves the present until the button returns to it.
+
+The controls name the state of the connection. They read Reconnecting while the page reconnects,
+Disconnected once the attempts of an outage have failed, and Stream ended when the source closed,
+and they add the number of frames lost while the stream reconnected. The view joins the frames on
+either side of a loss with a cut. The frames already received stay in the view in every case, and
+the view pauses, rewinds and scrubs through them as before. A stream that ends before its first
+frame closes the waiting view and says so. A stream on another server that the page cannot reach
+reports that such a stream must allow the page through CORS.
+
+A live source of this server whose batch has several environments shows an Environment field
+beside these controls, with the index that the source shows. Typing another index and pressing
+Enter, or choosing Switch, asks the source to show that environment after the next step of the
+batch. The stream of the old environment then ends and the page opens the new one in its place,
+and every page that watches the source follows it the same way, on whichever page it shows. The
+frames of the old environment leave the view with it.
+
+### The grid of environments
+
+The Grid button beside these controls, and the Grid of environments entry of the View menu, open
+a panel over the view with many environments of the same batch at once. Each tile is a small 2D
+view of one environment, from above as in the 2D view, with its index, its score and its clock
+along the top, and the tile of the environment that the main view shows carries a border. The
+tiles refresh at the modest pace that the grid of environments under Live sources describes, and
+a tile that the source has not read yet says it is waiting. The Tiles field sets 4, 9, 16, 25,
+36, 49 or 64 tiles, up to the first size that holds the whole batch, and the choice stays in the
+browser. Previous and Next, or Page Up and Page Down on a tile, move to the neighboring page of
+environments, and the panel names the range it shows.
+
+A click on a tile, or Enter or Space on a focused tile, closes the panel and shows that
+environment in the main view, through the switch of environments above, in 3D or in the 2D view
+as the View menu sets it. The panel opens with the focus on the tile of the environment that the
+main view shows, the arrow keys move the focus between tiles by rows and columns, Home and End
+reach the first and the last tile, and Esc or Close closes the panel and returns the focus to the
+button that opened it. The grid needs a source of this server with several environments, and it
+closes when the main view opens another source.
 
 ### Cameras
 
@@ -534,17 +819,45 @@ Every change of camera glides, and every steered camera stays within the ground,
 under the roof line, off the seats and clear of the players' bodies. After 20 seconds without
 input, the free camera returns to the broadcast view, which a setting turns off or lengthens.
 
+### The 2D view
+
+The 2D view draws the match from above on a plain 2D canvas, without WebGL, for a slow or older
+computer. The 2D view entry of the View menu and the 2D view setting turn it on and off, and the
+choice stays in the browser. It draws the same moment of the same timeline as the 3D view, so
+playing, pausing, seeking, the speeds, the keys and live sources work as they do in 3D, and the
+scoreboard keeps the score, the clock and the goal graphic above the drawing.
+
+The pitch lies as the broadcast camera sees it, with the left team's goal at the left edge. Each
+player is a disc in the shirt color of the team, the goalkeepers in their own color, with the
+player's number on the disc when the disc is large enough to hold it. A ring marks the player on
+the ball, and a second ring marks each player that an agent or a person controls. The ball rises
+up the picture with its height and grows a little, over a shadow that stays on the ground where
+the ball would land, and a thin line joins the two while the ball is in the air.
+
+The parts of the presentation that need the 3D view wait while the 2D view draws. Replays,
+celebrations, the lineups before kick-off, the restart transitions, the decision replays and the
+show after the match are skipped, and the goal graphic, the banners of restarts and the card of
+full time still show. Their settings keep their values and apply again once the 3D view returns.
+Turning the 2D view on ends a replay or a show that is running.
+
+A browser without WebGL opens the page in the 2D view, which then stays on, and Watch says so once.
+The Play and Field pages draw their pictures with WebGL alone. When the 3D picture of a playing
+match draws fewer than 12 frames a second over 5 seconds, a card at the top right offers the 2D
+view once in each visit. Use the 2D view turns it on, and Keep 3D keeps the 3D view and stops the
+offer for good in that browser.
+
 ## Playing a game
 
 The **Play** page, opened from its tab or the Play a game action on Home, lets a person play a match
-against the built in AI of GRF. A setup card picks the scenario, with the same short text under it
-as on Matches, the side to play, left, right or both for two people, the ability of the built in AI
-on each side, as on the Matches page, and whether the game goes to Recordings, which it does by
-default. The person controls one player of the side, and
-the built in AI plays the teammates and the other team. The side is an agent of the scenario, as a
-submission that controls the active player is, so the engine hands control to the designated
-player as play moves, the player nearest the ball among them, as GRF does for its own human
-players. An arrow floats over the controlled player, above the ring of control.
+against the built in AI of GRF or a team of the registry. A setup card picks the scenario, with the
+same short text under it as on Matches, the side to play, left, right or both for two people, the
+team of each side, the ability of the built in AI on each side, as on the Matches page, and whether
+the game goes to Recordings, which it does by default. The person controls one player of the side,
+and the built in AI plays the teammates and the other team unless the setup names a team for them.
+The side is an agent of the scenario, as a submission that controls the active player is, so the
+engine hands control to the designated player as play moves, the player nearest the ball among
+them, as GRF does for its own human players. An arrow floats over the controlled player, above the
+ring of control.
 
 The server plays the game in a process of its own at real time, ten steps a second, and streams
 each frame to the page as soon as it exists, and the page shows the picture about a tenth of a
@@ -581,7 +894,8 @@ keys of the players follow the physical keys, so they work on every keyboard lay
 A controller plays with GRF's own Xbox layout, the layout of FIFA. Each action belongs to the
 position of a button, so an Xbox, Nintendo or PlayStation controller plays the same with the same
 hands, and the page names the buttons in the labels of the controller's style. A stick pushed past
-half way along an axis counts as that direction, as GRF's own gamepad player reads it.
+the dead zone along an axis counts as that direction. The dead zone is half way by default, as
+GRF's own gamepad player reads it, and the input settings move it.
 
 | Button, Xbox, Nintendo, PlayStation | Action |
 | ------ | ------ |
@@ -608,12 +922,52 @@ browser's storage for each controller id, so two people each set up their own co
 before the style is chosen a press on another controller moves the setup to that one. The controls
 card also shows the id the browser reports and whether its mapping is standard or custom.
 
+On a tablet or a phone, **touch controls** show over the game once a touch screen is used. A stick
+in the lower left corner moves the player and holds a direction on each axis pushed past a third
+of its reach, so a push towards a corner holds the diagonal, as the stick of a controller does.
+The buttons in the lower right follow GRF's layout of the face buttons, long pass at the top, high
+pass on the left, shot on the right and short pass at the bottom, with dribble and sprint above
+them, and each holds for as long as its finger stays on it. Every finger acts on its own, so a
+person moves, sprints and shoots at once. The buttons press the same inputs as the keys and the
+buttons of a controller, through a device of their own, which the status line names Touch
+screen, and when two people play the touch screen goes with the keyboard. The button Pause at the
+top opens the pause menu, and the controls hide while it shows. The setting Touch controls on
+Play shows them once a touch screen is used, which is the default, always or never.
+
 The page reads the keyboard and every controller at once, and whichever device was used last drives
 the player. A notice announces each controller that connects or disconnects, and a card in a
 corner shows the controls of the device in use at the start of the game and whenever the device
 changes. For two people, the keyboard and the first controller play the left side and the second
 controller the right, or with one controller, the keyboard plays the left and the controller the
-right.
+right. The input settings can name the device of each side instead, as described below.
+
+The setup card holds **Input settings and tester**, a section that opens under the tables of the
+controls. The browser keeps its settings for the next visit, and a browser that keeps no site data
+uses them for the current visit only.
+
+- **Keys.** Each action of the keyboard has a button with its key. Choosing the button and
+    pressing a key gives the action that key, and Esc keeps the old one. A key is an arrow, a
+    letter or a digit. H, M and F stay with Help, mute and fullscreen, and a key that already has
+    another action is refused with the reason, so every key has at most one action. The tables
+    of the controls, the card in a game and the keys of play follow the new keys at once.
+- **Stick dead zone.** A slider from 0.1 to 0.8 sets how far the stick moves along an axis before
+    it counts as a direction, for every controller.
+- **Devices for two people.** A list for each side names its device, the keyboard or the
+    controller in one of the four slots of the browser, or leaves the choice to the page. A side
+    with a named device plays with that device alone, a side left to the page takes the devices
+    that the other side leaves, and the page refuses the same device for both sides.
+- **Tester.** A box that shows what each device holds at that moment. With the box focused, the
+    keys of the keyboard show the actions they press, and every connected controller shows the
+    position of its stick and the actions of its buttons and of its stick past the dead zone.
+- **Reset input settings** brings back the default keys, dead zone and devices.
+
+A controller works the whole section, as it works the rest of the setup card, apart from the
+choice of a key, which takes a key of the keyboard.
+
+During a game, the status line under the picture names the device in use and the action that the
+engine took for each person, as GRF's controller logic turned the keys and buttons into it. The
+game reports that action about once a second and whenever the score changes, so the line shows a
+sample of play, enough to see whether a key or button reaches the engine as the action it should.
 
 Esc or Start opens the pause menu, which pauses the game on the server and offers Resume, the
 controls, the controller setup, Quit, Home and Quit to Home. The paused picture and the end of a
@@ -638,6 +992,43 @@ controller setup by the positions of its buttons. The D-pad or the left stick mo
 repeats while held, the lower face button picks, steps a list or toggles a box, left and right
 change a list or a slider, and the right face button goes back, closing a card or the setup or
 resuming the game, while the steps of the setup that record a button take every press as theirs.
+
+### Registered teams in a game
+
+Each side of the setup card has a team list. On a side without a person it names the opponents,
+the built in AI or any team of the registry, which plays the whole side as it would in a requested
+match, with the same control settings, checks and errors. On a person's side it names the
+teammates. The built in AI plays them by default, and a team with dynamic assignment may play
+beside the person instead. The person's agent then comes first on the side and the team's agents
+follow it, so the side needs one controllable player more than the team asks for, and GRF shares
+the designated player among all the agents of the side as it does for any team of several agents.
+The list of a person's side shows only teams with dynamic assignment, and the server refuses a team
+of fixed assignment there, or a team that asks for more players than the side has left. The
+recording names the team of each side in its provenance, together with the agents of each side,
+and the end card names a team that stopped the game.
+
+A team loads and plays in the game's own process, from its own folder, as a requested match runs
+it, so its modules import and its weights load the same way, with weights only enabled. A game
+with a team plays GRF's v2 action set, whose action 19 hands a player to the built in AI for one
+step, while a team of the default set keeps its own checks of the 19 actions. The game never
+waits for a team beyond its time.
+
+- **Each step.** A team answers each observation on a thread of its own, and has nine tenths of
+    a step, 90 milliseconds at ten steps a second, counted from the moment it sees the step. A
+    team that misses that budget leaves its players to the built in AI for the step, as action 19,
+    and its late answer is discarded. While a late answer is still on its way, the steps that
+    follow go to the built in AI as well, and the team sees the next step once it is free. The
+    status line counts the steps that the built in AI played in its place, and a notice says so
+    when a team misses ten steps in a row. The recording keeps the count in its provenance.
+- **The first call.** Kaggle agents often load their model on their first call, so the first
+    observation has an allowance of its own, 45 seconds, after loading the team, which has 45
+    seconds as well. The game shows its first frame once the team has answered, well within the
+    two minutes that the page waits for a game to start.
+- **Failures.** A team that raises an error or answers with anything but actions of its set ends
+    the game, and a team that has not answered for ten seconds ends it too. The game ends cleanly
+    in both cases, saves its recording up to the last step when the setup asked for it, and the
+    end card shows the error. A team that fails to load or misses its first allowance stops the
+    game before it starts, and the page shows the error.
 
 ## Broadcast presentation
 
@@ -690,9 +1081,10 @@ replay.
 and the players, points at each restart, raises the whistle before it, and blows it.
 
 **The end of a recording.** The last frame brings End of recording when the file stops during
-play. An episode end flag brings End of episode when `full_match` is `false`, as in an academy
-exercise, and Full time otherwise. Older files without timing therefore bring Full time when the
-last frame has an episode end flag, and End of recording otherwise.
+play. An episode end flag brings Full time when `full_match` is `true`, and End of episode
+otherwise, as in an academy exercise. Older files without timing therefore bring End of episode
+when the last frame has an episode end flag, and End of recording otherwise. The show at the end
+of the match then opens under Full time for a full match and under Episode complete otherwise.
 
 **Full time.** At the final whistle, play winds down instead of stopping. Each player slows from a
 run
@@ -737,12 +1129,13 @@ touches, clean sheets, own goals and cards. Column buttons sort either way. Open
 rating terms and achievement reasons. Last come three charts over twelve periods of the match,
 possession, the running totals of shots and goals, and territory with possession, each with its
 caption, time axis and key, and the guide to the grades opens below them. The whole screen scrolls
-as one card. Focus starts on the outer dialog, where Esc closes the screen. Tab reaches the
-controls, arrow keys switch team tabs, and Enter activates a focused control. Within the content,
-Enter away from a control closes the screen. For a live source the screen opens from the podium
-panel of the show that Match summary offers. It takes a stable copy of the latest available
-episode with an explicit end flag, or the current episode otherwise. Sources with automatic
-resets supply start flags, so their summary uses the current episode.
+as one card. Focus starts on the outer dialog, where Esc or Enter closes the screen. Tab reaches
+the controls, arrow keys switch team tabs, and Enter activates a focused control. Anywhere away
+from a control, Enter closes the screen. For a live source the screen opens from the podium
+panel of the show that Match summary offers. It takes a stable copy of the latest completed
+episode that the page holds, or of the current episode while none has completed. An episode has
+completed when an end flag closes it or the next episode starts after it, which is how sources
+with automatic resets mark it, and a completed episode needs at least two frames.
 
 Player grades describe contributions in the available frames. Minutes use increasing game clock
 time while the player is on the pitch, excluding cuts. Goalkeeper is the header goalkeeper flag.
@@ -805,9 +1198,9 @@ and card changes for both teams along the time axis. The axis endpoints show the
 clock range. Available frames supply the statistics for partial sources as well as completed
 episodes.
 
-**Live sources** skip the lineups, show the card for full time alone, and offer the show at the end
-through a button rather than playing it. A decision replay that falls far behind the present
-returns to it under a wipe.
+**Live sources** skip the lineups, show the card for full time alone, or the card for the end of an
+episode outside a full match, and offer the show at the end through a button rather than playing
+it. A decision replay that falls far behind the present returns to it under a wipe.
 
 **Broadcast mode**, turned on with T, from the View menu or in the settings, shows the picture and
 its graphics alone, as on television, with the bars, the controls, the messages and the pointer
@@ -893,15 +1286,37 @@ fall back to the synthesized sounds where available.
 The page starts muted, since browsers start sound only after a click or a key, and M or the speaker
 button turns the sound on, at half volume by default.
 
+Three levels in the settings panel lower parts of the sound beneath the volume. The crowd level
+sets the crowd with its roars, groans and applause and the songs of the supporters of each team.
+The ambience level sets the soundscape of the arena and the weather, and the action sounds level
+sets the whistle, the ball and the other sounds of the play. Each level runs from silent to full
+and starts full, so a level can only make its part quieter. The volume, mute and the rule that
+sound plays only while a match plays on Watch or Play still govern every part, and the levels stay
+in the browser.
+
 ## Settings
 
 The settings panel holds the parts of the presentation and the behavior of the page. Each setting
 stays in the browser. The idle return interval accepts 5 to 300 seconds.
 
+Three presets at the top of the panel set the parts of the presentation in one click. **Quick
+look** turns off the lineups, the celebrations, the replays after goals, the decision replays, the
+restart transitions and the post-match show, so a researcher who checks a match sees play and
+nothing else. **Full broadcast** turns all six on, as they are by default. Any other mix of the six
+is **Custom**, which the browser keeps as the person's own. Choosing a preset over a custom mix
+keeps that mix, and Custom then brings it back as it was, so a person can try either preset and
+return. The preset in force is marked, a change of any one of the six boxes makes a new custom
+mix, and the arrow keys move between the presets as in any group of choices. The command palette
+offers the same presets.
+
 | Setting | Default | Effect |
 | ------- | ------- | ------ |
 | Return to broadcast when idle | on, after 20 seconds | return from the free camera |
 | Ball trail | on | a line behind the ball |
+| Player labels | off | the number and name over each player in sight |
+| Motion | the system's | reduced or full motion |
+| Crowd, ambience and action sounds levels | full | lower each part of the sound |
+| Click a player to follow | off | the Follow player camera on the player clicked |
 | Broadcast mode | off | the picture and its graphics alone |
 | Lineups before kick-off | on | the team sheets at the start of a recording |
 | Celebrations after goals | on | the celebration and its cameras |
@@ -910,10 +1325,21 @@ stays in the browser. The idle return interval accepts 5 to 300 seconds.
 | Restart transitions | on | the wind-down, wipe and pre-roll of each restart |
 | Slow motion in replays | half speed | off, half speed or quarter speed |
 | Post-match show | on | the show at the end of a recording |
+| 2D view | off | a flat drawing from above without WebGL, which skips replays and shows |
 | GRF classic pitch | off | GRF's own pitch texture in place of the drawn pitch |
 | Capture the mouse | off | a right click in the free camera captures the pointer |
 | Use the kits saved in the match | off | saved kits instead of current team settings |
+| Tips for new visitors | on | a short tip on each page until dismissed |
+| Touch controls on Play | when a touch screen is used | the stick and buttons of a game |
 | Theme | the system's | dark or light |
+
+The Motion setting follows the system's preference for reduced motion by default, and Reduced or
+Full sets it for the page alone. Reduced motion plays a match without the lineups, the
+celebrations, the replays after goals, the transitions of restarts and decisions and the
+post-match show, and the end of a recording opens its statistics in place of the show. A change
+of camera and the flights of the free camera and of the Field page reach their view at once, the
+ball trail hides, the preview of the team editor stands still and the animations of the page end
+at once. R then plays the last goal again from three seconds before it in the current camera.
 
 Three quality levels in the View menu set the resolution of the shadows, the pixel ratio, the
 glow of bright lights, the particles of rain and snow, the detail of the crowd and the shadows of
@@ -922,14 +1348,21 @@ the floodlights, and the page picks one from the device.
 ## Keyboard
 
 Tab and Shift Tab move between controls on every page. Enter or Space activates a control.
+Ctrl K opens the command palette outside text fields, as described under Page layout.
 The skip link moves to the main content. Menus and lists use the arrow keys, Home and End.
 Esc closes a menu or panel and returns focus to its opener. Dialogs keep Tab inside them.
 Sliders use the arrow keys. Color fields accept a hex value beside the color picker.
 
 Home cards open their pages. Watch keeps its playback and camera keys while the picture has
-focus. Focused controls use their own keys, and text fields keep typing within the field.
+focus. Focused controls use their own keys, and text fields keep typing within the field. Space on
+a focused control acts on that control, so a summary that opens a section opens it while playback
+carries on as before. The controls of the Watch page stay in view while keyboard focus is inside
+them and rest again once focus leaves.
 Recordings supports folder arrows and row arrows, Enter opens a row, and Space selects it.
-Matches and Play setup use Tab through their forms. Teams uses arrows through its list and
+The grid of environments on Watch moves between its tiles with the arrow keys, Home and End, and
+between its pages with Page Up and Page Down, and Enter shows the focused environment.
+Matches and Play setup use Tab through their forms, and the input settings of Play change the
+keys of play. Teams uses arrows through its list and
 section menus, with Tab through editor controls. Field uses Tab through settings and the
 preview, where the camera keys move the view and arrows turn it. Play uses Esc for its pause menu,
 with Home available there and on the end card. Home pauses an active game. Quit to Home ends
@@ -938,6 +1371,7 @@ for a complete match
 and End of episode otherwise.
 
 The picture uses plus and minus to zoom, and Watch uses Alt with arrows to turn the camera.
+The brackets choose the player of the Follow player camera, as a click on a player does.
 
 The painter canvas uses arrow keys to move its cursor and Space to paint. Page Up and Page Down
 select objects. Arrow keys move a selected object, Shift increases the distance, the plus and
@@ -949,9 +1383,9 @@ The post match show uses Enter to advance and Esc to finish while the picture ha
 Optional header fields carry scenario timing. The `duration` is the configured number of steps.
 The `second_half` field is the configured step of the second half, or null when no half time occurs.
 The clock threshold is `second_half` times 1800 milliseconds. The `full_match` field identifies a
-scenario with a duration of at least 3000 steps and no early episode end conditions. Missing timing
-leaves the recording playable, with Full time for an episode end flag and End of recording
-otherwise.
+scenario with a duration of at least 3000 steps and no early episode end conditions. Full time
+needs `full_match` set to `true`. Missing timing leaves the recording playable, with End of episode
+for an episode end flag and End of recording otherwise.
 
 Bits 0 and 1 of the frame flags mark episode end and start respectively, with values 1 and 2.
 The offside flag has value 4. Player references in the frame use indices in the header's player
@@ -974,6 +1408,23 @@ The header records the version, 1, the title, the scenario, the steps per second
 the fourteen joints and the parent of each, one entry per player with its team, its index within the
 team, whether it is the goalkeeper and whether an agent controls it, the name and colors of each
 team, the size of a frame and the number of frames, which a live stream gives as null.
+
+The header also holds a `provenance` object, which records what was known of the recording's
+origin when it was made. Every recording names the version of cuju that made it as
+`cuju_version` and its `source`, which is `requested_match`, `human_game`, `recorder` or `live`.
+A requested match adds its resolved `seed`, the `scenario`, the registry identifiers of both
+`teams`, the `controls` of each side, the `agent_counts`, the engine's `action_set` and the
+`ability` that played on each side. A game on the Play page adds its seed, scenario, the sides of
+the people as `humans`, the action set and the ability. A recorder and a live source add the
+`environment` index of the batch, and leave the seed unknown, since a batch may have been reset
+with another seed before the capture began. A field that is absent means its value is unknown. A
+seed above `2**53 - 1` is written as a decimal string, so the page reads it exactly. A registry
+identifier names a team of this machine, whose files may have changed since the match was played.
+
+The library summary beside each recording carries the same provenance, and a recording copied into
+the folder without a summary gets its provenance from its header. Provenance adds to the header
+alone and leaves the version 1 frame layout as it was, so recordings made before it open as before,
+with an empty provenance.
 
 A frame opens with eight signed 32 bit integers, seven floats and four more integers, as the table
 lists them.
@@ -1015,13 +1466,24 @@ A live stream sends the same bytes uncompressed.
 
 ## Folder and server
 
-The renderer's folder holds three subfolders, `matches` for the recordings, `teams` for the
-submissions and `live` for the announcements of running sources. The file `samples.json` names the
-sample matches that the library has received. Requested matches wait in the
-server's memory and play one at a time. Restarting the server clears the queue and its request
-history, while saved recordings and teams stay on disk. The variable `CUJU_RENDER_HOME`, or the
-option `--home`, moves the
-whole folder, so a project can keep its own matches beside its code.
+The renderer's folder holds four subfolders, `matches` for the recordings, `teams` for the
+submissions, `live` for the announcements of running sources and `requests` for the history of
+requested matches. The file `samples.json` names the
+sample matches that the library has received. Requested matches play one at a time, and each
+request keeps a small JSON file in the subfolder `requests`, with its teams, scenario, resolved
+seed, ability, state, error and the times it was made, started and finished. The server writes each
+file through a temporary file and removes any temporary file left behind when it starts. A file
+that holds a field of the wrong type, edited by hand or written by a later version, is skipped
+with a warning through the logger `cuju`, and the server starts with the rest of the history.
+
+A restart of the server marks every request that was waiting or playing as interrupted, and Retry
+queues it again. A match that was playing when the server stopped runs in a process of its own,
+which usually ends at its next report to the server, but one close to its end may still save its
+recording. That recording then appears in the library while its request stays interrupted, and
+its provenance names the same seed.
+
+The variable `CUJU_RENDER_HOME`, or the option `--home`, moves the whole folder, so a project can
+keep its own matches beside its code.
 
 The server listens on the loopback interface alone, since its API deletes files and plays the code
 of submissions, and it checks the loopback host on every request. Requests that change data also

@@ -11,6 +11,7 @@ import { NODE_COUNT, PLAYER_FLOATS, NODES_FLOAT } from '../recording/format.js';
 import { HALF_H, HALF_W } from '../world/pitch.js';
 import { restPoseNodes, walkPoseNodes } from '../players/players.js';
 import { KAYKIT_CELEBRATIONS, KAYKIT_ROLES } from '../players/kaykit.js';
+import { hasUpload, poseUpload } from '../players/retarget.js';
 
 // The library loads on its own, a page without it still celebrates with the simple poses.
 let lib = null;
@@ -110,7 +111,7 @@ export function celebrationFor(style, index, random) {
         const list = style && Array.isArray(style.celebrations) ? style.celebrations : [];
         choice = list.length ? list[Math.floor(random() * list.length)] : '';
     }
-    if (choice && (choice.startsWith('clip:') || dances.includes(choice))) {
+    if (choice && (choice.startsWith('clip:') || dances.includes(choice) || hasUpload(choice))) {
         return choice;
     }
     return dances.length ? dances[Math.floor(random() * dances.length)] : 'dance';
@@ -211,6 +212,13 @@ function shift(out, o, x, y, z) {
 // and turned to heading. Names of the library go through animate.pose, a clip of the model
 // stands idle here while the model plays it, and the rest fall back to simple poses.
 export function posePlayer(name, t, out, o, x, y, heading, mode = '') {
+    // A clip a team uploaded plays on the nodes, so every model follows it. Pinned to its spot on
+    // a podium, a stage or beside the scorer, and kept on the pitch for the scorer.
+    if (hasUpload(name)) {
+        const pin = mode === 'show' || mode === 'pin';
+        poseUpload(name, t, out, o, { x, y, heading, pin, bounds: pin ? null : [HALF_W, HALF_H] });
+        return;
+    }
     if (lib && typeof lib.pose === 'function' && name && libraryEntry(name)) {
         try {
             const info = libraryInfo(name);

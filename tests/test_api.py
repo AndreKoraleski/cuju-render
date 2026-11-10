@@ -4,6 +4,7 @@
 
 import gzip
 import json
+import os
 import struct
 
 import numpy as np
@@ -13,8 +14,8 @@ import torch
 import cuju
 import cuju.errors
 import cuju.state
-from conftest import actions_at
-from support.common import _SEVERAL, _control, _short_matches, _toy_team
+from conftest import actions_at, tensor_bytes
+from support.common import _SEVERAL, _control, _get, _short_matches, _toy_team
 
 
 def test_layout_offsets():
@@ -70,8 +71,63 @@ def test_stacked_batch_shows_and_a_failing_source_spares_the_step(render_home, m
 
     monkeypatch.setattr(source, 'after_step', fail)
     batch.step(torch.zeros((2, 1), dtype=torch.int32))
-    assert batch._live is None
+    assert source not in batch.observers
     batch.close()
+
+
+def test_live_environment_switch_changes_no_output(render_home):
+    """A switch changes the environment that the source reads, never the batch."""
+    outputs = []
+    choices = {15: 2, 30: 0, 45: 1}
+    for watched in (False, True):
+        batch = cuju.BatchEnvironment('5_vs_5_l4_r0', environment_count=3, device='cpu', seed=5)
+        source = cuju.render.watch(batch, environment=0, backlog=True) if watched else None
+        seen = [tensor_bytes(batch.reset())]
+        for step in range(60):
+            if source is not None and step in choices:
+                source.select_environment(choices[step])
+            observation, reward, done, _ = batch.step(actions_at(step, 3, 4, 19))
+            seen += [tensor_bytes(observation), tensor_bytes(reward), tensor_bytes(done)]
+        seen += [batch.get_state(index) for index in range(3)]
+        outputs.append(seen)
+        if source is not None:
+            assert source.environment == 1 and source._generation == 3
+            assert source._history
+        batch.close()
+    assert outputs[0] == outputs[1]
+
+
+def test_live_environment_switch_survives_a_failed_announcement(render_home, monkeypatch, caplog):
+    import logging
+    import pathlib
+
+    batch = cuju.BatchEnvironment('5_vs_5_l1_r0', environment_count=2, device='cpu')
+    try:
+        source = cuju.render.watch(batch, backlog=True)
+        batch.reset()
+        actions = torch.zeros((2, 1), dtype=torch.int32)
+        batch.step(actions)
+
+        def full_disk(self, target):
+            raise OSError(28, 'No space left on device')
+
+        source.select_environment(1)
+        with monkeypatch.context() as patch, caplog.at_level(logging.WARNING, logger='cuju'):
+            patch.setattr(pathlib.Path, 'replace', full_disk)
+            batch.step(actions)
+            batch.step(actions)
+        warnings = [record for record in caplog.records if record.name == 'cuju']
+        assert len(warnings) == 1
+        assert 'could not announce environment 1' in warnings[0].getMessage()
+        # The source still runs, shows the new environment, and leaves no partial file behind.
+        assert source in batch.observers
+        assert source.environment == 1 and len(source._history) == 2
+        assert not list((render_home / 'live').glob('*.part'))
+        assert json.loads(source._announcement.read_text())['environment'] == 0
+        batch.step(actions)
+        assert len(source._history) == 3
+    finally:
+        batch.close()
 
 
 def test_ability_sets_the_difficulty_that_plays(render_home):
@@ -120,3 +176,35 @@ def test_default_submission_rejects_builtin_action(render_home, tmp_path, monkey
     )
     with pytest.raises(IndexError, match='to 18'):
         cuju.render.play(default['id'], v2['id'], '5_vs_5', seed=1)
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='sends SIGINT as Ctrl+C does')
+def test_demo_starts_its_server_and_ends_cleanly_on_ctrl_c(render_home):
+    """Without a server the demo starts one, and Ctrl+C ends the match, the server and itself."""
+    import signal
+    import subprocess
+    import sys
+
+    process = subprocess.Popen(
+        [sys.executable, '-m', 'cuju.render', 'demo', '--port', '0', '--no-open'],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        address = None
+        for line in process.stdout:
+            if 'serves http://' in line:
+                address = line[line.index('http://') :].split()[0]
+            if 'Ctrl+C' in line:
+                break
+        assert address and '#live=' in line
+        assert len(json.loads(_get(address, 'api/live')[1])) == 1
+        process.send_signal(signal.SIGINT)
+        assert process.wait(30) == 0
+        assert 'stopped' in process.stdout.read()
+        assert not list((render_home / 'live').glob('*.json'))
+        with pytest.raises(OSError):
+            _get(address, 'api/info')
+    finally:
+        if process.poll() is None:
+            process.kill()

@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Checks of the recording format, the recorder, its filters and annotations."""
 
+import gzip
 import io
 import json
 import struct
+import threading
 
 import numpy as np
 import pytest
@@ -21,7 +23,9 @@ from support.common import (
     _SAMPLES,
     _SEVERAL,
     _frames,
+    _get,
     _library_ids,
+    _one_second,
     _serve_once,
     _short_matches,
     _toy_team,
@@ -104,6 +108,9 @@ def test_recorder_writes_episodes(render_home):
     assert [struct.unpack_from('<i', frame)[0] for frame in frames] == list(range(len(frames)))
     summary = {entry['id']: entry for entry in _library.matches()}[first.stem]
     assert summary['steps'] == len(frames)
+    provenance = {'source': 'recorder', 'environment': 0, 'cuju_version': cuju.__version__}
+    assert document['provenance'] == provenance
+    assert summary['provenance'] == provenance
     assert summary['scenario'] == 'academy_empty_goal_close_l1_r0'
     # The shots of the episode show as touches during shot animations of the agent's player.
     players = len(document['players'])
@@ -140,6 +147,43 @@ def test_late_viewer_gets_history(render_home):
     batch.close()
 
 
+def test_live_stream_through_the_server(render_home):
+    batch = cuju.BatchEnvironment('5_vs_5_l4_r0', environment_count=1, device='cpu')
+    source = cuju.render.watch(batch, backlog=True)
+    batch.reset()
+    for step in range(5):
+        batch.step(actions_at(step, 1, 4, 19))
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        port = server.server_address[1]
+        listed = json.loads(_get(f'http://127.0.0.1:{port}', '/api/live')[1])
+        assert [entry['id'] for entry in listed] == [source.identifier]
+        connection = _server.http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+        connection.request('GET', f'/api/live/{source.identifier}/stream')
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.read(8) == _recording.MAGIC
+        connection.close()
+        # The relay passes on a request for numbered frames.
+        connection = _server.http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+        connection.request('GET', f'/api/live/{source.identifier}/stream?sequence=1')
+        response = connection.getresponse()
+        assert _recording._parse_header(response)['stream_sequence'] == 1
+        connection.close()
+        provenance = _recording._parse_header(io.BytesIO(source._header()))['provenance']
+        assert provenance == {'source': 'live', 'environment': 0, 'cuju_version': cuju.__version__}
+    finally:
+        server.shutdown()
+        server.server_close()
+        source.close()
+    # A closed source lets go of its batch.
+    assert source not in batch.observers
+    batch.close()
+
+
 def test_recorder_keeps_the_final_goal_with_automatic_resets(render_home):
     batch = cuju.BatchEnvironment(
         'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu'
@@ -156,6 +200,104 @@ def test_recorder_keeps_the_final_goal_with_automatic_resets(render_home):
     last = list(_recording.frames(recorder.saved[0]))[-1]
     assert struct.unpack_from('<2i', last, 8) == ((1, 0) if scored else (0, 0))
     assert struct.unpack_from('<i', last, 28)[0] & 1
+
+
+@pytest.mark.parametrize('auto_reset', [True, False])
+def test_recorder_captures_by_itself_as_by_hand(render_home, auto_reset):
+    recorded = []
+    for by_hand in (False, True):
+        batch = cuju.BatchEnvironment(
+            'academy_empty_goal_close_l1_r0',
+            environment_count=2,
+            device='cpu',
+            seed=3,
+            auto_reset=auto_reset,
+        )
+        recorder = cuju.render.Recorder(batch, environment=1)
+        assert recorder in batch.observers
+        batch.reset()
+        if by_hand:
+            recorder.capture()
+        step = 0
+        while len(recorder.saved) < 2:
+            actions = torch.tensor([[12 if step % 3 else 5]] * 2, dtype=torch.int32)
+            _, _, done, _ = batch.step(actions)
+            if by_hand:
+                recorder.capture(done)
+            if not auto_reset and bool(done.any()):
+                # The reset clears the done flags that `done` views.
+                ended = bool(done[1])
+                batch.reset_done()
+                if by_hand and ended:
+                    recorder.capture()
+            step += 1
+        # A reset of the other environment adds no frame to the recording of this one.
+        frames = len(recorder._frames)
+        batch.reset(mask=[True, False])
+        assert len(recorder._frames) == frames
+        recorded.append([list(_recording.frames(path)) for path in recorder.saved])
+        batch.close()
+    assert recorded[0] == recorded[1]
+
+
+def test_game_actions_are_the_actions_of_a_batch(render_home):
+    """A game plays exactly the match that a batch plays for the same actions."""
+    from cuju.render._playing.game import Game
+
+    game = Game('5_vs_5', (True, True), ability=(0.3, None), seed=5)
+    keys = [('right', 'sprint'), ('up',), (), ('shot',), ('left', 'down'), ('dribble',)]
+    for step in range(60):
+        held = frozenset(keys[(step // 5) % len(keys)])
+        game.step({0: (held, frozenset()), 1: (held, frozenset({'short_pass'}))})
+    batch = cuju.BatchEnvironment(
+        '5_vs_5_l1_r1',
+        environment_count=1,
+        representation='raw',
+        seed=5,
+        auto_reset=False,
+        device='cpu',
+        difficulty=[(0.3, None)],
+    )
+    batch.reset()
+    for row in game.actions:
+        batch.step(torch.tensor([row], dtype=torch.int32))
+    assert batch.get_state(0) == game.batch.get_state(0)
+    assert len({tuple(row) for row in game.actions}) > 3
+    # Each frame marks the players that the people control, one a side.
+    start = _recording._FRAME_HEAD.size + 10 * 14 * 14
+    for frame in game.frames[1:]:
+        controlled = [k for k in range(10) if frame[start + k] & 8]
+        assert len(controlled) == 2
+        assert {game.lineup[k]['team'] for k in controlled} == {0, 1}
+    provenance = _recording.read_header(game.save())['provenance']
+    assert provenance == {
+        'source': 'human_game',
+        'seed': 5,
+        'scenario': '5_vs_5',
+        'humans': [True, True],
+        'teams': ['builtin', 'builtin'],
+        'agent_counts': [1, 1],
+        'action_set': 'default',
+        'ability': [team['ability'] for team in game.teams],
+        'cuju_version': cuju.__version__,
+    }
+    batch.close()
+    game.close()
+
+
+def test_recording_provenance_preserves_frame_format():
+    head = _recording.header('Match', 'custom', [], provenance={'source': 'recorder'})
+    document = _recording._parse_header(io.BytesIO(head))
+    assert document['version'] == 1
+    assert len(head) % 4 == 0
+    assert document['provenance'] == {'source': 'recorder', 'cuju_version': cuju.__version__}
+    document.pop('provenance')
+    text = json.dumps(document).encode()
+    old = _recording.MAGIC + struct.pack('<I', len(text)) + text
+    assert 'provenance' not in _recording._parse_header(io.BytesIO(old))
+    for seed, kept in ((2**53 - 1, 2**53 - 1), (2**53, str(2**53)), (2**64 - 1, str(2**64 - 1))):
+        large = _recording.header('Match', 'custom', [], provenance={'seed': seed})
+        assert _recording._parse_header(io.BytesIO(large))['provenance']['seed'] == kept
 
 
 def _moved(document, frames, team, steps):
@@ -263,6 +405,31 @@ def test_new_home_gets_the_samples_once(render_home, monkeypatch):
     assert sorted(path.name for path in (render_home / 'matches').iterdir()) == sorted(
         f'{name}.{suffix}' for name in _SAMPLES for suffix in ('cjr', 'json')
     )
+
+
+def test_recording_identifiers_are_unique_within_a_second(render_home, monkeypatch):
+    data = gzip.decompress((_library._SAMPLES / 'sample-5v5.cjr').read_bytes())
+    (length,) = struct.unpack_from('<I', data, len(_recording.MAGIC))
+    end = len(_recording.MAGIC) + 4 + length
+    size = json.loads(data[len(_recording.MAGIC) + 4 : end])['frame_bytes']
+    head, frames = data[:end], [data[end + k * size : end + (k + 1) * size] for k in range(3)]
+    _one_second(monkeypatch)
+    saved = []
+
+    def save_many():
+        for _ in range(10):
+            saved.append(_library.save(head, frames).stem)
+
+    workers = [threading.Thread(target=save_many) for _ in range(4)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(60)
+    assert len(saved) == len(set(saved)) == 40
+    assert sorted(saved) == _library_ids()
+    for name in saved:
+        assert list(_recording.frames(_library.path_of(name))) == frames
+        assert _library.details(name)['steps'] == 3
 
 
 @pytest.mark.parametrize('name,players', [('sample-11v11', 22), ('sample-5v5', 10)])

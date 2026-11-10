@@ -24,6 +24,7 @@ import { Painter } from './painter.js';
 import { Players, Rig, clipNames, fileBoneNames, guessJoints, parseModel, restPoseNodes, walkPoseNodes } from '../players/players.js';
 import { animationLibrary, danceNames, posePlayer } from '../broadcast/celebrate.js';
 import { attachKayKitClips, kaykitLabel, menuClips } from '../players/kaykit.js';
+import { clipMoveLabel, clipMoves, clipsPanel, openClips, previewMove } from './clip-editor.js';
 
 const LABELS = {
     plain: 'Plain', stripes: 'Stripes', hoops: 'Hoops', halves: 'Halves', sash: 'Sash', checkers: 'Checkers',
@@ -221,6 +222,7 @@ export class TeamEditor {
             this.startPreview();
             this.initial = this.snapshot();
             this.loadArt(token);
+            openClips(this, token);
             if (team.model) {
                 this.loadExistingModel(token);
             }
@@ -722,7 +724,7 @@ export class TeamEditor {
 
     rosterSection() {
         const modelOptions = [['team', `Team model, ${this.modelName(this.style.model)}`], ...this.modelOptions()];
-        const moves = [...celebrationNames(), ...this.lastClips.map((c) => `clip:${c}`)];
+        const moves = [...celebrationNames(), ...this.lastClips.map((c) => `clip:${c}`), ...clipMoves(this)];
         const select = (list, value, onChange, label, disabled = false) => {
             const el = h('select', { 'aria-label': label, disabled }, list.map(([v, t]) => h('option', { value: v, selected: v === value }, t)));
             el.addEventListener('change', () => onChange(el.value));
@@ -765,7 +767,7 @@ export class TeamEditor {
                 this.focusPlayer(i);
                 this.refreshPreview();
             }, 'Model');
-            const celebration = select([['team', 'Team default'], ...moves.map((m) => [m, celebrationLabel(m)])], p.celebration || 'team', (v) => {
+            const celebration = select([['team', 'Team default'], ...moves.map((m) => [m, clipMoveLabel(this, m) || celebrationLabel(m)])], p.celebration || 'team', (v) => {
                 p.celebration = v;
                 this.focusPlayer(i);
                 if (v !== 'team') {
@@ -840,7 +842,8 @@ export class TeamEditor {
             const i = this.previewGk ? 0 : this.previewIndex;
             const p = this.style.players[i];
             const who = p ? `${p.number} ${p.name || (i === 0 ? 'Goalkeeper' : `Player ${i + 1}`)}` : '';
-            cap.textContent = `${who}, ${this.modelName(this.playerModel(i))}${this.playing ? `, ${celebrationLabel(this.playing.name)}` : ''}`;
+            const move = this.playing ? clipMoveLabel(this, this.playing.name) || celebrationLabel(this.playing.name) : '';
+            cap.textContent = `${who}, ${this.modelName(this.playerModel(i))}${move ? `, ${move}` : ''}`;
         }
     }
 
@@ -878,7 +881,23 @@ export class TeamEditor {
     exportSection() {
         return h('div', { class: 'sec-body' },
             h('a', { class: 'btn primary', href: api.exportUrl(this.team.id), download: `${this.team.name || 'team'}.zip` }, 'Export to submission folder'),
-            h('p', { class: 'muted small' }, 'Save changes before exporting. Import the zip to restore the team.'));
+            h('p', { class: 'muted small' }, 'Save changes before exporting. Import the zip to restore the team.'),
+            this.team.kind !== 'builtin' ? h('button', { class: 'btn', type: 'button', onclick: (e) => this.duplicate(e.currentTarget) }, 'Duplicate saved team') : null,
+            this.team.kind !== 'builtin' ? h('p', { class: 'muted small' }, 'Duplicate makes a new team from the files, controls and look saved last, so save changes first.') : null);
+    }
+
+    // Copies the saved team as a new team of the registry, which then changes on its own.
+    async duplicate(button) {
+        button.disabled = true;
+        try {
+            const copy = await api.duplicateTeam(this.team.id);
+            this.app.teamsChanged();
+            this.app.hud.toast(`${copy.name} is a new team in the list.`);
+        } catch (err) {
+            this.app.hud.toast(err.message, 'error', 7000);
+        } finally {
+            button.disabled = false;
+        }
     }
 
     // A guide for the shirt painter, the shirt region of the kit mask, front or back.
@@ -1431,7 +1450,7 @@ export class TeamEditor {
         const fill = () => {
             const names = celebrationNames();
             const clips = (this.lastClips || []).map((c) => `clip:${c}`);
-            const all = [...names, ...clips];
+            const all = [...names, ...clips, ...clipMoves(this)];
             if (!all.length) {
                 host.replaceChildren(h('p', { class: 'muted small' }, 'Loading celebrations.'));
                 return;
@@ -1452,10 +1471,13 @@ export class TeamEditor {
                     }
                     summary.textContent = summaryText();
                 });
-                return h('div', { class: `move${name.startsWith('clip:') ? ' clip' : ''}` },
+                const own = clipMoveLabel(this, name);
+                const label = own || celebrationLabel(name);
+                const hint = own ? ' clip of the team' : name.startsWith('clip:') ? ' clip of the model' : null;
+                return h('div', { class: `move${name.startsWith('clip:') || own ? ' clip' : ''}` },
                     box,
-                    h('label', { for: id }, celebrationLabel(name), name.startsWith('clip:') ? h('span', { class: 'muted small' }, ' clip of the model') : null),
-                    h('button', { type: 'button', class: 'btn small ghost', 'aria-label': `Play ${celebrationLabel(name)} in the preview`, onclick: () => this.playCelebration(name) }, icon('play'), 'Play'));
+                    h('label', { for: id }, label, hint ? h('span', { class: 'muted small' }, hint) : null),
+                    h('button', { type: 'button', class: 'btn small ghost', 'aria-label': `Play ${label} in the preview`, onclick: () => this.playCelebration(name) }, icon('play'), 'Play'));
             }));
         };
         const summaryText = () => (s.celebrations.length
@@ -1481,11 +1503,11 @@ export class TeamEditor {
         });
         return h('div', { class: 'sec-body' },
             h('p', { class: 'muted small' }, 'Choose goal celebrations. Play previews a move.'),
-            summary, host);
+            summary, host, clipsPanel(this));
     }
 
     playCelebration(name) {
-        this.playing = { name, start: performance.now() };
+        this.playing = { name, start: performance.now(), ...previewMove(this, name) };
         this.walk = false;
         this.syncPreviewModes();
     }
@@ -1891,15 +1913,17 @@ export class TeamEditor {
         }
         const now = performance.now();
         const t = (now - this.clock) / 1000;
-        const heading = t * 0.6;
+        // Reduced motion holds the preview still.
+        const still = this.app.reducedMotion;
+        const heading = still ? 0 : t * 0.6;
         if (this.playing) {
             const pt = (now - this.playing.start) / 1000;
-            if (pt > 5) {
+            if (pt > (this.playing.length || 5)) {
                 this.playing = null;
                 this.syncPreviewModes();
             } else {
                 try {
-                    posePlayer(this.playing.name, pt, this.pose.nodes, 0, 0, 0, heading * 0.3);
+                    posePlayer(this.playing.pose || this.playing.name, pt, this.pose.nodes, 0, 0, 0, heading * 0.3);
                     // A clip of the model plays over the standing pose for this drawing.
                     if (this.playing.name.startsWith('clip:') && this.players) {
                         this.players.playClip(0, this.playing.name, pt);
@@ -1915,7 +1939,7 @@ export class TeamEditor {
             } else {
                 restPoseNodes(heading, this.pose.nodes);
                 // A slight breathing sway on the trunk keeps the idle pose alive.
-                this.pose.nodes[1 * 7 + 2] += Math.sin(t * 2) * 0.006;
+                this.pose.nodes[1 * 7 + 2] += still ? 0 : Math.sin(t * 2) * 0.006;
             }
         }
         if (this.players) {

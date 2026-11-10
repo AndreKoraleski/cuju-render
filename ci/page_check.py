@@ -1,8 +1,22 @@
 # Copyright 2026 The cuju Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Checks renderer pages through Chrome and CDP against the local mock server."""
+"""Checks renderer pages through Chrome and CDP against the local mock server.
 
+Usage:
+    python ci/page_check.py [--port 8790] [--debug-port 8791] [--chrome google-chrome]
+
+Options:
+    --port          The port of the mock server, by default `CUJU_PAGE_CHECK_PORT` or 8790.
+    --debug-port    The port of Chrome's debugging connection, by default
+                    `CUJU_PAGE_CHECK_DEBUG_PORT` or 8791. With 0, Chrome picks a free port.
+    --chrome        The Chrome to drive, by default `google-chrome`.
+
+Checks that run side by side give each its own pair of ports, so they never meet.
+"""
+
+import argparse
 import base64
+import contextlib
 import json
 import os
 import socket
@@ -13,6 +27,8 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
+
+import page_grid
 
 
 class CDP:
@@ -99,7 +115,542 @@ def wait_json(url):
     raise RuntimeError(f'Server startup failed at {url}')
 
 
+def debugging_port(profile, port):
+    """Returns the debugging port, or for 0 the port that Chrome chose and wrote to its profile."""
+    if port:
+        return port
+    path = Path(profile) / 'DevToolsActivePort'
+    for _ in range(150):
+        with contextlib.suppress(OSError, ValueError, IndexError):
+            return int(path.read_text().splitlines()[0])
+        time.sleep(0.2)
+    raise RuntimeError('Chrome startup failed.')
+
+
+def library_checks(client):
+    """Checks the Trash, the details of a recording, duplicated teams and request pages."""
+    result = client.evaluate("""
+        (async () => {
+            const { api } = await import('./js/core/api.js');
+            const [entry] = await api.matches();
+            const id = entry.id;
+            const details = await api.matchDetails(id);
+            await api.patchMatch(id, { tags: ['final'], favorite: true, notes: 'Goal' });
+            await api.deleteMatch(id);
+            const trashed = (await api.trash()).some((item) => item.id === id)
+                && !(await api.matches()).some((item) => item.id === id);
+            const missing = (err) => err.status === 404;
+            const hidden = await api.matchDetails(id).then(() => false, missing);
+            cuju.showPage('recordings');
+            cuju.recordings.trash = true;
+            await cuju.recordings.refresh();
+            const listed = cuju.recordings.list.some((item) => item.id === id);
+            const restored = await api.restoreMatch(id);
+            const kept = restored.id === id && restored.tags.join() === 'final' && restored.favorite
+                && restored.notes === 'Goal' && !('deleted_at' in restored);
+            cuju.recordings.trash = false;
+            await cuju.recordings.refresh();
+            const back = cuju.recordings.list.some((item) => item.id === id)
+                && (await api.trash()).length === 0;
+            const source = 'def agent(obs):\\n    return [0]\\n';
+            const team = await api.uploadTeam('Twin', 'main.py', source, '11v11');
+            const copy = await api.duplicateTeam(team.id);
+            const twins = copy.id !== team.id && copy.name === 'Twin copy'
+                && copy.format === team.format;
+            const builtin = await api.duplicateTeam('builtin').then(() => false,
+                (err) => err.status === 400);
+            await api.deleteTeam(copy.id);
+            await api.deleteTeam(team.id);
+            await cuju.library.refresh();
+            const all = { details: details.id === id, trashed, hidden, listed, kept, back, twins,
+                builtin };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'Trash, details and duplicate {result}'
+    result = client.evaluate("""
+        (async () => {
+            const { REQUEST_PAGE } = await import('./js/pages/matches.js');
+            const page = cuju.matches;
+            cuju.showPage('matches');
+            for (let i = 0; i < 100 && !page.built; i++) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            const saved = page.requests;
+            const now = Date.now() / 1000;
+            page.requests = Array.from({ length: REQUEST_PAGE + 10 }, (_, k) => ({
+                id: `r-20261109-120000-${String(k).padStart(4, '0')}`, left: 'builtin',
+                right: 'builtin', scenario: '5_vs_5', seed: k, ability: [null, null],
+                state: 'done', progress: 1, match: null, error: null, created: now - k,
+                started: now - k, finished: now - k,
+            }));
+            page.limit = REQUEST_PAGE;
+            page.renderQueue();
+            const cards = () => page.queueHost.querySelectorAll('.req-card').length;
+            const first = cards();
+            const button = page.queueHost.querySelector('.req-more');
+            const label = button && button.textContent;
+            button.focus();
+            button.click();
+            const all = cards();
+            const gone = !page.queueHost.querySelector('.req-more');
+            const focused = page.queueHost.contains(document.activeElement);
+            page.requests = saved;
+            page.limit = REQUEST_PAGE;
+            page.renderQueue();
+            const result = { first: first === REQUEST_PAGE, label: label === 'Show 10 more of 10',
+                all: all === REQUEST_PAGE + 10, gone, focused };
+            return Object.values(result).every(Boolean) || JSON.stringify(result);
+        })()
+    """)
+    assert result is True, f'Requested matches page by page {result}'
+    return 2
+
+
+def reconnection_checks(client):
+    """Checks that a live stream reconnects after a drop, marks the gap and tells the end."""
+    # Each stage waits in its own call, within the time that a call to Chrome may take.
+    wait = """
+        window.pageCheckWait = async (test) => {
+            const end = performance.now() + 12000;
+            while (!test() && performance.now() < end) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            return test();
+        };
+        window.pageCheckLive = () => cuju.source?.kind === 'live' ? cuju.source.live : null;
+    """
+    result = client.evaluate(
+        wait
+        + """
+        (async () => {
+            const { api } = await import('./js/core/api.js');
+            const [source] = await api.live();
+            // A stream of an earlier check may still be the source until the new one connects.
+            const before = pageCheckLive();
+            cuju.openLive(source.id);
+            const ready = await pageCheckWait(() => pageCheckLive() !== before
+                && pageCheckLive()?.state === 'connected' && pageCheckLive().lastSequence > 0);
+            if (!ready) return 'no live stream';
+            const stream = pageCheckLive();
+            window.pageCheckStream = stream;
+            window.pageCheckStates = [];
+            const hear = stream.callbacks.onState;
+            stream.callbacks.onState = (state) => {
+                pageCheckStates.push(state);
+                hear?.(state);
+            };
+            const answer = await fetch(`/api/mock/live/${source.id}/drop`, { method: 'POST' });
+            return answer.status === 204 || `drop answered ${answer.status}`;
+        })()
+    """
+    )
+    assert result is True, f'Live stream before a drop {result}'
+    result = client.evaluate("""
+        (async () => {
+            const stream = pageCheckStream;
+            const resumed = await pageCheckWait(() => pageCheckStates.includes('reconnecting')
+                && stream.state === 'connected' && stream.gaps > 0);
+            const store = stream.store;
+            let marked = 0;
+            let repeated = false;
+            for (let i = store.first + 1; i <= store.last; i++) {
+                marked += store.get(i).gap ? 1 : 0;
+                repeated ||= store.get(i).sequence <= store.get(i - 1).sequence;
+            }
+            const all = { resumed, gaps: stream.gaps === 10, marked: marked === 1,
+                once: !repeated };
+            return Object.values(all).every(Boolean)
+                || JSON.stringify({ ...all, states: pageCheckStates, count: stream.gaps });
+        })()
+    """)
+    assert result is True, f'Live reconnection {result}'
+    result = client.evaluate("""
+        (async () => {
+            const stream = pageCheckStream;
+            const answer = await fetch(`/api/mock/live/${stream.id}/end`, { method: 'POST' });
+            // The source leaves the list before its stream ends, so the page keeps the stream.
+            const ended = await pageCheckWait(() => stream.state === 'ended' && stream.ended);
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            const answered = answer.status === 204;
+            const all = { answered, ended, same: pageCheckLive() === stream };
+            stream.stop();
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'Live stream end {result}'
+    return 2
+
+
+def press(client, key, code, modifiers=0, text=None):
+    """Presses and releases one key, with the CDP modifier bits, 2 for Ctrl and 8 for Shift."""
+    for kind in ('keyDown', 'keyUp'):
+        event = {'type': kind, 'key': key, 'code': code, 'modifiers': modifiers}
+        if text and kind == 'keyDown':
+            event['text'] = text
+        client.call('Input.dispatchKeyEvent', event)
+
+
+def palette_checks(client):
+    """Checks that the command palette opens, searches, runs an action and gives focus back."""
+    client.evaluate("""
+        cuju.showPage('recordings');
+        document.getElementById('open-settings').focus();
+    """)
+    press(client, 'k', 'KeyK', 2)
+    result = client.evaluate("""
+        ({
+            open: !cuju.palette.root.hidden,
+            focus: document.activeElement === cuju.palette.input,
+            modal: cuju.palette.root.getAttribute('role') === 'dialog',
+            listed: cuju.palette.list.children.length > 10,
+        })
+    """)
+    assert all(result.values()), f'Ctrl K opens the palette {result}'
+    client.call('Input.insertText', {'text': 'go teams'})
+    result = client.evaluate("""
+        (() => {
+            const first = cuju.palette.list.querySelector('[aria-selected="true"]');
+            return first && first.textContent.startsWith('Go to Teams')
+                && cuju.palette.input.getAttribute('aria-activedescendant') === first.id;
+        })()
+    """)
+    assert result, 'The palette finds a page'
+    press(client, 'Enter', 'Enter')
+    result = client.evaluate("""
+        ({ page: cuju.page, closed: cuju.palette.root.hidden,
+           focus: document.activeElement && document.activeElement.id })
+    """)
+    assert result['page'] == 'teams' and result['closed'], f'Enter runs the action {result}'
+    client.evaluate("document.getElementById('open-settings').focus()")
+    press(client, 'k', 'KeyK', 2)
+    press(client, 'ArrowDown', 'ArrowDown')
+    moved = client.evaluate(
+        "cuju.palette.input.getAttribute('aria-activedescendant') === 'palette-item-1'"
+    )
+    press(client, 'Escape', 'Escape')
+    result = client.evaluate("""
+        ({ closed: cuju.palette.root.hidden, page: cuju.page,
+           focus: document.activeElement === document.getElementById('open-settings') })
+    """)
+    assert moved and all([result['closed'], result['focus']]), f'Esc gives focus back {result}'
+    assert result['page'] == 'teams', 'Esc runs nothing'
+    # A text field keeps its keys, Ctrl K among them.
+    client.evaluate("""
+        cuju.showPage('watch');
+        document.getElementById('address-input').focus();
+    """)
+    press(client, 'k', 'KeyK', 2)
+    assert client.evaluate('cuju.palette.root.hidden'), 'A text field keeps Ctrl K'
+    # The button of the top bar opens it too, and a settings action applies at once.
+    result = client.evaluate("""
+        (async () => {
+            document.getElementById('address-input').blur();
+            document.getElementById('open-palette').click();
+            const opened = !cuju.palette.root.hidden;
+            cuju.palette.input.value = 'light theme';
+            cuju.palette.render();
+            cuju.palette.run(cuju.palette.active);
+            const light = document.documentElement.dataset.theme === 'light';
+            cuju.palette.open('theme follows');
+            cuju.palette.run(cuju.palette.active);
+            return { opened, light, system: !document.documentElement.dataset.theme,
+                     closed: cuju.palette.root.hidden };
+        })()
+    """)
+    assert all(result.values()), f'The top bar button and a settings action {result}'
+    return 4
+
+
+def presets_checks(client):
+    """Checks that the presets of the settings switch every part and that Custom comes back."""
+    result = client.evaluate("""
+        (() => {
+            const $ = (id) => document.getElementById(id);
+            const boxes = ['lineups-on', 'celebrations-on', 'replays', 'decision-replays',
+                'restart-transitions', 'podium-on'];
+            const preset = (name) => document.querySelector(`#presets [data-preset="${name}"]`);
+            const chosen = () => document.querySelector('#presets [aria-checked="true"]')
+                .dataset.preset;
+            const on = () => boxes.map((id) => $(id).checked);
+            const start = chosen();
+            // One change of the defaults makes a mix of the person's own.
+            $('replays').click();
+            const custom = chosen() === 'custom' && cuju.settings.replays === false;
+            preset('quick').click();
+            const quick = chosen() === 'quick' && on().every((value) => !value)
+                && !cuju.settings.podium && !cuju.settings.lineups
+                && localStorage.getItem('cuju.replays') === 'false';
+            preset('broadcast').click();
+            const broadcast = chosen() === 'broadcast' && on().every(Boolean)
+                && cuju.settings.replays && cuju.settings.transitions;
+            preset('custom').click();
+            const back = chosen() === 'custom' && !$('replays').checked && !cuju.settings.replays
+                && on().filter(Boolean).length === 5;
+            $('replays').click();
+            return { start: start === 'broadcast', custom, quick, broadcast, back,
+                     end: chosen() === 'broadcast' && cuju.settings.replays };
+        })()
+    """)
+    assert all(result.values()), f'Presets round trip {result}'
+    return 1
+
+
+def first_run_checks(client):
+    """Checks the empty states, the tips and their dismissal, and the help of the controls."""
+    result = client.evaluate("""
+        (async () => {
+            const wait = async (test) => {
+                for (let i = 0; i < 100 && !test(); i++) {
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+                return test();
+            };
+            // Recordings without a recording point to the samples and to the recorder.
+            const page = cuju.recordings;
+            cuju.showPage('recordings');
+            const kept = page.list;
+            page.list = [];
+            page.render();
+            const empty = document.querySelector('#page-recordings .empty-state');
+            const recordings = !!empty && empty.textContent.includes('cuju render sample')
+                && empty.textContent.includes('cuju.render.Recorder');
+            page.list = kept;
+            page.render();
+            // Teams with the built-in AI alone points to the topic of the Help page.
+            cuju.showPage('teams');
+            await cuju.library.refresh();
+            const own = cuju.library.teams.some((team) => team.kind !== 'builtin');
+            const first = document.querySelector('#page-teams .teams-first');
+            let teams = own === !first;
+            if (first) {
+                first.querySelector('button').click();
+                teams = teams && cuju.page === 'help'
+                    && document.activeElement === document.getElementById('help-teams');
+            }
+            // The empty Watch page offers a sample match, which opens at once.
+            cuju.showPage('watch');
+            const next = document.querySelector('#watch-empty .watch-next button');
+            next.click();
+            const watch = await wait(() => cuju.source && cuju.source.kind === 'match');
+            // A tip shows on Home once tips are on, and Got it keeps it away.
+            const box = document.getElementById('tips-on');
+            const off = !box.checked && JSON.parse(localStorage.getItem('cuju.tips')).off;
+            box.click();
+            cuju.showPage('home');
+            const tip = document.getElementById('tip');
+            const shown = await wait(() => !tip.hidden && tip.textContent.includes('Ctrl K'));
+            tip.querySelector('button').click();
+            const dismissed = tip.hidden
+                && JSON.parse(localStorage.getItem('cuju.tips')).dismissed.includes('home');
+            cuju.showPage('field');
+            const field = await wait(() => !tip.hidden && tip.textContent.includes('preset'));
+            box.click();
+            const gone = tip.hidden && JSON.parse(localStorage.getItem('cuju.tips')).off === true;
+            // The help of a control shows on keyboard focus and leaves with it.
+            const button = document.getElementById('open-palette');
+            button.focus({ focusVisible: true });
+            const help = document.getElementById('help-tip');
+            const helped = !help.hidden && help.textContent.includes('Ctrl K')
+                && button.getAttribute('aria-describedby') === 'help-tip';
+            button.blur();
+            const left = help.hidden && !button.hasAttribute('aria-describedby');
+            return { recordings, teams, watch, off, shown, dismissed, field, gone, helped, left };
+        })()
+    """)
+    assert all(result.values()), f'First run {result}'
+    return 3
+
+
+def touch(client, kind, points=()):
+    """Sends one touch event, with each point as an id and the x and y of the window."""
+    client.call(
+        'Input.dispatchTouchEvent',
+        {'type': kind, 'touchPoints': [{'id': i, 'x': x, 'y': y} for i, x, y in points]},
+    )
+
+
+def touch_checks(client):
+    """Checks the touch pad of Play with several fingers, and swipes and taps on the timeline."""
+    client.call('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 5})
+    try:
+        result = client.evaluate("""
+            (async () => {
+                const { api } = await import('./js/core/api.js');
+                const sources = await api.live();
+                window.pageCheckApi = Object.fromEntries(
+                    ['startGame', 'gameStream', 'pauseGame', 'gameInput', 'quitGame', 'game']
+                        .map((name) => [name, api[name]]));
+                let entry = { id: sources[0].id, state: 'playing', score: [0, 0] };
+                window.pageCheckInputs = [];
+                api.startGame = async () => entry;
+                api.gameStream = (id, signal) => api.liveStream(id, signal);
+                api.pauseGame = async (id, paused) => {
+                    entry = { ...entry, state: paused ? 'paused' : 'playing' };
+                    return entry;
+                };
+                api.gameInput = async (id, input) => {
+                    pageCheckInputs.push(input);
+                    return entry;
+                };
+                api.game = async () => entry;
+                api.quitGame = async () => {
+                    entry = { ...entry, state: 'ended', ending: 'quit' };
+                    return entry;
+                };
+                cuju.showPage('play');
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                await cuju.play.start();
+                for (let i = 0; i < 100 && !cuju.play.game.started; i++) {
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+                const pad = cuju.touch.pad;
+                const status = cuju.play.status.getBoundingClientRect();
+                return {
+                    started: cuju.play.game.started, hiddenBefore: !!pad && pad.hidden,
+                    status: [status.left + 4, status.top + 4],
+                };
+            })()
+        """)
+        assert result['started'] and result['hiddenBefore'], f'Touch pad before a touch {result}'
+        # The first touch shows the pad.
+        touch(client, 'touchStart', [(0, *result['status'])])
+        touch(client, 'touchEnd')
+        shown = client.evaluate("""
+            (async () => {
+                for (let i = 0; i < 40 && cuju.touch.pad.hidden; i++) {
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+                return !cuju.touch.pad.hidden
+                    && document.getElementById('app').classList.contains('touch');
+            })()
+        """)
+        assert shown, 'A touch shows the pad'
+        result = client.evaluate("""
+            (() => {
+                const stick = cuju.touch.stick.getBoundingClientRect();
+                const shot = cuju.touch.pad.querySelector('[data-action="shot"]')
+                    .getBoundingClientRect();
+                return {
+                    stick: [stick.left + stick.width / 2, stick.top + stick.height / 2,
+                        stick.width / 2],
+                    shot: [shot.left + shot.width / 2, shot.top + shot.height / 2],
+                };
+            })()
+        """)
+        x, y, radius = result['stick']
+        # The stick is round, so its fingers press inside the circle.
+        radius *= 0.8
+        held = """
+            (async () => {
+                await new Promise((resolve) => setTimeout(resolve, 60));
+                const last = pageCheckInputs.at(-1);
+                return last ? last.held : null;
+            })()
+        """
+        touch(client, 'touchStart', [(0, x + radius, y)])
+        right = client.evaluate(held)
+        touch(client, 'touchStart', [(0, x + radius, y), (1, *result['shot'])])
+        both = client.evaluate(held)
+        touch(client, 'touchMove', [(0, x + radius, y - radius), (1, *result['shot'])])
+        diagonal = client.evaluate(held)
+        touch(client, 'touchEnd')
+        released = client.evaluate(held)
+        result = {
+            'right': right == ['right'],
+            'both': sorted(both or []) == ['right', 'shot'],
+            'diagonal': sorted(diagonal or []) == ['right', 'shot', 'up'],
+            'released': released == [],
+        }
+        assert all(result.values()), f'Touch pad fingers {result} {both} {diagonal}'
+        result = client.evaluate("""
+            (async () => {
+                const play = cuju.play;
+                const device = play.activeOf(0);
+                cuju.touch.pause.click();
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                const paused = !play.menu.hidden && cuju.touch.pad.hidden;
+                await play.quit();
+                for (let i = 0; i < 40 && play.game && !play.game.ended; i++) {
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+                if (play.game?.source) play.game.source.live.stop();
+                const { api } = await import('./js/core/api.js');
+                Object.assign(api, pageCheckApi);
+                play.showSetup();
+                // The setting hides the pad, and Never stays in the browser.
+                const select = document.getElementById('touch-controls');
+                select.value = 'off';
+                select.dispatchEvent(new Event('change'));
+                const never = localStorage.getItem('cuju.touchControls') === '"off"';
+                select.value = 'auto';
+                select.dispatchEvent(new Event('change'));
+                return {
+                    device: device === cuju.touch.device && device.label === 'Touch screen',
+                    paused, never,
+                };
+            })()
+        """)
+        assert all(result.values()), f'Touch pad pause and setting {result}'
+        result = client.evaluate("""
+            (async () => {
+                const { api } = await import('./js/core/api.js');
+                const entries = await api.matches();
+                cuju.showPage('watch');
+                await cuju.openMatch(entries[0].id);
+                cuju.director.stop(true);
+                if (cuju.postMatch.running) cuju.postMatch.end({ home: false });
+                const tl = cuju.timeline;
+                tl.pause();
+                tl.seek(tl.first + (tl.last - tl.first) / 2);
+                const r = document.getElementById('timeline').getBoundingClientRect();
+                return {
+                    left: r.left, width: r.width, y: r.top + r.height / 2, from: tl.t,
+                    first: tl.first, last: tl.last, height: r.height,
+                };
+            })()
+        """)
+        start = result['left'] + result['width'] / 2
+        touch(client, 'touchStart', [(0, start, result['y'])])
+        for step in range(1, 6):
+            touch(client, 'touchMove', [(0, start + step * result['width'] * 0.04, result['y'])])
+        touch(client, 'touchEnd')
+        span = result['last'] - result['first']
+        swiped = client.evaluate('cuju.timeline.t')
+        expected = result['from'] + 0.2 * span
+        tap = result['left'] + result['width'] * 0.25
+        touch(client, 'touchStart', [(0, tap, result['y'])])
+        touch(client, 'touchEnd')
+        tapped = client.evaluate('cuju.timeline.t')
+        assert abs(swiped - expected) <= span * 0.02 + 1, f'Timeline swipe {swiped} {expected}'
+        assert abs(tapped - (result['first'] + 0.25 * span)) <= span * 0.02 + 1, 'Timeline tap'
+        assert result['height'] >= 36, f'Timeline height on a touch screen {result}'
+    finally:
+        client.call('Emulation.setTouchEmulationEnabled', {'enabled': False})
+        client.evaluate("""
+            cuju.touch.touched = false;
+            cuju.touch.update();
+        """)
+    return 4
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=int(os.environ.get('CUJU_PAGE_CHECK_PORT') or 8790),
+        help='the port of the mock server',
+    )
+    parser.add_argument(
+        '--debug-port',
+        type=int,
+        default=int(os.environ.get('CUJU_PAGE_CHECK_DEBUG_PORT') or 8791),
+        help="the port of Chrome's debugging connection, 0 for a free one",
+    )
+    parser.add_argument('--chrome', default='google-chrome', help='the Chrome to drive')
+    options = parser.parse_args()
+    port = options.port
     root = Path(__file__).resolve().parents[1]
     processes = []
     client = None
@@ -112,7 +663,7 @@ def main():
                         sys.executable,
                         str(root / 'ci/mock_server.py'),
                         '--port',
-                        '8790',
+                        str(port),
                         '--short',
                     ],
                     stdout=subprocess.DEVNULL,
@@ -120,12 +671,12 @@ def main():
                 )
             )
             print('Starting mock server.', flush=True)
-            wait_json('http://127.0.0.1:8790/api/scenarios')
+            wait_json(f'http://127.0.0.1:{port}/api/scenarios')
             print('Starting Chrome.', flush=True)
             processes.append(
                 subprocess.Popen(
                     [
-                        'google-chrome',
+                        options.chrome,
                         '--headless=new',
                         '--mute-audio',
                         '--no-sandbox',
@@ -136,7 +687,7 @@ def main():
                         '--disable-sync',
                         '--no-first-run',
                         '--disable-default-apps',
-                        '--remote-debugging-port=8791',
+                        f'--remote-debugging-port={options.debug_port}',
                         f'--user-data-dir={profile}',
                         '--window-size=800,600',
                         'about:blank',
@@ -146,7 +697,8 @@ def main():
                     env={**os.environ, 'XDG_CONFIG_HOME': profile, 'XDG_DATA_HOME': profile},
                 )
             )
-            targets = wait_json('http://127.0.0.1:8791/json')
+            debug = debugging_port(profile, options.debug_port)
+            targets = wait_json(f'http://127.0.0.1:{debug}/json')
             target = next(item for item in targets if item['type'] == 'page')
             print('Connecting to Chrome.', flush=True)
             client = CDP(target['webSocketDebuggerUrl'])
@@ -158,13 +710,14 @@ def main():
                     'source': """
                 localStorage.setItem('cuju.muted', 'true');
                 localStorage.setItem('cuju.quality', '"low"');
+                localStorage.setItem('cuju.tips', '{"off": true}');
                 Element.prototype.requestPointerLock = function () {
                     throw new Error('Pointer capture refused by the page check.');
                 };
             """
                 },
             )
-            client.call('Page.navigate', {'url': 'http://127.0.0.1:8790/'})
+            client.call('Page.navigate', {'url': f'http://127.0.0.1:{port}/'})
             for _ in range(150):
                 if client.evaluate('!!(window.cuju && window.cuju.menus)'):
                     break
@@ -231,6 +784,25 @@ def main():
                 })()
             """)
             assert result, 'Source addresses'
+            checks += 1
+            result = client.evaluate("""
+                (async () => {
+                    cuju.director.stop(true);
+                    cuju.timeline.pause();
+                    cuju.postMatch.openStats();
+                    const card = () => cuju.postMatch.statsCard;
+                    for (let i = 0; i < 50 && (!card() || document.activeElement !== card()); i++) {
+                        await new Promise((resolve) => setTimeout(resolve, 20));
+                    }
+                    return !!card() && document.activeElement === card();
+                })()
+            """)
+            assert result, 'Statistics screen takes focus'
+            for kind in ('keyDown', 'keyUp'):
+                client.call(
+                    'Input.dispatchKeyEvent', {'type': kind, 'key': 'Enter', 'code': 'Enter'}
+                )
+            assert client.evaluate('cuju.postMatch.statsCard === null'), 'Enter closes statistics'
             checks += 1
             client.evaluate(
                 "cuju.director.stop(true); cuju.timeline.pause(); cuju.showPage('watch')"
@@ -339,10 +911,169 @@ def main():
                     cuju.editor.section === '{section}' && !!cuju.editor.formHost.children.length
                 """)
                 checks += 1
+            # A celebration clip uploads through the editor's file input, its animations join the
+            # moves, play in the preview on the nodes, retarget exactly onto a rig of the clip's own
+            # skeleton, and leave with the clip.
+            result = client.evaluate("""
+                (async () => {
+                    const wait = async (test) => {
+                        for (let i = 0; i < 200 && !test(); i++) {
+                            await new Promise((resolve) => setTimeout(resolve, 50));
+                        }
+                        return test();
+                    };
+                    const THREE = await import('three');
+                    const clips = await import('./js/players/clips.js');
+                    const retarget = await import('./js/players/retarget.js');
+                    const players = await import('./js/players/players.js');
+                    const celebrate = await import('./js/broadcast/celebrate.js');
+                    const editor = cuju.editor;
+                    editor.showSection('celebrations');
+                    const url = 'assets/animations/kaykit-rig-medium-general.glb';
+                    const bytes = await (await fetch(url)).arrayBuffer();
+                    const file = new File([bytes], 'KayKit General.glb', {
+                        type: 'model/gltf-binary',
+                    });
+                    const input = editor.formHost.querySelector('.clip-file');
+                    const transfer = new DataTransfer();
+                    transfer.items.add(file);
+                    input.files = transfer.files;
+                    input.dispatchEvent(new Event('change'));
+                    const uploaded = await wait(() => (editor.team.clips || []).length === 1
+                        && !!editor.formHost.querySelector('[data-clip="kaykit_general"]'));
+                    const clip = editor.team.clips[0];
+                    const idle = clip.animations.indexOf('Idle_A');
+                    const value = `upload:kaykit_general.${idle}`;
+                    const listed = [...editor.formHost.querySelectorAll('.move label')]
+                        .some((label) => label.textContent === 'Idle_A clip of the team');
+                    editor.playCelebration(value);
+                    const key = editor.playing.pose;
+                    const loaded = key !== value && retarget.hasUpload(key);
+                    await new Promise((resolve) => setTimeout(resolve, 400));
+                    const expected = new Float32Array(98);
+                    const pt = (performance.now() - editor.playing.start) / 1000;
+                    retarget.poseUpload(key, pt, expected, 0, {});
+                    const nodes = editor.pose.nodes;
+                    const previewed = nodes.every(Number.isFinite)
+                        && Math.abs(nodes[7 + 2] - expected[7 + 2]) < 0.05;
+                    // The roster offers the clip, and a goal plays it under its tag.
+                    editor.showSection('roster');
+                    const roster = [...editor.formHost.querySelectorAll('option')]
+                        .some((option) => option.value === value);
+                    const style = { celebrations: [key], players: [] };
+                    const picked = celebrate.celebrationFor(style, 0, Math.random) === key;
+                    const out = new Float32Array(98);
+                    celebrate.posePlayer(key, 0.3, out, 0, 54.9, 0, 0, '');
+                    const onPitch = out.every(Number.isFinite) && out[0] <= 55 + 1e-6;
+                    // Posing a rig of the clip's skeleton from the nodes gives back the bones'
+                    // turns of the clip.
+                    const gltf = await players.parseModel(bytes);
+                    const joints = players.guessJoints(players.fileBoneNames(gltf));
+                    const animation = gltf.animations[idle];
+                    const made = clips.retargetAnimation(gltf, animation, joints);
+                    const rig = new players.Rig(gltf.scene, joints, {});
+                    const posed = rig.instantiate();
+                    const played = rig.instantiate();
+                    for (const b of played.bones) {
+                        if (b) {
+                            b.matrixAutoUpdate = true;
+                            b.matrixWorldAutoUpdate = true;
+                        }
+                    }
+                    const mixer = new THREE.AnimationMixer(played.root);
+                    const action = mixer.clipAction(animation);
+                    action.play();
+                    let worst = 0;
+                    const m = new THREE.Matrix4();
+                    const p = new THREE.Vector3();
+                    const q = new THREE.Quaternion();
+                    const s = new THREE.Vector3();
+                    for (const i of [0, Math.floor(made.count / 2), made.count - 1]) {
+                        const t = (i / (made.count - 1)) * made.duration;
+                        action.time = Math.min(t, animation.duration - 1e-4);
+                        mixer.update(0);
+                        played.root.updateMatrixWorld(true);
+                        rig.pose(posed, made.frames, i * 98);
+                        rig.bones.forEach((info, j) => {
+                            if (info.node < 1 || !played.bones[j]) return;
+                            m.multiplyMatrices(rig.placement, played.bones[j].matrixWorld)
+                                .decompose(p, q, s);
+                            const r = new THREE.Quaternion();
+                            posed.world[j].decompose(p, r, s);
+                            worst = Math.max(worst, 1 - Math.abs(q.dot(r)));
+                        });
+                    }
+                    mixer.stopAllAction();
+                    rig.release(posed);
+                    rig.release(played);
+                    const exact = worst < 1e-5;
+                    // The mapping of the clip lists the bones, and removal takes its moves.
+                    editor.showSection('celebrations');
+                    const box = editor.formHost.querySelector('[data-clip] details');
+                    box.open = true;
+                    box.dispatchEvent(new Event('toggle'));
+                    const mapped = await wait(() => box.querySelectorAll('select').length === 14);
+                    const body = box.querySelectorAll('select')[1].value === 'hips';
+                    editor.style.celebrations = [value];
+                    const confirmBox = window.confirm;
+                    window.confirm = () => true;
+                    try {
+                        const editing = await import('./js/teams/clip-editor.js');
+                        await editing.removeClip(editor, 'kaykit_general');
+                    } finally {
+                        window.confirm = confirmBox;
+                    }
+                    const removed = !(editor.team.clips || []).length && !retarget.hasUpload(key)
+                        && !editor.style.celebrations.length
+                        && !editor.formHost.querySelector('[data-clip]');
+                    return {
+                        uploaded, listed, loaded, previewed, roster, picked, onPitch, exact,
+                        mapped, body, removed, worst,
+                    };
+                })()
+            """)
+            assert all(value for name, value in result.items() if name != 'worst'), result
+            checks += 1
             client.evaluate("cuju.editor.close(true); cuju.showPage('help')")
             assert client.evaluate(
                 "document.getElementById('page-help').contains(document.getElementById('help'))"
             )
+            checks += 1
+            result = client.evaluate("""
+                (async () => {
+                    const { api } = await import('./js/core/api.js');
+                    const sources = await api.live();
+                    cuju.openLive(sources[0].id);
+                    for (let i = 0; i < 100 && cuju.source?.kind !== 'live'; i++) {
+                        await new Promise((resolve) => setTimeout(resolve, 100));
+                    }
+                    if (cuju.source?.kind !== 'live') return 'no live source';
+                    const form = document.getElementById('live-env');
+                    const input = document.getElementById('live-env-index');
+                    const single = form.hidden;
+                    // A source of a batch with three environments offers the field.
+                    cuju.source.header.environment_count = 3;
+                    cuju.updateLiveUi();
+                    const shown = !form.hidden && input.value === '0' && input.max === '2';
+                    const original = api.selectEnvironment;
+                    let sent = null;
+                    api.selectEnvironment = async (...args) => { sent = args; return {}; };
+                    try {
+                        input.focus();
+                        input.value = '2';
+                        form.requestSubmit();
+                        await new Promise((resolve) => setTimeout(resolve, 20));
+                    } finally {
+                        api.selectEnvironment = original;
+                    }
+                    const asked = !!sent && sent[0] === sources[0].id && sent[1] === 2;
+                    const kept = document.activeElement === input;
+                    cuju.source.live.stop();
+                    const all = { single, shown, asked, kept };
+                    return Object.values(all).every(Boolean) || JSON.stringify(all);
+                })()
+            """)
+            assert result is True, f'Live environment field {result}'
             checks += 1
 
             result = client.evaluate("""
@@ -355,7 +1086,11 @@ def main():
                     );
                     let quitCount = 0;
                     let entry = { id: sources[0].id, state: 'paused', score: [0, 0] };
-                    api.startGame = async () => entry;
+                    let startSpec = null;
+                    api.startGame = async (spec) => {
+                        startSpec = spec;
+                        return entry;
+                    };
                     api.gameStream = (id, signal) => api.liveStream(id, signal);
                     api.pauseGame = async (id, paused) => {
                         entry = { ...entry, state: paused ? 'paused' : 'playing' };
@@ -372,7 +1107,14 @@ def main():
                     };
                     try {
                         cuju.showPage('play');
+                        await new Promise((resolve) => setTimeout(resolve, 100));
+                        const teamLists = cuju.play.teamSelects.length === 2
+                            && cuju.play.teamSelects.every((select) => select.value === 'builtin');
                         await cuju.play.start();
+                        const sent = startSpec && startSpec.teams.join();
+                        if (!teamLists || sent !== 'builtin,builtin') {
+                            throw new Error('Play team lists');
+                        }
                         for (let i = 0; i < 100 && !cuju.play.game.started; i++) {
                             await new Promise((resolve) => setTimeout(resolve, 100));
                         }
@@ -410,8 +1152,8 @@ def main():
                         });
                         cuju.play.pollPads();
                         for (const [index, actions] of [
-                            [0, ['short_pass']], [1, ['shot']],
-                            [2, ['high_pass', 'sliding']], [3, ['long_pass']], [7, ['sprint']], [5, ['dribble']],
+                            [0, ['short_pass']], [1, ['shot']], [2, ['high_pass', 'sliding']],
+                            [3, ['long_pass']], [7, ['sprint']], [5, ['dribble']],
                             [12, ['up']], [13, ['down']], [14, ['left']], [15, ['right']],
                         ]) {
                             pad.buttons[index].pressed = true;
@@ -465,11 +1207,422 @@ def main():
             """)
             assert result, 'Play Home, Resume and Quit to Home'
             checks += 1
+
+            result = client.evaluate("""
+                (async () => {
+                    cuju.showPage('play');
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                    const play = cuju.play;
+                    play.inputPanel.open = true;
+                    const button = play.keyButtons.shot;
+                    button.focus();
+                    button.click();
+                    const press = (code) => button.dispatchEvent(new KeyboardEvent('keydown', {
+                        code, key: code, bubbles: true, cancelable: true,
+                    }));
+                    press('KeyH');
+                    const reserved = play.input.keys.shot === 'KeyD'
+                        && /H, M and F/.test(play.inputNote.textContent);
+                    press('KeyW');
+                    const taken = play.input.keys.shot === 'KeyD'
+                        && /already/.test(play.inputNote.textContent);
+                    press('KeyX');
+                    const stored = JSON.parse(localStorage.getItem('cuju.input'));
+                    const bound = play.input.keys.shot === 'KeyX' && stored.keys.shot === 'KeyX'
+                        && play.keys.KeyX[0] === 'shot' && !play.keys.KeyD
+                        && play.keyTable.textContent.includes('X');
+                    play.deadZone.value = '0.3';
+                    play.deadZone.dispatchEvent(new Event('input'));
+                    const stick = { stickX: { a: 0, s: 1 }, stickY: { a: 1, s: 1 } };
+                    const zone = play.input.deadZone === 0.3
+                        && play.padHeld({ axes: [0.4, 0], buttons: [] }, stick).held.has('right')
+                        && !play.padHeld({ axes: [0.2, 0], buttons: [] }, stick).held.has('right');
+                    const pick = (select, value) => {
+                        select.value = value;
+                        select.dispatchEvent(new Event('change'));
+                    };
+                    pick(play.deviceSelects[0], 'keyboard');
+                    pick(play.deviceSelects[1], 'keyboard');
+                    const devices = play.input.devices.join() === 'keyboard,auto'
+                        && play.deviceSelects[1].value === 'auto';
+                    play.tester.focus();
+                    play.tester.dispatchEvent(new KeyboardEvent('keydown', {
+                        code: 'KeyX', key: 'x', bubbles: true, cancelable: true,
+                    }));
+                    const tested = /shot/.test(play.testerLines.textContent);
+                    play.tester.dispatchEvent(new KeyboardEvent('keyup', {
+                        code: 'KeyX', key: 'x', bubbles: true, cancelable: true,
+                    }));
+                    const targets = play.navTargets([play.setupView]);
+                    const navigable = targets.includes(play.inputPanel.querySelector('summary'))
+                        && targets.includes(play.deadZone) && targets.includes(button);
+                    [...play.inputPanel.querySelectorAll('button')]
+                        .find((item) => item.textContent === 'Reset input settings').click();
+                    const reset = play.input.keys.shot === 'KeyD' && play.input.deadZone === 0.5
+                        && play.input.devices.join() === 'auto,auto';
+                    play.inputPanel.open = false;
+                    return { reserved, taken, bound, zone, devices, tested, navigable, reset };
+                })()
+            """)
+            assert all(result.values()), f'Play input settings {result}'
+            checks += 1
+
+            client.evaluate("""
+                (async () => {
+                    const { api } = await import('./js/core/api.js');
+                    const entries = await api.matches();
+                    cuju.showPage('watch');
+                    await cuju.openMatch(entries[0].id);
+                    cuju.director.stop(true);
+                    if (cuju.postMatch.running) cuju.postMatch.end({ home: false });
+                    cuju.timeline.seek(cuju.timeline.first + 40);
+                    cuju.timeline.pause();
+                    cuju.setCamera('tactical');
+                    cuju.cameras.jump();
+                    document.getElementById('labels-on').click();
+                    for (let i = 0; i < 60 && !cuju.playerTools.layer.childElementCount; i++) {
+                        await new Promise((resolve) => setTimeout(resolve, 50));
+                    }
+                })()
+            """)
+            result = client.evaluate("""
+                (() => {
+                    const tools = cuju.playerTools;
+                    const point = tools.points[0];
+                    const labels = tools.layer.childElementCount;
+                    return {
+                        shown: !tools.layer.hidden && labels > 0
+                            && labels <= cuju.source.header.players.length,
+                        named: !!point
+                            && tools.layer.textContent.includes(cuju.playerLabel(point.index)),
+                        stored: localStorage.getItem('cuju.playerLabels') === 'true',
+                        point: point ? [point.x, point.y, point.index] : null,
+                    };
+                })()
+            """)
+            point = result.pop('point')
+            assert all(result.values()) and point, f'Player labels {result}'
+            checks += 1
+            client.evaluate("document.getElementById('click-follow').click()")
+            # A click lasts at most half a second, and Chrome hands the button's release to the
+            # page only after the frame it is drawing, which takes longer than that in software
+            # on a busy machine. The page holds its frames while the button goes down and up, so
+            # the click reaches it as quick as it was sent.
+            client.evaluate("""
+                (async () => {
+                    const real = window.requestAnimationFrame;
+                    window.__heldFrames = [];
+                    window.__realFrame = real;
+                    await new Promise((resolve) => {
+                        window.requestAnimationFrame = (fn) => {
+                            window.__heldFrames.push(fn);
+                            resolve();
+                            return 0;
+                        };
+                        setTimeout(resolve, 2000);
+                    });
+                    return true;
+                })()
+            """)
+            for kind in ['mousePressed', 'mouseReleased']:
+                client.call(
+                    'Input.dispatchMouseEvent',
+                    {'type': kind, 'x': point[0], 'y': point[1], 'button': 'left', 'clickCount': 1},
+                )
+            client.evaluate("""
+                window.requestAnimationFrame = window.__realFrame;
+                for (const fn of window.__heldFrames.splice(0)) window.requestAnimationFrame(fn);
+                true
+            """)
+            result = client.evaluate(f"""
+                (async () => {{
+                    const tools = cuju.playerTools;
+                    const followed = cuju.cameras.mode === 'player'
+                        && cuju.cameras.followIndex === {point[2]};
+                    cuju.showPage('teams');
+                    tools.update(true);
+                    const away = tools.layer.hidden && !tools.layer.childElementCount;
+                    cuju.showPage('watch');
+                    document.getElementById('labels-on').click();
+                    document.getElementById('click-follow').click();
+                    tools.update(true);
+                    const off = tools.layer.hidden && !tools.picking
+                        && localStorage.getItem('cuju.clickFollow') === 'false';
+                    cuju.setCamera('broadcast');
+                    return {{ followed, away, off }};
+                }})()
+            """)
+            assert all(result.values()), f'Click to follow {result}'
+            checks += 1
+
+            result = client.evaluate("""
+                (async () => {
+                    const motion = document.getElementById('motion');
+                    const choose = (value) => {
+                        motion.value = value;
+                        motion.dispatchEvent(new Event('change'));
+                    };
+                    const root = document.documentElement.classList;
+                    const start = motion.value === 'system' && !cuju.reducedMotion
+                        && !root.contains('reduced-motion');
+                    choose('reduce');
+                    const tl = cuju.timeline;
+                    const goal = tl.first + 80;
+                    tl.pause();
+                    cuju.director.play([{ goal: { index: goal, team: 0 }, shot: 'auto' }]);
+                    const reduced = cuju.reducedMotion && root.contains('reduced-motion')
+                        && cuju.cameras.reducedMotion && !cuju.ball.trailOn
+                        && !cuju.transition.enabled()
+                        && JSON.parse(localStorage.getItem('cuju.motion')) === 'reduce';
+                    const replay = !cuju.director.running && tl.playing
+                        && Math.abs(tl.t - (goal - 3 * tl.sps)) < 2;
+                    tl.pause();
+                    choose('full');
+                    const full = !cuju.reducedMotion && root.contains('full-motion')
+                        && cuju.ball.trailOn === cuju.settings.trail;
+                    choose('system');
+                    return { start, reduced, replay, full };
+                })()
+            """)
+            assert all(result.values()), f'Motion preference {result}'
+            checks += 1
+            # The page hears of a change of the media features in a task of its own, so each
+            # change is waited for, up to five seconds.
+            wait_motion = """
+                (async () => {
+                    for (let i = 0; i < 100 && cuju.reducedMotion !== %s; i++) {
+                        await new Promise((resolve) => setTimeout(resolve, 50));
+                    }
+                    return cuju.reducedMotion;
+                })()
+            """
+            client.call(
+                'Emulation.setEmulatedMedia',
+                {'features': [{'name': 'prefers-reduced-motion', 'value': 'reduce'}]},
+            )
+            followed = client.evaluate(wait_motion % 'true')
+            client.call('Emulation.setEmulatedMedia', {'features': []})
+            restored = not client.evaluate(wait_motion % 'false')
+            assert followed and restored, f'System motion {followed} {restored}'
+            checks += 1
+            result = client.evaluate("""
+                (async () => {
+                    const sound = cuju.sound;
+                    const start = ['crowd', 'ambience', 'effects'].every((name) =>
+                        sound.levels[name] === 1
+                        && document.getElementById('level-' + name).value === '1');
+                    const slider = document.getElementById('level-crowd');
+                    slider.value = '0.4';
+                    slider.dispatchEvent(new Event('input'));
+                    const lowered = sound.levels.crowd === 0.4
+                        && JSON.parse(localStorage.getItem('cuju.soundLevels')).crowd === 0.4;
+                    sound.setChannel('effects', 3);
+                    sound.setChannel('ambience', -1);
+                    const bounded = sound.levels.effects === 1 && sound.levels.ambience === 0;
+                    await new Promise((resolve) => setTimeout(resolve, 400));
+                    // A suspended context holds its gains, so the level shows once it runs.
+                    const mixed = !sound.mix || (sound.master.gain.value === 0
+                        && (sound.ctx.state !== 'running'
+                            || Math.abs(sound.mix.crowd.dry.gain.value - 0.4) < 0.01));
+                    for (const name of ['crowd', 'ambience', 'effects']) {
+                        const input = document.getElementById('level-' + name);
+                        input.value = '1';
+                        input.dispatchEvent(new Event('input'));
+                    }
+                    const muted = cuju.settings.muted
+                        && localStorage.getItem('cuju.muted') === 'true';
+                    return { start, lowered, bounded, mixed, muted };
+                })()
+            """)
+            assert all(result.values()), f'Sound levels {result}'
+            checks += 1
+
+            # The pointer is never captured here. A stand-in for the captured state lets the
+            # page's own release rule run as it would.
+            result = client.evaluate("""
+                (async () => {
+                    const { openPanel } = await import('./js/core/comfort.js');
+                    const wait = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
+                    const name = (node) => node && (node.id || node.className || node.tagName);
+                    const $ = (id) => document.getElementById(id);
+                    for (const menu of Object.values(cuju.menus)) menu.close();
+                    document.activeElement.blur();
+                    const resting = {};
+                    for (const page of ['watch', 'field', 'play', 'recordings']) {
+                        cuju.showPage(page);
+                        await wait();
+                        resting[page] = name(openPanel());
+                    }
+                    cuju.showPage('watch');
+                    await wait();
+                    let released = 0;
+                    const original = {
+                        release: cuju.releasePointer, lock: cuju.settings.pointerLock,
+                    };
+                    cuju.releasePointer = () => { released++; };
+                    cuju.settings.pointerLock = true;
+                    document.hasFocus = () => true;
+                    const canvas = cuju.view.renderer.domElement;
+                    Object.defineProperty(document, 'pointerLockElement', {
+                        configurable: true, get: () => canvas,
+                    });
+                    const opened = {};
+                    const step = async (label, page, open, close) => {
+                        cuju.showPage(page);
+                        await wait();
+                        const before = openPanel();
+                        released = 0;
+                        await open();
+                        await wait();
+                        opened[label] = !before && released > 0;
+                        await close();
+                        await wait();
+                    };
+                    try {
+                        released = 0;
+                        $('watch').classList.add('page-check');
+                        await wait();
+                        $('watch').classList.remove('page-check');
+                        opened.quiet = released === 0;
+                        await step('settings', 'watch', () => $('open-settings').click(),
+                            () => cuju.menus.settings.close());
+                        await step('dialog', 'watch', () => {
+                            const dialog = document.createElement('dialog');
+                            dialog.id = 'check-dialog';
+                            document.body.append(dialog);
+                            dialog.showModal();
+                        }, () => $('check-dialog').remove());
+                        await step('details', 'watch', () => {
+                            const details = document.createElement('details');
+                            details.id = 'check-details';
+                            details.innerHTML = '<summary>More</summary><p>Text</p>';
+                            $('watch').append(details);
+                            details.open = true;
+                        }, () => $('check-details').remove());
+                        await step('environment', 'watch', () => {
+                            $('live-box').hidden = false;
+                            $('live-env').hidden = false;
+                            $('live-env-index').focus();
+                        }, () => {
+                            document.activeElement.blur();
+                            $('live-env').hidden = true;
+                            $('live-box').hidden = true;
+                        });
+                        await step('input', 'play', () => { cuju.play.inputPanel.open = true; },
+                            () => { cuju.play.inputPanel.open = false; });
+                        await cuju.recordings.refresh();
+                        const recordings = cuju.recordings;
+                        await step('recording', 'recordings', () => {
+                            recordings.selected = new Set([recordings.list[0].id]);
+                            recordings.toggleDetails();
+                        }, () => recordings.toggleDetails());
+                    } finally {
+                        delete document.pointerLockElement;
+                        delete document.hasFocus;
+                        cuju.releasePointer = original.release;
+                        cuju.settings.pointerLock = original.lock;
+                        cuju.showPage('watch');
+                    }
+                    const rest = Object.values(resting).every((value) => !value);
+                    return { rest: rest || JSON.stringify(resting), ...opened };
+                })()
+            """)
+            assert all(value is True for value in result.values()), f'Pointer release {result}'
+            checks += 1
+            client.evaluate("""
+                (() => {
+                    cuju.timeline.pause();
+                    const details = document.createElement('details');
+                    details.id = 'check-summary';
+                    details.innerHTML = '<summary>More</summary><p>Text</p>';
+                    document.getElementById('watch').append(details);
+                    details.querySelector('summary').focus();
+                })()
+            """)
+            for kind in ['keyDown', 'keyUp']:
+                client.call('Input.dispatchKeyEvent', {'type': kind, 'key': ' ', 'code': 'Space'})
+            result = client.evaluate("""
+                (() => {
+                    const kept = !cuju.timeline.playing && cuju.page === 'watch';
+                    document.getElementById('check-summary').remove();
+                    return kept;
+                })()
+            """)
+            assert result, 'Space on a summary'
+            checks += 1
+            client.evaluate("""
+                (() => {
+                    cuju.settings.savedCelebrations = cuju.settings.celebrations;
+                    cuju.settings.celebrations = false;
+                    cuju.timeline.seek(cuju.timeline.first + 10);
+                    cuju.act('play');
+                    // The short recordings of the mock server last 12 seconds, so play runs at a
+                    // quarter of its speed and stays clear of the end and the show after it
+                    // however slowly a busy machine draws.
+                    cuju.timeline.speed = 0.25;
+                })()
+            """)
+            for kind in ['keyDown', 'keyUp']:
+                client.call(
+                    'Input.dispatchKeyEvent', {'type': kind, 'key': 'Shift', 'code': 'ShiftLeft'}
+                )
+            result = client.evaluate("""
+                (async () => {
+                    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                    const app = document.getElementById('app');
+                    const button = document.getElementById('btn-pause');
+                    button.focus();
+                    const visible = button.matches(':focus-visible');
+                    cuju.poke();
+                    await wait(2900);
+                    const kept = !app.classList.contains('idle');
+                    button.blur();
+                    cuju.poke();
+                    await wait(2900);
+                    const faded = app.classList.contains('idle');
+                    cuju.act('pause');
+                    cuju.timeline.speed = 1;
+                    cuju.settings.celebrations = cuju.settings.savedCelebrations;
+                    cuju.poke();
+                    return { visible, kept, faded };
+                })()
+            """)
+            assert all(result.values()), f'Controls with keyboard focus {result}'
+            checks += 1
+            result = client.evaluate("""
+                (() => {
+                    const motion = document.getElementById('motion');
+                    const choose = (value) => {
+                        motion.value = value;
+                        motion.dispatchEvent(new Event('change'));
+                    };
+                    choose('reduce');
+                    const tl = cuju.timeline;
+                    cuju.act('pause');
+                    const paused = cuju.userPaused;
+                    cuju.replayGoal({ index: tl.first + 80, team: 0 });
+                    const playing = tl.playing && !cuju.userPaused;
+                    cuju.act('pause');
+                    choose('system');
+                    return { paused, playing };
+                })()
+            """)
+            assert all(result.values()), f'Reduced motion replay {result}'
+            checks += 1
+            checks += library_checks(client)
+            checks += reconnection_checks(client)
+            checks += palette_checks(client)
+            checks += presets_checks(client)
+            checks += first_run_checks(client)
+            checks += touch_checks(client)
+            checks += page_grid.check_grid(client)
+            checks += page_grid.check_flat(client, f'http://127.0.0.1:{port}/')
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
             assert not client.evaluate('!!document.pointerLockElement')
             assert not client.errors, client.errors
             print(
-                f'PASS. {checks} page, source, key, import and editor checks. Chrome stayed muted.'
+                f'PASS. {checks} page, source, key, import, editor, library and stream checks. '
+                'Chrome stayed muted.'
             )
     except Exception as error:
         print(f'FAIL. {checks} checks passed. {error}', file=sys.stderr)

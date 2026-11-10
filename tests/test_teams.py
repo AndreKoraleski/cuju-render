@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Checks of the team registry, its kits, styles, models and clips."""
 
+import io
 import json
+import struct
+import threading
+import urllib.request
 
 import pytest
 import torch
@@ -13,7 +17,17 @@ import cuju.state
 from cuju.render._format import recording as _recording
 from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
-from support.common import _SEVERAL, _control, _frames, _short_matches, _toy_team
+from cuju.render._store import home as _home
+from support.common import (
+    _SEVERAL,
+    _control,
+    _frames,
+    _get,
+    _one_second,
+    _send,
+    _short_matches,
+    _toy_team,
+)
 
 
 @pytest.mark.parametrize(
@@ -287,6 +301,11 @@ def test_cli_team_archive_round_trip(render_home, tmp_path, capsys):
     assert copy['style'] == team['style']
     assert copy['format'] == '5v5'
     assert copy['name'] == 'Visitors'
+    duplicate = _teams.duplicate(team['id'])
+    assert (duplicate['name'], duplicate['control']) == ('Visitors copy', team['control'])
+    assert duplicate['id'] not in (team['id'], copy['id'])
+    with pytest.raises(cuju.ArgumentError):
+        _teams.duplicate(_teams.BUILTIN)
     assert main(['team', 'list']) == 0
     assert 'Visitors' in capsys.readouterr().out
     assert main(['team', 'remove', copy['id']]) == 0
@@ -295,3 +314,277 @@ def test_cli_team_archive_round_trip(render_home, tmp_path, capsys):
     broken = tmp_path / 'broken.zip'
     broken.write_bytes(b'bad archive')
     assert main(['team', 'add', str(broken)]) == 1
+
+
+def test_api_team_assets_and_missing_resources(render_home):
+    """Team assets support upload, download and removal with clear refusals."""
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+    try:
+        team = _send(address, '/api/teams?filename=main.py', b'def agent(obs):\n    return 0\n')
+        prefix = f'/api/teams/{team["id"]}'
+        model = (_server._WEB / 'assets/player.glb').read_bytes()
+        bones = _teams._skin_joints(model)
+        joints = urllib.parse.quote(json.dumps({'body': sorted(bones)[0]}))
+        for payload, mapping in [(b'bad', joints), (model, '%7B%7D')]:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                _send(address, f'{prefix}/model?joints={mapping}', payload, 'PUT')
+            assert error.value.code == 400
+        entry = _send(address, f'{prefix}/model?joints={joints}', model, 'PUT')
+        assert entry['model']['bytes'] == len(model)
+        assert _get(address, f'{prefix}/model')[1] == model
+        for slot, payload in [
+            ('images/shirt-front', b'\x89PNG\r\n\x1a\n' + bytes(32)),
+            ('sounds/goal', b'OggS' + bytes(60)),
+        ]:
+            _send(address, f'{prefix}/{slot}', payload, 'PUT')
+            assert _get(address, f'{prefix}/{slot}')[1] == payload
+        # A duplicate takes the saved files, controls and look, and then changes on its own.
+        control = {'players': 1, 'assignment': 'fixed', 'selection': [3]}
+        _teams.update(team['id'], changes={'badge': 'DUP'}, control=control)
+        original = _teams.entry(team['id'])
+        assert (original['style']['badge'], original['control']['selection']) == ('DUP', [3])
+        copy = _send(address, f'{prefix}/duplicate', b'')
+        assert copy['id'] != team['id']
+        assert copy['name'] == f'{original["name"]} copy'
+        for key in ('format', 'control', 'style', 'model', 'images', 'sounds'):
+            assert copy[key] == original[key], key
+        twin = f'/api/teams/{copy["id"]}'
+        assert _get(address, f'{twin}/model')[1] == model
+        assert (
+            _get(address, f'{twin}/images/shirt-front')[1]
+            == _get(address, f'{prefix}/images/shirt-front')[1]
+        )
+        assert (_home.folder('teams') / copy['id'] / 'main.py').read_bytes() == (
+            _home.folder('teams') / team['id'] / 'main.py'
+        ).read_bytes()
+        _send(address, twin, b'{"name": "Independent"}', 'PATCH')
+        assert _teams.entry(team['id'])['name'] == original['name']
+        for refused in ('builtin', 'missing', '..'):
+            with pytest.raises(urllib.error.HTTPError) as error:
+                _send(address, f'/api/teams/{refused}/duplicate', b'')
+            assert error.value.code == 400
+        for resource in ['model', 'images/shirt-front', 'sounds/goal']:
+            request = urllib.request.Request(f'{address}{prefix}/{resource}', method='DELETE')
+            with urllib.request.urlopen(request, timeout=5) as response:
+                assert response.status == 204
+            for method in ['GET', 'DELETE']:
+                request = urllib.request.Request(f'{address}{prefix}/{resource}', method=method)
+                with pytest.raises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(request, timeout=5)
+                assert error.value.code == 404
+        for path in [
+            '/api/matches/missing',
+            '/api/live/missing/stream',
+            '/api/teams/missing/export',
+            '/api/game/missing/stream',
+        ]:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                _get(address, path)
+            assert error.value.code == 404
+        for path in ['/api/matches/missing', '/api/requests/missing', '/api/game/missing']:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                _send(address, path, b'', 'DELETE')
+            assert error.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_team_identifiers_are_unique_within_a_second(render_home, monkeypatch):
+    _one_second(monkeypatch)
+    source = b'def agent(obs):\n    return [0]\n'
+    added = [_teams.add(f'team {k}', 'main.py', source) for k in range(6)]
+    added.append(_teams.duplicate(added[0]['id']))
+    identifiers = [team['id'] for team in added]
+    assert len(set(identifiers)) == 7
+    assert sorted(team['id'] for team in _teams.teams() if team['kind'] != 'builtin') == sorted(
+        identifiers
+    )
+    assert _teams.entry(identifiers[-1])['name'] == 'team 0 copy'
+
+
+def _clip_server():
+    """Starts a server of the renderer on a free port and returns it with its address."""
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f'http://127.0.0.1:{server.server_address[1]}'
+
+
+def _raw(address, method, path, body=b''):
+    """Sends a request with its path as given and returns its status and body."""
+    port = int(address.rsplit(':', 1)[1])
+    connection = _server.http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+    try:
+        connection.request(method, path, body=body)
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+def test_clip_uploads_are_checked(render_home, monkeypatch):
+    """A clip arrives when it is a sound binary glTF file with a skin and an animation."""
+    from cuju.render._registry import clips as _clips
+    from support.clip import clip_bytes
+
+    server, address = _clip_server()
+    try:
+        team = _send(address, '/api/teams?filename=main.py', b'def agent(obs):\n    return 0\n')
+        prefix = f'/api/teams/{team["id"]}/clips'
+        clip = clip_bytes()
+        mapping = {'body': 'mixamorig:Hips', 'right_shoulder': 'mixamorig:RightArm'}
+        joints = urllib.parse.quote(json.dumps(mapping))
+        entry = _send(address, f'{prefix}/wave?joints={joints}', clip, 'PUT')
+        assert entry['clips'] == [
+            {
+                'name': 'wave',
+                'bytes': len(clip),
+                'animations': ['Wave', 'Bounce'],
+                'joints': mapping,
+            }
+        ]
+        assert _get(address, f'{prefix}/wave')[1] == clip
+        # Without a mapping, the page maps the bones by their names.
+        assert _send(address, f'{prefix}/plain', clip, 'PUT')['clips'][0]['joints'] == {}
+        # A shipped animation pack of KayKit, with its own rig, passes as a clip.
+        kaykit = (_server._WEB / 'assets/animations/kaykit-rig-medium-general.glb').read_bytes()
+        assert 'Idle_A' in _clips.check(kaykit)['animations']
+        broken = bytearray(clip)
+        struct.pack_into('<I', broken, 12, 6)
+        refused = {
+            'wrong magic': b'glTX' + clip[4:],
+            'no animation': clip_bytes(animations=False),
+            'no skin': clip_bytes(skin=False),
+            'too big': clip + bytes(_clips.MAXIMUM_CLIP_BYTES),
+            'external link': clip_bytes(uri='https://example.invalid/clip.bin'),
+            'broken chunk': bytes(broken),
+            'wrong length': clip[:-4],
+            'version 1': clip[:4] + struct.pack('<I', 1) + clip[8:],
+        }
+        for reason, payload in refused.items():
+            status, body = _raw(address, 'PUT', f'{prefix}/refused', payload)
+            assert status == 400, (reason, body)
+        for wrong in [
+            {'player': 'mixamorig:Hips'},
+            {'body': 'Pelvis'},
+            {'body': 'mixamorig:Hips', 'tail': 'mixamorig:Spine'},
+        ]:
+            query = urllib.parse.quote(json.dumps(wrong))
+            assert _raw(address, 'PUT', f'{prefix}/refused?joints={query}', clip)[0] == 400
+        # Names that could leave the folder, open a device on Windows or are not the page's own.
+        for name in ['..', '%2E%2E', '..%2F..%2Fteam', 'CON', 'con', 'a.glb', 'Wave', 'x' * 41]:
+            assert _raw(address, 'PUT', f'{prefix}/{name}', clip)[0] in (400, 404), name
+            assert _raw(address, 'GET', f'{prefix}/{name}')[0] in (400, 404), name
+        for path in [f'{prefix}/../../model', f'{prefix}/a/b', f'{prefix}/%00']:
+            assert _raw(address, 'PUT', path, clip)[0] in (400, 404), path
+        folder = _home.folder('teams') / team['id'] / _teams.TEAM_FOLDER / 'clips'
+        assert sorted(path.name for path in folder.iterdir()) == [
+            'plain.glb',
+            'plain.json',
+            'wave.glb',
+            'wave.json',
+        ]
+        # A team holds at most so many clips and bytes of them, and a replacement counts once.
+        with monkeypatch.context() as patch:
+            patch.setattr(_clips, 'MAXIMUM_CLIPS', 2)
+            assert _raw(address, 'PUT', f'{prefix}/third', clip)[0] == 400
+            assert _raw(address, 'PUT', f'{prefix}/plain', clip)[0] == 200
+            patch.setattr(_clips, 'MAXIMUM_TEAM_BYTES', 2 * len(clip) - 1)
+            assert _raw(address, 'PUT', f'{prefix}/plain', clip)[0] == 400
+        # The mapping changes alone, and a removal takes the clip's celebrations with it.
+        document = json.dumps({'joints': {'body': 'mixamorig:Hips'}}).encode()
+        changed = _send(address, f'{prefix}/wave', document, 'PATCH')
+        assert changed['clips'][1]['joints'] == {'body': 'mixamorig:Hips'}
+        assert _raw(address, 'PATCH', f'{prefix}/wave', b'{"joints": {"body": "x"}}')[0] == 400
+        assert _raw(address, 'PATCH', f'{prefix}/missing', b'{"joints": {}}')[0] == 400
+        _teams.update(
+            team['id'],
+            changes={
+                'celebrations': ['upload:wave.0', 'upload:plain.1', 'arms_up'],
+                'players': [{}, {'celebration': 'upload:wave.1'}],
+            },
+        )
+        assert _raw(address, 'DELETE', f'{prefix}/wave')[0] == 204
+        assert _raw(address, 'DELETE', f'{prefix}/wave')[0] == 404
+        assert _raw(address, 'GET', f'{prefix}/wave')[0] == 404
+        after = _teams.entry(team['id'])
+        assert [item['name'] for item in after['clips']] == ['plain']
+        assert after['style']['celebrations'] == ['upload:plain.1', 'arms_up']
+        assert after['style']['players'][1]['celebration'] == 'team'
+        assert not (folder / 'wave.json').exists()
+        # The built-in AI keeps clips as well.
+        builtin = _send(address, '/api/teams/builtin/clips/wave', clip, 'PUT')
+        assert builtin['clips'][0]['name'] == 'wave'
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_clips_travel_in_export_and_import(render_home):
+    """An exported team brings its clips back, each checked again, and leaves out the rest."""
+    import zipfile
+
+    from cuju.render._registry import clips as _clips
+    from support.clip import clip_bytes
+
+    team = _teams.add('Dancers', 'main.py', b'def agent(obs):\n    return 0\n')
+    clip = clip_bytes()
+    _clips.set_clip(team['id'], 'wave', clip, {'body': 'mixamorig:Hips'})
+    _clips.set_clip(team['id'], 'bounce', clip_bytes(names=('Up', 'Down')))
+    _teams.update(
+        team['id'],
+        changes={
+            'celebrations': ['upload:wave.0'],
+            'players': [{}, {'celebration': 'upload:bounce.1'}],
+        },
+    )
+    original = _teams.entry(team['id'])
+    filename, data = _teams.export(team['id'])
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = archive.namelist()
+        assert 'cuju-team/clips/wave.glb' in names and 'cuju-team/clips/wave.json' in names
+        assert 'clips' not in json.loads(archive.read('cuju-team/team.json'))
+    copy = _teams.add('', filename, data)
+    assert copy['clips'] == original['clips']
+    assert copy['style']['celebrations'] == ['upload:wave.0']
+    assert copy['style']['players'][1]['celebration'] == 'upload:bounce.1'
+    assert _clips.clip_path(copy['id'], 'wave').read_bytes() == clip
+    # A tampered archive keeps the sound clips and drops a damaged one, unsafe names, a folder,
+    # another file and a mapping to bones that the clip lacks.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(buffer, 'w') as out:
+        for item in source.infolist():
+            content = source.read(item)
+            if item.filename == 'cuju-team/clips/wave.json':
+                content = json.dumps({'joints': {'body': 'Pelvis'}, 'animations': ['X']}).encode()
+            out.writestr(item, content)
+        out.writestr('cuju-team/clips/broken.glb', b'glTF' + bytes(40))
+        out.writestr('cuju-team/clips/con.glb', clip)
+        out.writestr('cuju-team/clips/Upper.glb', clip)
+        out.writestr('cuju-team/clips/nested/inner.glb', clip)
+        out.writestr('cuju-team/clips/notes.txt', b'hello')
+    tampered = _teams.add('Tampered', 'team.zip', buffer.getvalue())
+    clips = {item['name']: item for item in tampered['clips']}
+    assert sorted(clips) == ['bounce', 'wave']
+    assert clips['wave']['joints'] == {}
+    assert clips['wave']['animations'] == ['Wave', 'Bounce']
+    folder = _home.folder('teams') / tampered['id'] / _teams.TEAM_FOLDER / 'clips'
+    assert sorted(path.name for path in folder.iterdir()) == [
+        'bounce.glb',
+        'bounce.json',
+        'wave.glb',
+        'wave.json',
+    ]
+    duplicate = _teams.duplicate(team['id'])
+    assert duplicate['clips'] == original['clips']
+    # A clip whose JSON file went missing is checked again and maps its bones by their names.
+    (folder / 'bounce.json').unlink()
+    clips = {item['name']: item for item in _teams.entry(tampered['id'])['clips']}
+    assert clips['bounce']['animations'] == ['Up', 'Down'] and clips['bounce']['joints'] == {}
+    assert (folder / 'bounce.json').is_file()

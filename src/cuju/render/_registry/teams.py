@@ -366,6 +366,9 @@ def _complete(entry: dict[str, Any], kit: dict[str, Any] | None = None) -> dict[
     folder = _meta_path(entry['id']).parent
     entry['images'] = [slot for slot in IMAGE_SLOTS if _image_file(folder, slot) is not None]
     entry['sounds'] = [slot for slot in SOUND_SLOTS if _sound_file(folder, slot) is not None]
+    from . import clips as _clips
+
+    entry['clips'] = _clips.listing(folder)
     return entry
 
 
@@ -848,7 +851,9 @@ def _replace(path: Path, data: bytes) -> None:
 
 def _write(identifier: str, current: dict[str, Any]) -> None:
     """Writes a team's entry, without the fields the folder implies."""
-    stored = {key: value for key, value in current.items() if key not in ('images', 'sounds')}
+    stored = {
+        key: value for key, value in current.items() if key not in ('images', 'sounds', 'clips')
+    }
     _replace(_meta_path(identifier), json.dumps(stored).encode())
 
 
@@ -898,6 +903,38 @@ def check_scenario(teams_: list[dict[str, Any]], scenario: str) -> None:
             selected_players(control, scenario_players(scenario, side))
         except ArgumentError as error:
             raise ArgumentError(f'{team["name"]} cannot play {scenario}, {error}') from error
+
+
+def game_agents(teams_: list[dict[str, Any]], scenario: str, humans: Any) -> list[int]:
+    """Returns the agents of the team on each side of a game that people play, after checks.
+
+    A side without a person belongs to its team, the built-in AI or a submission, as in a requested
+    match. A side with a person takes its team as the person's teammates, a submission with dynamic
+    assignment whose players join the person's one, so the side needs one controllable player more
+    than the team asks for.
+
+    Raises:
+        ArgumentError: If a team cannot play its side of the scenario, or a team beside a person
+            uses fixed assignment or asks for more players than the side has left.
+    """
+    check_scenario(teams_, scenario)
+    agents = []
+    for side, team in enumerate(teams_):
+        count = agent_count(team, scenario, side)
+        if humans[side] and count:
+            control = check_control(team.get('control'), team['format'])
+            if control['assignment'] != 'dynamic':
+                raise ArgumentError(
+                    f'expected dynamic assignment for {team["name"]} beside a person'
+                )
+            available = sum(player.controllable for player in scenario_players(scenario, side))
+            if count + 1 > available:
+                raise ArgumentError(
+                    f'{team["name"]} cannot play beside a person in {scenario}, which has '
+                    f'{available} controllable players on that side'
+                )
+        agents.append(count)
+    return agents
 
 
 def match_teams(left: str, right: str) -> list[dict[str, Any]]:
@@ -1116,9 +1153,7 @@ def add(
         check_control(control, format)
     name_given = bool(name and name.strip())
     name = _printable((name or '').strip() or Path(filename).stem.strip() or 'team').strip()[:80]
-    identifier = _home.new_identifier('t')
-    folder = _home.folder('teams') / identifier
-    folder.mkdir()
+    identifier, folder = _new_folder()
     try:
         _extract(data, filename, folder)
     except OSError as error:
@@ -1144,6 +1179,23 @@ def add(
     completed = _complete(entry)
     _write(identifier, completed)
     return completed
+
+
+def _new_folder() -> tuple[str, Path]:
+    """Creates the folder of a new team and returns its identifier and path.
+
+    Identifiers sort by the second they are made in, so teams added in the same second differ by
+    their random end alone. Creating the folder claims the identifier, and a draw that is taken
+    is drawn again.
+    """
+    while True:
+        identifier = _home.new_identifier('t')
+        folder = _home.folder('teams') / identifier
+        try:
+            folder.mkdir()
+        except FileExistsError:
+            continue
+        return identifier, folder
 
 
 def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
@@ -1174,7 +1226,7 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
         entry['name'] = saved['name'].strip()[:80]
     for path in list(team_folder.iterdir()):
         slot, suffix = path.stem, path.suffix
-        if path.name in ('team.json', _MODEL):
+        if path.name in ('team.json', _MODEL, 'clips'):
             continue
         try:
             data = path.read_bytes()
@@ -1194,6 +1246,9 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
             valid = False
         if not valid:
             path.unlink() if path.is_file() else shutil.rmtree(path, ignore_errors=True)
+    from . import clips as _clips
+
+    _clips.import_folder(team_folder)
     model = team_folder / _MODEL
     joints = (
         (saved.get('model') or {}).get('joints') if isinstance(saved.get('model'), dict) else None
@@ -1218,6 +1273,23 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
             entry['style']['model'] = 'grf'
 
 
+def duplicate(identifier: str) -> dict[str, Any]:
+    """Copies a registered submission as a new team and returns the copy's entry.
+
+    The copy takes the submission's files, its format, controls, style, roster, images, sounds and
+    model as they were last saved, under the name of the team followed by `copy`, and from then on
+    each team changes alone.
+
+    Raises:
+        ArgumentError: If the team is unknown or is the built-in AI, which has no files to copy.
+    """
+    team = entry(identifier)
+    if team['kind'] == 'builtin':
+        raise ArgumentError('expected a registered submission to duplicate, found the built-in AI')
+    filename, data = export(identifier)
+    return add(f'{team["name"]} copy', filename, data, team['format'])
+
+
 def export(identifier: str) -> tuple[str, bytes]:
     """Returns a team as a zip of its submission folder, with its `cuju-team` folder inside.
 
@@ -1231,7 +1303,7 @@ def export(identifier: str) -> tuple[str, bytes]:
     team = entry(identifier)
     root = _meta_path(identifier).parent.parent
     meta = _meta_path(identifier)
-    stored = {key: value for key, value in team.items() if key not in ('images', 'sounds')}
+    stored = {key: value for key, value in team.items() if key not in ('images', 'sounds', 'clips')}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(f'{TEAM_FOLDER}/team.json', json.dumps(stored))

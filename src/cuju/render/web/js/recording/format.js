@@ -119,6 +119,9 @@ export function parseHeader(bytes) {
 }
 
 export function validateHeader(header) {
+    if (header.stream_sequence !== undefined && header.stream_sequence !== 1) {
+        throw new FormatError('This live stream numbers its frames in a format this viewer does not read.');
+    }
     if (header.version !== 1) {
         throw new FormatError(`Recording version ${header.version} is not supported, this viewer reads version 1.`);
     }
@@ -212,6 +215,12 @@ export async function parseRecording(input) {
 }
 
 // Incremental parser for the live stream, fed with chunks as they arrive.
+// The serial that ends a numbered live stream, which no frame carries.
+const STREAM_END = 0xffffffffffffffffn;
+
+// Reads a stream in chunks. A header with stream_sequence 1 puts a serial of eight bytes before
+// every frame, which the frame keeps as its sequence, and the serial STREAM_END ends the stream,
+// before the header too when a source closes before its first frame.
 export class StreamParser {
     constructor(onHeader, onFrame) {
         this.onHeader = onHeader;
@@ -219,9 +228,13 @@ export class StreamParser {
         this.buffer = new Uint8Array(1 << 16);
         this.length = 0;
         this.header = null;
+        this.ended = false;
     }
 
     push(chunk) {
+        if (this.ended) {
+            return;
+        }
         if (this.length + chunk.length > this.buffer.length) {
             let size = this.buffer.length;
             while (size < this.length + chunk.length) {
@@ -234,7 +247,13 @@ export class StreamParser {
         this.buffer.set(chunk, this.length);
         this.length += chunk.length;
         let start = 0;
+        const view = new DataView(this.buffer.buffer);
         if (!this.header) {
+            if (this.length >= 8 && view.getBigUint64(0, true) === STREAM_END) {
+                this.ended = true;
+                this.length = 0;
+                return;
+            }
             const parsed = parseHeader(this.buffer.subarray(0, this.length));
             if (!parsed) {
                 return;
@@ -243,10 +262,27 @@ export class StreamParser {
             start = parsed.offset;
             this.onHeader(this.header);
         }
-        const size = this.header.frame_bytes;
-        while (this.length - start >= size) {
-            const copy = this.buffer.slice(start, start + size).buffer;
-            this.onFrame(makeFrame(copy, 0, this.header));
+        const prefix = this.header.stream_sequence === 1 ? 8 : 0;
+        const size = prefix + this.header.frame_bytes;
+        while (this.length - start >= (prefix || size)) {
+            const serial = prefix ? view.getBigUint64(start, true) : null;
+            if (serial === STREAM_END) {
+                this.ended = true;
+                start = this.length;
+                break;
+            }
+            if (this.length - start < size) {
+                break;
+            }
+            if (serial !== null && serial > BigInt(Number.MAX_SAFE_INTEGER)) {
+                throw new FormatError('A live frame carries a serial number beyond what this viewer counts.');
+            }
+            const copy = this.buffer.slice(start + prefix, start + size).buffer;
+            const frame = makeFrame(copy, 0, this.header);
+            if (serial !== null) {
+                frame.sequence = Number(serial);
+            }
+            this.onFrame(frame);
             start += size;
         }
         this.buffer.copyWithin(0, start, this.length);
@@ -279,7 +315,8 @@ export function episodeBoundary(a, b) {
     return !!(a.flags & EPISODE_END) || !!(b.flags & EPISODE_START) || b.step <= a.step;
 }
 
-// A cut is an episode boundary or a gap of more than a second, never interpolate across it.
+// A cut is an episode boundary, a gap of more than a second, or frames that a live stream lost
+// while it reconnected, never interpolate across it.
 export function isCut(a, b) {
-    return episodeBoundary(a, b) || b.step - a.step > MAX_BLEND_GAP;
+    return !!b.gap || episodeBoundary(a, b) || b.step - a.step > MAX_BLEND_GAP;
 }

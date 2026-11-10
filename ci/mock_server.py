@@ -8,6 +8,12 @@ starts with two synthetic recordings from mock_sample.py, runs one live source t
 synthetic episodes forever at 10 steps per second and greets each viewer with the last 10 seconds,
 and plays each requested match as a synthetic one. Nothing here depends on cuju.
 
+A viewer that asks for `?sequence=1` receives numbered frames, as from a source of cuju. Two routes
+that only the mock has let a page check test a viewer's reconnection. `POST /api/mock/live/ID/drop`
+closes every stream of the source without its end marker and loses the next second of frames.
+`POST /api/mock/live/ID/end` closes the source as a process that stops does, so it leaves the
+list and every stream ends with its end marker, and a new source takes its place.
+
 Usage:
     python ci/mock_server.py [--port 8765]
 Then open http://127.0.0.1:8765/ in a browser.
@@ -35,6 +41,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mock_grid
 import mock_sample
 
 WEB_ROOT = os.path.realpath(
@@ -146,6 +153,10 @@ CLASH = 120
 MATCH_FRAMES = 3001
 # A viewer that joins a live source first receives this many seconds of frames.
 BACKLOG_SECONDS = 10
+# A simulated drop of a live source loses this many frames, one second of play.
+DROP_FRAMES = 10
+# The serial that ends a numbered stream, which no frame carries.
+END = struct.pack('<Q', 2**64 - 1)
 # Member paths are checked against this folder as the real server checks them against its own.
 UNPACK_ROOT = Path(tempfile.gettempdir()) / 'cuju-mock-team'
 
@@ -166,9 +177,9 @@ def locked(function):
     """Runs a function while it holds the lock of all state."""
 
     @functools.wraps(function)
-    def run(*arguments):
+    def run(*arguments, **options):
         with LOCK:
-            return function(*arguments)
+            return function(*arguments, **options)
 
     return run
 
@@ -467,6 +478,7 @@ def complete(entry, kit=None):
     entry.setdefault('model', None)
     entry['images'] = [slot for slot in IMAGE_SLOTS if image_file(entry['id'], slot) is not None]
     entry['sounds'] = [slot for slot in SOUND_SLOTS if sound_file(entry['id'], slot) is not None]
+    entry['clips'] = clip_listing(entry['id'])
     return entry
 
 
@@ -509,7 +521,9 @@ def entry(identifier):
 
 
 def write(identifier, current):
-    stored = {key: value for key, value in current.items() if key not in ('images', 'sounds')}
+    stored = {
+        key: value for key, value in current.items() if key not in ('images', 'sounds', 'clips')
+    }
     FOLDERS.setdefault(identifier, {})[META] = json.dumps(stored).encode()
 
 
@@ -673,6 +687,157 @@ def model_path(identifier):
     return FOLDERS.get(identifier, {}).get(f'{TEAM_FOLDER}/{MODEL}')
 
 
+# The celebration clips of a team, as _clips.py keeps them, beside a JSON file of each.
+CLIPS = 'clips'
+CLIP_NAME = re.compile(r'[a-z0-9_]{1,40}')
+CLIP_DEVICES = re.compile(r'(con|prn|aux|nul|com[0-9]|lpt[0-9])', re.IGNORECASE)
+MAXIMUM_CLIP = 10 * 1024 * 1024
+MAXIMUM_TEAM_CLIPS = 40 * 1024 * 1024
+MAXIMUM_CLIP_COUNT = 16
+
+
+def clip_key(name, suffix='.glb'):
+    return f'{TEAM_FOLDER}/{CLIPS}/{name}{suffix}'
+
+
+def check_clip(data):
+    """Returns the animation names and bones of a clip, or raises ArgumentError."""
+    if len(data) > MAXIMUM_CLIP:
+        raise ArgumentError(f'expected a clip of at most 10 MB, found {len(data)} bytes')
+    bones = skin_joints(data)
+    if struct.unpack_from('<I', data, 8)[0] != len(data):
+        raise ArgumentError('expected a binary glTF file of the length its header gives')
+    (size,) = struct.unpack_from('<I', data, 12)
+    document = json.loads(data[20 : 20 + size])
+    animations = document.get('animations') or []
+    if not isinstance(animations, list) or not animations:
+        raise ArgumentError('expected a clip with at least one animation, found none')
+    names = [
+        (item.get('name') if isinstance(item, dict) and isinstance(item.get('name'), str) else '')
+        or f'Animation {index + 1}'
+        for index, item in enumerate(animations)
+    ]
+    return names, bones
+
+
+def check_clip_name(name):
+    if not CLIP_NAME.fullmatch(name or '') or CLIP_DEVICES.fullmatch(name):
+        raise ArgumentError(f'expected a clip name of lowercase letters, found {name!r}')
+    return name
+
+
+def check_clip_joints(joints, bones):
+    if not joints:
+        return {}
+    if not isinstance(joints, dict) or 'body' not in joints:
+        raise ArgumentError('expected a bone for the joint body, the pelvis, which every rig has')
+    if any(key not in (*JOINTS, 'player') or value not in bones for key, value in joints.items()):
+        raise ArgumentError('expected joints of GRF and bones of the clip')
+    return dict(joints)
+
+
+def clip_listing(identifier):
+    files = FOLDERS.get(identifier, {})
+    out = []
+    for path in sorted(files):
+        if path.startswith(f'{TEAM_FOLDER}/{CLIPS}/') and path.endswith('.glb'):
+            name = path[len(f'{TEAM_FOLDER}/{CLIPS}/') : -4]
+            meta = json.loads(files.get(clip_key(name, '.json'), b'{}'))
+            out.append(
+                {
+                    'name': name,
+                    'bytes': len(files[path]),
+                    'animations': meta.get('animations', []),
+                    'joints': meta.get('joints', {}),
+                }
+            )
+    return out
+
+
+@locked
+def set_clip(identifier, name, data, joints):
+    entry(identifier)
+    check_clip_name(name)
+    animations, bones = check_clip(data)
+    mapping = check_clip_joints(joints, bones)
+    files = FOLDERS.setdefault(identifier, {})
+    others = [item for item in clip_listing(identifier) if item['name'] != name]
+    if len(others) >= MAXIMUM_CLIP_COUNT:
+        raise ArgumentError(f'expected at most {MAXIMUM_CLIP_COUNT} clips for a team')
+    if sum(item['bytes'] for item in others) + len(data) > MAXIMUM_TEAM_CLIPS:
+        raise ArgumentError('expected at most 40 MB of clips for a team')
+    files[clip_key(name)] = data
+    files[clip_key(name, '.json')] = json.dumps(
+        {'animations': animations, 'joints': mapping}
+    ).encode()
+    return entry(identifier)
+
+
+@locked
+def set_clip_joints(identifier, name, joints):
+    data = clip_bytes(identifier, name)
+    if data is None:
+        raise ArgumentError(f'expected a clip of the team, found {name!r}')
+    animations, bones = check_clip(data)
+    FOLDERS[identifier][clip_key(name, '.json')] = json.dumps(
+        {'animations': animations, 'joints': check_clip_joints(joints, bones)}
+    ).encode()
+    return entry(identifier)
+
+
+@locked
+def clip_bytes(identifier, name):
+    if identifier != BUILTIN and not valid_identifier(identifier):
+        return None
+    with contextlib.suppress(ArgumentError):
+        return FOLDERS.get(identifier, {}).get(clip_key(check_clip_name(name)))
+    return None
+
+
+@locked
+def remove_clip(identifier, name):
+    if clip_bytes(identifier, name) is None:
+        return False
+    files = FOLDERS[identifier]
+    del files[clip_key(name)]
+    files.pop(clip_key(name, '.json'), None)
+    current = entry(identifier)
+    gone = f'upload:{name}.'
+    current['style']['celebrations'] = [
+        item for item in current['style']['celebrations'] if not item.startswith(gone)
+    ]
+    for player in current['style']['players']:
+        if player.get('celebration', '').startswith(gone):
+            player['celebration'] = 'team'
+    write(identifier, current)
+    return True
+
+
+def import_clips(files):
+    """Keeps the clips of an exported team that pass the checks of an upload."""
+    prefix = f'{TEAM_FOLDER}/{CLIPS}/'
+    for path in [path for path in files if path.startswith(prefix) and path.endswith('.glb')]:
+        stem = path[len(prefix) : -4]
+        try:
+            check_clip_name(stem)
+            animations, bones = check_clip(files[path])
+        except (ArgumentError, ValueError):
+            del files[path]
+            continue
+        try:
+            meta = json.loads(files.get(clip_key(stem, '.json'), b'{}'))
+            mapping = check_clip_joints(meta.get('joints'), bones)
+        except (ArgumentError, ValueError, AttributeError):
+            mapping = {}
+        files[clip_key(stem, '.json')] = json.dumps(
+            {'animations': animations, 'joints': mapping}
+        ).encode()
+    for path in [path for path in files if path.startswith(prefix)]:
+        sibling = path.endswith('.json') and path[:-5] + '.glb' in files
+        if not (path.endswith('.glb') or sibling):
+            del files[path]
+
+
 def header_team(identifier):
     team = entry(identifier)
     kit = team['style']['kit']
@@ -823,7 +988,7 @@ def import_team(files, entry, name_given):
         entry['name'] = saved['name'].strip()[:80]
     children = {path[len(prefix) :].split('/')[0] for path in files if path.startswith(prefix)}
     for name in children:
-        if name in ('team.json', MODEL):
+        if name in ('team.json', MODEL, CLIPS):
             continue
         key = prefix + name
         child = PurePosixPath(name)
@@ -847,6 +1012,7 @@ def import_team(files, entry, name_given):
         if not valid:
             for path in [path for path in files if path == key or path.startswith(key + '/')]:
                 del files[path]
+    import_clips(files)
     joints = (
         (saved.get('model') or {}).get('joints') if isinstance(saved.get('model'), dict) else None
     )
@@ -881,6 +1047,8 @@ def add(name, filename, data, format='11v11'):
     name_given = bool(name and name.strip())
     name = (name or Path(filename).stem or 'team').strip()[:80]
     identifier = new_identifier('t')
+    while identifier in FOLDERS:
+        identifier = new_identifier('t')
     files = {}
     extract(data, filename, files)
     FOLDERS[identifier] = files
@@ -903,7 +1071,7 @@ def add(name, filename, data, format='11v11'):
 def export(identifier):
     """Returns a file name and the bytes of a zip of a team's folder, its team.json first."""
     team = entry(identifier)
-    stored = {key: value for key, value in team.items() if key not in ('images', 'sounds')}
+    stored = {key: value for key, value in team.items() if key not in ('images', 'sounds', 'clips')}
     files = FOLDERS.get(identifier, {})
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
@@ -913,6 +1081,16 @@ def export(identifier):
                 archive.writestr(path, files[path])
     safe = ''.join(character if character.isalnum() else '-' for character in team['name'])
     return f'{safe.strip("-") or "team"}.zip', buffer.getvalue()
+
+
+@locked
+def duplicate(identifier):
+    """Copies a submission team with its files, controls and look, and returns the copy."""
+    team = entry(identifier)
+    if team['kind'] == 'builtin':
+        raise ArgumentError('expected a registered submission to duplicate, found the built-in AI')
+    filename, data = export(identifier)
+    return add(f'{team["name"]} copy', filename, data, team['format'])
 
 
 @locked
@@ -928,8 +1106,10 @@ def remove(identifier):
 
 @locked
 def save_match(header, frames):
-    """Stores a recording in the library and returns its identifier."""
+    """Stores a recording in the library and returns its identifier, which no other one holds."""
     identifier = new_identifier('m')
+    while identifier in MATCHES:
+        identifier = new_identifier('m')
     data = gzip.compress(mock_sample.encode_recording(header, frames), 6)
     score = list(struct.unpack_from('<2i', frames[-1], 8)) if frames else [0, 0]
     MATCHES[identifier] = {
@@ -943,6 +1123,10 @@ def save_match(header, frames):
             'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
             'bytes': len(data),
             'folder': '',
+            'provenance': header.get('provenance') or {},
+            'favorite': False,
+            'tags': [],
+            'notes': '',
         },
         'data': data,
     }
@@ -950,17 +1134,58 @@ def save_match(header, frames):
 
 
 @locked
-def matches():
-    entries = [dict(item['summary']) for item in MATCHES.values()]
+def matches(trash=False):
+    """Returns the summaries of the library, or of the Trash, newest first."""
+    entries = [
+        dict(item['summary'])
+        for item in MATCHES.values()
+        if ('deleted_at' in item['summary']) == trash
+    ]
     entries.sort(key=lambda entry: entry.get('created') or '', reverse=True)
     return entries
 
 
 @locked
-def recording(identifier):
+def recording(identifier, include_trash=False):
+    """Returns the bytes of a recording, of the Trash too when include_trash is true."""
     if not valid_identifier(identifier) or identifier not in MATCHES:
         return None
+    if not include_trash and 'deleted_at' in MATCHES[identifier]['summary']:
+        return None
     return MATCHES[identifier]['data']
+
+
+@locked
+def details(identifier):
+    if recording(identifier) is None:
+        raise ArgumentError(f'expected a recording of the library, found {identifier!r}')
+    return dict(MATCHES[identifier]['summary'])
+
+
+@locked
+def trash(identifier, restore=False):
+    """Moves a recording to the Trash, or restores it, and returns whether it existed."""
+    if recording(identifier, include_trash=True) is None:
+        return False
+    summary = MATCHES[identifier]['summary']
+    if ('deleted_at' in summary) != restore:
+        return False
+    if restore:
+        del summary['deleted_at']
+    else:
+        summary['deleted_at'] = time.strftime('%Y-%m-%dT%H:%M:%S')
+    return True
+
+
+@locked
+def purge(identifier):
+    """Deletes a recording of the Trash for good, and returns whether there was one."""
+    if recording(identifier, include_trash=True) is None:
+        return False
+    if 'deleted_at' not in MATCHES[identifier]['summary']:
+        return False
+    del MATCHES[identifier]
+    return True
 
 
 def folder_path(folder):
@@ -975,10 +1200,26 @@ def folder_path(folder):
 
 
 @locked
-def update_match(identifier, title=None, folder=None):
+def update_match(identifier, title=None, folder=None, favorite=None, tags=None, notes=None):
     if recording(identifier) is None:
         raise ArgumentError(f'expected a recording of the library, found {identifier!r}')
     summary = dict(MATCHES[identifier]['summary'])
+    if favorite is not None:
+        if not isinstance(favorite, bool):
+            raise ArgumentError(f'expected favorite as true or false, found {favorite!r}')
+        summary['favorite'] = favorite
+    if tags is not None:
+        if (
+            not isinstance(tags, list)
+            or len(tags) > 20
+            or not all(isinstance(tag, str) and 0 < len(tag.strip()) <= 40 for tag in tags)
+        ):
+            raise ArgumentError('expected up to twenty tags, each of one to forty characters')
+        summary['tags'] = list(dict.fromkeys(tag.strip() for tag in tags))
+    if notes is not None:
+        if not isinstance(notes, str) or len(notes) > 10000:
+            raise ArgumentError('expected notes as text of at most ten thousand characters')
+        summary['notes'] = notes
     if title is not None:
         title = str(title).strip()[:120]
         if not title:
@@ -989,14 +1230,6 @@ def update_match(identifier, title=None, folder=None):
     summary.setdefault('folder', '')
     MATCHES[identifier]['summary'] = summary
     return summary
-
-
-@locked
-def remove_match(identifier):
-    if recording(identifier) is None:
-        return False
-    del MATCHES[identifier]
-    return True
 
 
 def scenario_size(scenario):
@@ -1111,7 +1344,9 @@ class LiveSource:
     """Replays synthetic episodes forever, each frame published at real time.
 
     A batch resets itself after an episode, so the step that ends one shows the next kick off with
-    flags 2, and the frame of the reset before the first step is never shown.
+    flags 2, and the frame of the reset before the first step is never shown. Every frame has a
+    serial, and the source keeps its newest frames with their serials. A drop closes every stream
+    and skips the frames of the next second, so a viewer that reconnects sees them as a gap.
     """
 
     def __init__(self, per_team):
@@ -1121,13 +1356,21 @@ class LiveSource:
         self.title = f'{self.scenario}, environment 0, process {os.getpid()}'
         self.cond = threading.Condition()
         self.header = None
+        # The newest frames as pairs of serial and bytes, and the serial of the next frame.
         self.frames = []
         self.serial = 0
+        self.skip = 0
+        # Counts of the drops and ends so far, which every stream compares with its own.
+        self.drops = 0
+        self.ends = 0
+        # The serial of the first frame that the latest drop loses.
+        self.dropped = 0
+        self.closed = False
         threading.Thread(target=self.run, daemon=True).start()
 
     def run(self):
         seed = 10
-        while True:
+        while not self.closed:
             header, frames = mock_sample.generate_frames(
                 self.per_team, 600, seed, ('Left', 'Right'), DEFAULT_TEAMS
             )
@@ -1140,12 +1383,18 @@ class LiveSource:
                         continue
                     frame = with_flags(frame, 2)
                 time.sleep(1.0 / mock_sample.STEPS_PER_SECOND)
+                if self.closed:
+                    return
                 with self.cond:
+                    serial = self.serial
+                    self.serial += 1
+                    if self.skip:
+                        self.skip -= 1
+                        continue
                     if self.header is None:
                         self.header = header
-                    self.frames.append(frame)
+                    self.frames.append((serial, frame))
                     self.frames = self.frames[-BACKLOG_SECONDS * mock_sample.STEPS_PER_SECOND :]
-                    self.serial += 1
                     self.cond.notify_all()
             seed += 1
 
@@ -1155,15 +1404,37 @@ class LiveSource:
         start = len(frames) - 1
         while start > 0:
             if (
-                struct.unpack_from('<i', frames[start])[0]
-                != struct.unpack_from('<i', frames[start - 1])[0] + 1
+                struct.unpack_from('<i', frames[start][1])[0]
+                != struct.unpack_from('<i', frames[start - 1][1])[0] + 1
             ):
                 break
             start -= 1
         return frames[max(0, start) :]
 
+    def drop(self):
+        """Closes every stream without its end marker and loses the frames of the next second."""
+        with self.cond:
+            self.drops += 1
+            self.dropped = self.serial
+            self.skip = DROP_FRAMES
+            self.cond.notify_all()
+
+    def end(self):
+        """Stops the source and ends every stream with its end marker."""
+        with self.cond:
+            self.closed = True
+            self.ends += 1
+            self.cond.notify_all()
+
     def describe(self):
-        return {'id': self.id, 'title': self.title, 'scenario': self.scenario, 'environment': 0}
+        return {
+            'id': self.id,
+            'title': self.title,
+            'scenario': self.scenario,
+            'environment': 0,
+            'environment_count': 1,
+            'generation': 0,
+        }
 
 
 def make_handler(requests):
@@ -1248,22 +1519,31 @@ def make_handler(requests):
             self._handle(self._get)
 
         def _get(self):
-            parts, _ = self._route()
+            parts, query = self._route()
             try:
                 if parts[:1] != ['api']:
                     self._static(parts)
                 elif parts == ['api', 'matches']:
                     self._json(matches())
+                elif parts == ['api', 'trash']:
+                    self._json(matches(trash=True))
+                elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'details':
+                    try:
+                        self._json(details(parts[2]))
+                    except ArgumentError as error:
+                        self._error(404, str(error))
                 elif len(parts) == 3 and parts[1] == 'matches':
                     data = recording(parts[2])
                     if data is None:
                         self._error(404, 'no such match')
                     else:
                         self._bytes(data, 'application/octet-stream')
+                elif len(parts) == 4 and parts[1] == 'live' and mock_grid.owns(parts[2]):
+                    mock_grid.get(self, parts[2], parts[3], self._route()[1])
                 elif parts == ['api', 'live']:
-                    self._json([source.describe() for source in LIVE.values()])
+                    self._json([source.describe() for source in list(LIVE.values())])
                 elif len(parts) == 4 and parts[1] == 'live' and parts[3] == 'stream':
-                    self._relay(parts[2])
+                    self._relay(parts[2], query.get('sequence') == '1')
                 elif parts == ['api', 'scenarios']:
                     self._json(SCENARIOS)
                 elif parts == ['api', 'teams']:
@@ -1285,6 +1565,12 @@ def make_handler(requests):
                         self._bytes(data, SOUND_TYPES[PurePosixPath(path).suffix], no_store=True)
                 elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'export':
                     self._export(parts[2])
+                elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
+                    data = clip_bytes(parts[2], parts[4])
+                    if data is None:
+                        self._error(404, 'no such clip')
+                    else:
+                        self._bytes(data, 'model/gltf-binary', no_store=True)
                 elif parts == ['api', 'models']:
                     self._json(shipped_models())
                 elif parts == ['api', 'requests']:
@@ -1300,7 +1586,30 @@ def make_handler(requests):
         def _post(self):
             parts, query = self._route()
             try:
-                if parts == ['api', 'teams']:
+                if len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'duplicate':
+                    self._json(duplicate(parts[2]), 201)
+                elif len(parts) == 4 and parts[1] == 'trash' and parts[3] == 'restore':
+                    if trash(parts[2], restore=True):
+                        self._json(details(parts[2]))
+                    else:
+                        self._error(404, 'no such recording in the Trash')
+                elif parts[1:3] == ['mock', 'live'] and parts[4:] in (['drop'], ['end']):
+                    source = LIVE.get(parts[3])
+                    if source is None:
+                        self._error(404, 'no such live source')
+                    else:
+                        if parts[4] == 'drop':
+                            source.drop()
+                        else:
+                            # A source that closes leaves the list before its streams end, and
+                            # a new one takes its place, as a new process would.
+                            LIVE.pop(source.id, None)
+                            replacement = LiveSource(source.per_team)
+                            LIVE[replacement.id] = replacement
+                            source.end()
+                        self.send_response(204)
+                        self.end_headers()
+                elif parts == ['api', 'teams']:
                     team = add(
                         query.get('name', ''),
                         query.get('filename', 'main.py'),
@@ -1318,6 +1627,8 @@ def make_handler(requests):
                         None if seed in (None, '') else int(seed),
                     )
                     self._json(item, 201)
+                elif len(parts) == 4 and parts[1] == 'live' and mock_grid.owns(parts[2]):
+                    mock_grid.post(self, parts[2], parts[3])
                 else:
                     self._error(404, 'no such resource')
             except (ArgumentError, ValueError) as error:
@@ -1336,6 +1647,9 @@ def make_handler(requests):
                     self._json(set_image(parts[2], parts[4], self._body()))
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'sounds':
                     self._json(set_sound(parts[2], parts[4], self._body()))
+                elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
+                    joints = json.loads(query['joints']) if 'joints' in query else None
+                    self._json(set_clip(parts[2], parts[4], self._body(), joints))
                 else:
                     self._error(404, 'no such resource')
             except (ArgumentError, ValueError) as error:
@@ -1350,8 +1664,18 @@ def make_handler(requests):
                 if len(parts) == 3 and parts[1] == 'matches':
                     document = self._document()
                     self._json(
-                        update_match(parts[2], document.get('title'), document.get('folder'))
+                        update_match(
+                            parts[2],
+                            document.get('title'),
+                            document.get('folder'),
+                            document.get('favorite'),
+                            document.get('tags'),
+                            document.get('notes'),
+                        )
                     )
+                elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
+                    joints = self._document().get('joints')
+                    self._json(set_clip_joints(parts[2], parts[4], joints))
                 elif len(parts) == 3 and parts[1] == 'teams':
                     document = self._document()
                     self._json(
@@ -1383,8 +1707,12 @@ def make_handler(requests):
                 removed = remove_image(parts[2], parts[4])
             elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'sounds':
                 removed = remove_sound(parts[2], parts[4])
+            elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
+                removed = remove_clip(parts[2], parts[4])
             elif len(parts) == 3 and parts[1] == 'matches':
-                removed = remove_match(parts[2])
+                removed = trash(parts[2])
+            elif len(parts) == 3 and parts[1] == 'trash':
+                removed = purge(parts[2])
             elif len(parts) == 3 and parts[1] == 'teams':
                 removed = remove(parts[2])
             else:
@@ -1437,7 +1765,12 @@ def make_handler(requests):
             self.end_headers()
             self.wfile.write(data)
 
-        def _relay(self, identifier):
+        def _relay(self, identifier, sequence=False):
+            """Streams a live source, numbering its frames when sequence is true.
+
+            A numbered stream announces itself in the header and ends with the end marker, and a
+            drop closes the connection without it, as a lost connection does.
+            """
             source = LIVE.get(identifier)
             if source is None:
                 self._error(404, 'no such live source')
@@ -1446,23 +1779,52 @@ def make_handler(requests):
             self.send_header('Content-Type', 'application/octet-stream')
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
+
+            def pack(items):
+                return b''.join(
+                    (struct.pack('<Q', serial) if sequence else b'') + frame
+                    for serial, frame in items
+                )
+
             with source.cond:
                 source.cond.wait_for(lambda: source.header is not None)
-                head = mock_sample.encode_header(source.header)
-                seen = source.serial
+                header = dict(source.header)
+                if sequence:
+                    header.update(stream_sequence=1, stream_id=f'{source.id}:0')
+                head = mock_sample.encode_header(header)
                 backlog = source.backlog()
-            self.wfile.write(head + b''.join(backlog))
+                last = source.serial - 1
+                drops, ends = source.drops, source.ends
+            self.wfile.write(head + pack(backlog))
             self.wfile.flush()
             while True:
                 with source.cond:
-                    start = seen
-                    source.cond.wait_for(lambda start=start: source.serial > start, timeout=5.0)
-                    fresh = min(len(source.frames), source.serial - seen)
-                    batch = source.frames[-fresh:] if fresh else []
-                    seen = source.serial
+                    source.cond.wait_for(
+                        lambda last=last: (
+                            source.serial - 1 > last or source.drops != drops or source.ends != ends
+                        ),
+                        timeout=5.0,
+                    )
+                    # The frames published before a drop still reach the viewer, however far
+                    # this stream lags, so a reconnection loses the drop's frames alone.
+                    dropped = source.drops != drops
+                    ended = source.ends != ends
+                    batch = [
+                        item
+                        for item in source.frames
+                        if item[0] > last and (not dropped or item[0] < source.dropped)
+                    ]
+                    last = source.serial - 1
                 if batch:
-                    self.wfile.write(b''.join(batch))
+                    self.wfile.write(pack(batch))
                     self.wfile.flush()
+                if dropped:
+                    return
+                if ended:
+                    if sequence:
+                        self.wfile.write(END)
+                        self.wfile.flush()
+                    return
 
     return Handler
 
@@ -1502,6 +1864,7 @@ def main():
         load_recordings(args.recordings)
     source = LiveSource(11)
     LIVE[source.id] = source
+    mock_grid.start(LIVE, new_identifier('live'))
     server = http.server.ThreadingHTTPServer(('127.0.0.1', args.port), make_handler(Requests()))
     server.daemon_threads = True
     print(f'serving {WEB_ROOT} on http://127.0.0.1:{server.server_address[1]}/', flush=True)

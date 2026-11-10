@@ -125,8 +125,12 @@ export class TeamsPage {
         if (!this.upload) {
             this.upload = this.uploadForm();
         }
+        // With the built-in AI alone, the list points to the way an agent of one's own looks.
+        const first = teams.some((t) => t.kind !== 'builtin') ? null : h('div', { class: 'empty-state teams-first' },
+            h('p', { class: 'muted' }, 'Only the built-in AI so far. Add a submission folder below to play your own agent.'),
+            h('button', { type: 'button', class: 'btn', onclick: () => this.app.palette?.helpTopic('help-teams') }, 'How a team looks'));
         this.root.replaceChildren(
-            h('section', { class: 'panel-section' }, h('h3', {}, 'Teams'), list),
+            h('section', { class: 'panel-section' }, h('h3', {}, 'Teams'), list, first),
             h('section', { class: 'panel-section' }, h('h3', {}, 'Add a team'), this.upload),
             h('p', { class: 'muted small side-note' }, 'To play a match between teams, open ',
                 h('button', { type: 'button', class: 'link', onclick: () => this.app.showPage('matches') }, 'Matches'), '.'));

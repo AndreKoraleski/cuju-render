@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The Play a game page, where a person controls one player of a side with the keyboard or a
-// controller, Xbox, Nintendo or PlayStation, against GRF's built-in AI, which plays every other player. The
-// server plays the game in a process of its own at ten steps a second and streams each frame at
-// once, and the page sends the held keys and buttons of each person's side on every change. The
-// keys and buttons follow Gameplay Football's layout, and the server turns them into GRF's 19
-// actions with GRF's own controller logic.
+// controller, Xbox, Nintendo or PlayStation. GRF's built-in AI or a team of the registry plays the
+// other side, and either one plays the person's teammates. The server plays the game in a process
+// of its own at ten steps a second and streams each frame at once, and the page sends the held
+// keys and buttons of each person's side on every change. The keys and buttons follow Gameplay
+// Football's layout, and the server turns them into GRF's 19 actions with GRF's own controller logic.
 
 import * as THREE from 'three';
 import { api } from '../core/api.js';
@@ -14,6 +14,10 @@ import { LiveSource } from '../recording/live.js';
 import { el as h } from '../core/menu.js';
 import { PLAYER_FLOATS } from '../recording/format.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
+import {
+    BINDINGS, DEAD_ZONE, actionName, devicesClash, keyLabel, keyMap, keyMessage, keyProblem,
+    loadSettings, defaultSettings, saveSettings, stickDirections,
+} from '../core/input-settings.js';
 
 const DEFAULT_SCENARIO = '11_vs_11_kaggle';
 // The view keeps this many frames behind the newest one, enough to blend between two frames.
@@ -24,15 +28,12 @@ const HEARTBEAT_MS = 500;
 const STICK = 0.5;
 // The settings of the viewer that would hold play back, off while a game shows.
 const HELD_BACK = { celebrations: false, replays: false, transitions: false, decisionReplays: false, podium: false, lineups: false };
+// The steps in a row without an answer in time after which a registered team counts as falling
+// behind, as the game reports it.
+const LATE_STREAK = 10;
 
-// Keyboard, by the physical key, so every layout plays the same. Each key presses the buttons of
-// Gameplay Football, the ones outside GRF's 19 actions left out.
-const KEYS = {
-    ArrowLeft: ['left'], ArrowRight: ['right'], ArrowUp: ['up'], ArrowDown: ['down'],
-    KeyW: ['long_pass'], KeyA: ['high_pass', 'sliding'], KeyS: ['short_pass'], KeyD: ['shot'],
-    KeyE: ['sprint'], KeyC: ['dribble'],
-};
-// Controller actions bind to the position of a button, GRF's own Xbox layout, so the same hands
+// The keyboard's keys come from the input settings, by the physical key, so every layout plays the
+// same. Controller actions bind to the position of a button, GRF's own Xbox layout, so the same hands
 // play the same on every style of controller. South is the lower face button, east the right one,
 // west the left one and north the upper one.
 const PAD_BUTTONS = {
@@ -83,24 +84,26 @@ const DIRECTIONS = new Set(['left', 'right', 'up', 'down']);
 const NAV_DELAY_MS = 400;
 const NAV_REPEAT_MS = 120;
 const NAV_RELEASE = 0.3;
-const FOCUSABLE = 'button, select, input, a[href], [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'button, select, input, summary, a[href], [tabindex]:not([tabindex="-1"])';
+// The input tester refreshes this often while it shows.
+const TESTER_MS = 100;
 
 // Focus that a controller moves shows the ring of keyboard focus.
 function padFocus(el) {
     el.focus({ focusVisible: true });
 }
 
-export const KEYBOARD_CONTROLS = [
-    ['Arrow keys', 'Move, sticky while held'],
-    ['S', 'Short pass'],
-    ['W', 'Long pass'],
-    ['A', 'High pass, or a sliding tackle when defending'],
-    ['D', 'Shot'],
-    ['E', 'Sprint while held'],
-    ['C', 'Dribble while held'],
-    ['Esc', 'Pause menu'],
-    ['H or ?', 'Help'],
-];
+// The keyboard rows of the current keys. The four arrows share a row while they move.
+export function keyboardControls(settings) {
+    const arrows = ['left', 'up', 'down', 'right'].every((id) => settings.keys[id] === `Arrow${id[0].toUpperCase()}${id.slice(1)}`);
+    const rows = arrows ? [['Arrow keys', 'Move, sticky while held']] : [];
+    for (const binding of BINDINGS) {
+        if (!(arrows && binding.names.length === 1 && ['left', 'right', 'up', 'down'].includes(binding.id))) {
+            rows.push([keyLabel(settings.keys[binding.id]), binding.label]);
+        }
+    }
+    return rows.concat([['Esc', 'Pause menu'], ['H or ?', 'Help']]);
+}
 // The controller rows name positions, drawn in the icons of the controller's style.
 export const PAD_CONTROLS = [
     ['stick or dpad', 'Move, sticky while held'],
@@ -284,9 +287,13 @@ export class PlayPage {
     constructor(app) {
         this.app = app;
         this.root = document.getElementById('page-play');
-        this.setup = { scenario: DEFAULT_SCENARIO, side: 'left', ability: [null, null], record: true };
+        this.setup = { scenario: DEFAULT_SCENARIO, side: 'left', ability: [null, null], record: true, teams: ['builtin', 'builtin'] };
+        this.teamList = [];
         this.game = null;
         this.keyboard = new Device('keyboard', 'Keyboard');
+        this.input = loadSettings();
+        this.keys = keyMap(this.input);
+        this.testerAt = 0;
         this.pads = new Map();
         this.built = false;
         this.saved = null;
@@ -337,6 +344,16 @@ export class PlayPage {
         this.sideSelect = h('select', { 'aria-label': 'Your side' }, sides.map(([v, t]) => h('option', { value: v }, t)));
         this.sideSelect.addEventListener('change', () => {
             this.setup.side = this.sideSelect.value;
+            this.syncTeams();
+        });
+        // The team of each side, which plays a side without a person and joins a person as teammates.
+        this.teamLabels = [0, 1].map(() => h('span', {}));
+        this.teamSelects = [0, 1].map((side) => {
+            const select = h('select', {});
+            select.addEventListener('change', () => {
+                this.setup.teams[side] = select.value;
+            });
+            return select;
         });
         const ability = (side) => {
             const own = h('input', { type: 'checkbox', 'aria-label': `Set the ability of the built-in AI on the ${side ? 'right' : 'left'}` });
@@ -365,12 +382,14 @@ export class PlayPage {
                 h('label', { class: 'field' }, 'Scenario', this.scenarioSelect),
                 h('label', { class: 'field' }, 'Your side', this.sideSelect)),
             this.scenarioText,
+            h('div', { class: 'setup-row' }, [0, 1].map((side) => h('label', { class: 'field' }, this.teamLabels[side], this.teamSelects[side]))),
             h('div', { class: 'setup-row', title: 'How well the built-in AI plays the players it controls, from 0 to 1' }, ability(0), ability(1)),
             h('label', { class: 'check' }, this.recordBox, 'Save to Recordings'),
             h('div', { class: 'play-tables' },
-                h('div', {}, h('h3', {}, 'Keyboard'), controlsTable(KEYBOARD_CONTROLS)),
+                this.keyTable = h('div', {}, h('h3', {}, 'Keyboard'), controlsTable(keyboardControls(this.input))),
                 this.padTable),
             this.padNote,
+            this.inputSettings(),
             h('div', { class: 'play-row' }, this.startButton));
         this.view = h('div', { class: 'play-view', tabindex: '0', 'aria-label': 'Game, Escape opens the pause menu' });
         this.view.addEventListener('focusout', () => this.releaseKeys());
@@ -419,9 +438,11 @@ export class PlayPage {
             this.scenarioSelect.value = scenarios.includes(this.setup.scenario) ? this.setup.scenario : scenarios[0];
             this.setup.scenario = this.scenarioSelect.value;
             this.scenarioText.textContent = scenarioText(this.setup.scenario);
+            this.teamList = await api.teams();
         } catch {
             // The server is away, the start says so.
         }
+        this.syncTeams();
         this.updatePadNote();
         if (this.game) {
             this.enterStage();
@@ -478,6 +499,30 @@ export class PlayPage {
         this.marker.visible = false;
     }
 
+    // The team lists of both sides. A side without a person lists every team, and a person's side
+    // lists the teams of dynamic assignment, which share a side with a person as GRF's agents do.
+    syncTeams() {
+        if (!this.built) {
+            return;
+        }
+        const humans = [this.setup.side !== 'right', this.setup.side !== 'left'];
+        const two = humans[0] && humans[1];
+        [0, 1].forEach((side) => {
+            const human = humans[side];
+            const role = human ? (two ? `player ${side + 1}'s teammates` : 'your teammates') : 'opponents';
+            const where = side ? 'Right' : 'Left';
+            this.teamLabels[side].textContent = `${where}, ${role}`;
+            const teams = this.teamList.filter((team) => team.kind !== 'builtin'
+                && (!human || (team.control && team.control.assignment === 'dynamic')));
+            const select = this.teamSelects[side];
+            select.setAttribute('aria-label', `${where} team, ${role}`);
+            select.replaceChildren(h('option', { value: 'builtin' }, 'Built-in AI'),
+                ...teams.map((team) => h('option', { value: team.id }, `${team.name}, ${team.format === '5v5' ? 'five' : 'eleven'} a side`)));
+            select.value = teams.some((team) => team.id === this.setup.teams[side]) ? this.setup.teams[side] : 'builtin';
+            this.setup.teams[side] = select.value;
+        });
+    }
+
     showSetup() {
         this.leaveStage();
         this.game = null;
@@ -494,14 +539,14 @@ export class PlayPage {
         this.startButton.disabled = true;
         let entry;
         try {
-            entry = await api.startGame({ scenario: s.scenario, humans, ability: s.ability.slice(), record: s.record });
+            entry = await api.startGame({ scenario: s.scenario, humans, ability: s.ability.slice(), record: s.record, teams: s.teams.slice() });
         } catch (err) {
             this.app.hud.toast(err.status === 409 ? 'A game is already playing. Quit it first.' : err.message, 'error', 7000);
             this.startButton.disabled = false;
             return;
         }
         this.startButton.disabled = false;
-        this.game = { id: entry.id, humans, entry, started: false, paused: false, ended: false, source: null, sent: {}, busy: false };
+        this.game = { id: entry.id, humans, entry, started: false, paused: false, ended: false, source: null, sent: {}, busy: false, behind: false };
         this.menu.hidden = true;
         this.end.hidden = true;
         this.enterStage();
@@ -638,6 +683,14 @@ export class PlayPage {
             return;
         }
         game.entry = entry;
+        // A registered team that keeps missing its time is named once, until it catches up again.
+        if ((entry.streak || 0) >= LATE_STREAK && !game.behind) {
+            game.behind = true;
+            this.notice('The registered team keeps missing its time, so the built-in AI plays its players until it answers in time.');
+        } else if (!entry.streak && game.behind) {
+            game.behind = false;
+        }
+        this.updateStatus();
         if (entry.state === 'paused' && entry.reason === 'input' && !game.waiting) {
             game.waiting = true;
             this.notice('Waiting for the connection to the game.');
@@ -679,13 +732,16 @@ export class PlayPage {
             !!(frame.flags & 1) &&
             frame.step >= header.duration && frame.timeMs >= header.duration * 1800;
         const played = entry.ending === 'full time' || entry.ending === 'episode';
-        const title = entry.state === 'failed' ? 'The game stopped' :
+        const title = entry.state === 'failed' || entry.ending === 'policy' ? 'The game stopped' :
             full ? 'Full time' : played ? 'End of episode' : 'Game over';
         this.end.setAttribute('aria-label', title);
         const lines = [h('h2', {}, title),
             h('p', { class: 'play-score' }, `${names[0]} ${score[0]}, ${names[1]} ${score[1]}`)];
-        if (entry.state === 'failed' && entry.error) {
+        if (entry.error) {
             lines.push(h('p', { class: 'error-text' }, entry.error));
+        }
+        if (entry.late) {
+            lines.push(h('p', { class: 'muted' }, `The built-in AI stood in for the registered team on ${entry.late} ${entry.late === 1 ? 'step' : 'steps'}.`));
         }
         if (entry.match) {
             lines.push(h('p', { class: 'muted' }, 'Saved to Recordings.'),
@@ -698,11 +754,193 @@ export class PlayPage {
         this.end.hidden = false;
     }
 
+    // Input settings, kept in the browser, with a tester of every device.
+
+    inputSettings() {
+        this.inputNote = h('p', { class: 'muted small', role: 'status' });
+        this.keyButtons = {};
+        const rows = BINDINGS.map((binding) => {
+            const button = h('button', { type: 'button', class: 'btn small key-bind' });
+            this.keyButtons[binding.id] = button;
+            button.addEventListener('click', () => this.listenKey(binding.id));
+            button.addEventListener('keydown', (e) => this.bindKey(e, binding.id));
+            button.addEventListener('blur', () => this.listenKey(null));
+            return h('tr', {}, h('th', {}, binding.label), h('td', {}, button));
+        });
+        this.deadZone = h('input', {
+            type: 'range', min: String(DEAD_ZONE.min), max: String(DEAD_ZONE.max), step: String(DEAD_ZONE.step),
+            'aria-label': 'Stick dead zone, from 0.1 to 0.8',
+        });
+        this.deadZoneShown = h('output', { class: 'ability-value' });
+        this.deadZone.addEventListener('input', () => {
+            this.input.deadZone = Number(this.deadZone.value);
+            this.saveInput();
+        });
+        const options = [['auto', 'Automatic'], ['keyboard', 'Keyboard'],
+            ...[0, 1, 2, 3].map((slot) => [`pad${slot}`, `Controller in slot ${slot + 1}`])];
+        this.deviceSelects = [0, 1].map((side) => {
+            const select = h('select', { 'aria-label': `Device of the ${side ? 'right' : 'left'} side, when two people play` },
+                options.map(([value, text]) => h('option', { value }, text)));
+            select.addEventListener('change', () => {
+                const devices = this.input.devices.slice();
+                devices[side] = select.value;
+                if (devicesClash(devices)) {
+                    select.value = this.input.devices[side];
+                    this.inputNote.textContent = 'Each side needs a device of its own. Choose another one.';
+                    return;
+                }
+                this.input.devices = devices;
+                this.saveInput();
+                this.flush();
+            });
+            return select;
+        });
+        this.tester = h('div', { class: 'input-tester', tabindex: '0', 'aria-label': 'Input tester, press keys here or use a controller' },
+            this.testerLines = h('div', { 'aria-live': 'polite' }));
+        this.testerKeys = new Set();
+        const test = (e, down) => {
+            if (e.code === 'Tab' || e.ctrlKey || e.metaKey || e.altKey) {
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            if (down) {
+                this.testerKeys.add(e.code);
+            } else {
+                this.testerKeys.delete(e.code);
+            }
+            this.updateTester(true);
+        };
+        this.tester.addEventListener('keydown', (e) => test(e, true));
+        this.tester.addEventListener('keyup', (e) => test(e, false));
+        this.tester.addEventListener('blur', () => {
+            this.testerKeys.clear();
+            this.updateTester(true);
+        });
+        this.inputPanel = h('details', { class: 'input-settings' },
+            h('summary', {}, 'Input settings and tester'),
+            h('p', { class: 'muted small' }, 'Choose a key, then press the key that takes its action. Arrow keys, letters and digits work, apart from H, M and F. The browser keeps these settings.'),
+            h('table', { class: 'controls-table key-bindings' }, h('tbody', {}, rows)),
+            h('div', { class: 'setup-row' },
+                h('label', { class: 'field' }, 'Stick dead zone', h('div', { class: 'ability' }, this.deadZone, this.deadZoneShown)),
+                ...[0, 1].map((side) => h('label', { class: 'field' }, `${side ? 'Right' : 'Left'} side device, two people`, this.deviceSelects[side]))),
+            this.inputNote,
+            h('h3', {}, 'Tester'),
+            this.tester,
+            h('div', { class: 'play-row' }, h('button', { type: 'button', class: 'btn', onclick: () => {
+                this.input = defaultSettings();
+                this.saveInput();
+                this.inputNote.textContent = 'The input settings are back to their defaults.';
+            } }, 'Reset input settings')));
+        this.inputPanel.addEventListener('toggle', () => this.updateTester(true));
+        this.showInput();
+        return this.inputPanel;
+    }
+
+    // The settings as the panel and the tables show them.
+    showInput() {
+        for (const binding of BINDINGS) {
+            const button = this.keyButtons[binding.id];
+            const code = this.input.keys[binding.id];
+            button.textContent = this.listening === binding.id ? 'Press a key' : keyLabel(code);
+            button.setAttribute('aria-label', `${binding.label}, key ${this.listening === binding.id ? 'waiting' : keyLabel(code)}. Choose to change it.`);
+            button.setAttribute('aria-pressed', String(this.listening === binding.id));
+        }
+        this.deadZone.value = String(this.input.deadZone);
+        this.deadZoneShown.textContent = this.input.deadZone.toFixed(2);
+        this.deviceSelects.forEach((select, side) => {
+            select.value = this.input.devices[side];
+        });
+        this.keyTable.replaceChildren(h('h3', {}, 'Keyboard'), controlsTable(keyboardControls(this.input)));
+    }
+
+    saveInput() {
+        this.releaseKeys();
+        this.keys = keyMap(this.input);
+        if (!saveSettings(this.input)) {
+            this.inputNote.textContent = 'The browser keeps no settings here, so they hold for this visit only.';
+        }
+        this.showInput();
+        this.updateTester(true);
+    }
+
+    listenKey(id) {
+        if (this.listening === id) {
+            return;
+        }
+        this.listening = id;
+        if (id) {
+            this.inputNote.textContent = 'Press the new key, or Esc to keep the old one.';
+        }
+        this.showInput();
+    }
+
+    // The key pressed while a binding waits for one. Tab moves on, Esc keeps the old key, and a
+    // reserved, unknown or taken key is refused with the reason.
+    bindKey(e, id) {
+        if (this.listening !== id || e.code === 'Tab') {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.code === 'Escape') {
+            this.inputNote.textContent = '';
+            this.listenKey(null);
+            return;
+        }
+        const problem = keyProblem(this.input, id, e.code);
+        if (problem) {
+            this.inputNote.textContent = keyMessage(problem);
+            return;
+        }
+        this.input.keys = { ...this.input.keys, [id]: e.code };
+        this.listening = null;
+        this.inputNote.textContent = `${BINDINGS.find((b) => b.id === id).label} now uses ${keyLabel(e.code)}.`;
+        this.saveInput();
+    }
+
+    // What each device holds now, read live while the tester shows. The keyboard counts while the
+    // tester has focus, and a controller shows its stick past the dead zone and its buttons.
+    updateTester(now = false) {
+        if (!this.tester || !this.inputPanel.open || this.setupView.hidden) {
+            return;
+        }
+        const time = performance.now();
+        if (!now && time - this.testerAt < TESTER_MS) {
+            return;
+        }
+        this.testerAt = time;
+        const names = (list) => (list.length ? [...new Set(list)].join(', ').replaceAll('_', ' ') : 'nothing held');
+        const keys = [...this.testerKeys];
+        const mapped = keys.flatMap((code) => this.keys[code] || []);
+        const unmapped = keys.filter((code) => !this.keys[code]).map(keyLabel);
+        const lines = [`Keyboard, ${document.activeElement === this.tester ? names(mapped) : 'focus the tester to try keys'}`
+            + (unmapped.length ? `, ${unmapped.join(' and ')} not in use` : '')];
+        const list = navigator.getGamepads ? Array.from(navigator.getGamepads() || []) : [];
+        for (const pad of list) {
+            const device = pad && pad.connected ? this.pads.get(pad.index) : null;
+            if (!device) {
+                continue;
+            }
+            const { held, x, y } = this.padHeld(pad, device.entry.layout);
+            lines.push(`Controller in slot ${pad.index + 1}, stick ${x.toFixed(2)} and ${y.toFixed(2)}, ${names([...held])}`);
+        }
+        if (lines.length === 1) {
+            lines.push('No controller found yet. Connect one and press a button.');
+        }
+        const text = lines.join('\n');
+        if (text !== this.testerText) {
+            this.testerText = text;
+            this.testerLines.replaceChildren(...lines.map((line) => h('div', {}, line)));
+        }
+    }
+
     // Input.
 
     onKey(e, down) {
-        if (!down && KEYS[e.code] && this.keyboard.held.size) {
-            this.keyboard.set(KEYS[e.code], false);
+        const mapped = this.keys[e.code];
+        if (!down && mapped && this.keyboard.held.size) {
+            this.keyboard.set(mapped, false);
             this.flush();
         }
         if (this.padSetup) {
@@ -736,7 +974,7 @@ export class PlayPage {
         } else if (down && e.code === 'KeyF') {
             this.app.toggleFullscreen();
         }
-        const names = KEYS[e.code];
+        const names = mapped;
         if (!names) {
             return;
         }
@@ -807,6 +1045,7 @@ export class PlayPage {
             }
             this.readPad(pad, device);
         }
+        this.updateTester();
         for (const [index, device] of this.pads) {
             if (!seen.has(index)) {
                 this.pads.delete(index);
@@ -848,16 +1087,8 @@ export class PlayPage {
         }
         const x = axis(layout.stickX);
         const y = axis(layout.stickY);
-        if (x < -STICK) {
-            held.add('left');
-        } else if (x > STICK) {
-            held.add('right');
-        }
-        if (y < -STICK) {
-            held.add('up');
-        } else if (y > STICK) {
-            held.add('down');
-        }
+        // The stick counts along each axis past the dead zone of the input settings.
+        stickDirections(x, y, this.input.deadZone).forEach((name) => held.add(name));
         return { now, held, x, y };
     }
 
@@ -1068,17 +1299,30 @@ export class PlayPage {
         }
     }
 
-    // The devices of each person's side. Two people take the keyboard and the first controller,
-    // or two controllers, and one person takes every device.
+    // The devices of each person's side. One person takes every device. Two people take the
+    // devices the input settings name for their sides, and a side left to the page takes, of the
+    // devices the other side leaves, the keyboard and the first controller for the left and the
+    // second controller for the right, or with one controller, the keyboard and the controller.
     devicesOf(side) {
         const pads = [...this.pads.keys()].sort((a, b) => a - b).map((i) => this.pads.get(i));
+        // The touch screen, once its controls exist, goes with the keyboard.
+        const keys = this.touch ? [this.keyboard, this.touch] : [this.keyboard];
+        const all = [...keys, ...pads];
         if (!this.game || !this.game.humans[0] || !this.game.humans[1]) {
-            return [this.keyboard, ...pads];
+            return all;
+        }
+        const [own, other] = [this.input.devices[side], this.input.devices[1 - side]];
+        const named = (device, id) => device.id === id || (id === 'keyboard' && device === this.touch);
+        if (own !== 'auto') {
+            return all.filter((device) => named(device, own));
+        }
+        if (other !== 'auto') {
+            return all.filter((device) => !named(device, other));
         }
         if (pads.length >= 2) {
-            return side === 0 ? [this.keyboard, pads[0]] : [pads[1]];
+            return side === 0 ? [...keys, pads[0]] : [pads[1]];
         }
-        return side === 0 ? [this.keyboard] : pads.slice(0, 1);
+        return side === 0 ? keys : pads.slice(0, 1);
     }
 
     activeOf(side) {
@@ -1088,7 +1332,7 @@ export class PlayPage {
 
     // Whichever device was used last drives its side, and a change shows its controls.
     use(device) {
-        const pad = device !== this.keyboard;
+        const pad = device !== this.keyboard && device !== this.touch;
         const changed = this.lastDevice !== device.label || (pad && this.lastPad !== device);
         if (pad) {
             this.lastPad = device;
@@ -1233,6 +1477,20 @@ export class PlayPage {
         if (pads && this.lastDevice !== 'Controller') {
             parts.push(`${pads} ${pads === 1 ? 'controller' : 'controllers'} ready`);
         }
+        const entry = this.game && this.game.entry;
+        // The engine's action of each person, as the game last reported it, once every second or
+        // so, which shows what GRF's controller logic made of the keys and buttons.
+        const taken = entry && Array.isArray(entry.actions) ? entry.actions : [];
+        const two = this.game && this.game.humans[0] && this.game.humans[1];
+        taken.forEach((action, side) => {
+            if (typeof action === 'number') {
+                parts.push(`${two ? `${side ? 'right' : 'left'} ` : ''}engine action ${actionName(action)}`);
+            }
+        });
+        const late = entry && entry.late;
+        if (late) {
+            parts.push(`built-in AI stood in for ${late} ${late === 1 ? 'step' : 'steps'}`);
+        }
         this.status.textContent = parts.join(', ');
     }
 
@@ -1243,7 +1501,7 @@ export class PlayPage {
             const style = pad.entry.style;
             this.card.replaceChildren(h('h3', {}, `Controller, ${PAD_STYLES[style].name}`), controlsTable(PAD_CONTROLS, style), ...this.padTools(pad));
         } else {
-            this.card.replaceChildren(h('h3', {}, 'Keyboard'), controlsTable(KEYBOARD_CONTROLS), ...this.padTools(pad));
+            this.card.replaceChildren(h('h3', {}, 'Keyboard'), controlsTable(keyboardControls(this.input)), ...this.padTools(pad));
         }
         this.card.hidden = !on;
         if (on && ms) {
@@ -1441,7 +1699,12 @@ export class PlayPage {
         const bob = Math.sin(performance.now() / 180) * 0.08;
         for (let side = 0; side < 2; side++) {
             const arrow = this.arrows[side];
-            const k = game.humans[side] ? header.players.findIndex((p, i) => p.team === side && (s.a.playerFlags[i] & 8)) : -1;
+            // On a side shared with a registered team the frames mark every player of its agents,
+            // so the game names the person's own player.
+            const own = game.entry && game.entry.controlled ? game.entry.controlled[side] : null;
+            const k = !game.humans[side] ? -1 : typeof own === 'number'
+                ? header.players.findIndex((p) => p.team === side && p.index === own)
+                : header.players.findIndex((p, i) => p.team === side && (s.a.playerFlags[i] & 8));
             arrow.visible = k >= 0;
             if (k < 0) {
                 continue;

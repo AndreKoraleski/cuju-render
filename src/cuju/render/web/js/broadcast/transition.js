@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import { NODE_COUNT, NODE_FLOATS, NODE_PARENTS, NODES_FLOAT, PLAYER_FLOATS, episodeBoundary, isCut } from '../recording/format.js';
+import { fullMatch } from '../recording/episodes.js';
 import { teamNames } from './hud.js';
 import { BALL_RADIUS, FULL_HALF_H, FULL_HALF_W, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_H, HALF_W, POST_RADIUS } from '../world/pitch.js';
 import * as figures from '../players/players.js';
@@ -1188,7 +1189,7 @@ export class Transitions {
 
     enabled() {
         const s = this.app.settings;
-        return s.transitions !== false;
+        return !this.app.reducedMotion && s.transitions !== false;
     }
 
     maybeStart() {
@@ -1228,6 +1229,7 @@ export class Transitions {
 
     // Decision replays and restart transitions each have a setting of their own.
     wanted(ev) {
+        if (this.app.reducedMotion) return false;
         if (ev.decision && this.decisions && this.app.settings.decisionReplays !== false) {
             return true;
         }
@@ -1239,6 +1241,7 @@ export class Transitions {
 
     start(ev, prerollOnly = false) {
         const app = this.app;
+        if (app.reducedMotion) return;
         const tl = app.timeline;
         const store = tl.store;
         const header = app.source.header;
@@ -2185,7 +2188,8 @@ export class Transitions {
         }
     }
 
-    // Full time, a title card when no show after the match follows.
+    // Full time, a title card when no show after the match follows, or the end of an episode
+    // outside a full match.
     fullTime() {
         const app = this.app;
         if (!app.source || app.director.running || (app.settings.podium && app.source.kind !== 'live')) {
@@ -2197,7 +2201,8 @@ export class Transitions {
         }
         this.fullShown = tl;
         const frame = tl ? tl.store.get(tl.index) : null;
-        this.title.show('Full time', app.source.header, app.styles, frame, '',
+        const title = fullMatch(app.source.header) ? 'Full time' : 'End of episode';
+        this.title.show(title, app.source.header, app.styles, frame, '',
             app.source.kind === 'live' ? [] : [app.postMatch.statsButton()]);
         clearTimeout(this.fullTimer);
         this.fullTimer = setTimeout(() => this.title.hide(), 4500);

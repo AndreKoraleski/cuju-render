@@ -421,9 +421,13 @@ class Scape {
         this.name = name;
         this.always = always;
         this.fade = makeGain(ctx, 0);
-        this.fade.connect(sound.master);
+        this.fade.connect(sound.mix.ambience.dry);
         this.wetFade = makeGain(ctx, 0);
-        this.wetFade.connect(sound.reverb);
+        this.wetFade.connect(sound.mix.ambience.wet);
+        this.crowdFade = makeGain(ctx, 0);
+        this.crowdFade.connect(sound.mix.crowd.dry);
+        this.crowdWetFade = makeGain(ctx, 0);
+        this.crowdWetFade.connect(sound.mix.crowd.wet);
         this.sources = [];
         this.timers = new Set();
         this.live = true;
@@ -444,15 +448,17 @@ class Scape {
         const t = this.ctx.currentTime;
         this.fade.gain.setTargetAtTime(level, t, FADE);
         this.wetFade.gain.setTargetAtTime(level, t, FADE);
+        this.crowdFade.gain.setTargetAtTime(level, t, FADE);
+        this.crowdWetFade.gain.setTargetAtTime(level, t, FADE);
     }
 
     // Sends a node into the scape, directly and into the echo.
-    send(node, dry = 1, wet = 0.3) {
+    send(node, dry = 1, wet = 0.3, channel = this.name === 'stadium' ? 'crowd' : 'ambience') {
         if (dry > 0) {
-            node.connect(makeGain(this.ctx, dry)).connect(this.fade);
+            node.connect(makeGain(this.ctx, dry)).connect(channel === 'crowd' ? this.crowdFade : this.fade);
         }
         if (wet > 0) {
-            node.connect(makeGain(this.ctx, wet)).connect(this.wetFade);
+            node.connect(makeGain(this.ctx, wet)).connect(channel === 'crowd' ? this.crowdWetFade : this.wetFade);
         }
         return node;
     }
@@ -510,6 +516,8 @@ class Scape {
         this.sources = [];
         this.fade.disconnect();
         this.wetFade.disconnect();
+        this.crowdFade.disconnect();
+        this.crowdWetFade.disconnect();
     }
 }
 
@@ -518,6 +526,7 @@ export class Sound {
         this.base = base;
         this.ctx = null;
         this.volume = 0.5;
+        this.levels = { crowd: 1, ambience: 1, effects: 1 };
         this.muted = true;
         this.intensity = 0.3;
         this.ready = false;
@@ -593,6 +602,13 @@ export class Sound {
         this.reverbReturn = ctx.createGain();
         this.reverbReturn.gain.value = ARENA_ECHO[this.arena];
         this.reverb.connect(this.reverbReturn).connect(this.master);
+        this.mix = {};
+        for (const [name, level] of Object.entries(this.levels)) {
+            const dry = makeGain(ctx, level), wet = makeGain(ctx, level);
+            dry.connect(this.master);
+            wet.connect(this.reverb);
+            this.mix[name] = { dry, wet };
+        }
         this.pink = noiseBuffer(ctx, 4, 'pink');
         this.brown = noiseBuffer(ctx, 6, 'brown');
         this.white = noiseBuffer(ctx, 2, 'white');
@@ -612,14 +628,14 @@ export class Sound {
     }
 
     // Sends a node to the master directly and to the stadium echo.
-    route(node, dry = 1, wet = 0.4) {
+    route(node, dry = 1, wet = 0.4, channel = 'effects') {
         const d = this.ctx.createGain();
         d.gain.value = dry;
-        node.connect(d).connect(this.master);
+        node.connect(d).connect(this.mix[channel].dry);
         if (wet > 0) {
             const w = this.ctx.createGain();
             w.gain.value = wet;
-            node.connect(w).connect(this.reverb);
+            node.connect(w).connect(this.mix[channel].wet);
         }
     }
 
@@ -818,9 +834,9 @@ export class Sound {
         if (pan) {
             pan.pan.value = Math.random() * 1.6 - 0.8;
             dark.connect(pan);
-            p.scape.send(pan, p.dry, p.wet);
+            p.scape.send(pan, p.dry, p.wet, 'crowd');
         } else {
-            p.scape.send(dark, p.dry, p.wet);
+            p.scape.send(dark, p.dry, p.wet, 'crowd');
         }
         osc.start(t);
         osc.stop(t + length + 0.05);
@@ -839,7 +855,7 @@ export class Sound {
         band.frequency.value = p.band || 1300 + Math.random() * 700;
         band.Q.value = 0.9;
         bus.connect(band);
-        p.scape.send(band, p.dry, p.wet);
+        p.scape.send(band, p.dry, p.wet, 'crowd');
         for (let i = 0; i < count; i++) {
             const t = t0 + Math.random() * span;
             const src = ctx.createBufferSource();
@@ -857,6 +873,14 @@ export class Sound {
     setVolume(v) {
         this.volume = v;
         this.applyGain();
+    }
+
+    setChannel(name, value) {
+        if (!(name in this.levels) || !Number.isFinite(value)) return;
+        this.levels[name] = Math.max(0, Math.min(1, value));
+        for (const gain of Object.values(this.mix?.[name] || {})) {
+            gain.gain.setTargetAtTime(this.levels[name], this.ctx.currentTime, 0.05);
+        }
     }
 
     setMuted(m) {
@@ -1053,7 +1077,7 @@ export class Sound {
             band.connect(delay).connect(back).connect(feedback).connect(delay);
             back.connect(makeGain(ctx, 0.45)).connect(out);
         }
-        s.send(out, c.dry, c.wet);
+        s.send(out, c.dry, c.wet, 'crowd');
         // The crowd's own sound, before the place, which an offline render can measure alone.
         s.crowdOut = out;
         s.crowd.connect(s.cheer).connect(input);
@@ -1763,7 +1787,7 @@ export class Sound {
             const g = this.ctx.createGain();
             g.gain.value = 0;
             src.connect(g);
-            this.route(g, 1, 0.1);
+            this.route(g, 1, 0.1, 'ambience');
             src.start(0, Math.random() * buffer.duration);
             entry = { src, gain: g };
             this.ambience.set(name, entry);
@@ -1789,7 +1813,7 @@ export class Sound {
     }
 
     // Plays a decoded buffer once through an optional panner, at a gain and rate.
-    playBuffer(buffer, { gain = 1, rate = 1, position = null, wet = 0.15, when = 0 } = {}) {
+    playBuffer(buffer, { gain = 1, rate = 1, position = null, wet = 0.15, when = 0, channel = 'effects' } = {}) {
         const ctx = this.ctx;
         const src = ctx.createBufferSource();
         src.buffer = buffer;
@@ -1798,14 +1822,14 @@ export class Sound {
         g.gain.value = gain;
         src.connect(g);
         if (position) {
-            g.connect(this.panner(position)).connect(this.master);
+            g.connect(this.panner(position)).connect(this.mix[channel].dry);
             if (wet > 0) {
                 const w = ctx.createGain();
                 w.gain.value = wet;
-                g.connect(w).connect(this.reverb);
+                g.connect(w).connect(this.mix[channel].wet);
             }
         } else {
-            this.route(g, 1, wet);
+            this.route(g, 1, wet, channel);
         }
         src.start(ctx.currentTime + when);
         return src;
@@ -1933,7 +1957,7 @@ export class Sound {
             return;
         }
         if (this.files.has('crowd-ooh')) {
-            this.playBuffer(this.files.get('crowd-ooh'), { gain: 0.45, wet: 0.3 });
+            this.playBuffer(this.files.get('crowd-ooh'), { gain: 0.45, wet: 0.3, channel: 'crowd' });
             return;
         }
         const t = this.ctx.currentTime;
@@ -1955,7 +1979,7 @@ export class Sound {
             return;
         }
         if (this.files.has('applause')) {
-            this.playBuffer(this.files.get('applause'), { gain: 0.45, wet: 0.3 });
+            this.playBuffer(this.files.get('applause'), { gain: 0.45, wet: 0.3, channel: 'crowd' });
             return;
         }
         this.claps(60, 1.2);
@@ -2072,7 +2096,8 @@ export class Sound {
         this.lastPlayed[team].set(slot, now);
         const where = position || (fans ? { x: team === 0 ? -62 : 62, y: 12, z: 0 } : null);
         const wet = fans ? 0.6 * (this.arena === 'stadium' ? 1 : 0.5) : 0.2;
-        this.playBuffer(buffer, { gain: (TEAM_SLOT_GAIN[slot] || 0.4) * crowd, position: where, wet });
+        this.playBuffer(buffer, { gain: (TEAM_SLOT_GAIN[slot] || 0.4) * crowd, position: where, wet,
+            channel: fans ? 'crowd' : 'effects' });
         return true;
     }
 }

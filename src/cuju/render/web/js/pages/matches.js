@@ -11,6 +11,8 @@ import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.j
 
 const DEFAULT_SCENARIO = '11_vs_11_kaggle';
 const FORMAT_NAMES = { '5v5': '5 against 5', '11v11': '11 against 11' };
+// The list of requested matches shows this many more rows each time Show more is pressed.
+export const REQUEST_PAGE = 50;
 
 // Scenarios a team may play, by its format. The built-in AI plays any.
 export function fits(team, scenario) {
@@ -39,15 +41,32 @@ function stateOf(r) {
     if (r.state === 'failed' && r.error === 'cancelled') {
         return 'cancelled';
     }
+    // A restart of the server marks the requests that waited or played as interrupted.
+    if (r.state === 'failed' && typeof r.error === 'string' && r.error.startsWith('interrupted by a server restart')) {
+        return 'interrupted';
+    }
     return r.state;
 }
 
-const STATE_LABELS = { queued: 'Waiting', running: 'Playing', done: 'Finished', failed: 'Failed', cancelled: 'Canceled' };
+const STATE_LABELS = { queued: 'Waiting', running: 'Playing', done: 'Finished', failed: 'Failed', cancelled: 'Canceled', interrupted: 'Interrupted' };
 
-// The time a request was made, read from its identifier, r-YYYYMMDD-HHMMSS-xxxx.
-function requestTime(id) {
-    const m = /^r-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(id || '');
+// The time a request was made, its saved time, or for an older entry the time in its identifier,
+// r-YYYYMMDD-HHMMSS-xxxx.
+function requestTime(r) {
+    if (typeof r.created === 'number' && Number.isFinite(r.created)) {
+        return new Date(r.created * 1000);
+    }
+    const m = /^r-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(r.id || '');
     return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null;
+}
+
+// The seconds a request played, from its start to its end or to now while it plays.
+function playedSeconds(r) {
+    if (typeof r.started !== 'number') {
+        return null;
+    }
+    const end = typeof r.finished === 'number' ? r.finished : Date.now() / 1000;
+    return Math.max(0, Math.floor(end - r.started));
 }
 
 export class MatchesPage {
@@ -61,6 +80,7 @@ export class MatchesPage {
         this.primed = false;
         this.state = { left: null, right: 'builtin', scenario: null, seed: '', ability: [null, null] };
         this.filters = { status: 'all', team: 'all', scenario: 'all', date: 'any', sort: 'newest' };
+        this.limit = REQUEST_PAGE;
         this.error = null;
         this.token = 0;
         this.built = false;
@@ -296,7 +316,7 @@ export class MatchesPage {
             });
             return el;
         };
-        this.statusFilter = select('status', 'Status', [['all', 'Every state'], ['active', 'Waiting or playing'], ['done', 'Finished'], ['failed', 'Failed'], ['cancelled', 'Canceled']]);
+        this.statusFilter = select('status', 'Status', [['all', 'Every state'], ['active', 'Waiting or playing'], ['done', 'Finished'], ['failed', 'Failed'], ['cancelled', 'Canceled'], ['interrupted', 'Interrupted']]);
         this.teamFilter = select('team', 'Team', [['all', 'Every team']]);
         this.scenarioFilter = select('scenario', 'Scenario', [['all', 'Every scenario']]);
         this.dateFilter = select('date', 'Date', [['any', 'Any date'], ['hour', 'Last hour'], ['today', 'Today'], ['week', 'Last 7 days']]);
@@ -348,7 +368,7 @@ export class MatchesPage {
                 return false;
             }
             if (f.date !== 'any') {
-                const when = requestTime(r.id);
+                const when = requestTime(r);
                 const now = new Date();
                 const from = f.date === 'hour' ? now.getTime() - 36e5
                     : f.date === 'today' ? new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
@@ -366,22 +386,29 @@ export class MatchesPage {
         if (!this.requests.length) {
             this.queueHost.replaceChildren(h('div', { class: 'empty-state' },
                 h('p', { class: 'empty-title' }, 'No matches requested yet'),
-                h('p', { class: 'muted' }, 'Choose teams and Play match. Watch opens the result.')));
+                h('p', { class: 'muted' }, 'Choose teams and Play match. Watch opens the result. The built-in AI plays every scenario, so a first match needs no team of your own.')));
             return;
         }
         if (!rows.length) {
             this.queueHost.replaceChildren(h('p', { class: 'muted pad' }, 'No requested match fits these filters.'));
             return;
         }
+        const more = rows.length - this.limit;
+        rows = rows.slice(0, this.limit);
         // Rows are kept by request, so a progress bar moves smoothly instead of being redrawn.
         const old = new Map([...this.queueHost.querySelectorAll('.req-card')].map((el) => [el.dataset.id, el]));
         const list = this.queueHost.querySelector('.req-cards') || h('ul', { class: 'req-cards' });
         const items = rows.map((r) => {
-            const key = `${r.id}|${stateOf(r)}|${r.match || ''}|${r.error || ''}`;
+            const key = `${r.id}|${stateOf(r)}|${r.match || ''}|${r.error || ''}|${r.persistence_error || ''}`;
             let li = old.get(r.id);
             if (!li || li.dataset.key !== key) {
                 li = this.requestCard(r);
                 li.dataset.key = key;
+            }
+            const played = li.querySelector('.req-played');
+            const seconds = playedSeconds(r);
+            if (played && seconds !== null) {
+                played.textContent = `played ${seconds} ${seconds === 1 ? 'second' : 'seconds'}`;
             }
             const bar = li.querySelector('.progress .bar');
             if (bar) {
@@ -398,11 +425,33 @@ export class MatchesPage {
         if (list.parentNode !== this.queueHost) {
             this.queueHost.replaceChildren(list);
         }
+        this.showMore(more);
+    }
+
+    // The button under the list that shows the next rows, kept in place while it has focus.
+    showMore(more) {
+        let button = this.queueHost.querySelector('.req-more');
+        if (more <= 0) {
+            if (button && button === document.activeElement) {
+                // The last rows take the focus of the button that showed them.
+                this.queueHost.querySelector('.req-card:last-child button')?.focus();
+            }
+            button?.remove();
+            return;
+        }
+        if (!button) {
+            button = h('button', { type: 'button', class: 'btn small ghost req-more', onclick: () => {
+                this.limit += REQUEST_PAGE;
+                this.renderQueue();
+            } });
+            this.queueHost.appendChild(button);
+        }
+        button.textContent = `Show ${Math.min(more, REQUEST_PAGE)} more of ${more}`;
     }
 
     requestCard(r) {
         const st = stateOf(r);
-        const when = requestTime(r.id);
+        const when = requestTime(r);
         const side = (id, i) => {
             const t = this.team(id);
             return h('span', { class: 'req-team' }, t ? kitShirt(t, i) : null, h('span', { class: 'req-team-name' }, this.teamName(id)));
@@ -415,6 +464,12 @@ export class MatchesPage {
             actions.push(h('button', { type: 'button', class: 'btn small primary', onclick: () => this.app.openMatchInWatch(r.match) },
                 icon('play'), 'Watch'));
         }
+        if (st !== 'queued' && st !== 'running') {
+            // Retry and Repeat queue a new request with the same seed, teams, scenario and ability.
+            const label = st === 'done' ? 'Repeat' : 'Retry';
+            actions.push(h('button', { type: 'button', class: 'btn small', title: `${label} with seed ${r.seed}`,
+                onclick: (event) => this.again(r, event.currentTarget) }, label));
+        }
         const li = h('li', { class: `req-card state-${st}`, 'data-id': r.id },
             h('div', { class: 'req-main' },
                 h('div', { class: 'req-teams' }, side(r.left, 0), h('span', { class: 'req-vs' }, 'vs'), side(r.right, 1)),
@@ -425,18 +480,33 @@ export class MatchesPage {
                     Array.isArray(r.ability) && r.ability.some((v) => v !== null)
                         ? h('span', {}, `ability ${r.ability.map((v) => (v === null ? "scenario's" : Number(v).toFixed(2))).join(' and ')}`)
                         : null,
-                    when ? h('span', {}, new Intl.DateTimeFormat(uiLocale(), { timeStyle: 'short', dateStyle: 'medium' }).format(when)) : null),
+                    when ? h('span', {}, new Intl.DateTimeFormat(uiLocale(), { timeStyle: 'short', dateStyle: 'medium' }).format(when)) : null,
+                    h('span', { class: 'req-played' })),
                 st === 'queued' || st === 'running'
                     ? h('div', { class: 'req-progress' },
                         h('div', { class: `progress${st === 'queued' ? ' waiting' : ''}` }, h('div', { class: 'bar' })),
                         h('span', { class: 'pct muted small' }, st === 'queued' ? 'In the queue' : ''))
                     : null,
-                st === 'failed' && r.error ? h('div', { class: 'error-text' }, r.error) : null),
+                (st === 'failed' || st === 'interrupted') && r.error ? h('div', { class: 'error-text' }, r.error) : null,
+                r.persistence_error ? h('div', { class: 'error-text' }, r.persistence_error) : null),
             h('div', { class: 'req-actions' }, actions));
         if (st === 'queued') {
             li.querySelector('.pct').classList.remove('pct');
         }
         return li;
+    }
+
+    async again(r, button) {
+        button.disabled = true;
+        try {
+            await api.requestMatch({ left: r.left, right: r.right, scenario: r.scenario, seed: r.seed, ability: r.ability });
+            this.app.hud.toast(`${this.teamName(r.left)} against ${this.teamName(r.right)} is in the queue with seed ${r.seed}.`);
+            this.requests = await api.requests();
+            this.renderQueue();
+        } catch (err) {
+            this.app.hud.toast(err.message, 'error', 7000);
+            button.disabled = false;
+        }
     }
 
     async cancel(r) {

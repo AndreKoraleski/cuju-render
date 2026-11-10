@@ -2,10 +2,35 @@
 # SPDX-License-Identifier: Apache-2.0
 """Helpers that the renderer's tests of several areas share."""
 
+import json
+import threading
+import urllib.request
+
 from cuju.render._format import recording as _recording
 from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
+from cuju.render._store import home as _home
 from cuju.render._store import library as _library
+
+
+def _get(address, path):
+    with urllib.request.urlopen(address + path, timeout=10) as response:
+        return response.status, response.read()
+
+
+def _send(address, path, data, method='POST'):
+    request = urllib.request.Request(address + path, data=data, method=method)
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read())
+
+
+_CRASH = """
+def agent(obs):
+    if obs['step'] == 4:
+        raise ValueError('the policy broke')
+    return [7]
+"""
+
 
 # A toy submission that controls several players and sends each one a direction of its own, by
 # the index of its player, so the test sees each action reach its player.
@@ -82,3 +107,21 @@ def _serve_once(monkeypatch):
 
 def _library_ids():
     return sorted(entry['id'] for entry in _library.matches())
+
+
+def _one_second(monkeypatch):
+    """Makes identifiers of one second whose random ends each come three times."""
+    import itertools
+    import types
+
+    monkeypatch.setattr(
+        _home, 'time', types.SimpleNamespace(strftime=lambda form: '20261109-120000')
+    )
+    lock = threading.Lock()
+    source = itertools.chain.from_iterable([f'{value:04x}'] * 3 for value in itertools.count())
+
+    def token_hex(count):
+        with lock:
+            return next(source)
+
+    monkeypatch.setattr(_home, 'secrets', types.SimpleNamespace(token_hex=token_hex))

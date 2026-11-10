@@ -14,6 +14,8 @@ SPDX-License-Identifier: Apache-2.0
     <link rel="icon" type="image/png" href="assets/cuju-logo.png">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="home.css">
+    <link rel="stylesheet" href="easy.css">
+    <link rel="stylesheet" href="flat.css">
     <script type="importmap">
     {
         "imports": {
@@ -39,6 +41,7 @@ SPDX-License-Identifier: Apache-2.0
     <symbol id="i-muted" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-fullscreen" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-help" viewBox="0 0 24 24"><path d="M3 7h18v10H3z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10h2v2H6zm4 0h2v2h-2zm4 0h2v2h-2zm-6 3h8v1.5H8z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 110 13 6.5 6.5 0 010-13zM15.5 15.5L21 21" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 110 7 3.5 3.5 0 010-7zm8.5 2l-2-.4a6.8 6.8 0 00-.8-1.9l1.2-1.7-1.4-1.4-1.7 1.2a6.8 6.8 0 00-1.9-.8l-.4-2h-2l-.4 2a6.8 6.8 0 00-1.9.8L6.5 5.1 5.1 6.5l1.2 1.7a6.8 6.8 0 00-.8 1.9l-2 .4v2l2 .4c.2.7.4 1.3.8 1.9l-1.2 1.7 1.4 1.4 1.7-1.2c.6.4 1.2.6 1.9.8l.4 2h2l.4-2c.7-.2 1.3-.4 1.9-.8l1.7 1.2 1.4-1.4-1.2-1.7c.4-.6.6-1.2.8-1.9l2-.4z" fill-rule="evenodd"/></symbol>
 </svg>
 
@@ -70,6 +73,7 @@ SPDX-License-Identifier: Apache-2.0
             </div>
         </div>
         <div class="top-actions">
+            <button id="open-palette" class="icon-btn" title="Commands (Ctrl K)" aria-label="Commands" aria-keyshortcuts="Control+K"><svg class="icon"><use href="#i-search"/></svg></button>
             <button id="open-settings" class="icon-btn" title="Settings" aria-label="Settings"><svg class="icon"><use href="#i-settings"/></svg></button>
             <button id="fullscreen" class="icon-btn" title="Fullscreen (F)" aria-label="Fullscreen"><svg class="icon"><use href="#i-fullscreen"/></svg></button>
         </div>
@@ -159,6 +163,12 @@ SPDX-License-Identifier: Apache-2.0
                             <div id="live-box" hidden>
                                 <span id="live-state">Live</span>
                                 <button id="go-live" class="btn small live" data-act="live" hidden>Go live</button>
+                                <form id="live-env" class="live-env" hidden>
+                                    <label title="The environment of the batch that the source shows"><span>Environment</span>
+                                        <input id="live-env-index" type="number" min="0" step="1" required></label>
+                                    <button id="live-env-go" class="btn small" type="submit">Switch</button>
+                                </form>
+                                <button id="live-grid" class="btn small" type="button" title="Many environments of the batch at once" hidden>Grid</button>
                                 <button id="post-show" class="btn small" data-act="post-show" hidden>Match summary</button>
                             </div>
                         </div>
@@ -204,18 +214,25 @@ SPDX-License-Identifier: Apache-2.0
         <section id="page-help" class="page" hidden><div id="help" aria-label="Help">
             <div class="help-card">
                 <header><h2>Help</h2><button id="help-close" class="icon-btn" aria-label="Close" title="Close (Esc)">✕</button></header>
-                <p>Keyboard. Tab and Shift Tab move between controls. Enter or Space activates a control.
+                <p id="help-keyboard">Keyboard. Tab and Shift Tab move between controls. Enter or Space activates a control.
                     Arrow keys, Home and End move through menus and lists. Esc closes panels and returns
                     focus. Focus the picture for camera and playback keys. Field arrows turn the camera,
                     Watch uses Alt and arrows. Plus and minus zoom. Color fields also accept hex values.</p>
-                <section><h3>Getting started</h3>
+                <section><h3 id="help-start">Getting started</h3>
                 <p>Watch, open a file or choose a source. Recordings, browse saved games.
                     Record a batch with cuju.render.Recorder. Watch live with cuju.render.watch.
                     Matches, choose teams and request a game. Play, choose a side and start.</p>
-                <h3>Pages</h3><p>Home, choose an activity. Teams, import submissions and edit players.
-                    Field, arrange the pitch and stadium. Help, find controls and guides.</p>
-                <h3>Play controls</h3><p>Arrow keys move. S passes short, W passes long, A passes high
-                    or tackles, D shoots. Hold E to sprint and C to dribble. Esc pauses.</p>
+                <h3 id="help-pages">Pages</h3><p>Home, choose an activity. Teams, import submissions and edit players.
+                    Field, arrange the pitch and stadium. Help, find controls and guides.
+                    Ctrl K, or the search button in the top bar, opens the command palette on any page.</p>
+                <h3 id="help-teams">Making a team</h3><p>A team is a submission folder in the format of
+                    Kaggle's football competition, whose main.py defines the agent as its last function.
+                    Add the folder on the Teams page, or with cuju render team add, then pick the team on
+                    Matches or Play. The built-in AI is always a team.</p>
+                <h3 id="help-play">Play controls</h3><p>Arrow keys move. S passes short, W passes long, A passes high
+                    or tackles, D shoots. Hold E to sprint and C to dribble. Esc pauses. The input
+                    settings on Play change these keys and the dead zone of the stick. On a touch screen a
+                    stick and the buttons of play show over the game.</p>
                 <p class="pad-help">Controller, <span class="padicon pad-stick" role="img" aria-label="Left stick">L</span> left stick or
                     <span class="padicon pad-dpad" role="img" aria-label="Directional pad"></span> D pad moves.
                     <span class="padicon pad-face pad-a" role="img" aria-label="A button">A</span> passes short,
@@ -233,7 +250,7 @@ SPDX-License-Identifier: Apache-2.0
                     <a href="https://github.com/AndreKoraleski/cuju">Repository</a></p></section>
                 <div class="help-grid">
                     <section>
-                        <h3>Playback</h3>
+                        <h3 id="help-playback">Playback</h3>
                         <dl>
                             <dt><kbd>Space</kbd></dt><dd>Play or pause</dd>
                             <dt><kbd>L</kbd></dt><dd>Play forward, again to speed up</dd>
@@ -253,7 +270,7 @@ SPDX-License-Identifier: Apache-2.0
                         </dl>
                     </section>
                     <section>
-                        <h3>Cameras</h3>
+                        <h3 id="help-cameras">Cameras</h3>
                         <dl>
                             <dt><kbd>V</kbd></dt><dd>Broadcast, tactical, behind the goal, follow player and free in turn</dd>
                             <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Chase camera on the previous or next player</dd>
@@ -270,7 +287,7 @@ SPDX-License-Identifier: Apache-2.0
                         </dl>
                     </section>
                     <section>
-                        <h3>View</h3>
+                        <h3 id="help-view">View</h3>
                         <dl>
                             <dt><kbd>T</kbd></dt><dd>Broadcast mode, the picture alone, <kbd>Esc</kbd> shows the controls, twice leaves</dd>
                             <dt><kbd>F</kbd></dt><dd>Fullscreen</dd>
@@ -306,6 +323,7 @@ SPDX-License-Identifier: Apache-2.0
             </select>
         </label>
         <label class="check"><input type="checkbox" id="podium-on"> Post-match show, facts, highlights, player of the match, podium</label>
+        <label class="check"><input type="checkbox" id="view-2d"> 2D view, a flat drawing from above without WebGL</label>
         <label class="check"><input type="checkbox" id="classic"> GRF classic pitch</label>
         <label class="check"><input type="checkbox" id="pointer-lock"> Capture the mouse on right click in the free camera, Esc releases it</label>
         <label class="check"><input type="checkbox" id="saved-style"> Use the kits saved in the match</label>
@@ -326,6 +344,8 @@ SPDX-License-Identifier: Apache-2.0
         <div class="dd-heading" role="presentation"><span>Camera</span><span class="dd-aside"><kbd>V</kbd> cycles the first five</span></div>
         <div id="view-cameras"></div>
         <div id="view-screen"></div>
+        <div class="dd-heading" role="presentation"><span>Drawing</span></div>
+        <div id="view-drawing"></div>
         <div class="dd-heading" role="presentation"><span>Time and weather</span></div>
         <div id="view-environment"></div>
         <div class="dd-heading" role="presentation"><span>Quality</span></div>

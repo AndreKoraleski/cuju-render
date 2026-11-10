@@ -84,10 +84,17 @@ export const api = {
         }
         return out;
     },
+    // Deleting a recording moves it to the Trash, and only the Trash deletes one for good.
     deleteMatch: (id) => request('DELETE', `/api/matches/${enc(id)}`),
+    matchDetails: (id) => getJson(`/api/matches/${enc(id)}/details`),
+    trash: () => getJson('/api/trash'),
+    restoreMatch: async (id) => (await request('POST', `/api/trash/${enc(id)}/restore`)).json(),
+    purgeMatch: (id) => request('DELETE', `/api/trash/${enc(id)}`),
     patchMatch: async (id, changes) => (await request('PATCH', `/api/matches/${enc(id)}`, { json: changes })).json().catch(() => null),
     live: () => getJson('/api/live'),
-    liveStream: (id, signal) => fetch(`/api/live/${enc(id)}/stream`, { signal, cache: 'no-store' }),
+    selectEnvironment: async (id, environment) => (await request('POST', `/api/live/${enc(id)}/environment`, { json: { environment } })).json(),
+    liveStream: (id, signal) => fetch(`/api/live/${enc(id)}/stream?sequence=1`, { signal, cache: 'no-store' }),
+    liveGrid: (id, first, count) => getJson(`/api/live/${enc(id)}/grid?first=${first}&count=${count}`),
     info: () => getJson('/api/info'),
     scenarios: () => getJson('/api/scenarios'),
     teams: () => getJson('/api/teams'),
@@ -104,6 +111,7 @@ export const api = {
     exportUrl: (id) => `/api/teams/${enc(id)}/export`,
     updateTeam: async (id, changes) => (await request('PATCH', `/api/teams/${enc(id)}`, { json: changes })).json(),
     deleteTeam: (id) => request('DELETE', `/api/teams/${enc(id)}`),
+    duplicateTeam: async (id) => (await request('POST', `/api/teams/${enc(id)}/duplicate`)).json(),
     putModel: (id, joints, bytes) =>
         request('PUT', `/api/teams/${enc(id)}/model?joints=${enc(JSON.stringify(joints))}`, { body: bytes }),
     modelBytes: async (id) => (await request('GET', `/api/teams/${enc(id)}/model`)).arrayBuffer(),
@@ -124,6 +132,14 @@ export const api = {
         (await request('PUT', `/api/teams/${enc(id)}/sounds/${enc(slot)}`, { body, headers: { 'Content-Type': type || 'application/octet-stream' } })).json(),
     soundBytes: async (id, slot) => (await request('GET', `/api/teams/${enc(id)}/sounds/${enc(slot)}`)).arrayBuffer(),
     deleteSound: (id, slot) => request('DELETE', `/api/teams/${enc(id)}/sounds/${enc(slot)}`),
+    // Team celebration clips, binary glTF files of at most 10 MB, named by the page.
+    putClip: async (id, name, joints, bytes) => {
+        const query = joints && joints.body ? `?joints=${enc(JSON.stringify(joints))}` : '';
+        return (await request('PUT', `/api/teams/${enc(id)}/clips/${enc(name)}${query}`, { body: bytes })).json();
+    },
+    clipJoints: async (id, name, joints) => (await request('PATCH', `/api/teams/${enc(id)}/clips/${enc(name)}`, { json: { joints } })).json(),
+    clipBytes: async (id, name) => (await request('GET', `/api/teams/${enc(id)}/clips/${enc(name)}`)).arrayBuffer(),
+    deleteClip: (id, name) => request('DELETE', `/api/teams/${enc(id)}/clips/${enc(name)}`),
 };
 
 // The team setting travels as JSON through both forms.

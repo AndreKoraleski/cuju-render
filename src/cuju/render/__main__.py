@@ -5,7 +5,8 @@
 
 `cuju render` serves the page, `cuju render team add FOLDER` registers a Kaggle submission folder,
 `cuju render play` records a match between two registered teams, and `cuju render sample` adds the
-shipped sample matches to the library again.
+shipped sample matches to the library again, or brings them back from the Trash. `cuju render demo`
+streams a live match between the built-in AIs to the page.
 """
 
 from __future__ import annotations
@@ -63,11 +64,17 @@ def main(arguments: list[str] | None = None) -> int:
             help=f"the {side} built-in AI's ability from 0 to 1, the scenario's when absent",
         )
     sample = commands.add_parser(
-        'sample', help='add the sample matches to the library again, after a deletion'
+        'sample', help='add the sample matches to the library again, or restore them from the Trash'
     )
     sample.add_argument(
         'name', nargs='?', choices=('11v11', '5v5'), help='one sample, by default both'
     )
+    show = commands.add_parser('demo', help='stream a live match between the built-in AIs')
+    show.add_argument('--port', type=int, default=8780, help='the port, 8780 by default')
+    show.add_argument('--eleven', action='store_true', help='eleven a side, five by default')
+    show.add_argument('--scenario', help='another shipped scenario, such as academy_corner')
+    show.add_argument('--seed', type=int, default=None, help='the seed, drawn when absent')
+    show.add_argument('--no-open', action='store_true', help='leave the browser closed')
     options = parser.parse_args(arguments)
     if options.home:
         os.environ[_home.HOME_VARIABLE] = str(Path(options.home).expanduser().resolve())
@@ -107,9 +114,10 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         from ._store import library as _library
 
         names = None if options.name is None else [f'sample-{options.name}']
+        trashed = {entry['id'] for entry in _library.matches(trash=True)}
         added = _library.add_samples(names)
         for path in added:
-            print(f'added {path.stem}')
+            print(f'{"restored" if path.stem in trashed else "added"} {path.stem}')
         if not added:
             print('the library already holds the samples')
         return 0
@@ -127,6 +135,17 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         )
         print(f'saved {path}')
         return 0
+    if options.command == 'demo':
+        from ._playing import demo as _demo
+
+        if not 0 <= options.port <= 65535:
+            parser.error('expected a port from 0 to 65535')
+        from cuju import bundled_scenarios
+
+        scenario = options.scenario or _demo.SCENARIOS['11v11' if options.eleven else '5v5']
+        if scenario not in bundled_scenarios():
+            parser.error(f'expected a shipped scenario, found {scenario!r}')
+        return _demo.demo(options.port, scenario, not options.no_open, options.seed)
     from ._http.server import serve
 
     port = getattr(options, 'port', 8780)

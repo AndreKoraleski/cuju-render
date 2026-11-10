@@ -11,7 +11,8 @@ import {
     Celebration, Reactions, ballIntoNet, choseCelebration, danceNames, figureSize, kaykitCelebration, posePlayer, roleName,
     seeded, showDance,
 } from './celebrate.js';
-import { ACTION, NODES_FLOAT, PLAYER_FLOATS, TOUCH, episodeBoundary, isCut } from '../recording/format.js';
+import { ACTION, NODES_FLOAT, PLAYER_FLOATS, TOUCH, isCut } from '../recording/format.js';
+import { fullMatch, summaryRange } from '../recording/episodes.js';
 import { bareTeamName, kitSwatch, teamNames } from './hud.js';
 import { HALF_H, HALF_W } from '../world/pitch.js';
 import { Players } from '../players/players.js';
@@ -917,6 +918,9 @@ export class Director {
     // before the goal can hold while the scorer celebrates.
     goalScored(index, team, early = false) {
         const app = this.app;
+        if (app.reducedMotion) {
+            return;
+        }
         const tl = app.timeline;
         if (!tl || this.running || this.handled === index || app.postMatch.running) {
             return;
@@ -1290,6 +1294,25 @@ export class Director {
     play(queue, options = {}) {
         const app = this.app;
         const tl = app.timeline;
+        // The 2D view skips replays, which need the 3D view.
+        if (tl && queue.length && app.flat && app.flat.blocks('replay')) {
+            if (options.onDone) {
+                options.onDone();
+            }
+            return;
+        }
+        // With reduced motion a replay plays the goal again from three seconds before it, in the
+        // view of the moment, without the wipe or the replay cameras.
+        if (app.reducedMotion && tl && queue.length) {
+            tl.seek(Math.max(tl.store.first, queue[0].goal.index - 3 * tl.sps));
+            app.lastIndex = tl.index;
+            app.afterSeek();
+            // The replay plays, so a pause of the viewer before it ends here.
+            app.userPaused = false;
+            tl.play(1);
+            app.updatePlayUi();
+            return;
+        }
         if (!tl || !queue.length) {
             if (options.onDone) {
                 options.onDone();
@@ -1559,6 +1582,9 @@ export class Director {
     // Team sheets before kick-off over a slow pan of the ground, while play waits.
     showLineups() {
         const app = this.app;
+        if (app.reducedMotion) {
+            return;
+        }
         const tl = app.timeline;
         if (!tl || !app.source || app.source.kind === 'live' || !app.settings.lineups || this.running
             || tl.t > tl.first + 1 || app.postMatch.running) {
@@ -1745,23 +1771,10 @@ const medal = (s) => h('span', {
 },
     s.grade || '—');
 
+// The frames that the statistics describe, all of a recording, or for a live source the latest
+// completed episode, and the current one until an episode completes.
 export function summaryStore(store, live) {
-    let first = store.first;
-    let last = store.last;
-    if (live) {
-        for (let i = last; i >= first; i--) {
-            if (store.get(i).flags & 1) {
-                last = i;
-                break;
-            }
-        }
-        for (let i = last; i > first; i--) {
-            if (episodeBoundary(store.get(i - 1), store.get(i))) {
-                first = i;
-                break;
-            }
-        }
-    }
+    const { first, last } = live ? summaryRange(store) : { first: store.first, last: store.last };
     const frames = [];
     for (let i = first; i <= last; i++) frames.push(store.get(i));
     return {first, last, get: (i) => frames[i - first]};
@@ -2403,6 +2416,13 @@ export class PostMatch {
 
     start() {
         const app = this.app;
+        if (app.reducedMotion) {
+            // Reduced motion leaves out the show and opens the statistics alone.
+            if (app.timeline && app.source && app.settings.podium) {
+                this.openStats();
+            }
+            return;
+        }
         if (this.running || !app.source || !app.settings.podium || !app.timeline) {
             return;
         }
@@ -2577,10 +2597,10 @@ export class PostMatch {
             if (title && typeof title.show === 'function') {
                 const w = r.winner;
                 const foot = w >= 0 ? `${this.teamName(w)} ${plural(bareTeamName(header, w)) ? 'win' : 'wins'}` : 'A draw, the points are shared';
-                title.show(header.full_match === false ? 'Episode complete' : 'Full time', header, app.styles, r.frame, foot);
+                title.show(fullMatch(header) ? 'Full time' : 'Episode complete', header, app.styles, r.frame, foot);
                 r.titled = true;
             } else {
-                this.showCard(h('div', { class: 'post-score' }, h('div', { class: 'post-kicker' }, header.full_match === false ? 'Episode complete' : 'Full time'), this.scoreLine(this.facts)));
+                this.showCard(h('div', { class: 'post-score' }, h('div', { class: 'post-kicker' }, fullMatch(header) ? 'Full time' : 'Episode complete'), this.scoreLine(this.facts)));
             }
         }
         if (r.titled && r.clock >= r.titleAt + TITLE_SECONDS && title) {
@@ -2789,7 +2809,9 @@ export class PostMatch {
         }
         this.statsCard.addEventListener('click', (e) => e.stopPropagation());
         this.statsCard.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
+            // Focus starts on the dialog itself, where Enter closes it as it does anywhere away
+            // from a control.
+            if (e.key === 'Escape' || (e.key === 'Enter' && e.target === this.statsCard)) {
                 e.preventDefault();
                 e.stopPropagation();
                 close();
@@ -3481,7 +3503,7 @@ export class Spotlight {
             app.hud.hideGoal();
         }
         const t = (performance.now() - st.clock) / 1000;
-        const push = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : Math.pow(Math.max(0, 1 - t / 1.2), 3);
+        const push = app.reducedMotion ? 0 : Math.pow(Math.max(0, 1 - t / 1.2), 3);
         st.camera.position.z = st.dist * (1 + push * 0.65);
         posePlayer(this.danceName, t, st.pose.nodes, 0, 0, 0, Math.sin(t * 0.4) * 0.2, 'show');
         if (this.danceName && this.danceName.startsWith('clip:') && typeof st.players.playClip === 'function') {

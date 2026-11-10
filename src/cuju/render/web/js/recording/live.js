@@ -3,10 +3,12 @@
 
 // Reads a live stream into a growing frame store, like a DVR, keeping the newest frames. A source
 // opens the stream with up to ten seconds of frames it captured before the viewer joined, which
-// arrive at once and land in the store like any other frames.
+// arrive at once and land in the store like any other frames. The page asks for numbered frames,
+// so a lost connection reconnects, the history that the source sends again drops, and the frames
+// lost in between mark a cut.
 
 import { api } from '../core/api.js';
-import { NODES_FLOAT, PLAYER_FLOATS, StreamParser } from './format.js';
+import { FormatError, NODES_FLOAT, PLAYER_FLOATS, StreamParser } from './format.js';
 import { FrameStore } from './timeline.js';
 
 // A stream keeps its newest frames within this memory, which holds 15 minutes of 11 against 11
@@ -21,6 +23,11 @@ export function liveLimit(header) {
     const sps = header.steps_per_second || 10;
     return Math.max(60 * sps, Math.min(LIVE_KEEP_MINUTES * 60 * sps, Math.floor(LIVE_BUDGET_BYTES / frameBytes)));
 }
+// A lost connection retries this many times in each outage, after a delay that doubles from the
+// first up to the last.
+export const RECONNECT_ATTEMPTS = 3;
+const RECONNECT_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 4000;
 // The backlog arrives within this long after the header, frames after it come at real time.
 const BACKLOG_SETTLE_MS = 700;
 // Frames that may run ahead of real time from network jitter alone.
@@ -30,17 +37,28 @@ export class LiveSource {
     // A full URL reaches a stream on another server, a tunnel for example. The caller only passes
     // one that the user typed, never one from a shared link.
     // open, when given, opens the stream in place of the live source's own, as a game does.
-    constructor(id, { onHeader, onFrame, onEnd, onError, open = null }) {
+    constructor(id, { onHeader, onFrame, onEnd, onError, onState = null, open = null }) {
         this.id = id;
         this.open = open;
         this.url = /^https?:\/\//i.test(id) ? id : null;
         this.abort = new AbortController();
         this.store = null;
         this.ended = false;
-        this.callbacks = { onHeader, onFrame, onEnd, onError };
+        this.callbacks = { onHeader, onFrame, onEnd, onError, onState };
         this.received = 0;
         this.headerAt = 0;
         this.backlog = 0;
+        // The connection, idle, connecting, connected, reconnecting, ended or failed.
+        this.state = 'idle';
+        // Whether the stream numbers its frames, so that a lost connection may resume.
+        this.resumable = false;
+        // The attempts to reconnect in the current outage, and whether the next new frame
+        // follows an outage.
+        this.attempts = 0;
+        this.resumed = false;
+        this.lastSequence = -1;
+        // The frames that the stream lost while it reconnected, which the store marks as cuts.
+        this.gaps = 0;
     }
 
     // Resolves with the whole seconds of history the stream opened with, once they have arrived.
@@ -56,7 +74,82 @@ export class LiveSource {
         return Math.round(this.backlog / sps);
     }
 
+    // Reads the stream until it ends, is stopped or fails. A stream that numbers its frames
+    // survives a lost connection, see connect, and any other loss ends with onError.
     async start() {
+        this.setState('connecting');
+        let outage = null;
+        while (!this.abort.signal.aborted) {
+            let outcome;
+            try {
+                outcome = await this.connect();
+            } catch (err) {
+                if (this.abort.signal.aborted || err.name === 'AbortError') {
+                    return;
+                }
+                if (!this.resumable || err.terminal) {
+                    this.fail(err);
+                    return;
+                }
+                outcome = 'lost';
+                outage = err;
+            }
+            if (this.abort.signal.aborted) {
+                return;
+            }
+            if (outcome === 'ended') {
+                this.ended = true;
+                this.setState('ended');
+                this.callbacks.onEnd();
+                return;
+            }
+            // A connection that delivered its header ends an outage, so every outage has the
+            // whole number of attempts.
+            if (this.state === 'connected') {
+                this.attempts = 0;
+                outage = null;
+            }
+            if (this.attempts >= RECONNECT_ATTEMPTS) {
+                const text = outage ? outage.message.replace(/\.$/, '') : '';
+                const reason = text ? `, ${text[0].toLowerCase()}${text.slice(1)}` : '';
+                this.fail(new Error(`The live stream was lost and ${RECONNECT_ATTEMPTS} attempts to reconnect failed${reason}.`));
+                return;
+            }
+            this.setState('reconnecting');
+            this.resumed = true;
+            const delay = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_DELAY_MS * 2 ** this.attempts);
+            this.attempts++;
+            await new Promise((resolve) => {
+                const stop = () => {
+                    clearTimeout(timer);
+                    resolve();
+                };
+                const timer = setTimeout(() => {
+                    this.abort.signal.removeEventListener('abort', stop);
+                    resolve();
+                }, delay);
+                this.abort.signal.addEventListener('abort', stop, { once: true });
+            });
+        }
+    }
+
+    // onState, when given, hears every change of the connection's state.
+    setState(state) {
+        if (this.state !== state) {
+            this.state = state;
+            this.callbacks.onState?.(state);
+        }
+    }
+
+    fail(err) {
+        this.setState('failed');
+        this.callbacks.onError(err);
+    }
+
+    // Opens the stream once and reads it, resolving with 'ended' when the stream ended and 'lost'
+    // when a numbered stream lost its connection. A stream that closes before its header ends,
+    // as a game that ends early does, and so does one that never numbered its frames.
+    async connect() {
         let res;
         try {
             res = this.open
@@ -65,23 +158,54 @@ export class LiveSource {
                     ? await fetch(this.url, { signal: this.abort.signal, cache: 'no-store' })
                     : await api.liveStream(this.id, this.abort.signal);
         } catch (err) {
-            if (err.name !== 'AbortError') {
-                this.callbacks.onError(new Error(`Cannot reach the live stream, ${err.message}.${this.url ? ' A stream on another server must allow this page, through CORS.' : ''}`));
+            if (err.name === 'AbortError') {
+                throw err;
             }
-            return;
+            throw new Error(`Cannot reach the live stream, ${err.message}.${this.url ? ' A stream on another server must allow this page, through CORS.' : ''}`);
         }
         if (!res.ok || !res.body) {
-            this.stop();
-            this.callbacks.onError(new Error(`The live stream answered ${res.status} ${res.statusText}.`));
-            return;
+            const err = new Error(`The live stream answered ${res.status} ${res.statusText}.`);
+            // A source that the server no longer lists has stopped, a failed relay may recover.
+            err.terminal = res.status < 500;
+            throw err;
         }
         const parser = new StreamParser(
             (header) => {
-                this.store = new FrameStore(header, [], liveLimit(header));
-                this.headerAt = performance.now();
-                this.callbacks.onHeader(header, this.store);
+                if (this.store) {
+                    if (header.stream_sequence !== 1 || header.stream_id !== this.store.header.stream_id) {
+                        // The source switched its environment while the connection was lost, so
+                        // this stream has ended and the source goes on with another.
+                        const err = new Error('The live source started another stream.');
+                        err.switched = true;
+                        throw err;
+                    }
+                    if (JSON.stringify(header.players) !== JSON.stringify(this.store.header.players)) {
+                        throw new FormatError('The reconnected stream lists other players than the stream it continues.');
+                    }
+                } else {
+                    this.store = new FrameStore(header, [], liveLimit(header));
+                    this.headerAt = performance.now();
+                    this.resumable = header.stream_sequence === 1;
+                    this.callbacks.onHeader(header, this.store);
+                }
+                this.setState('connected');
             },
             (frame) => {
+                if (frame.sequence !== undefined) {
+                    // A reconnected stream sends the history again, the frames already here drop.
+                    if (frame.sequence <= this.lastSequence) {
+                        return;
+                    }
+                    if (this.resumed) {
+                        const missed = this.lastSequence >= 0 ? frame.sequence - this.lastSequence - 1 : 0;
+                        if (missed > 0) {
+                            frame.gap = missed;
+                            this.gaps += missed;
+                        }
+                        this.resumed = false;
+                    }
+                    this.lastSequence = frame.sequence;
+                }
                 this.received++;
                 // The backlog is how far the frames ran ahead of real time just after the header.
                 const elapsed = (performance.now() - this.headerAt) / 1000;
@@ -101,18 +225,25 @@ export class LiveSource {
                     break;
                 }
                 parser.push(value);
+                if (parser.ended) {
+                    return 'ended';
+                }
             }
         } catch (err) {
-            if (err.name === 'AbortError') {
-                return;
+            if (err.switched) {
+                return 'ended';
             }
-            // A malformed stream stops here, so the connection does not keep the source busy.
-            this.stop();
-            this.callbacks.onError(err);
-            return;
+            // A malformed stream, or a lost one that cannot resume, stops here, so the
+            // connection does not keep the source busy.
+            if (err instanceof FormatError || !this.resumable) {
+                err.terminal = true;
+            }
+            throw err;
+        } finally {
+            reader.cancel().catch(() => {});
         }
-        this.ended = true;
-        this.callbacks.onEnd();
+        // Only a numbered stream that delivered its header and lost its connection reconnects.
+        return parser.header && parser.header.stream_sequence === 1 ? 'lost' : 'ended';
     }
 
     stop() {

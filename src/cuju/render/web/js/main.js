@@ -5,6 +5,9 @@
 
 import * as THREE from 'three';
 import { api, formatBytes } from './core/api.js';
+import { PlayerTools } from './watch/player-tools.js';
+import { AccessibilityControls } from './core/accessibility.js';
+import { OWN_KEYS, openPanel } from './core/comfort.js';
 import { Sound } from './broadcast/audio.js';
 import { Ball } from './world/ball.js';
 import { CAMERA_MODES, CameraRig, PLAYER_VIEWS } from './world/cameras.js';
@@ -23,6 +26,7 @@ import { PlayPage } from './play/play.js';
 import { bindTopMenus } from './core/menu.js';
 import { GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_W, Pitch } from './world/pitch.js';
 import { Players, loadAssets, loadTeamRig, playerModel } from './players/players.js';
+import { loadTeamClips, qualifyStyle } from './players/clips.js';
 import { Pose } from './recording/pose.js';
 import { Director, Podium, PostMatch, Spotlight, playerInfo, scorerAt } from './broadcast/show.js';
 import { Environment, View, defaultQuality } from './world/scene.js';
@@ -30,7 +34,14 @@ import { Stadium } from './world/stadium.js';
 import { FrameStore, Timeline } from './recording/timeline.js';
 import { Transitions } from './broadcast/transition.js';
 import { Decisions } from './broadcast/decisions.js';
+import { fullMatch } from './recording/episodes.js';
 import { titleText } from './core/scenarios.js';
+import { CommandPalette } from './help/palette.js';
+import { SettingsPresets } from './watch/presets.js';
+import { FirstRun } from './help/firstrun.js';
+import { TouchControls } from './play/touch.js';
+import { FlatMode, headlessView } from './watch/flat.js';
+import { EnvironmentGrid } from './watch/grid.js';
 
 const $ = (id) => document.getElementById(id);
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
@@ -55,6 +66,16 @@ function save(key, value) {
     }
 }
 
+// Whether keyboard focus rests inside an element, which keeps it in view. A browser without :has
+// counts any focus inside.
+function keyboardFocusIn(selector) {
+    try {
+        return document.querySelector(`${selector}:has(:focus-visible)`);
+    } catch {
+        return document.querySelector(`${selector}:focus-within`);
+    }
+}
+
 // The theme of the page, system to follow the operating system, or dark or light.
 function applyTheme(theme) {
     if (theme === 'dark' || theme === 'light') {
@@ -70,8 +91,9 @@ class App {
         try {
             this.view = new View($('stage'));
         } catch (err) {
-            this.fatal(`This browser cannot run the viewer. ${err.message}`);
-            throw err;
+            // A browser without WebGL 2 watches matches in the 2D view.
+            this.noWebGL = err.message || 'no WebGL';
+            this.view = headlessView($('stage'), View);
         }
         this.settings = {
             quality: load('quality', defaultQuality()),
@@ -136,6 +158,9 @@ class App {
         // Restarts, half time and the referee's decisions, presented as on television.
         this.transition = new Transitions(this);
         this.decisions = new Decisions(this, this.transition);
+        this.playerTools = new PlayerTools(this);
+        this.accessibility = new AccessibilityControls(this);
+        this.palette = new CommandPalette(this, { CAMERA_MODES, api });
         this.clock = 0;
         this.idleTimer = null;
         this.hashTimer = null;
@@ -158,6 +183,13 @@ class App {
         this.bindPointerRelease();
         this.bindTv();
         this.syncSettingsUi();
+        // The 2D view, which reads the presentations that need 3D as off while it draws.
+        this.flat = new FlatMode(this, this.noWebGL || null);
+        this.settings = this.flat.gate(this.settings);
+        this.grid = new EnvironmentGrid(this);
+        this.presets = new SettingsPresets(this);
+        this.firstRun = new FirstRun(this);
+        this.touch = new TouchControls(this);
         this.showEmpty(true);
         this.applyField(this.field);
         loadAssets().then((assets) => {
@@ -316,15 +348,18 @@ class App {
     }
 
     // A full URL reaches a stream on another server, so it opens only when the user typed it,
-    // never from a link someone shared.
-    openLive(id, typed = false) {
+    // never from a link someone shared. A source that switched its environment opens again on
+    // the page that the viewer is on.
+    openLive(id, typed = false, switched = false) {
         if (/^https?:\/\//i.test(id) && !typed) {
             this.hud.toast('A stream on another server opens only when its address is typed in the address bar.', 'error', 8000);
             return;
         }
         const token = ++this.loadToken;
         this.dropPendingLive();
-        this.showPage('watch');
+        if (!switched) {
+            this.showPage('watch');
+        }
         this.setWaiting('Waiting for the source');
         const live = new LiveSource(id, {
             onHeader: async (header, store) => {
@@ -336,6 +371,9 @@ class App {
                 await this.setSource({ kind: 'live', id, header, store, live });
                 if (this.source.live !== live) {
                     return;
+                }
+                if (switched) {
+                    this.hud.toast(`The source now shows environment ${(header.provenance && header.provenance.environment) || 0}.`, 'info', 4000);
                 }
                 this.timeline.goLive();
                 // A source sends what it already captured first, so the viewer can rewind at once.
@@ -350,7 +388,23 @@ class App {
                 }
             },
             onFrame: () => {},
-            onEnd: () => {
+            onState: () => {
+                if (this.source && this.source.live === live) {
+                    this.updateLiveUi();
+                }
+            },
+            onEnd: async () => {
+                if (await this.followSwitch(live)) {
+                    return;
+                }
+                // A source that closes before its first frame leaves nothing to watch.
+                if (this.pendingLive === live && !live.store) {
+                    this.setWaiting(null);
+                    this.pendingLive = null;
+                    if (token === this.loadToken) {
+                        this.hud.toast('The live stream ended before sending any frames.', 'info');
+                    }
+                }
                 if (this.source && this.source.live === live) {
                     this.hud.toast('The live stream ended. Its frames stay here to review.', 'info', 6000);
                     this.updateLiveUi();
@@ -377,6 +431,58 @@ class App {
         });
         this.pendingLive = live;
         live.start();
+    }
+
+    // A source that switches its environment ends its streams and stays listed, while a source
+    // that closes leaves the list first, so a stream that ends on a listed source gives way to
+    // the stream of the new environment.
+    async followSwitch(live) {
+        const watched = () => this.pendingLive === live || (this.source && this.source.live === live);
+        if (live.url || live.open || !watched()) {
+            return false;
+        }
+        let entry;
+        try {
+            entry = (await api.live()).find((s) => s.id === live.id);
+        } catch {
+            return false;
+        }
+        if (!entry || !watched()) {
+            return false;
+        }
+        this.openLive(live.id, false, true);
+        return true;
+    }
+
+    // Asks the live source to show another environment of its batch. The source switches after
+    // the next step of the batch and ends this stream, and followSwitch opens the new one.
+    async switchEnvironment() {
+        const source = this.source;
+        const live = source && source.kind === 'live' ? source.live : null;
+        if (!live) {
+            return;
+        }
+        const count = source.header.environment_count || 1;
+        const current = (source.header.provenance && source.header.provenance.environment) || 0;
+        const environment = Number($('live-env-index').value);
+        if (!Number.isInteger(environment) || environment < 0 || environment >= count) {
+            this.hud.toast(`Choose an environment from 0 to ${count - 1}.`, 'error');
+            return;
+        }
+        if (environment === current) {
+            this.hud.toast(`The source already shows environment ${environment}.`, 'info');
+            return;
+        }
+        $('live-env-go').disabled = true;
+        try {
+            await api.selectEnvironment(source.id, environment);
+            this.switchingLive = live;
+            this.hud.toast(`Environment ${environment} shows after the next step of the batch.`, 'info');
+        } catch (err) {
+            this.hud.toast(`The environment could not be switched. ${err.message}`, 'error', 8000);
+        } finally {
+            $('live-env-go').disabled = false;
+        }
     }
 
     async setSource(source) {
@@ -414,10 +520,10 @@ class App {
                 const h = source.header;
                 const ended = f && !!(f.flags & 1);
                 // An episode that ended plays the show, under the card of full time for a full
-                // match, which an older recording without the field counts as, and under the card
-                // of the end of an episode otherwise. A recording saved before its episode ended
-                // shows its own card alone.
-                if (ended && h.full_match !== false) {
+                // match and under the card of the end of an episode otherwise, as for an older
+                // recording without timing. A recording saved before its episode ended shows its
+                // own card alone.
+                if (ended && fullMatch(h)) {
                     clearTimeout(this.fullTimeTimer);
                     this.transition.fullTime();
                     this.postMatch.start();
@@ -482,6 +588,10 @@ class App {
             // Artwork belongs to GRF's own model, which any player of the roster may wear.
             style.art = art;
             sponsors.push(art.sponsors);
+            // The team's own celebration clips play under names of their own while it plays.
+            if (known) {
+                qualifyStyle(style, await loadTeamClips(known));
+            }
             styles.push(style);
             // A rig for every model the players of this side use, by model, shared by players.
             const wanted = new Set([model]);
@@ -788,7 +898,9 @@ class App {
                 this.endCard = false;
                 this.transition.title.hide();
             }
-            this.director.update();
+            if (!this.reducedMotion) {
+                this.director.update();
+            }
             this.transition.update(this.playDt);
             const s = tl.sample();
             if (s.index !== this.lastIndex) {
@@ -842,6 +954,7 @@ class App {
         this.cameras.idleSeconds = this.page === 'watch' && this.settings.idleReturn ? this.settings.idleSeconds : 0;
         this.cameras.update(dt, ballPos, this.players, this.pose || { players: 1 }, this.view.aspect, follow);
         this.sound.setListener(this.view.camera);
+        this.playerTools.update();
         // Sound plays on the pages that show a match, while it plays or while a show runs that the
         // viewer has not paused, and stops on every other page.
         const onStage = this.page === 'watch' || this.page === 'play';
@@ -852,7 +965,8 @@ class App {
         this.stadium.update(this.clock, this.excitement, Math.min(1, this.goalBoost * 1.6));
         this.environment.update(dt);
         // Recordings and Teams cover the view, so it need not draw.
-        if (this.page === 'watch' || this.page === 'field' || this.page === 'play') {
+        // The 2D view draws the Watch page in place of the 3D picture when it is on.
+        if ((this.page === 'watch' || this.page === 'field' || this.page === 'play') && !this.flat.draw(this.page)) {
             this.view.render();
         }
     }
@@ -928,7 +1042,7 @@ class App {
     // A recording goes on to the show after the match, a live stream keeps playing and offers
     // the show on a button instead.
     fullTime(end = null, before = null) {
-        const full = !this.source || this.source.header.full_match !== false;
+        const full = !!this.source && fullMatch(this.source.header);
         const goal = end && before && (end.scoreLeft !== before.scoreLeft || end.scoreRight !== before.scoreRight);
         const stopped = end && before && end.gameMode > 0 && end.gameMode !== before.gameMode;
         if (full || goal || stopped) {
@@ -1251,6 +1365,10 @@ class App {
             });
         }
         $('speed').addEventListener('change', () => this.setSpeed(SPEEDS.indexOf(Number($('speed').value))));
+        $('live-env').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.switchEnvironment();
+        });
         // Camera, quality and theme live in the View menu, the rest of the settings and the
         // help open from the bar, each as a dropdown.
         this.menus = bindTopMenus(this, { CAMERA_MODES, api, scorerAt });
@@ -1406,7 +1524,7 @@ class App {
         window.addEventListener('keydown', (e) => {
             this.sound.unlock();
             const textField = e.target.closest('input, select, textarea, [contenteditable]');
-            const control = e.target.closest('button, a, [role^="menuitem"], [role="slider"]');
+            const control = e.target.closest(OWN_KEYS);
             if (e.defaultPrevented || textField || (control && e.key !== 'Escape')) {
                 return;
             }
@@ -1769,7 +1887,7 @@ class App {
     // The interface fades while playing or in fullscreen once the pointer rests.
     bindIdle() {
         const wake = () => this.poke();
-        for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart']) {
+        for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart', 'focusin']) {
             window.addEventListener(ev, wake, { passive: true });
         }
         this.poke();
@@ -1782,7 +1900,8 @@ class App {
         this.idleTimer = setTimeout(() => {
             const playing = this.timeline && this.timeline.playing;
             const busy = this.postMatch.running || this.page !== 'watch' || $('help').classList.contains('open') || $('settings').classList.contains('open')
-                || document.querySelector('#controls:hover, #topbar:hover, #watch-bar:focus-within, .dd-panel.open');
+                || document.querySelector('#controls:hover, #topbar:hover, #watch-bar:focus-within, .dd-panel.open')
+                || keyboardFocusIn('#controls');
             if ((playing || document.fullscreenElement) && !busy) {
                 app.classList.add('idle');
             }
@@ -1798,17 +1917,16 @@ class App {
         $('app').classList.remove('idle');
     }
 
-    // Whatever asks for a click or a key releases the pointer, a menu, a dialog, a confirm or a
-    // prompt, the editor, the lineups, the cards after the match, and any element marked with
-    // data-prompt. The check runs only while the pointer is locked, so it costs nothing else.
+    // Whatever asks for a click or a key releases the pointer, a menu, a dialog, a details panel,
+    // the panel of an expanded button, a confirm or a prompt, the editor, the lineups, the cards
+    // after the match, any element marked with data-prompt, and focus on a control. The check
+    // runs only while the pointer is locked, so it costs nothing else.
     bindPointerRelease() {
-        const wants = 'dialog[open], .dd-panel.open, #team-editor:not([hidden]), #lineups, .post-card, #victory, #spotlight, [data-prompt]';
         let queued = false;
         const check = () => {
             queued = false;
             // Only what shows counts, the editor on a hidden page does not.
-            const shown = [...document.querySelectorAll(wants)].some((el) => el.getClientRects().length > 0);
-            if (document.pointerLockElement && shown) {
+            if (document.pointerLockElement && openPanel()) {
                 this.releasePointer();
             }
         };
@@ -1817,7 +1935,17 @@ class App {
                 queued = true;
                 setTimeout(check, 0);
             }
-        }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'hidden', 'open'] });
+        }).observe(document.body, {
+            subtree: true, childList: true, attributes: true,
+            attributeFilter: ['class', 'hidden', 'open', 'style', 'aria-expanded'],
+        });
+        // Focus that moves to a control, by Tab or by script, wants the pointer as well.
+        document.addEventListener('focusin', (e) => {
+            const locked = document.pointerLockElement;
+            if (locked && e.target instanceof Element && !e.target.contains(locked)) {
+                this.releasePointer();
+            }
+        });
         // Something that opened while the pointer was free is caught when the lock begins.
         document.addEventListener('pointerlockchange', () => {
             if (document.pointerLockElement) {
@@ -1964,7 +2092,7 @@ class App {
     setTrail(on) {
         this.settings.trail = on;
         save('trail', on);
-        this.ball.setTrail(on);
+        this.ball.setTrail(on && !this.reducedMotion);
         $('trail').checked = on;
     }
 
@@ -2033,8 +2161,33 @@ class App {
         $('go-live').hidden = atEdge && !ended;
         $('go-live').disabled = ended;
         $('go-live').title = ended ? 'The stream has ended' : 'Go to the newest moment (End)';
-        $('live-state').textContent = ended ? 'Stream ended' : atEdge ? 'Live' : `${formatSeconds(behind)} behind live`;
+        const connection = this.source.live;
+        let state = ended ? 'Stream ended' : atEdge ? 'Live' : `${formatSeconds(behind)} behind live`;
+        if (connection && connection.failed) {
+            state = 'Disconnected';
+        } else if (connection && connection.state === 'reconnecting') {
+            state = 'Reconnecting';
+        }
+        // Frames lost while the stream reconnected show as cuts, and their count stays here.
+        if (connection && connection.gaps) {
+            state += `, ${connection.gaps} ${connection.gaps === 1 ? 'frame' : 'frames'} lost`;
+        }
+        $('live-state').textContent = state;
+        // A source on this server with several environments may show another, and the control
+        // stays while a switch it asked for ends this stream.
+        const header = this.source.header;
+        const switchable = !this.source.game && connection && !connection.url
+            && (header.environment_count || 1) > 1 && (!ended || this.switchingLive === connection);
+        $('live-env').hidden = !switchable;
+        if (switchable && this.environmentSource !== this.source) {
+            this.environmentSource = this.source;
+            $('live-env-index').max = String(header.environment_count - 1);
+            $('live-env-index').value = String((header.provenance && header.provenance.environment) || 0);
+        }
         $('live-box').classList.toggle('at-edge', atEdge && !ended);
+        if (this.grid) {
+            this.grid.update();
+        }
     }
 
     renderMarkers() {

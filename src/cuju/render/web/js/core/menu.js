@@ -421,6 +421,9 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
                 }),
                 menuItem('Fullscreen', { checked: !!document.fullscreenElement, check: true, kbd: 'F', onSelect: () => app.toggleFullscreen() }));
         }
+        if ($('view-drawing') && app.flat) {
+            $('view-drawing').replaceChildren(...app.flat.menuItems(menuItem), ...(app.grid ? app.grid.menuItems(menuItem) : []));
+        }
         radio($('view-quality'), [['low', 'Low, for older laptops'], ['medium', 'Medium'], ['high', 'High, shadows and effects']],
             app.settings.quality, (q) => app.setQuality(q));
         radio($('view-theme'), [['system', 'Follow the system'], ['dark', 'Dark'], ['light', 'Light']],

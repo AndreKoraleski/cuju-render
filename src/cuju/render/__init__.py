@@ -13,6 +13,7 @@ registry, and `serve` runs the local page that plays them all. The guide is in t
 from __future__ import annotations
 
 import struct
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -26,14 +27,25 @@ from ._store.home import home
 from ._watch import live as _live
 from ._watch.live import LiveSource
 
-__all__ = ['LiveSource', 'Recorder', 'add_team', 'home', 'play', 'serve', 'watch']
+__all__ = [
+    'LiveSource',
+    'Recorder',
+    'add_team',
+    'home',
+    'on_batch_created',
+    'play',
+    'serve',
+    'watch',
+]
 
 
 class Recorder:
     """Records the matches of one environment of a batch into the renderer's library.
 
-    Call `capture` after `reset` and after each `step`. A recording ends when its episode ends, and
-    `save` writes it, so a batch with automatic resets yields one recording per episode.
+    The recorder is a step observer of the batch, so it captures every `reset` and step by itself.
+    A recording ends when its episode ends, and `save` writes it, so a batch with automatic resets
+    yields one recording per episode. Code that calls `capture` after each step, as with cuju
+    0.2.0, still works, since the first call of `capture` turns the automatic capture off.
 
     Attributes:
         environment: The index of the environment.
@@ -48,7 +60,7 @@ class Recorder:
         teams: list[dict[str, Any]] | None = None,
         scenario: str | None = None,
     ) -> None:
-        """Prepares a recorder of `environment` of `batch`.
+        """Attaches a recorder of `environment` to `batch`, which captures from the next call on.
 
         Args:
             batch: The batch.
@@ -58,7 +70,7 @@ class Recorder:
                 RGB list of three integers from 0 to 255, each optional.
             scenario: The name of the scenario that the header records, by default the batch's.
         """
-        if not hasattr(batch, '_state'):
+        if not callable(getattr(batch, 'add_observer', None)):
             raise ArgumentError(
                 'expected a BatchEnvironment, found a batch whose states the recorder cannot read; '
                 'record one of the batches of a MultiDeviceBatch instead'
@@ -68,7 +80,9 @@ class Recorder:
                 f'expected an environment from 0 to {batch.environment_count - 1}, '
                 f'found {environment}'
             )
-        self._batch = batch
+        # The batch holds the recorder, which holds the batch weakly, so that a dropped batch
+        # frees its memory without waiting for the garbage collector.
+        self._batch = weakref.ref(batch)
         self.environment = environment
         self._title = title
         self._teams = teams
@@ -79,9 +93,33 @@ class Recorder:
         self._frames: list[bytes] = []
         self._timing = None
         self.saved: list[Path] = []
+        # The information of the last step, whose scoring signal completes an ending episode.
+        self._information: dict[str, Any] | None = None
+        # Whether the caller captures by hand, as with cuju 0.2.0, which ends automatic capture.
+        self._manual = False
+        batch.add_observer(self)
+
+    def __call__(self, batch: Any, done: Any, information: dict[str, Any]) -> None:
+        """Captures a reset of the environment or a step, as a step observer of the batch."""
+        if done is None:
+            if self._manual or 'reset' not in information:
+                return
+            reset = information['reset']
+            if reset is None or bool(reset[self.environment]):
+                self._capture(batch, None)
+            return
+        self._information = information
+        if not self._manual:
+            self._capture(batch, done)
 
     def capture(self, done: Any = None) -> Path | None:
-        """Adds the environment's current step, and saves the recording when its episode ended.
+        """Adds the environment's current step by hand, and saves the recording when its episode
+        ended.
+
+        The recorder captures by itself, so a program needs this only to choose its steps. The
+        first call turns the automatic capture off for good and drops the frames that it took and
+        has not saved, so code written for cuju 0.2.0, which calls this after `reset` and after
+        each `step`, records the same frames as before.
 
         With automatic resets, the step that ends an episode already shows the next one's start,
         so the recording ends at the step before, marked as the end, and the new start opens the
@@ -92,16 +130,30 @@ class Recorder:
 
         Returns:
             The path of the recording saved by this call, or `None`.
+
+        Raises:
+            ArgumentError: If the batch is gone.
         """
+        if not self._manual:
+            self._manual = True
+            self._frames, self._lineup = [], None
+        batch = self._batch()
+        if batch is None:
+            raise ArgumentError('expected the batch of the recorder, found it gone')
+        return self._capture(batch, done)
+
+    def _capture(self, batch: Any, done: Any) -> Path | None:
+        """Adds the environment's current step, as `capture` describes."""
         ended = done is not None and bool(done[self.environment])
         saved = None
-        if ended and self._batch.auto_reset:
+        if ended and batch.auto_reset:
             if self._frames:
                 last = bytearray(self._frames[-1])
                 (flags,) = struct.unpack_from('<i', last, 28)
                 struct.pack_into('<i', last, 28, flags | 1)
                 # GRF: the scoring signal is 1 when the left team scores and -1 for the right.
-                signal = self._batch._score_reward
+                information = self._information or {}
+                signal = information.get('score_reward')
                 scored = int(signal[self.environment]) if signal is not None else 0
                 if scored:
                     offset = 8 if scored > 0 else 12
@@ -110,11 +162,11 @@ class Recorder:
                     struct.pack_into('<i', last, 28, (flags | 1) & ~(31 << 8))
                 self._frames[-1] = bytes(last)
             saved = self.save()
-        state = self._batch._state(self.environment)
+        state = batch.get_state(self.environment, stacked=batch.stacked)
         self._timing = _recording.scenario_timing(state)
         if self._lineup is None:
             self._lineup = self._reader.lineup(state)
-        closing = ended and not self._batch.auto_reset
+        closing = ended and not batch.auto_reset
         self._frames.append(self._reader.frame(state, 1 if closing else 0))
         if closing:
             saved = self.save()
@@ -129,8 +181,16 @@ class Recorder:
         if not self._frames or self._lineup is None:
             return None
         title = self._title or f'{self._scenario}, environment {self.environment}'
+        # A batch may have been reset with another seed before the capture, so the recording
+        # names its environment alone and leaves the seed unknown.
         head = _recording.header(
-            title, self._scenario, self._lineup, self._teams, len(self._frames), self._timing
+            title,
+            self._scenario,
+            self._lineup,
+            self._teams,
+            len(self._frames),
+            self._timing,
+            {'source': 'recorder', 'environment': self.environment},
         )
         path = _library.save(head, self._frames)
         self._frames, self._lineup = [], None
@@ -178,8 +238,8 @@ def watch(
 ) -> LiveSource:
     """Streams one environment of a running batch to the renderer's page.
 
-    The batch publishes after each step while a viewer watches, as `CUJU_RENDER` makes every batch
-    do. Close the source, or the batch, to withdraw it.
+    The source is a step observer of the batch, which publishes after each step while a viewer
+    watches, as `CUJU_RENDER` makes every batch do. Close the source, or the batch, to withdraw it.
 
     Args:
         batch: The batch.
@@ -190,20 +250,44 @@ def watch(
             seconds of history, at the cost of one state read per step.
 
     Returns:
-        The source, which the batch holds as well.
+        The source, which the batch holds as one of its observers, in place of any source that
+        `watch` or `CUJU_RENDER` gave it before.
     """
-    if not isinstance(getattr(batch, '_live', False), (LiveSource, type(None))):
+    if not callable(getattr(batch, 'add_observer', None)):
         raise ArgumentError(
             'expected a BatchEnvironment, found a batch whose steps show no live source; watch '
             'one of the batches of a MultiDeviceBatch instead'
         )
-    if batch._live is not None:
-        batch._live.close()
-    batch._live = LiveSource(batch, environment, title, teams, backlog=backlog)
-    return batch._live
+    for observer in batch.observers:
+        if isinstance(observer, LiveSource):
+            observer.close()
+    source = LiveSource(batch, environment, title, teams, backlog=backlog)
+    batch.add_observer(source)
+    return source
+
+
+def on_batch_created(batch: Any) -> LiveSource | None:
+    """Gives a new batch the live source that `CUJU_RENDER` asks for, and returns it.
+
+    cuju calls this for every batch that it creates while `CUJU_RENDER` is set, and it is the one
+    function of the renderer that cuju calls. `CUJU_RENDER` holds `on` for environment 0, or the
+    index of the environment to show, and an index past the batch's count shows environment 0.
+    A non-empty `CUJU_RENDER_BACKLOG` other than `0`, `off` or `no` makes the source read every
+    step.
+
+    Args:
+        batch: The batch.
+
+    Returns:
+        The source, or `None` when the variable asks for none.
+    """
+    source = _live.from_environment(batch)
+    if source is not None:
+        batch.add_observer(source)
+    return source
 
 
 # The modules keep `cuju.render` as the module of the public names.
-for _name in (Recorder, watch, home, play, serve, LiveSource, add_team):
+for _name in (Recorder, watch, on_batch_created, home, play, serve, LiveSource, add_team):
     _name.__module__ = __name__
 del _name

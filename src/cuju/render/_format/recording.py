@@ -10,6 +10,7 @@ the repository's `docs/rendering.md`, under Recording format.
 
 from __future__ import annotations
 
+import functools
 import gzip
 import json
 import struct
@@ -19,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from cuju import __version__
 from cuju import state as _state
 from cuju.errors import StateError
 
@@ -73,14 +75,33 @@ def _quantize(nodes: np.ndarray) -> np.ndarray:
     return np.clip(np.rint(nodes * scale), -32767, 32767).astype('<i2')
 
 
+# GRF: the state names each type as C++'s `typeid` does, and stores it little-endian.
+_DTYPES = {
+    'f': ('<f4', ()),
+    'i': ('<i4', ()),
+    'j': ('<u4', ()),
+    'b': ('u1', ()),
+    'c': ('i1', ()),
+    'm': ('<u8', ()),
+    'N7blunted7Vector3E': ('<f4', (3,)),
+    'N7blunted10QuaternionE': ('<f4', (4,)),
+}
+
+
+@functools.cache
+def _layout() -> dict[str, _state.Field]:
+    """Returns the layout of the match in memory, read once."""
+    return _state.layout()
+
+
 def _field(path: str) -> _state.Field:
     """Returns the `Field` of a path of the layout."""
-    return _state._fields()[path]
+    return _layout()[path]
 
 
 def _dtype(field: _state.Field) -> tuple[str, tuple[int, ...]]:
     """Returns the numpy type and shape of a field of the layout."""
-    dtype, shape = _state._DTYPES.get(field.type, (None, ()))
+    dtype, shape = _DTYPES.get(field.type, (None, ()))
     # GRF: an enumeration is a C++ `enum`, four bytes on every platform it runs on.
     if dtype is None and field.size == 4 and field.type[:1].isdigit():
         dtype = '<i4'
@@ -154,7 +175,7 @@ class StateReader:
                 layout.append((f'{name}{player}', *_dtype(fields[-1])))
         self._fields = fields
         self._dtype = np.dtype(layout)
-        known = _state._fields()
+        known = _layout()
         self._roles = {
             (team, index): known[path]
             for team, side in enumerate(('left', 'right'))
@@ -349,6 +370,7 @@ def header(
     teams: list[dict[str, Any]] | None = None,
     frame_count: int | None = None,
     timing: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> bytes:
     """Returns the magic, the header length and the header of a recording.
 
@@ -359,6 +381,8 @@ def header(
         teams: The name, `color` and `secondary` color of the left and right team, each optional.
         frame_count: The number of frames, or None for a live stream.
         timing: The optional scenario timing fields.
+        provenance: What is known of where the recording comes from, such as its source, seed
+            and configuration. The version of cuju joins it, and a field left out stays unknown.
     """
     given = [*(teams or ()), {}, {}]
     document = {
@@ -375,7 +399,12 @@ def header(
         'teams': [{**_DEFAULT_TEAMS[side], **given[side]} for side in range(2)],
         'frame_bytes': frame_bytes(len(lineup)),
         'frame_count': frame_count,
+        'provenance': {**(provenance or {}), 'cuju_version': __version__},
     }
+    # JavaScript holds integers exactly only up to 2**53 - 1, so a larger seed travels as text.
+    seed = document['provenance'].get('seed')
+    if isinstance(seed, int) and not isinstance(seed, bool) and seed > 2**53 - 1:
+        document['provenance']['seed'] = str(seed)
     text = json.dumps(document, separators=(',', ':')).encode()
     # Spaces after the JSON align the frames to four bytes, so a reader views their floats in place.
     text += b' ' * (-(len(MAGIC) + 4 + len(text)) % 4)
