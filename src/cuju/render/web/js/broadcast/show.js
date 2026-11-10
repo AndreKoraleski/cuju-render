@@ -2941,7 +2941,9 @@ export class Podium {
         return !!this.overlay;
     }
 
-    show() {
+    // A trophy ceremony passes `honour`, the side of the champion with a title and a line under
+    // it, and the podium holds that side whatever the score of the match.
+    show(f = null, honour = null) {
         const app = this.app;
         if (this.showing || !app.source) {
             return;
@@ -2950,7 +2952,7 @@ export class Podium {
         const { stats } = matchStats(app.timeline.store, header);
         const last = app.timeline.store.get(app.timeline.last);
         app.hud.freeze(last);
-        const winner = last.scoreLeft === last.scoreRight ? -1 : (last.scoreLeft > last.scoreRight ? 0 : 1);
+        const winner = honour ? honour.team : last.scoreLeft === last.scoreRight ? -1 : (last.scoreLeft > last.scoreRight ? 0 : 1);
         const best = (team) => stats.filter((s) => s.team === team).sort((a, b) => b.score - a.score);
         app.sound.fanfare();
         this.previousCamera = app.cameras.mode === 'scripted' ? (app.settings.camera || 'broadcast') : app.cameras.mode;
@@ -2964,11 +2966,11 @@ export class Podium {
         const cards = winner >= 0 ? [this.card(best(winner)[0], header)] : [this.card(best(0)[0], header, true), this.card(best(1)[0], header, true)];
         const all = stats.slice().sort((a, b) => b.score - a.score);
         this.mvp = winner >= 0 ? best(winner)[0] : all[0];
-        const title = winner >= 0 ? `${names[winner]} ${plural(bareTeamName(header, winner)) ? 'win' : 'wins'}` : 'A draw';
-        this.overlay = h('div', { id: 'victory', class: winner >= 0 ? '' : 'draw' },
+        const title = honour ? honour.title : winner >= 0 ? `${names[winner]} ${plural(bareTeamName(header, winner)) ? 'win' : 'wins'}` : 'A draw';
+        this.overlay = h('div', { id: 'victory', class: honour ? 'ceremony' : winner >= 0 ? '' : 'draw', role: honour ? 'dialog' : null, 'aria-label': honour ? title : null },
             h('div', { class: 'victory-head' },
                 h('div', { class: 'victory-title' }, title),
-                h('div', { class: 'victory-score' }, `${names[0]}  ${last.scoreLeft} – ${last.scoreRight}  ${names[1]}`)),
+                h('div', { class: 'victory-score' }, honour ? honour.subtitle : `${names[0]}  ${last.scoreLeft} – ${last.scoreRight}  ${names[1]}`)),
             h('div', { class: 'victory-cards' }, cards),
             h('div', { class: 'victory-actions' }, app.postMatch.statsButton('btn ghost'),
                 h('button', { class: 'btn', onclick: () => app.postMatch.end() }, 'Close')));

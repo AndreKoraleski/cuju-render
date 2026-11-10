@@ -4,10 +4,11 @@
 """Watches cuju's matches in a browser, saved or live, in 3D with sound.
 
 The renderer reads GRF states and never writes one, so a match plays the same bits watched or not.
-`Recorder` saves the matches of a batch, `watch` streams one environment of a running batch,
-`add_team` registers a Kaggle submission folder, `play` records a match between two teams of the
-registry, and `serve` runs the local page that plays them all. The guide is in the repository's
-`docs/rendering.md`.
+`show` opens the viewer on a batch, a recording or a live source in one call, starting the server
+when none runs. `Recorder` and `record` save the matches of a batch, `watch` streams one
+environment of a running batch, `add_team` registers a Kaggle submission folder, `play` records a
+match between two teams of the registry, and `serve` runs the local page that plays them all.
+The guide is in the repository's `docs/rendering.md`.
 """
 
 from __future__ import annotations
@@ -26,15 +27,19 @@ from ._store import library as _library
 from ._store.home import home
 from ._watch import live as _live
 from ._watch.live import LiveSource
+from ._watch.show import View, show
 
 __all__ = [
     'LiveSource',
     'Recorder',
+    'View',
     'add_team',
     'home',
     'on_batch_created',
     'play',
+    'record',
     'serve',
+    'show',
     'watch',
 ]
 
@@ -197,6 +202,42 @@ class Recorder:
         self.saved.append(path)
         return path
 
+    def close(self) -> Path | None:
+        """Detaches the recorder from its batch and saves the frames captured so far.
+
+        Returns:
+            The path of the recording that this call saved, or `None` when nothing was captured.
+        """
+        batch = self._batch()
+        if batch is not None and any(observer is self for observer in batch.observers):
+            batch.remove_observer(self)
+        return self.save()
+
+    def __enter__(self) -> Recorder:
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        """Closes the recorder, so that a `with` block saves its last episode at its end."""
+        self.close()
+
+
+def record(batch: Any, environment: int = 0, **options: Any) -> Recorder:
+    """Records the matches of one environment of a batch, as a `Recorder` that also serves as a
+    context manager.
+
+    Leaving the `with` block detaches the recorder and saves the episode that it was capturing,
+    and every episode that ended inside the block is saved already.
+
+    Args:
+        batch: The batch.
+        environment: The environment to record.
+        **options: The other arguments of `Recorder`, such as `title` and `teams`.
+
+    Returns:
+        The recorder, whose list `saved` holds the paths of its recordings.
+    """
+    return Recorder(batch, environment, **options)
+
 
 def play(
     left: str,
@@ -288,6 +329,17 @@ def on_batch_created(batch: Any) -> LiveSource | None:
 
 
 # The modules keep `cuju.render` as the module of the public names.
-for _name in (Recorder, watch, on_batch_created, home, play, serve, LiveSource, add_team):
+for _name in (
+    Recorder,
+    watch,
+    on_batch_created,
+    home,
+    play,
+    serve,
+    LiveSource,
+    add_team,
+    show,
+    View,
+):
     _name.__module__ = __name__
 del _name

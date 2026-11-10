@@ -89,7 +89,7 @@ export const HELP_TOPICS = [
 
 const PAGES = [
     ['home', 'Home'], ['watch', 'Watch'], ['play', 'Play'], ['recordings', 'Recordings'],
-    ['matches', 'Matches'], ['teams', 'Teams'], ['field', 'Field'], ['help', 'Help'],
+    ['matches', 'Matches'], ['tournaments', 'Tournaments'], ['teams', 'Teams'], ['field', 'Field'], ['help', 'Help'],
 ];
 const TIMES = [['dawn', 'Dawn', 6.5], ['day', 'Day', 15], ['dusk', 'Dusk', 19], ['night', 'Night', 22]];
 

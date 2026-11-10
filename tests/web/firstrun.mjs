@@ -20,7 +20,7 @@ process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const { HELP_TEXT, TIPS, dismissTip, tipFor, tipState } = await import(pathToFileURL(join(folder, 'help/firstrun.js')).href);
 
 test('every page but Help has a short tip, and every control a short line of help', () => {
-    assert.deepEqual(Object.keys(TIPS).sort(), ['field', 'home', 'matches', 'play', 'recordings', 'teams', 'watch']);
+    assert.deepEqual(Object.keys(TIPS).sort(), ['field', 'home', 'matches', 'play', 'recordings', 'teams', 'tournaments', 'watch']);
     for (const text of [...Object.values(TIPS), ...Object.values(HELP_TEXT)]) {
         assert.ok(text.length <= 90, text);
         assert.ok(!/[;:()!]/.test(text), text);

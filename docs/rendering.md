@@ -16,23 +16,20 @@ sees, which the public tests check on both backends.
 
 ## Quick start
 
-The page runs as a local server, which listens on the loopback interface of the machine and keeps
-its files in a hidden folder, `~/.cuju/render` by default. The package installs the command `cuju`,
-whose subcommand `cuju render` runs the renderer, as `python -m cuju.render` does. The first command
-starts the server and opens the page, and the second plays a script with one of its environments
-shown live.
+Three lines of Python show a running batch in the browser.
 
-```sh
-cuju render serve --open
-CUJU_RENDER=on python train.py
+```python
+import cuju.render
+batch = cuju.BatchEnvironment('11_vs_11_stochastic_l1_r0', environment_count=8)
+cuju.render.show(batch)
 ```
 
-The server prints its address, `http://127.0.0.1:8780/` by default. The option `--port` of `serve`
-accepts ports from zero to 65535, with zero choosing a free port. The option `--home` of
-`cuju render`, written before the subcommand, picks another folder, as in
-`cuju render --home ./matches serve --port 8790`. A running batch with
-`CUJU_RENDER` set appears in the page's list of live sources when the list next refreshes, every
-eight seconds, and saved recordings appear on the next library refresh.
+`cuju.render.show` starts the renderer's server in the background, gives environment 0 of the
+batch a live source and opens the page on it, in the default browser from a script or a terminal
+and inside the notebook in Jupyter or Google Colab, as [Notebooks](#notebooks) describes. The batch
+then steps as it always does, in a training loop or any other code, and the page shows its matches
+while it plays. A second call reuses the server, and the server ends with the process that started
+it. [Showing from code](#showing-from-code) describes every argument.
 
 The quickest first look is the demo, which needs no script at all.
 
@@ -50,11 +47,107 @@ such as `academy_corner`, `--port` names the port of the server, `--seed` fixes 
 so the demo then says so and opens the page at its start, and the option `--home` of
 `cuju render` gives both the same folder.
 
+The page runs as a local server, which listens on the loopback interface of the machine and keeps
+its files in a hidden folder, `~/.cuju/render` by default. The package installs the command `cuju`,
+whose subcommand `cuju render` runs the renderer, as `python -m cuju.render` does. The first command
+starts the server and opens Home, the second opens a recording file, and the third plays a script
+with one of its environments shown live.
+
+```sh
+cuju render
+cuju render open match.cjr
+CUJU_RENDER=on python train.py
+```
+
+The server prints its address, `http://127.0.0.1:8780/` by default. The option `--port` of `serve`
+accepts ports from zero to 65535, with zero choosing a free port. The option `--home` of
+`cuju render`, written before the subcommand, picks another folder, as in
+`cuju render --home ./matches serve --port 8790`. A running batch with
+`CUJU_RENDER` set appears in the page's list of live sources when the list next refreshes, every
+eight seconds, and saved recordings appear on the next library refresh.
+
 cuju imports the renderer only when a command, a script or `CUJU_RENDER` asks for it, so a program
 that only trains loads none of it. Where the renderer is missing, `cuju render`,
 `python -m cuju.render` and `import cuju.render` each end with one message naming
 `pip install 'cuju[render]'`, which installs it. `CUJU_RENDER` then gives one warning through the
 logger `cuju`, and every batch of the process runs on as it would without the variable.
+
+### Showing from code
+
+`cuju.render.show(target=None, environment=0, title=None, teams=None, display='auto', port=None,
+stay=False, height=600)` opens the viewer on its target, which may be any of these.
+
+| Target | The page opens |
+| --- | --- |
+| a batch | a live source of `environment`, the one the batch has or a new one with `title` and `teams` as for `watch` |
+| a `LiveSource` | that source |
+| a path of a `.cjr` file | the recording, which `show` copies into the library first unless the library holds it |
+| the identifier of a recording or a live source | that recording or source |
+| a URL of the page | that address |
+| `None` | Home |
+
+The server of the renderer's folder answers when one runs, whether `cuju render` or an earlier
+`show` started it. Otherwise `show` starts one in a process of its own, on port 8780 when it is
+free and on a free port otherwise, or on `port`. That server writes its messages to `server.log`
+in the renderer's folder and ends with the process that started it, so a script that ends closes
+its page. With `stay=True` it keeps running until it is stopped, which suits a short script that
+only opens a recording. The argument `display` chooses where the page opens, `auto` inline in a
+notebook and in the default browser elsewhere, `browser` or `inline` for one of them, and `none`
+for neither. A machine without a display, such as a server reached over SSH, opens no browser,
+and `show` prints the address instead.
+
+`show` returns a view, whose attribute `url` holds the address of the page on this machine and
+`source` the live source it shows. Leaving a view used as a context manager closes the live source
+that `show` attached and leaves the server running.
+
+```python
+with cuju.render.show(batch, environment=2) as view:
+    train(batch, steps=100_000)
+```
+
+`cuju.render.record(batch, environment=0, **options)` creates a [recorder](#recordings) that also
+serves as a context manager, and `cuju.render.watch` returns a live source that does the same.
+Leaving the `with` block of a recorder detaches it from the batch and saves the episode it was
+capturing, and leaving the block of a source withdraws it from the page. `Recorder.close()` does
+the same for a recorder outside a `with` block.
+
+```python
+with cuju.render.record(batch, environment=3, title='Evaluation') as recorder:
+    evaluate(batch)
+print(recorder.saved)
+```
+
+## Notebooks
+
+In a notebook of Jupyter, JupyterLab or VS Code, `show` places the viewer in the output of its
+cell, a frame of the page 600 pixels high with a link beneath it that opens the viewer full size in
+a new tab. The argument `height` sets the height of the frame, and `display='browser'` opens a tab
+of the browser instead. A view that ends its cell appears once, and naming it in a later cell shows
+the viewer again.
+
+```python
+import cuju.render
+cuju.render.show('sample-11v11', height=480)
+```
+
+The frame shows the page of the server on the machine of the kernel at `127.0.0.1`, which is the
+machine of the browser when Jupyter runs locally. A kernel on another machine needs its port
+forwarded to the machine of the browser, as [Remote use](#remote-use) describes, and VS Code
+forwards it from its Ports view.
+
+In Google Colab, `show` serves the page through Colab's port proxy, the functions of
+`google.colab.output`, which carry it from the machine of the notebook to the browser of the
+person using Colab. A server that `show` starts there also answers the requests that arrive
+under the addresses of that proxy, so the inline viewer and its full size link work in that browser
+with no tunnel. A request that changes data through the proxy comes from a page whose origin names
+the very address that the request names, so the page of another notebook, under another address of
+Colab, changes nothing. The server ends with the notebook's runtime.
+
+The server lets a page sit in a frame only when its address carries the key of the server, which
+`show` reads from the renderer's folder, and only inside a notebook on this machine, in VS Code or
+in Colab. Every other site that frames the page finds it refused, as the server refuses its
+requests. `show` tells a notebook from a script by the modules that the process has already
+loaded, so a script or a terminal never imports IPython or Colab.
 
 ## Recordings
 
@@ -128,11 +221,21 @@ both samples again, and `cuju render sample 11v11` or `cuju render sample 5v5` a
 that sits in the Trash comes back from there with its folder, tags and notes, and the command says
 which samples it restored and which it added.
 
+The page opens a recording in stages and shows each on a bar over the view, the download with its
+share, the reading of the frames, and the players and the stadium while their files still load. A
+background worker of the browser unpacks the recording and reads its frames, so the page keeps
+drawing and loading meanwhile, and where a worker cannot start the page reads the recording itself
+into the same frames. The art of the players, the ball, the goals and the stands loads all at once
+beside the recording, and the players of a recording are built once, with their models. The rest
+loads when the page first needs it, the montage of Home when Home shows, the sounds when the sound
+is turned on, and the models and animations of other characters when a team wears them.
+
 ## Live sources
 
 A live source streams one environment of a running batch to the page. The environment variable
 `CUJU_RENDER` gives every batch of a process a source, with `on` for environment 0 or an index for
-another environment, and the call `cuju.render.watch` gives one batch a source from code. Every
+another environment, the call `cuju.render.watch` gives one batch a source from code, and
+`cuju.render.show` gives one and opens the page on it. Every
 batch that cuju creates while the variable is set calls `cuju.render.on_batch_created`, which
 gives it a source, and either way the source joins the [step observers](api.md#step-observers) of
 its batch.
@@ -559,8 +662,8 @@ Export alone.
 
 ## Page layout
 
-The page holds eight pages, chosen from the bar along its top. The cuju logo at the left of the bar
-opens Home, and tabs open Watch, Play, Recordings, Matches, Teams, Field and Help.
+The page holds nine pages, chosen from the bar along its top. The cuju logo at the left of the bar
+opens Home, and tabs open Watch, Play, Recordings, Matches, Tournaments, Teams, Field and Help.
 Commands, Settings and Fullscreen sit at the right end of the bar. On a narrow screen the tabs
 fold into one menu of pages.
 
@@ -690,6 +793,9 @@ on a failed, canceled or interrupted match and Repeat on a finished one queue a 
 same teams, scenario, seed and ability. The new request plays the teams as the registry holds them
 at that moment, so a team whose files changed since the first match plays its new files. A seed
 above `2**53 - 1` keeps its exact value on the page and in a retry.
+
+**Tournaments** makes and follows tournaments of registered teams, the built in AI and people, as
+described under Tournaments.
 
 **Teams** lists the registry on its left, with a form that adds a team from a submission folder or
 a single file, and opens the editor of the chosen team on its right, as described under
@@ -1030,6 +1136,231 @@ waits for a team beyond its time.
     end card shows the error. A team that fails to load or misses its first allowance stops the
     game before it starts, and the page shows the error.
 
+## Tournaments
+
+A **tournament** plays many matches between many entrants and crowns a champion. Its entrants are
+registered teams, the built in AI at chosen abilities, each a named entrant of its own, and people,
+so agents and people take part in the same tournament on equal terms. The matches of agents play
+headless in processes of their own, as requested matches do, and faster than real time. A match
+with a person waits for that person, who plays it on the Play page when its turn comes. Every match
+becomes a recording of the library, which opens from the tournament.
+
+A tournament is a chain of one to eight **stages**. The first stage takes every entrant, and each
+later stage takes those who advance from the stage before it, seeded by their standing there, at
+random from the seed, or by rating. The tournament keeps going while results come in, so a stage
+schedules each match as soon as both its sides are known, and the next stage starts once the
+stage before it has ended. Tournaments take from 2 to 256 entrants.
+
+### Formats
+
+Each stage plays one of eight formats.
+
+- **Knockout.** Single elimination, each tie between two entrants, the winner going on. A bracket
+    whose entrant count is no power of two is filled in one of two ways, chosen in the stage.
+    Byes for the top seeds fill the bracket up to the next power of two, so the best seeds start
+    in the second round. A **play-in round** brings the count down to the power of two below it,
+    the lowest seeds playing each other for the last places of the bracket. The bracket size may
+    also be set by hand within the range that either way allows. A knockout may stop when a set
+    number of entrants remain, a power of two, which makes it a qualifying stage of a chain, and
+    may add a third place match between the losers of the semi-finals. Seed one meets the lowest
+    seed in the first round, and the best seeds meet as late as the bracket allows.
+- **Double elimination.** A winners bracket and a losers bracket. An entrant that loses in the
+    winners bracket drops into the losers bracket, and leaves the tournament after a second
+    defeat. The winners of both brackets meet in the grand final. When the winner of the losers
+    bracket wins it, both have lost once, and a deciding match follows unless the stage turns it
+    off. Byes fill the bracket.
+- **League.** A round robin, every entrant meeting every other. The number of cycles sets how
+    many times each pair meets, once for a single round robin, twice for home and away, three
+    times or more beyond that, with the home side alternating from cycle to cycle. The legs of a
+    league set how many matches each meeting holds, played back to back with the venue in turn,
+    and each counts in the table on its own. An odd count of entrants gives one entrant a rest on
+    each matchday.
+- **Groups.** The entrants are drawn into groups, and each group plays a league. The stage sets
+    the number of groups, or a group size from which the number follows, or the size of each group
+    by hand, so groups of different sizes are allowed. The draw puts the seeded entrants into
+    **pots**, any number of them, as even as the count allows, the best seeds in the first pot,
+    shuffles each pot by the tournament seed and deals its entrants one at a time to the next group
+    with room. One pot for each place of a group gives the classic draw of one seed in each group,
+    and a single pot gives a draw at random. The **qualifiers** of each group go on, a count for
+    every group or one count for each group, and the stage may add the best entrants of one place
+    across the groups, such as the four best third places, or as many as fill a bracket of the
+    next power of two. Entrants of the same place compare across groups by points, goal difference,
+    goals and wins for each match played, which keeps groups of different sizes fair, and then by
+    lots. The qualifiers go on group winners first, then runners up and so on, so a knockout seeded
+    by standing pairs winners with runners up.
+- **Swiss system.** A set number of rounds, by default the rounds that a knockout of the same
+    entrants would take. The first round pairs the seeds in order. Each later round orders the
+    entrants by the table so far and pairs each with the best placed entrant it has not met. An
+    odd count gives a bye to the lowest entrant without one, worth a win, a draw or nothing as the
+    stage sets. Every pair meets at most once. Such a pairing always exists while each entrant has
+    met fewer than half the field, so a Swiss stage plays at most half as many rounds as it has
+    entrants, rounded up.
+- **Ladder.** The entrants stand on a ladder in seed order. In each round, neighbours meet, the
+    first and second, the third and fourth and so on, and in the next round the second and third,
+    the fourth and fifth, in turn. A challenger who wins takes the higher place, and on a draw the
+    holder keeps it unless the stage settles draws as ties. After as many rounds as entrants, the
+    default, the ladder sorts any order of strength.
+- **King of the hill.** The top seed starts as king, and every other entrant in turn challenges
+    the king. A challenger who wins becomes king, and on a draw the king stays unless the stage
+    settles draws as ties. Laps set how many times the challengers come round, and from the second
+    lap a dethroned king challenges too. The last king wins, and the others rank by the ties they
+    won.
+- **Gauntlet.** The two lowest seeds meet first, and the winner climbs to meet the next higher
+    seed, step by step up to the top seed, who plays only the last match. Drawn steps settle as
+    ties, or go to the higher seed when the stage says so.
+
+The final ranking of a tournament lists the last stage in its order, then those who left in
+earlier stages, later stages first. A knockout ranks the champion, the runner up, the third place
+match and then the round in which each entrant went out. A double elimination ranks by the round of
+the second defeat.
+
+### Settings
+
+Every setting below may be set for the whole tournament, as a default of every stage, and again
+for one stage, which overrides the default.
+
+| Setting | What it sets |
+| ------- | ------------ |
+| Scenario | Any scenario that every entrant can play, by default the Kaggle match, or five against five when every registered team is five a side. Stages may use different scenarios and formats, such as groups of five against five and a final of eleven against eleven, when every entrant who could reach a stage can play its scenario. |
+| Match length | The steps a match lasts, from 50 to 5000, ten steps a second, or the scenario's own. |
+| Ability | The ability of the built in AI sides, which plays beside a team or a person, and of a built in AI entrant that has no ability of its own. |
+| Legs | The matches of a tie, from 1 to 10, the higher seed playing the last leg at home, and goals adding up across them. The final may have its own count. |
+| Drawn ties | An ordered list of ways to settle a tie that ends level. Away goals count when the legs are even. A replay, up to five, is one more match. A deciding match plays a chosen scenario twice, such as an academy drill, each side attacking from the left once, and adds the goals of both. Lots drawn from the tournament seed always come last and always decide. |
+| Points | The points for a win, a draw and a loss, any whole numbers from minus 100 to 100. |
+| Tiebreakers | An ordered list of what separates entrants level on points, goal difference, goals scored, fewer goals conceded, the matches between them, wins, away goals, fair play from cards, Buchholz, the points of the opponents met, and lots from the seed, which always come last. |
+| Seeding | For the first stage, at random from the seed, by hand in the order of the entrants, or by rating. For a later stage, by the standing of the stage before it, at random or by rating. |
+| Matches at once | How many matches of agents play at the same time, from 1, the default, to 8. |
+| Forfeit score | The goals by which a match awarded by hand is won, 3 by default. |
+
+The settings of each format, the bracket, the stop of a knockout, the third place match, the reset
+of a grand final, cycles, groups, pots, qualifiers, best places, rounds, the points of a bye, laps,
+what a draw does and how many advance, are described with their formats above. A setting that
+cannot work, such as more Swiss rounds than allow a pairing without rematches, groups of one, a
+bracket too small for its entrants, a stage that receives fewer than two entrants or a team in a
+scenario of another format, is refused with a message that names the setting, the stage and why.
+
+Ratings come from earlier tournaments. Every match of a tournament moves the rating of both
+entrants by the Elo formula, 20 points for an upset at most, and a new entrant starts at 1500.
+A registered team, the built in AI at each ability and each person by name keep their own rating.
+An entrant's rating may also be set by hand, and seeding by rating uses the ratings as they stand
+when the tournament is made.
+
+### Determinism
+
+The same configuration and **tournament seed** give the same draw and the same seed for every
+match, whatever order the matches finish in. Each match has a key, such as `0/w4-1/2` for the second
+leg of the first semi-final of the first stage, and its seed comes from the tournament seed and that
+key. The draw of groups, pots, random seeding and lots each draw from the tournament seed and their
+own purpose. So a tournament repeats with the same seed, and a match that a stop cut short plays
+again from the start with the same seed and gives the same result.
+
+### Presets
+
+A preset holds a tournament's format, its stages, defaults and seeding, without its entrants. Those
+that ship adapt to the number of entrants where their format allows.
+
+| Preset | Format |
+| ------ | ------ |
+| World Cup | Groups of four, the best two of each in a knockout of single matches with a third place match. |
+| European Championship | Groups of four, the best two and enough of the best third places to fill a bracket. |
+| Champions League | Groups of four home and away, then two legged ties settled by away goals, and a single final. |
+| League phase and playoffs | A Swiss league phase of everyone, then the best eight in two legged ties. |
+| Classic league | A double round robin for three points a win. |
+| Round robin | A single round robin. |
+| Quick 8 team cup | A knockout of short matches of 600 steps, drawn ties settled by lots. |
+| Swiss of 16 | Five Swiss rounds ranked by points and Buchholz. |
+| Double elimination | Winners and losers brackets with a deciding grand final. |
+| League and playoffs | A round robin, then semi-finals and a final among the best four. |
+| Cup with a play-in | A knockout whose lowest seeds play in, with a third place match. |
+| Ladder | Neighbours meet each round, and winners climb. |
+| King of the hill | Challengers try the king one after another. |
+| Gauntlet | The lowest seeds climb toward the top seed. |
+
+The page saves any format as a preset of the user, which the setup lists beside those that ship.
+
+### The Tournaments page
+
+The **Tournaments** page lists every tournament on its left, with its state, entrants, formats,
+progress, the champion of a finished one and the matches waiting for a person. **New tournament**
+opens the setup on the right, in five steps that are tabs of their own, so any step opens at any
+time, and the arrow keys move between them.
+
+1. **Format** offers the presets, those that ship and those of the user.
+2. **Entrants** adds registered teams one at a time or every one at once, the built in AI at an
+    ability, or four of them at rising abilities, and people by name, with the built in AI or a
+    team of dynamic assignment as their teammates. Each entrant may be renamed, given a rating and
+    moved up or down, which is the seeding when it is manual, or removed.
+3. **Settings** names the tournament, takes its seed or draws one, and sets the seeding, the
+    scenario, match length and ability of every stage, the matches at once and the forfeit score.
+4. **Stages** is the advanced editor. Each stage is a card with every setting that its format
+    reads, the ordered lists of tiebreakers and ways to settle a tie, and buttons to add, move and
+    remove stages. Edit as JSON shows the stages and defaults as JSON to change as text.
+5. **Review** checks the tournament on the server and shows each stage with its entrants, those
+    who advance, its scenario and the draw of its first round or its groups, or the reason it
+    cannot be made. It also saves the format as a preset. Start tournament begins it.
+
+An open tournament shows its state, seed and progress, the matches playing now, and buttons to
+cancel it, resume it after a failed match, hold its trophy ceremony, run it again with the same
+settings and a new seed, or delete it, which leaves its recordings in Recordings. Its stages are
+tabs. A knockout or a double elimination shows its **bracket**, one column a round, each tie between
+the two that feed it, with the play-in round, the losers bracket, the grand final and the third
+place match in sections of their own, and a bracket wider than the page scrolls sideways. Leagues,
+groups, Swiss rounds, ladders and the challenges of a king show **tables**, with the places that
+qualify marked, a caption that names the order of the tiebreakers, and a line for each entrant that
+stands above another on equal points that names the tiebreaker that placed it there. **Fixtures and
+results** list every round with its matches, their scores, how a tie was decided, the progress of
+a match that plays, and Watch, which opens the recording of each match. The page follows a running
+tournament as it plays and announces a match that waits for a person and the end of a tournament.
+
+A match with a person shows **Play now**, which starts it as a game of the Play page with the
+tournament's scenario, length, abilities and match seed. The person's name stands on the
+scoreboard, and two people in one match play the game for two. A game that reaches its end gives
+the result, and the end card leads back to the tournament. A game that ends early, by Quit or a
+lost page, leaves the match to be played again. **Award** gives a match to either side by the
+forfeit score, for a person who cannot play or a team that keeps failing.
+
+The **trophy ceremony** of a finished tournament opens the last match that the champion played on
+the Watch page at its end, and holds the podium and confetti of the show after a match, with the
+champion's players on the steps in the champion's colors, the champion's name, and the tournament
+won with the runner up beneath it. Close ends it.
+
+### The command line and the server
+
+```sh
+cuju render tournament new --preset world_cup --name "Office cup" --seed 7 \
+    --team t-20261106-101500-3fa9 --builtin 0.3 --builtin 0.8 --person Ana --run
+cuju render tournament list
+cuju render tournament show t-20261110-090000-1a2b
+cuju render tournament run t-20261110-090000-1a2b
+cuju render tournament cancel t-20261110-090000-1a2b
+cuju render tournament presets
+```
+
+The new command makes a tournament from a preset, `quick_cup` by default, or from a JSON file of a
+whole configuration given to `--config`, with the entrants in the order of the options `--team`,
+`--builtin`, with an ability or `any`, and `--person`. The options `--seeding`, `--scenario`,
+`--length` and `--concurrency` change the preset. A running server plays a new tournament, and
+`run` plays it in the terminal until it ends or waits for people, who play their matches on the
+page. One process at a time runs a tournament, and a lock file beside it names the process, so the
+server leaves alone a tournament that `run` plays, and the page follows it. A cancel from either
+reaches the process that runs it.
+
+The server answers `GET /api/tournaments`, `GET /api/tournaments/ID`, `GET
+/api/tournaments/presets`, `GET /api/tournaments/ratings`, `POST /api/tournaments` with a
+configuration, `POST /api/tournaments/check`, which resolves a configuration and returns its draw,
+`POST /api/tournaments/ID/cancel`, `resume`, `play` and `forfeit`, `POST
+/api/tournaments/presets/NAME`, and `DELETE` of a tournament or a preset, with the same Host and
+Origin checks as every other route.
+
+Each tournament lives in a JSON file of the folder `tournaments`, with its resolved configuration,
+the result of every match and its state, written through a temporary file. A file that cannot be
+read is skipped with a warning, and the server starts with the rest. A restart of the server
+resumes every running tournament where it stopped, and a match that was playing plays again from
+its start with the same seed. The ratings and the presets of the user live in `ratings.json` and
+`presets.json` of the same folder. A match length writes a small scenario file into the folder
+`scenarios`, which plays the shipped scenario for that many steps, with the second half starting at
+the same share of the match.
+
 ## Broadcast presentation
 
 The page presents a match as a broadcast does, and covers the seams of the engine, the jumps of
@@ -1280,8 +1611,8 @@ goal sting, the rain and the wind. The rest is synthesized in the browser, and t
 `sounds.json` beside the sounds names the author, source and license of each file. A change of arena
 or weather fades from one soundscape to the next over about a second. The sounds of the play follow
 forward play at up to two and a half times real time, and pausing silences the page. Each arena's
-own sounds play under its crowd. The arena files load with the sound system, and unavailable files
-fall back to the synthesized sounds where available.
+own sounds play under its crowd. The sound files load the first time the sound is turned on, so a
+muted page fetches none, and unavailable files fall back to the synthesized sounds where available.
 
 The page starts muted, since browsers start sound only after a click or a key, and M or the speaker
 button turns the sound on, at half volume by default.
@@ -1415,7 +1746,10 @@ origin when it was made. Every recording names the version of cuju that made it 
 A requested match adds its resolved `seed`, the `scenario`, the registry identifiers of both
 `teams`, the `controls` of each side, the `agent_counts`, the engine's `action_set` and the
 `ability` that played on each side. A game on the Play page adds its seed, scenario, the sides of
-the people as `humans`, the action set and the ability. A recorder and a live source add the
+the people as `humans`, the action set and the ability. A match of a tournament adds `tournament`,
+with the identifier and name of the tournament, the name of its stage, the label of the match and
+its key, and the names of its people as `names` when it was a game, and a match of a set length
+adds `length`. A recorder and a live source add the
 `environment` index of the batch, and leave the seed unknown, since a batch may have been reset
 with another seed before the capture began. A field that is absent means its value is unknown. A
 seed above `2**53 - 1` is written as a decimal string, so the page reads it exactly. A registry
@@ -1466,9 +1800,10 @@ A live stream sends the same bytes uncompressed.
 
 ## Folder and server
 
-The renderer's folder holds four subfolders, `matches` for the recordings, `teams` for the
-submissions, `live` for the announcements of running sources and `requests` for the history of
-requested matches. The file `samples.json` names the
+The renderer's folder holds six subfolders, `matches` for the recordings, `teams` for the
+submissions, `live` for the announcements of running sources, `requests` for the history of
+requested matches, `tournaments` for the tournaments with their ratings and presets, and
+`scenarios` for the scenario files of set match lengths. The file `samples.json` names the
 sample matches that the library has received. Requested matches play one at a time, and each
 request keeps a small JSON file in the subfolder `requests`, with its teams, scenario, resolved
 seed, ability, state, error and the times it was made, started and finished. The server writes each
@@ -1490,11 +1825,78 @@ of submissions, and it checks the loopback host on every request. Requests that 
 check any
 Origin header against the server's own address, including the scheme and port. A server on another
 machine is reached through a tunnel, such as
-the port forwarding of SSH, which makes it a loopback server of the local machine.
+the port forwarding of SSH, which makes it a loopback server of the local machine, as
+[Remote use](#remote-use) describes.
+
+While a server runs, the file `server.json` of the renderer's folder names its port, its process
+and the key that lets a notebook frame its page, and the server removes the file when it stops.
+`show` and `cuju render open` read the file and ask the server whether it answers, so they reuse a
+running server of the same folder and start one only when none answers. A server that `show`
+starts in the background writes its messages to `server.log` beside it.
+
+## Command line
+
+`cuju render`, also `python -m cuju.render`, takes the option `--home` before its subcommand, which
+picks the renderer's folder for that command alone.
+
+| Command | Does |
+| --- | --- |
+| `cuju render` | serves the page and opens Home, or opens Home of the server that already runs for the folder |
+| `cuju render serve` | serves the page until interrupted, with `--port`, `--open` to open the page and `--remote` for [Remote use](#remote-use) |
+| `cuju render open TARGET` | opens a `.cjr` file, the identifier of a recording or a live source, or a URL of the page, with `--port` for a server that it starts |
+| `cuju render team add FOLDER` | registers a submission folder or archive, with `--name` and `--format` |
+| `cuju render team list`, `export ID`, `remove ID` | lists, exports with `--out` or removes registered teams |
+| `cuju render play` | records a match between `--left` and `--right` on `--scenario`, with `--seed`, `--device`, `--left-ability` and `--right-ability` |
+| `cuju render sample` | adds the sample matches to the library again, or one with `11v11` or `5v5` |
+| `cuju render demo` | streams a live match between the built in AIs to the page, as [Quick start](#quick-start) describes |
+| `cuju render tournament` | makes, lists, shows, runs and cancels tournaments, as [Tournaments](#tournaments) describes |
+
+`cuju render open` copies a recording file from outside the library into it, under a new
+identifier, and opens the copy. A file whose bytes the library already holds opens that recording,
+so opening the same file twice adds it once, and a file of the library's own folder opens as it is.
+When a server of the folder runs, the command opens its page on the target and returns at once.
+Otherwise it serves the page in the foreground on `--port`, 8780 by default, with the browser
+opened on the target, until interrupted with Ctrl+C. A bare `cuju render` behaves the same way for
+Home.
+
+The commands explain what went wrong and what to do about it. A port that another program holds
+names that program as another cuju server or another program, and suggests another port or
+`--port 0` for a free one, and a port held by the server of the same folder names its address. A
+missing file, a file that holds no recording, an identifier that names nothing and a recording in
+the Trash each have a message of their own. A folder that is a file, lies under a file, or cannot
+be created or written stops every command at its start, with a message that names the folder and
+the option `--home`.
+
+## Remote use
+
+A server on another machine, such as a training server, serves the page on its own loopback
+interface, which the machine of the browser reaches through a tunnel. The option `--remote` of
+`cuju render serve` prints the exact SSH command for the machine and port of the server. Inside an
+SSH session it names the address and port that the session came in on, with the user that runs
+the server, and elsewhere the name of the machine.
 
 ```sh
-ssh -L 8780:127.0.0.1:8780 training-server
+cuju render serve --remote
 ```
+
+The command to run on the machine of the browser then reads like this one, and the page opens at
+`http://127.0.0.1:8780/` there while the command runs.
+
+```sh
+ssh -N -L 8780:127.0.0.1:8780 user@training-server
+```
+
+The server then waits for the page and prints one line with the time when a browser first reaches
+it, which confirms that the tunnel works. A tunnel that forwards another local port works the same
+way, with the page at that port.
+
+VS Code with its Remote SSH extension forwards a port from its Ports view, where adding 8780 opens
+the page in the local browser, and VS Code often offers to forward the port by itself when the
+server prints its address in the integrated terminal. A notebook of VS Code on a remote machine
+shows the inline viewer once the port is forwarded. Google Colab needs no tunnel, since `show`
+serves the page through Colab's own proxy, as [Notebooks](#notebooks) describes. A notebook of
+Jupyter on a remote machine needs the same SSH tunnel as the page, and its inline viewer and link
+then open through the tunnel.
 
 ## See also
 

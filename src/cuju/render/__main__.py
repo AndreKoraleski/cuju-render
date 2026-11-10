@@ -3,10 +3,12 @@
 
 """The command line of the renderer, `cuju render`, also `python -m cuju.render`.
 
-`cuju render` serves the page, `cuju render team add FOLDER` registers a Kaggle submission folder,
-`cuju render play` records a match between two registered teams, and `cuju render sample` adds the
-shipped sample matches to the library again, or brings them back from the Trash. `cuju render demo`
-streams a live match between the built-in AIs to the page.
+`cuju render` serves the page and opens Home, `cuju render open` opens a recording or a live
+source, `cuju render team add FOLDER` registers a Kaggle submission folder, `cuju render play`
+records a match between two registered teams, `cuju render tournament` makes, lists, shows, runs
+and cancels tournaments, and `cuju render sample` adds the shipped sample matches to the library
+again, or brings them back from the Trash. `cuju render demo` streams a live match between the
+built-in AIs to the page.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from cuju.errors import Error
 
@@ -30,9 +33,29 @@ def main(arguments: list[str] | None = None) -> int:
         '--home', help=f'the renderer folder, by default {_home.home()} or ${_home.HOME_VARIABLE}'
     )
     commands = parser.add_subparsers(dest='command')
-    server = commands.add_parser('serve', help='serve the page, the default command')
+    server = commands.add_parser(
+        'serve', help='serve the page, which a bare cuju render also opens'
+    )
     server.add_argument('--port', type=int, default=8780, help='the port, 8780 by default')
     server.add_argument('--open', action='store_true', help='open the page in the browser')
+    server.add_argument(
+        '--remote',
+        action='store_true',
+        help='print the SSH command that reaches the page from another computer',
+    )
+    # A server that `cuju.render.show` starts ends with the process that started it.
+    server.add_argument('--parent', type=int, default=None, help=argparse.SUPPRESS)
+    server.add_argument('--colab', action='store_true', help=argparse.SUPPRESS)
+    opener = commands.add_parser(
+        'open', help='open a recording file, a recording or live source, or a URL of the page'
+    )
+    opener.add_argument('target', help='a .cjr file, a recording or live source identifier, a URL')
+    opener.add_argument(
+        '--port',
+        type=int,
+        default=8780,
+        help='the port of a server that it starts, 8780 by default',
+    )
     team = commands.add_parser('team', help='add, list, export or remove teams of the registry')
     team.add_argument('action', choices=('add', 'list', 'export', 'remove'))
     team.add_argument(
@@ -63,6 +86,7 @@ def main(arguments: list[str] | None = None) -> int:
             default=None,
             help=f"the {side} built-in AI's ability from 0 to 1, the scenario's when absent",
         )
+    _tournament_parser(commands)
     sample = commands.add_parser(
         'sample', help='add the sample matches to the library again, or restore them from the Trash'
     )
@@ -79,6 +103,9 @@ def main(arguments: list[str] | None = None) -> int:
     if options.home:
         os.environ[_home.HOME_VARIABLE] = str(Path(options.home).expanduser().resolve())
     try:
+        from ._http.launch import check_home
+
+        check_home()
         return _run(parser, options)
     except (Error, OSError) as error:
         print(f'cuju render: {error}', file=sys.stderr)
@@ -121,6 +148,10 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         if not added:
             print('the library already holds the samples')
         return 0
+    if options.command == 'tournament':
+        from ._tournaments.tournament_cli import run_command
+
+        return run_command(parser, options)
     if options.command == 'play':
         from ._playing.play import play
 
@@ -146,13 +177,45 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         if scenario not in bundled_scenarios():
             parser.error(f'expected a shipped scenario, found {scenario!r}')
         return _demo.demo(options.port, scenario, not options.no_open, options.seed)
-    from ._http.server import serve
-
     port = getattr(options, 'port', 8780)
     if not 0 <= port <= 65535:
         parser.error('expected a port from 0 to 65535')
-    serve(port, getattr(options, 'open', False))
-    return 0
+    from ._http.commands import open_target, serve_page
+
+    if options.command == 'open':
+        return open_target(options.target, port)
+    return serve_page(port, options)
+
+
+def _tournament_parser(commands: Any) -> None:
+    """Adds `cuju render tournament` with its actions and options."""
+
+    class Entrant(argparse.Action):
+        """Keeps the entrants of every kind in the order the command line names them."""
+
+        def __call__(self, parser: Any, namespace: Any, value: Any, flag: Any = None) -> None:
+            kind = {'--team': 'team', '--builtin': 'builtin', '--person': 'person'}[flag]
+            entrants = getattr(namespace, 'entrants', None) or []
+            entrants.append((kind, value))
+            namespace.entrants = entrants
+
+    cup = commands.add_parser('tournament', help='make, list, show, run or cancel tournaments')
+    cup.add_argument('action', choices=('new', 'list', 'show', 'run', 'cancel', 'presets'))
+    cup.add_argument('target', nargs='?', help='the identifier of a tournament')
+    cup.add_argument('--preset', help='a preset of formats, quick_cup when neither it nor --config')
+    cup.add_argument('--config', help='a JSON file with the whole configuration of a tournament')
+    cup.add_argument('--name', help='the name of the tournament')
+    cup.add_argument('--seed', type=int, help='the tournament seed, drawn when absent')
+    cup.add_argument('--team', action=Entrant, dest='entrants', help='a registered team')
+    cup.add_argument(
+        '--builtin', action=Entrant, dest='entrants', help='the built-in AI at an ability, or any'
+    )
+    cup.add_argument('--person', action=Entrant, dest='entrants', help='a person, by name')
+    cup.add_argument('--seeding', choices=('random', 'manual', 'rating'))
+    cup.add_argument('--scenario', help='the scenario of every stage')
+    cup.add_argument('--length', type=int, help='the steps of every match')
+    cup.add_argument('--concurrency', type=int, help='the matches of agents at once, 1 by default')
+    cup.add_argument('--run', action='store_true', help='run the new tournament at once')
 
 
 if __name__ == '__main__':

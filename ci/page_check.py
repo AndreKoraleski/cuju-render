@@ -207,6 +207,101 @@ def library_checks(client):
     return 2
 
 
+def tournament_checks(client):
+    """Checks the tournament wizard, its refusal of an impossible setup, the bracket and tables."""
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const until = async (test, ms = 8000) => {
+                for (let t = 0; t < ms; t += 50) {
+                    if (test()) {
+                        return true;
+                    }
+                    await wait(50);
+                }
+                return false;
+            };
+            const page = cuju.tournaments;
+            document.querySelector('[data-page="tournaments"]').click();
+            await until(() => page.built);
+            const main = () => page.mainHost;
+            const button = (text) => [...main().querySelectorAll('button')]
+                .find((b) => b.textContent.trim() === text);
+            page.root.querySelector('.cup-side-head button').click();
+            const tabs = [...main().querySelectorAll('[role="tab"]')].map((t) => t.textContent);
+            const steps = tabs.length === 5 && tabs[0].endsWith('Format');
+            await until(() => main().querySelector('[data-preset="world_cup"]'));
+            main().querySelector('[data-preset="world_cup"]').click();
+            const picked = main().querySelector('[data-preset="world_cup"]')
+                .getAttribute('aria-checked') === 'true';
+            // The arrow keys move between the steps of the wizard.
+            const first = document.getElementById('cup-step-0');
+            first.focus();
+            first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+            const keys = page.step === 1 && document.activeElement.id === 'cup-step-1';
+            button('Add built-in AI').click();
+            page.goStep(4);
+            const refused = await until(() => main().querySelector('.cup-review [role="alert"]'));
+            const reason = refused && /entrants/.test(
+                main().querySelector('.cup-review [role="alert"]').textContent);
+            page.goStep(1);
+            button('Add four of rising ability').click();
+            button('Add four of rising ability').click();
+            button('Add four of rising ability').click();
+            const entrants = main().querySelectorAll('.cup-entrants > li').length === 13;
+            page.goStep(3);
+            const stages = main().querySelectorAll('.cup-stage').length === 2;
+            page.goStep(4);
+            const reviewed = await until(
+                () => main().querySelectorAll('.cup-review-stage').length === 2);
+            const groups = main().querySelectorAll('.cup-review-groups h4').length === 3;
+            main().querySelector('.cup-start').click();
+            const opened = await until(() => page.mode === 'view' && page.current
+                && document.getElementById('cup-tab-0'));
+            const listed = page.root.querySelectorAll('.cup-item').length === 1;
+            const done = await until(() => page.current && page.current.state === 'done', 20000);
+            const tab = document.getElementById('cup-tab-0');
+            tab.click();
+            const rows = main().querySelectorAll('.cup-table tbody tr').length === 13;
+            const tab0 = document.getElementById('cup-tab-0');
+            tab0.focus();
+            tab0.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+            const bracket = await until(() => main().querySelector('.cup-bracket .cup-fixture'));
+            const cells = main().querySelectorAll('.cup-bracket-cell').length >= 7;
+            const third = [...main().querySelectorAll('.cup-bracket-section h3')]
+                .some((h) => h.textContent === 'Third place');
+            const watch = !!main().querySelector('.cup-watch button');
+            const champion = /Champion, /.test(main().querySelector('.cup-champion').textContent);
+            const text = page.root.textContent;
+            const names = !/_vs_|academy_|11_vs|5_vs/.test(text);
+            const all = { steps, picked, keys, refused: !!refused, reason, entrants, stages,
+                reviewed, groups, opened: !!opened, rows, listed, done, bracket: !!bracket, cells,
+                third, watch, champion, names };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'Tournament wizard, tables and bracket {result}'
+    result = client.evaluate("""
+        (async () => {
+            const page = cuju.tournaments;
+            page.current.config.stages.length;
+            page.mainHost.querySelector('.cup-actions .btn.primary').click();
+            for (let t = 0; t < 8000 && !cuju.podium.showing; t += 50) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            const shown = cuju.podium.showing && cuju.page === 'watch';
+            const title = document.querySelector('#victory .victory-title').textContent;
+            const named = title.startsWith(page.current.champion);
+            const locked = !!document.pointerLockElement;
+            cuju.postMatch.end();
+            cuju.showPage('tournaments');
+            return (shown && named && !locked) || JSON.stringify({ shown, title, locked });
+        })()
+    """)
+    assert result is True, f'Trophy ceremony {result}'
+    return 2
+
+
 def reconnection_checks(client):
     """Checks that a live stream reconnects after a drop, marks the gap and tells the end."""
     # Each stage waits in its own call, within the time that a call to Chrome may take.
@@ -729,6 +824,7 @@ def main():
                 'watch',
                 'recordings',
                 'matches',
+                'tournaments',
                 'teams',
                 'field',
                 'play',
@@ -1610,6 +1706,7 @@ def main():
             assert all(result.values()), f'Reduced motion replay {result}'
             checks += 1
             checks += library_checks(client)
+            checks += tournament_checks(client)
             checks += reconnection_checks(client)
             checks += palette_checks(client)
             checks += presets_checks(client)

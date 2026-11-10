@@ -196,6 +196,8 @@ class Game:
         teams: tuple[str, str] = (_teams.BUILTIN, _teams.BUILTIN),
         load_seconds: float | None = LOAD_SECONDS,
         first_call_seconds: float | None = FIRST_CALL_SECONDS,
+        length: int | None = None,
+        tournament: dict[str, Any] | None = None,
     ) -> None:
         """Creates and resets the environment, and loads the submissions that play.
 
@@ -211,6 +213,9 @@ class Game:
             load_seconds: How long the submissions may take to load, or `None` without a limit.
             first_call_seconds: How long the submissions may take to answer the first
                 observation, or `None` without a limit.
+            length: The steps the game lasts, or `None` for the scenario's own duration.
+            tournament: The tournament match that the game plays, which its provenance keeps,
+                with the names of the people in `names`, or `None`.
 
         Raises:
             ArgumentError: If the scenario is not shipped, no side has a person, an ability lies
@@ -237,12 +242,18 @@ class Game:
         agents = _teams.game_agents(entries, scenario, self.humans)
         self.counts = [int(self.humans[side]) + agents[side] for side in (0, 1)]
         self.action_set = 'v2' if any(agents) else 'default'
+        self.length = None if length is None else int(length)
+        self.tournament = tournament
+        if self.length is not None:
+            from .._tournaments.tournament_runner import length_scenario
+
+            asset = length_scenario(scenario, self.length)
+        elif scenario in _teams.renderer_scenarios():
+            asset = str(_teams.scenario_path(scenario))
+        else:
+            asset = f'{scenario}_l{self.counts[0]}_r{self.counts[1]}'
         self.batch = BatchEnvironment(
-            (
-                str(_teams.scenario_path(scenario))
-                if scenario in _teams.renderer_scenarios()
-                else f'{scenario}_l{self.counts[0]}_r{self.counts[1]}'
-            ),
+            asset,
             agent_counts=[tuple(self.counts)],
             environment_count=1,
             representation='raw',
@@ -290,11 +301,12 @@ class Game:
         self.done = False
         played = [round(float(value), 4) for value in self.batch.difficulty[0].tolist()]
         two = all(self.humans)
+        named = (tournament or {}).get('names') or [None, None]
         self.teams = []
         for side, team in enumerate(_teams.match_teams(*self.team_ids)):
             name = team['name']
             if self.humans[side]:
-                person = f'Player {side + 1}' if two else 'You'
+                person = named[side] or (f'Player {side + 1}' if two else 'You')
                 name = person if team['id'] == _teams.BUILTIN else f'{person} with {name}'
             self.teams.append(
                 {**team, 'name': name, 'ability': played[side], 'person': self.humans[side]}
@@ -302,8 +314,11 @@ class Game:
 
     @property
     def title(self) -> str:
-        """Returns the title of the game, its teams by name."""
-        return f'{self.teams[0]["name"]} against {self.teams[1]["name"]}'
+        """Returns the title of the game, its teams by name, after its tournament match."""
+        title = f'{self.teams[0]["name"]} against {self.teams[1]["name"]}'
+        if self.tournament is not None:
+            title = f'{self.tournament.get("name")}, {self.tournament.get("label")}, {title}'
+        return title
 
     def step(
         self,
@@ -365,6 +380,10 @@ class Game:
         }
         if self.runner is not None:
             provenance['late_steps'] = self.runner.late
+        if self.length is not None:
+            provenance['length'] = self.length
+        if self.tournament is not None:
+            provenance['tournament'] = self.tournament
         head = _recording.header(
             self.title,
             self.scenario,
@@ -504,6 +523,8 @@ def main(arguments: list[str] | None = None) -> None:
     parser.add_argument('--right-ability', type=float, default=None)
     parser.add_argument('--record', action='store_true')
     parser.add_argument('--pace', type=float, default=STEPS_PER_SECOND)
+    parser.add_argument('--length', type=int, default=None)
+    parser.add_argument('--tournament', type=json.loads, default=None)
     options = parser.parse_args(arguments)
     # The reports keep a copy of standard output, and everything else written there goes to
     # standard error, so nothing printed by a library can pass for a report.
@@ -519,6 +540,8 @@ def main(arguments: list[str] | None = None) -> None:
             (options.left_ability, options.right_ability),
             options.seed,
             teams=(options.left_team, options.right_team),
+            length=options.length,
+            tournament=options.tournament,
         )
     except PolicyError as error:
         _report(error=str(error))

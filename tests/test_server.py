@@ -7,6 +7,8 @@ import json
 import os
 import re
 import struct
+import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -18,10 +20,12 @@ import cuju
 import cuju.errors
 import cuju.state
 from cuju.render._format import recording as _recording
+from cuju.render._http import launch as _launch
 from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
 from cuju.render._store import home as _home
-from support.common import _CRASH, _get, _send, _toy_team
+from cuju.render._store import library as _library
+from support.common import _CRASH, _fake_server, _get, _send, _toy_team
 
 
 def test_server_api(render_home):
@@ -729,6 +733,231 @@ def test_responses_refuse_framing_and_bad_announcements_are_skipped(render_home)
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_show_attaches_sources_and_reuses_them(render_home, monkeypatch):
+    """`show` attaches one live source per environment and closes only the one it attached."""
+    started = []
+
+    def start(port, stay, colab=False):
+        started.append((port, stay, colab))
+        return _fake_server(render_home)
+
+    monkeypatch.setattr(_launch, 'start', start)
+    batch = cuju.BatchEnvironment('5_vs_5_l1_r0', environment_count=2, device='cpu')
+    with cuju.render.show(batch, environment=1, display='none', stay=True) as view:
+        assert view.url == f'http://127.0.0.1:8999/#live={view.source.identifier}'
+        assert view.source.environment == 1 and view.source in batch.observers
+        again = cuju.render.show(batch, environment=1, display='none')
+        assert again.source is view.source
+        again.close()
+        assert view.source in batch.observers
+    assert view.source not in batch.observers
+    assert started == [(None, True, False), (None, False, False)]
+    assert cuju.render.show(display='none').url.endswith('/#page=home')
+    with pytest.raises(cuju.ArgumentError, match='display'):
+        cuju.render.show(display='window')
+    with pytest.raises(cuju.ArgumentError, match='MultiDeviceBatch'):
+        cuju.render.show(3, display='none')
+
+
+def test_show_starts_a_server_that_ends_with_its_process(render_home):
+    """A server that `show` starts answers, is found again, and ends with its parent."""
+    view = cuju.render.show(display='none')
+    try:
+        server = view.server
+        assert server.process is not None and server.pid == server.process.pid
+        assert _launch.running().pid == server.pid
+        assert cuju.render.show('sample-5v5', display='none').server.pid == server.pid
+        _, body = _get(server.url[:-1], '/api/matches')
+        assert 'sample-5v5' in {entry['id'] for entry in json.loads(body)}
+    finally:
+        _launch._stop(view.server.process)
+    assert _launch.running() is None
+    # A server whose parent is gone stops by itself and withdraws its file.
+    child = subprocess.Popen([sys.executable, '-c', 'pass'])
+    child.wait()
+    finished = threading.Event()
+
+    def serve():
+        _server.serve(0, parent=child.pid)
+        finished.set()
+
+    threading.Thread(target=serve, daemon=True).start()
+    assert finished.wait(30)
+    assert not (render_home / _launch.SERVER_FILE).exists()
+
+
+def test_framed_page_and_proxied_origin(render_home):
+    """Only the page asked for with the server's key may sit in a notebook's frame."""
+    server = _launch.LoopbackServer(('127.0.0.1', 0), _server.make_handler(_server._Requests()))
+    server.frame_key = 'secret-key'
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    address = f'http://127.0.0.1:{port}'
+    try:
+        for path, framed in [
+            ('/?embed=secret-key', True),
+            ('/index.html?embed=secret-key', True),
+            ('/?embed=other', False),
+            ('/', False),
+            ('/js/main.js?embed=secret-key', False),
+        ]:
+            with urllib.request.urlopen(address + path, timeout=10) as response:
+                policy = response.headers['Content-Security-Policy']
+                denied = response.headers['X-Frame-Options']
+            if framed:
+                assert policy == f'frame-ancestors {_launch.FRAME_ANCESTORS}', path
+                assert denied is None, path
+            else:
+                assert (policy, denied) == ("frame-ancestors 'none'", 'DENY'), path
+        # Colab's proxy shows the page under https at the same loopback host and port.
+        for origin, allowed in [
+            (f'https://127.0.0.1:{port}', True),
+            ('https://example.com', False),
+        ]:
+            request = urllib.request.Request(
+                f'{address}/api/teams/builtin/duplicate', method='POST', headers={'Origin': origin}
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    answered = response.status
+            except urllib.error.HTTPError as error:
+                answered = error.code
+            assert (answered != 403) == allowed, (origin, answered)
+        # Inside Colab the server also answers the names of Colab's proxy, and only then.
+        proxy = 'abc-8780-colab.googleusercontent.com'
+        for domains, allowed in [((), False), (_launch.COLAB_DOMAINS, True)]:
+            server.proxy_domains = domains
+            for path, headers in [
+                ('/api/info', {'Host': proxy}),
+                ('/api/teams/builtin/duplicate', {'Host': proxy, 'Origin': f'https://{proxy}'}),
+            ]:
+                method = 'POST' if 'Origin' in headers else 'GET'
+                request = urllib.request.Request(address + path, method=method, headers=headers)
+                try:
+                    with urllib.request.urlopen(request, timeout=10) as response:
+                        answered = response.status
+                except urllib.error.HTTPError as error:
+                    answered = error.code
+                assert (answered != 403) == allowed, (domains, headers, answered)
+        # A page of another notebook, under another name of Colab's domains, changes nothing.
+        server.proxy_domains = _launch.COLAB_DOMAINS
+        for host, origin in [
+            (proxy, 'https://evil-8780-colab.googleusercontent.com'),
+            (proxy, 'https://abc.colab.dev'),
+            (f'127.0.0.1:{port}', f'https://{proxy}'),
+            (proxy.upper(), 'https://evil.colab.dev'),
+        ]:
+            request = urllib.request.Request(
+                f'{address}/api/teams/builtin/duplicate',
+                method='POST',
+                headers={'Host': host, 'Origin': origin},
+            )
+            with pytest.raises(urllib.error.HTTPError) as refused:
+                urllib.request.urlopen(request, timeout=10)
+            assert refused.value.code == 403, (host, origin)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_open_targets(render_home, tmp_path):
+    _library.add_samples()
+    assert _launch.resolve(None) == '#page=home'
+    assert _launch.resolve('sample-5v5') == '#match=sample-5v5'
+    assert _launch.resolve('http://127.0.0.1:8780/#live=a') == 'http://127.0.0.1:8780/#live=a'
+    copy = tmp_path / 'final.cjr'
+    copy.write_bytes((_library._SAMPLES / 'sample-5v5.cjr').read_bytes())
+    # A file whose bytes the library holds opens that recording.
+    assert _launch.resolve(copy) == '#match=sample-5v5'
+    assert _launch.resolve(_library.path_of('sample-5v5')) == '#match=sample-5v5'
+    _library.trash('sample-5v5')
+    fragment = _launch.resolve(str(copy))
+    identifier = fragment.removeprefix('#match=')
+    assert identifier != 'sample-5v5'
+    assert _library.path_of(identifier).read_bytes() == copy.read_bytes()
+    assert _launch.resolve(str(copy)) == fragment
+    assert _library.details(identifier)['steps'] > 0
+    with pytest.raises(cuju.ArgumentError, match='Trash'):
+        _launch.resolve('sample-5v5')
+    with pytest.raises(cuju.ArgumentError, match='no file'):
+        _launch.resolve(str(tmp_path / 'missing.cjr'))
+    other = tmp_path / 'notes.cjr'
+    other.write_bytes(b'not a recording')
+    with pytest.raises(cuju.ArgumentError, match='other bytes'):
+        _launch.resolve(other)
+    with pytest.raises(cuju.ArgumentError, match='names none'):
+        _launch.resolve('nothing-here')
+    batch = cuju.BatchEnvironment('5_vs_5_l1_r0', environment_count=1, device='cpu')
+    with cuju.render.watch(batch) as source:
+        assert _launch.resolve(source.identifier) == f'#live={source.identifier}'
+
+
+def test_render_command_line(render_home, tmp_path, monkeypatch, capsys):
+    from cuju.render import __main__ as command
+
+    opened, served = [], []
+    monkeypatch.setattr(_launch, 'open_browser', lambda url: opened.append(url) or True)
+
+    def serve(*arguments, **options):
+        served.append((arguments, options))
+
+    monkeypatch.setattr(_server, 'serve', serve)
+    _library.add_samples()
+    assert command.main(['open', 'sample-5v5']) == 0
+    assert command.main([]) == 0
+    assert served == [((8780, True), {'page': '#match=sample-5v5'}), ((8780, True), {})]
+    assert command.main(['open', 'http://127.0.0.1:8790/#live=a']) == 0
+    assert served[-1] == ((8790, True), {'page': '#live=a'})
+    monkeypatch.setattr(_launch, 'running', lambda: _fake_server(render_home))
+    assert command.main(['open', 'sample-5v5']) == 0
+    assert command.main([]) == 0
+    assert opened == ['http://127.0.0.1:8999/#match=sample-5v5', 'http://127.0.0.1:8999/']
+    assert len(served) == 3
+    capsys.readouterr()
+    assert command.main(['open', 'missing.cjr']) == 1
+    assert 'no file' in capsys.readouterr().err
+    blocker = tmp_path / 'blocker'
+    blocker.write_text('')
+    assert command.main(['--home', str(blocker / 'render'), 'team', 'list']) == 1
+    message = capsys.readouterr().err
+    assert 'is a file' in message and '--home' in message
+
+
+def test_port_in_use_and_remote_use(render_home, monkeypatch, capsys):
+    import socket
+
+    from cuju.render import __main__ as command
+
+    with socket.socket() as taken:
+        taken.bind(('127.0.0.1', 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        assert not _launch.port_free(port)
+        assert command.main(['serve', '--port', str(port)]) == 1
+        message = capsys.readouterr().err
+        assert f'port {port} is in use by another program' in message
+        assert f'--port {port + 10}' in message and '--port 0' in message
+    monkeypatch.setenv('SSH_CONNECTION', '10.0.0.2 51000 10.0.0.9 2222')
+    monkeypatch.setattr(_launch.getpass, 'getuser', lambda: 'ana')
+    assert _launch.tunnel_command(8780) == 'ssh -N -L 8780:127.0.0.1:8780 -p 2222 ana@10.0.0.9'
+    original = _launch.LoopbackServer.serve_forever
+
+    def visited(server):
+        thread = threading.Thread(target=original, args=(server,))
+        thread.start()
+        assert (render_home / _launch.SERVER_FILE).exists()
+        _get(f'http://127.0.0.1:{server.server_address[1]}', '/')
+        server.shutdown()
+        thread.join()
+
+    monkeypatch.setattr(_launch.LoopbackServer, 'serve_forever', visited)
+    assert command.main(['serve', '--port', '0', '--remote']) == 0
+    printed = capsys.readouterr().out
+    assert 'ssh -N -L' in printed and 'ana@10.0.0.9' in printed
+    assert 'A browser reached the page' in printed
+    assert not (render_home / _launch.SERVER_FILE).exists()
 
 
 def test_request_history_keeps_the_newest_ended_requests(render_home, monkeypatch):

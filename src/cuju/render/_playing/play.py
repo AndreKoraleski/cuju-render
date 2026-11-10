@@ -61,6 +61,8 @@ def play(
     title: str | None = None,
     device: str = 'cpu',
     ability: tuple[float | None, float | None] = (None, None),
+    length: int | None = None,
+    tournament: dict[str, Any] | None = None,
 ) -> Path:
     """Plays a match between two teams of the registry, saves it and returns the recording.
 
@@ -75,6 +77,9 @@ def play(
             `None` for the scenario's. It is GRF's team difficulty, which steers every player that
             the built-in AI controls, the whole team of the built-in AI and the teammates of a
             submission's player alike.
+        length: The steps the match lasts, or `None` for the scenario's own duration.
+        tournament: The tournament, stage and match that the match belongs to, which its
+            provenance keeps, or `None`.
 
     Returns:
         The path of the recording in the renderer's folder.
@@ -97,12 +102,16 @@ def play(
         for team, c in zip(sides, controls, strict=True)
     )
     seed = int(time.time()) % 2**31 if seed is None else int(seed)
+    if length is not None:
+        from .._tournaments.tournament_runner import length_scenario
+
+        asset = length_scenario(scenario, length)
+    elif scenario in _teams.renderer_scenarios():
+        asset = str(_teams.scenario_path(scenario))
+    else:
+        asset = f'{scenario}_l{agents[0]}_r{agents[1]}'
     batch = BatchEnvironment(
-        (
-            str(_teams.scenario_path(scenario))
-            if scenario in _teams.renderer_scenarios()
-            else f'{scenario}_l{agents[0]}_r{agents[1]}'
-        ),
+        asset,
         agent_counts=[tuple(agents)],
         environment_count=1,
         representation='raw',
@@ -140,6 +149,8 @@ def play(
         batch.close()
     names = [team['name'] for team in sides]
     title = title or f'{names[0]} against {names[1]}'
+    if tournament is not None and not title.startswith(str(tournament.get('name'))):
+        title = f'{tournament.get("name")}, {tournament.get("label")}, {title}'
     # The ability that played, the scenario's where none was given, goes with each team.
     played = [round(float(value), 4) for value in difficulty]
     teams = [
@@ -156,6 +167,10 @@ def play(
         'action_set': 'v2' if extended else 'default',
         'ability': played,
     }
+    if length is not None:
+        provenance['length'] = int(length)
+    if tournament is not None:
+        provenance['tournament'] = tournament
     head = _recording.header(title, scenario, lineup, teams, len(frames), timing, provenance)
     return _library.save(head, frames)
 
@@ -497,6 +512,8 @@ def main(arguments: list[str] | None = None) -> None:
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--left-ability', type=float, default=None)
     parser.add_argument('--right-ability', type=float, default=None)
+    parser.add_argument('--length', type=int, default=None)
+    parser.add_argument('--tournament', type=json.loads, default=None)
     options = parser.parse_args(arguments)
     # The reports keep a copy of standard output, and everything else written there, by Python or
     # by native code, goes to standard error.
@@ -513,6 +530,8 @@ def main(arguments: list[str] | None = None) -> None:
             None,
             options.device,
             (options.left_ability, options.right_ability),
+            options.length,
+            options.tournament,
         )
     except Exception as error:
         _report(error=f'{type(error).__name__}: {error}')

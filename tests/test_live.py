@@ -5,6 +5,7 @@
 import io
 import json
 import struct
+import sys
 
 import numpy as np
 import pytest
@@ -15,9 +16,12 @@ import cuju.errors
 import cuju.state
 from conftest import actions_at, tensor_bytes
 from cuju.render._format import recording as _recording
+from cuju.render._http import launch as _launch
 from cuju.render._http import server as _server
 from cuju.render._watch import grid as _grid
 from cuju.render._watch import live as _live
+from cuju.render._watch import notebook as _notebook
+from support.common import _fake_server
 
 
 def test_watching_changes_no_output(device, render_home):
@@ -192,6 +196,93 @@ def test_live_close_with_full_viewer_queue(render_home):
     finally:
         source.close()
         batch.close()
+
+
+class _Shell:
+    """A notebook shell, whose class takes the name of Jupyter's or the terminal's."""
+
+    execution_count = 3
+
+
+def _notebook_modules(monkeypatch, shell_name='ZMQInteractiveShell', colab=False):
+    """Fakes the modules of a notebook, and returns the shell and the calls of its displays."""
+    import types
+
+    calls = []
+    shell = type(shell_name, (_Shell,), {})()
+    ipython = types.ModuleType('IPython')
+    ipython.get_ipython = lambda: shell
+    display = types.ModuleType('IPython.display')
+    display.HTML = lambda text: ('html', text)
+    display.display = calls.append
+    ipython.display = display
+    monkeypatch.setitem(sys.modules, 'IPython', ipython)
+    monkeypatch.setitem(sys.modules, 'IPython.display', display)
+    if colab:
+        package = types.ModuleType('google.colab')
+        output = types.ModuleType('google.colab.output')
+        output.serve_kernel_port_as_iframe = lambda port, **options: calls.append(
+            ('iframe', port, options)
+        )
+        output.serve_kernel_port_as_window = lambda port, **options: calls.append(
+            ('window', port, options)
+        )
+        package.output = output
+        monkeypatch.setitem(sys.modules, 'google.colab', package)
+        monkeypatch.setitem(sys.modules, 'google.colab.output', output)
+    else:
+        monkeypatch.delitem(sys.modules, 'google.colab', raising=False)
+    return shell, calls
+
+
+def test_notebook_environment_needs_loaded_modules(monkeypatch):
+    for name in ['IPython', 'google.colab']:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    assert _notebook.environment() is None
+    assert 'IPython' not in sys.modules and 'google.colab' not in sys.modules
+    _notebook_modules(monkeypatch, 'TerminalInteractiveShell')
+    assert _notebook.environment() is None
+    _notebook_modules(monkeypatch)
+    assert _notebook.environment() == 'jupyter'
+    _notebook_modules(monkeypatch, colab=True)
+    assert _notebook.environment() == 'colab'
+
+
+def test_show_inline_in_jupyter(render_home, monkeypatch):
+    shell, calls = _notebook_modules(monkeypatch)
+    monkeypatch.setattr(_launch, 'start', lambda port, stay, colab: _fake_server(render_home))
+    monkeypatch.setattr(_launch, 'open_browser', lambda url: pytest.fail('opened a browser'))
+    view = cuju.render.show()
+    ((kind, markup),) = calls
+    assert kind == 'html'
+    assert 'src="http://127.0.0.1:8999/?embed=key#page=home"' in markup
+    assert 'href="http://127.0.0.1:8999/#page=home" target="_blank"' in markup
+    assert 'height="600"' in markup and _notebook.FULL_SIZE in markup
+    # The view that ends its own cell shows once, and shows again in a later cell.
+    view._ipython_display_()
+    assert len(calls) == 1
+    shell.execution_count = 4
+    view._ipython_display_()
+    assert len(calls) == 2
+    cuju.render.show(display='none')
+    assert len(calls) == 2
+
+
+def test_show_inline_in_colab(render_home, monkeypatch):
+    _, calls = _notebook_modules(monkeypatch, colab=True)
+    started = []
+
+    def start(port, stay, colab):
+        started.append(colab)
+        return _fake_server(render_home, 8781)
+
+    monkeypatch.setattr(_launch, 'start', start)
+    cuju.render.show(height=500)
+    assert started == [True]
+    assert calls == [
+        ('iframe', 8781, {'path': '/?embed=key#page=home', 'height': '500'}),
+        ('window', 8781, {'path': '/#page=home', 'anchor_text': _notebook.FULL_SIZE}),
+    ]
 
 
 class _Clock:

@@ -9,6 +9,7 @@ import pytest
 import cuju
 import cuju.errors
 import cuju.state
+from cuju.render._http import launch as _launch
 from cuju.render._store import home as _home
 from cuju.render._store import library as _library
 from support.common import _SAMPLES, _library_ids, _serve_once
@@ -18,6 +19,15 @@ def test_relative_home_resolves(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(_home.HOME_VARIABLE, 'relative-home')
     assert _home.home() == tmp_path / 'relative-home'
+
+
+def test_open_sample_on_a_new_home(render_home):
+    # A home folder whose server never started still opens a shipped sample by name, as the
+    # notebook example of the docs does.
+    assert _library.path_of('sample-11v11') is None
+    assert _launch.resolve('sample-11v11') == '#match=sample-11v11'
+    assert _library.path_of('sample-11v11') is not None
+    assert _library.path_of('sample-5v5') is None
 
 
 def test_recording_details_and_trash(render_home):

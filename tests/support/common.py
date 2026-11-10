@@ -3,10 +3,12 @@
 """Helpers that the renderer's tests of several areas share."""
 
 import json
+import os
 import threading
 import urllib.request
 
 from cuju.render._format import recording as _recording
+from cuju.render._http import launch as _launch
 from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
 from cuju.render._store import home as _home
@@ -107,6 +109,10 @@ def _serve_once(monkeypatch):
 
 def _library_ids():
     return sorted(entry['id'] for entry in _library.matches())
+
+
+def _fake_server(render_home, port=8999):
+    return _launch.Server(port, os.getpid(), 'key', render_home)
 
 
 def _one_second(monkeypatch):

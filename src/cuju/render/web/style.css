@@ -6387,3 +6387,487 @@ dialog.painter .toolbar {
 .reduced-motion .mvp-flash {
     display: none;
 }
+
+/* Tournaments, the list beside the open tournament, the wizard, brackets and tables. */
+.cup-layout {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(0, 3fr);
+    gap: 20px;
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.cup-side,
+.cup-main {
+    min-width: 0;
+    border: 1px solid var(--border);
+    background: var(--surface);
+}
+
+.cup-side {
+    align-self: start;
+}
+
+.cup-side-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.cup-side-head h2,
+.cup-head h2 {
+    margin: 0;
+    font-size: 22px;
+    font-variant: small-caps;
+    letter-spacing: 0.06em;
+}
+
+.cup-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.cup-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    padding: 10px 14px;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.cup-item:hover,
+.cup-item.active {
+    background: var(--surface-2);
+}
+
+.cup-item.active {
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.cup-item-name {
+    font-weight: 600;
+}
+
+.cup-item-meta,
+.cup-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.cup-item-people {
+    color: var(--accent);
+    font-size: 13px;
+}
+
+.cup-main {
+    padding: 16px 20px 20px;
+    border-top: 3px solid var(--accent);
+}
+
+.cup-head {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.cup-steps,
+.cup-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+}
+
+.cup-step,
+.cup-tab {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    padding: 8px 12px;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.cup-step.active,
+.cup-tab.active {
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+}
+
+.cup-step-number {
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    font-size: 12px;
+}
+
+.cup-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.cup-nav-gap {
+    flex: 1;
+}
+
+.cup-presets {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 10px;
+}
+
+.cup-preset {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    background: var(--bg);
+}
+
+.cup-preset.active {
+    border-color: var(--accent);
+    box-shadow: inset 0 3px 0 var(--accent);
+}
+
+.cup-preset-pick {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.cup-preset-title {
+    font-weight: 600;
+}
+
+.cup-adders {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.cup-adder {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: flex-end;
+    padding: 10px;
+    border: 1px solid var(--border);
+}
+
+.cup-entrants {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-left: 28px;
+}
+
+.cup-entrant {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: flex-end;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.cup-entrant-kind {
+    min-width: 110px;
+}
+
+.cup-entrant-actions,
+.cup-actions,
+.cup-watch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.cup-kind,
+.cup-dot {
+    display: inline-grid;
+    place-items: center;
+    min-width: 22px;
+    height: 22px;
+    border: 1px solid var(--border);
+    font-size: 11px;
+}
+
+.cup-dot {
+    min-width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.small-field input,
+.small-field select {
+    max-width: 150px;
+}
+
+.cup-form {
+    display: grid;
+    gap: 12px;
+    max-width: 640px;
+}
+
+.cup-optional,
+.cup-points {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.cup-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 12px;
+}
+
+.cup-stage {
+    border: 1px solid var(--border);
+    padding: 10px 14px 14px;
+}
+
+.cup-stage legend {
+    padding: 0 6px;
+    font-weight: 600;
+}
+
+.cup-stage-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px 18px;
+    margin-bottom: 10px;
+}
+
+.cup-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cup-order {
+    margin: 0;
+    padding-left: 22px;
+}
+
+.cup-order li {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.cup-order li.off {
+    color: var(--muted);
+}
+
+.cup-json {
+    width: 100%;
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+}
+
+.cup-review-groups {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+}
+
+.cup-review-draw {
+    columns: 2 260px;
+}
+
+.cup-save {
+    margin-top: 18px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.cup-people {
+    margin-bottom: 14px;
+    padding: 10px 14px;
+    border: 1px solid var(--accent);
+}
+
+.cup-people ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.cup-people li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    align-items: center;
+    padding: 6px 0;
+}
+
+.cup-bracket-section {
+    margin-bottom: 18px;
+}
+
+.cup-bracket-scroll,
+.cup-table-scroll {
+    overflow-x: auto;
+}
+
+.cup-bracket {
+    display: grid;
+    gap: 6px 22px;
+    align-items: center;
+}
+
+.cup-bracket-round {
+    color: var(--muted);
+    font-size: 13px;
+    font-variant: small-caps;
+}
+
+.cup-bracket-cell {
+    display: flex;
+    align-items: center;
+}
+
+.cup-fixture {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+    background: var(--bg);
+}
+
+.cup-fixture.state-done {
+    border-left-color: var(--muted);
+}
+
+.cup-fixture.state-running,
+.cup-fixture.state-playing,
+.cup-fixture.state-person {
+    border-left-color: var(--accent);
+}
+
+.cup-fixture.state-failed {
+    border-left-color: var(--danger);
+}
+
+.cup-side-name {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.cup-side-name.won {
+    font-weight: 700;
+}
+
+.cup-side-name.unknown {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.cup-goals {
+    margin-left: auto;
+    padding-left: 10px;
+}
+
+.cup-round ul {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 6px;
+    margin: 0 0 12px;
+    padding: 0;
+    list-style: none;
+}
+
+.cup-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+.cup-table caption {
+    text-align: left;
+    padding-bottom: 4px;
+}
+
+.cup-table th,
+.cup-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+}
+
+.cup-table th[scope="row"],
+.cup-table thead th:nth-child(2) {
+    text-align: left;
+}
+
+.cup-table tr.qualified th[scope="row"] {
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.cup-tiebreaks {
+    color: var(--muted);
+}
+
+.cup-champion {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.cup-ranking ol {
+    columns: 3 200px;
+}
+
+#victory.ceremony .victory-title {
+    font-variant: small-caps;
+}
+
+@media (max-width: 900px) {
+    .cup-layout {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 12px;
+    }
+}

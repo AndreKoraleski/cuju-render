@@ -391,6 +391,25 @@ def test_recording_scenario_timing(monkeypatch, duration, second, expected):
     assert document['full_match'] == (duration >= 3000)
 
 
+def test_record_and_watch_as_context_managers(render_home):
+    """`record` and `watch` detach at the end of a `with` block, and `record` saves its episode."""
+    batch = cuju.BatchEnvironment('5_vs_5_l1_r0', environment_count=2, device='cpu')
+    with cuju.render.record(batch, environment=1, title='kept at the end') as recorder:
+        batch.reset()
+        for _ in range(5):
+            batch.step(torch.zeros((2, 1), dtype=torch.int32))
+        assert recorder in batch.observers
+    assert recorder not in batch.observers
+    (path,) = recorder.saved
+    assert _recording.read_header(path)['title'] == 'kept at the end'
+    assert sum(1 for _ in _recording.frames(path)) == 6
+    assert recorder.close() is None
+    with cuju.render.watch(batch, environment=1) as source:
+        announcement = render_home / 'live' / f'{source.identifier}.json'
+        assert announcement.exists() and source in batch.observers
+    assert not announcement.exists() and source not in batch.observers
+
+
 def test_new_home_gets_the_samples_once(render_home, monkeypatch):
     _serve_once(monkeypatch)
     assert _library_ids() == _SAMPLES

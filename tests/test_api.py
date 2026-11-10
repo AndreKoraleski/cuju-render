@@ -6,6 +6,8 @@ import gzip
 import json
 import os
 import struct
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -182,8 +184,6 @@ def test_default_submission_rejects_builtin_action(render_home, tmp_path, monkey
 def test_demo_starts_its_server_and_ends_cleanly_on_ctrl_c(render_home):
     """Without a server the demo starts one, and Ctrl+C ends the match, the server and itself."""
     import signal
-    import subprocess
-    import sys
 
     process = subprocess.Popen(
         [sys.executable, '-m', 'cuju.render', 'demo', '--port', '0', '--no-open'],

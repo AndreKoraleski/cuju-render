@@ -43,6 +43,7 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mock_grid
 import mock_sample
+import mock_tournaments
 
 WEB_ROOT = os.path.realpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'cuju', 'render', 'web')
@@ -1440,9 +1441,23 @@ class LiveSource:
 def make_handler(requests):
     """Returns the request handler, the real server's checks and routes on the data above."""
     allowed_hosts = set(LOOPBACK)
+    cups = mock_tournaments.MockTournaments(
+        teams, SCENARIOS, lambda: (matches() or [{'id': None}])[-1]['id']
+    )
 
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = 'cuju-render-mock'
+
+        def _tournaments(self, method):
+            """Answers the tournament routes from the mock's tournaments."""
+            parts, _ = self._route()
+            document = self._document() if method == 'POST' else {}
+            status, body = cups.respond(method, parts[2:], document)
+            if status == 204:
+                self.send_response(204)
+                self.end_headers()
+            else:
+                self._json(body, status)
 
         def _allowed(self):
             named = self.headers.get('Host') or ''
@@ -1523,6 +1538,8 @@ def make_handler(requests):
             try:
                 if parts[:1] != ['api']:
                     self._static(parts)
+                elif parts[:2] == ['api', 'tournaments']:
+                    self._tournaments('GET')
                 elif parts == ['api', 'matches']:
                     self._json(matches())
                 elif parts == ['api', 'trash']:
@@ -1586,7 +1603,9 @@ def make_handler(requests):
         def _post(self):
             parts, query = self._route()
             try:
-                if len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'duplicate':
+                if parts[:2] == ['api', 'tournaments']:
+                    self._tournaments('POST')
+                elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'duplicate':
                     self._json(duplicate(parts[2]), 201)
                 elif len(parts) == 4 and parts[1] == 'trash' and parts[3] == 'restore':
                     if trash(parts[2], restore=True):
@@ -1696,6 +1715,9 @@ def make_handler(requests):
 
         def _delete(self):
             parts, _ = self._route()
+            if parts[:2] == ['api', 'tournaments']:
+                self._tournaments('DELETE')
+                return
             if len(parts) == 3 and parts[1] == 'requests':
                 removed = requests.cancel(parts[2])
             elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':

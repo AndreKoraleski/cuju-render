@@ -483,6 +483,13 @@ class LiveSource:
         self._server.shutdown()
         self._server.server_close()
 
+    def __enter__(self) -> LiveSource:
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        """Closes the source, so that `with cuju.render.watch(batch):` withdraws it at the end."""
+        self.close()
+
 
 def _end(viewer: _Viewer) -> None:
     """Ends the stream of a viewer, dropping the frames it has not received yet."""

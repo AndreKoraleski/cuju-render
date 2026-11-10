@@ -34,7 +34,9 @@ from .._registry import clips as _clips
 from .._registry import teams as _teams
 from .._store import home as _home
 from .._store import library as _library
+from .._tournaments import tournament_runner as _tournament_runner
 from .._watch import grid as _grid
+from . import launch as _launch
 
 _WEB = Path(__file__).parents[1] / 'web'
 _LOGGER = logging.getLogger('cuju')
@@ -406,6 +408,8 @@ class _Games:
         seed: int | None = None,
         record: bool = True,
         teams: Any = (_teams.BUILTIN, _teams.BUILTIN),
+        length: int | None = None,
+        tournament: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Starts a game and returns its entry.
 
@@ -417,6 +421,8 @@ class _Games:
             record: Whether the game goes to the library.
             teams: The registry team of each side, which plays a side without a person and joins a
                 person as teammates.
+            length: The steps the game lasts, or `None` for the scenario's own duration.
+            tournament: The tournament match that the game plays, or `None`.
 
         Raises:
             ArgumentError: If the scenario is not shipped, the sides name no person, an ability
@@ -463,6 +469,7 @@ class _Games:
             'error': None,
             'late': 0,
             'streak': 0,
+            'tournament': tournament,
         }
         command = [
             sys.executable,
@@ -488,6 +495,10 @@ class _Games:
         for side, value in zip(('left', 'right'), ability, strict=True):
             if value is not None:
                 command += [f'--{side}-ability', repr(value)]
+        if length is not None:
+            command += ['--length', str(int(length))]
+        if tournament is not None:
+            command += ['--tournament', json.dumps(tournament)]
         with self._lock:
             if self._entry is not None and self._entry['state'] not in ('ended', 'failed'):
                 raise GameBusyError('a game already plays, quit it first')
@@ -731,20 +742,41 @@ _MAXIMUM_BODY = 110 * 1024 * 1024
 
 
 def make_handler(
-    requests: _Requests, games: _Games | None = None
+    requests: _Requests,
+    games: _Games | None = None,
+    tournaments: _tournament_runner.Tournaments | None = None,
 ) -> type[http.server.BaseHTTPRequestHandler]:
-    """Returns the request handler of the server, which serves the loopback interface alone."""
+    """Returns the request handler of the server, which serves the loopback interface alone.
+
+    The tournaments start with the first request that names them, unless the server passes them.
+    """
     allowed_hosts = set(_LOOPBACK)
     games = games if games is not None else _Games()
+    held = {'tournaments': tournaments}
+    held_lock = threading.Lock()
+
+    def cups() -> _tournament_runner.Tournaments:
+        with held_lock:
+            if held['tournaments'] is None:
+                held['tournaments'] = _tournament_runner.Tournaments(games)
+            return held['tournaments']
 
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = 'cuju-render'
         timeout = 60
 
         def end_headers(self) -> None:
-            """Adds to every response the headers that keep other sites from framing the page."""
-            self.send_header('X-Frame-Options', 'DENY')
-            self.send_header('Content-Security-Policy', "frame-ancestors 'none'")
+            """Adds to every response the headers that keep other sites from framing the page.
+
+            A page asked for with the key of the server, which `show` hands to a notebook, may sit
+            in the frame of a notebook on this machine, in VS Code or in Google Colab.
+            """
+            if getattr(self, '_framed', False):
+                ancestors = _launch.FRAME_ANCESTORS
+                self.send_header('Content-Security-Policy', f'frame-ancestors {ancestors}')
+            else:
+                self.send_header('X-Frame-Options', 'DENY')
+                self.send_header('Content-Security-Policy', "frame-ancestors 'none'")
             self.send_header('X-Content-Type-Options', 'nosniff')
             super().end_headers()
 
@@ -756,13 +788,26 @@ def make_handler(
             name it by its own host and come from its own page or from no page at all.
             """
             named = self.headers.get('Host') or ''
-            if urllib.parse.urlsplit('//' + named).hostname not in allowed_hosts:
+            # A server that `show` starts inside Google Colab also answers the names of Colab's
+            # proxy, which resolve to Google alone, so no other site makes a browser send them.
+            domains = getattr(self.server, 'proxy_domains', ())
+            hostname = urllib.parse.urlsplit('//' + named).hostname
+            if hostname not in allowed_hosts and not _launch.in_domains(hostname, domains):
                 self._error(403, 'expected a request to this server by its loopback address')
                 return False
             # A page served by another port of this machine is another site, so the whole
             # origin, scheme, host and port, must be this server's own.
+            # The proxy of Google Colab shows the page under https at the same loopback host and
+            # port, an origin that no other page can hold while this server holds the port. Behind
+            # the proxy the page's origin names the very host the request names, and a page of
+            # any other notebook, under another name of Colab's domains, is another site.
             origin = self.headers.get('Origin')
-            if origin is not None and self.command != 'GET' and origin != f'http://{named}':
+            own = (f'http://{named}', f'https://{named}')
+            proxied = origin is not None and origin.startswith('https://')
+            if proxied:
+                origin_host = urllib.parse.urlsplit(origin).hostname
+                proxied = origin_host == hostname and _launch.in_domains(origin_host, domains)
+            if origin is not None and self.command != 'GET' and origin not in own and not proxied:
                 self._error(403, 'expected a request from the page of this server')
                 return False
             try:
@@ -879,6 +924,8 @@ def make_handler(
                     self._json(requests.entries())
                 elif parts == ['api', 'game']:
                     self._json(games.current())
+                elif parts[:2] == ['api', 'tournaments']:
+                    self._tournament_get(parts[2:])
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'stream':
                     port = games.port(parts[2])
                     if port is None:
@@ -935,6 +982,8 @@ def make_handler(
                         document.get('teams', [_teams.BUILTIN, _teams.BUILTIN]),
                     )
                     self._json(entry, 201)
+                elif parts[:2] == ['api', 'tournaments']:
+                    self._tournament_post(parts[2:])
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'input':
                     self._json(games.input(parts[2], self._document()))
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'pause':
@@ -1022,6 +1071,14 @@ def make_handler(
                 return
             if len(parts) == 3 and parts[1] == 'requests':
                 removed = requests.cancel(parts[2])
+            elif len(parts) == 4 and parts[1:3] == ['tournaments', 'presets']:
+                removed = _tournament_runner.remove_preset(parts[3])
+            elif len(parts) == 3 and parts[1] == 'tournaments':
+                try:
+                    removed = cups().remove(parts[2])
+                except ArgumentError as error:
+                    self._error(409, str(error))
+                    return
             elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':
                 try:
                     removed = _teams.remove_model(parts[2])
@@ -1049,6 +1106,51 @@ def make_handler(
             else:
                 self._error(404, 'no such item')
 
+        def _tournament_get(self, rest: list[str]) -> None:
+            """Answers the reads of tournaments, their list, presets, ratings and one in full."""
+            if not rest:
+                self._json(cups().entries())
+            elif rest == ['presets']:
+                self._json(_tournament_runner.presets())
+            elif rest == ['ratings']:
+                self._json(_tournament_runner.ratings())
+            elif len(rest) == 1:
+                entry = cups().get(rest[0])
+                if entry is None:
+                    self._error(404, 'no such tournament')
+                else:
+                    self._json(entry)
+            else:
+                self._error(404, 'no such resource')
+
+        def _tournament_post(self, rest: list[str]) -> None:
+            """Creates, checks and changes tournaments, and saves presets."""
+            document = self._document()
+            if not rest:
+                self._json(cups().create(document.get('config', document)), 201)
+            elif rest == ['check']:
+                self._json(_tournament_runner.preview(document.get('config', document)))
+            elif len(rest) == 2 and rest[0] == 'presets':
+                self._json(_tournament_runner.save_preset(rest[1], document.get('preset')), 201)
+            elif len(rest) == 2 and rest[1] in ('cancel', 'resume', 'play', 'forfeit'):
+                identifier, action = rest
+                try:
+                    if action == 'cancel':
+                        if not cups().cancel(identifier):
+                            raise KeyError(identifier)
+                        self._json(cups().get(identifier))
+                    elif action == 'resume':
+                        self._json(cups().resume(identifier))
+                    elif action == 'play':
+                        self._json(cups().play(identifier, str(document.get('key'))), 201)
+                    else:
+                        winner = document.get('winner')
+                        self._json(cups().forfeit(identifier, str(document.get('key')), winner))
+                except KeyError:
+                    self._error(404, 'no such tournament')
+            else:
+                self._error(404, 'no such resource')
+
         def _static(self, parts: list[str]) -> None:
             relative = Path(*parts) if parts else Path('index.html')
             path = (_WEB / relative).resolve()
@@ -1057,11 +1159,19 @@ def make_handler(
                 return
             data = path.read_bytes()
             kind = _TYPES.get(path.suffix) or mimetypes.guess_type(path.name)[0]
+            page = relative == Path('index.html')
+            key = getattr(self.server, 'frame_key', None)
+            given = self._route()[1].get('embed', '').encode()
+            self._framed = page and bool(key) and secrets.compare_digest(given, key.encode())
             self.send_response(200)
             self.send_header('Content-Type', kind or 'application/octet-stream')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
+            self._framed = False
             self.wfile.write(data)
+            reached = getattr(self.server, 'on_page', None)
+            if page and reached is not None:
+                reached()
 
         def _model(self, identifier: str) -> None:
             path = _teams.model_path(identifier)
@@ -1281,32 +1391,85 @@ def make_handler(
     return Handler
 
 
-def serve(port: int = 8780, open_browser: bool = False) -> None:
+def serve(
+    port: int = 8780,
+    open_browser: bool = False,
+    *,
+    page: str = '',
+    remote: bool = False,
+    parent: int | None = None,
+    colab: bool = False,
+) -> None:
     """Serves the renderer's page and API on the loopback interface until interrupted.
 
     The API deletes files and plays submitted code, so it listens on the loopback interface alone,
-    and another machine reaches it through a tunnel, such as the port forwarding of SSH.
+    and another machine reaches it through a tunnel, such as the port forwarding of SSH. While it
+    runs, the file `server.json` of the home folder names it, so that `show` and
+    `cuju render open` find it.
 
     Args:
         port: The port, and 0 picks a free one.
         open_browser: Whether to open the page in the default browser.
+        page: The end of the address to open, from `#` on, such as `#match=sample-5v5`.
+        remote: Whether to print the SSH command that reaches the page from another machine, and
+            a line when a browser first reaches the page.
+        parent: A process whose end stops the server, as `show` asks for.
+        colab: Whether the server also answers through the port proxy of Google Colab, as `show`
+            asks for inside Colab.
+
+    Raises:
+        Error: If the port is in use, with what to do.
     """
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), make_handler(_Requests()))
-    server.daemon_threads = True
+    games = _Games()
+    # The tournaments resume as the server starts, each match where it stopped.
+    tournaments = _tournament_runner.Tournaments(games)
+    try:
+        server = _launch.LoopbackServer(
+            ('127.0.0.1', port), make_handler(_Requests(), games, tournaments)
+        )
+    except OSError as error:
+        tournaments.close()
+        raise _launch.port_error(port, error) from None
+    server.frame_key = secrets.token_urlsafe(18)
+    server.proxy_domains = _launch.COLAB_DOMAINS if colab else ()
     # The library receives each shipped sample match once, and keeps a deleted one deleted.
     try:
         _library.add_samples(again=False)
     except OSError as error:
         print(f'cuju render could not add the sample matches: {error}', flush=True)
-    address = f'http://127.0.0.1:{server.server_address[1]}/'
+    port = server.server_address[1]
+    address = f'http://127.0.0.1:{port}/'
     print(f'cuju render serves {address} from {_home.home()}', flush=True)
-    if open_browser:
-        import webbrowser
+    announcement = _launch.announce(port, server.frame_key)
+    if remote:
+        print(_launch.remote_note(port), flush=True)
+        print('Waiting for a browser to reach the page.', flush=True)
 
-        threading.Timer(0.5, webbrowser.open, (address,)).start()
+        def reached() -> None:
+            server.on_page = None
+            print(f'A browser reached the page at {time.strftime("%H:%M:%S")}.', flush=True)
+
+        server.on_page = reached
+    if parent is not None:
+
+        def watch_parent() -> None:
+            while _alive(parent):
+                time.sleep(1)
+            server.shutdown()
+
+        threading.Thread(target=watch_parent, daemon=True).start()
+    if open_browser:
+
+        def opening() -> None:
+            if not _launch.open_browser(address + page):
+                print(f'Open {address + page} in a browser.', flush=True)
+
+        threading.Timer(0.5, opening).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        tournaments.close()
+        _launch.withdraw(announcement)
         server.server_close()

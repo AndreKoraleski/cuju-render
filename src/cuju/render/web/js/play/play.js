@@ -546,12 +546,23 @@ export class PlayPage {
             return;
         }
         this.startButton.disabled = false;
-        this.game = { id: entry.id, humans, entry, started: false, paused: false, ended: false, source: null, sent: {}, busy: false, behind: false };
+        this.begin(entry, humans);
+    }
+
+    // Shows a game that the server started, from the setup or as a match of a tournament, whose
+    // context names it and leads back to the tournament at the end.
+    begin(entry, humans, context = null) {
+        this.game = { id: entry.id, humans, entry, started: false, paused: false, ended: false, source: null, sent: {}, busy: false, behind: false, context };
+        if (!this.built) {
+            return;
+        }
         this.menu.hidden = true;
         this.end.hidden = true;
-        this.enterStage();
-        this.view.focus();
-        this.connect();
+        if (this.app.page === 'play') {
+            this.enterStage();
+            this.view.focus();
+            this.connect();
+        }
     }
 
     connect() {
@@ -747,9 +758,17 @@ export class PlayPage {
             lines.push(h('p', { class: 'muted' }, 'Saved to Recordings.'),
                 h('button', { type: 'button', class: 'btn primary', onclick: () => this.app.openMatchInWatch(entry.match) }, 'Watch it'));
         }
-        lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.start() }, 'Play again'),
-            h('button', { type: 'button', class: 'btn', onclick: () => this.showSetup() }, 'New game'),
-            h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, 'Home'));
+        if (game.context) {
+            lines.push(h('p', { class: 'muted' }, game.context.label),
+                h('button', { type: 'button', class: 'btn', onclick: () => {
+                    this.showSetup();
+                    game.context.back();
+                } }, 'Back to the tournament'));
+        } else {
+            lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.start() }, 'Play again'),
+                h('button', { type: 'button', class: 'btn', onclick: () => this.showSetup() }, 'New game'));
+        }
+        lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, 'Home'));
         this.endPanel.replaceChildren(...lines);
         this.end.hidden = false;
     }

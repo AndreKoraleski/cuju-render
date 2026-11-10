@@ -22,6 +22,7 @@ import { FieldPage } from './pages/fieldpage.js';
 import { loadField, loadImages } from './world/field.js';
 import { LiveSource } from './recording/live.js';
 import { MatchesPage } from './pages/matches.js';
+import { TournamentsPage } from './play/tournament.js';
 import { PlayPage } from './play/play.js';
 import { bindTopMenus } from './core/menu.js';
 import { GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_W, Pitch } from './world/pitch.js';
@@ -138,6 +139,7 @@ class App {
         this.library = new TeamsPage(this);
         this.recordings = new RecordingsPage(this);
         this.matches = new MatchesPage(this);
+        this.tournaments = new TournamentsPage(this);
         this.play = null;
         this.fieldPage = new FieldPage(this);
         this.editor = new TeamEditor(this);
@@ -759,6 +761,8 @@ class App {
             this.recordings.refresh();
         } else if (name === 'matches') {
             this.matches.refresh();
+        } else if (name === 'tournaments') {
+            this.tournaments.refresh();
         } else if (name === 'teams') {
             this.library.refresh();
         } else if (name === 'field') {
@@ -2273,7 +2277,7 @@ class App {
             return;
         }
         const page = new URLSearchParams(raw).get('page');
-        if (page && ['home', 'watch', 'play', 'recordings', 'matches', 'teams', 'field', 'help'].includes(page)) {
+        if (page && ['home', 'watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help'].includes(page)) {
             this.showPage(page);
             return;
         }
