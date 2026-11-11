@@ -328,7 +328,7 @@ class _Requests:
 
     def _play_child(self, entry: dict[str, Any]) -> None:
         command = [
-            sys.executable,
+            *_home.python_command(),
             '-m',
             'cuju.render._playing.play',
             '--left',
@@ -351,7 +351,8 @@ class _Requests:
             self._checkpoint(entry)
             # Starting and registering the child share the cancellation lock. The child runs in the
             # renderer's folder, so no module beside the server's working folder shadows cuju or
-            # torch, and it reads nothing from the server's terminal.
+            # torch, with that folder off its path of modules, and it reads nothing from the
+            # server's terminal.
             process = subprocess.Popen(
                 command,
                 stdin=subprocess.DEVNULL,
@@ -360,7 +361,7 @@ class _Requests:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                cwd=_home.home(),
+                cwd=_home.process_folder(),
                 env=os.environ.copy(),
             )
             self._processes[entry['id']] = process
@@ -569,17 +570,17 @@ class _Games:
     @staticmethod
     def _spawn(arguments: list[str]) -> subprocess.Popen:
         """Starts the process of a game with its arguments, or with `--warm` to keep it ready."""
-        # The child runs in the renderer's folder and writes its errors to a pipe of its own.
-        _home.home().mkdir(parents=True, exist_ok=True)
+        # The child runs in the renderer's folder, with that folder off its path of modules,
+        # and writes its errors to a pipe of its own.
         return subprocess.Popen(
-            [sys.executable, '-m', 'cuju.render._playing.game', *arguments],
+            [*_home.python_command(), '-m', 'cuju.render._playing.game', *arguments],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             encoding='utf-8',
             errors='replace',
-            cwd=_home.home(),
+            cwd=_home.process_folder(),
             env=os.environ.copy(),
         )
 
@@ -850,6 +851,30 @@ def _scenarios() -> list[str]:
     return sorted([*bundled_scenarios(), *_teams.renderer_scenarios()])
 
 
+def _whole(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _announced(source: Any) -> bool:
+    """Returns whether a live announcement holds each field that the server reads, of its kind.
+
+    The server reaches a source at its port of the loopback interface alone, and only at a port
+    that no system service takes, from 1024 on.
+    """
+    return (
+        isinstance(source, dict)
+        and isinstance(source.get('id'), str)
+        and _home.valid_identifier(source['id'])
+        and isinstance(source.get('title'), str)
+        and isinstance(source.get('scenario'), str)
+        and _whole(source.get('environment'))
+        and _whole(source.get('environment_count', 1))
+        and _whole(source.get('generation', 0))
+        and _whole(source.get('port'))
+        and 1024 <= source['port'] <= 65535
+    )
+
+
 def _sources() -> list[dict[str, Any]]:
     """Returns the live sources whose process runs, and withdraws the announcements of others."""
     sources = []
@@ -858,9 +883,10 @@ def _sources() -> list[dict[str, Any]]:
             source = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        # An announcement without a whole number for its process is skipped, and the list goes on.
+        # An announcement without a whole number for its process, or with a field that the server
+        # cannot read, is skipped alone, and the list goes on.
         pid = source.get('pid') if isinstance(source, dict) else None
-        if not isinstance(pid, int) or isinstance(pid, bool):
+        if not _whole(pid) or not _announced(source):
             continue
         if not _alive(pid):
             path.unlink(missing_ok=True)
@@ -1026,7 +1052,23 @@ def make_handler(
                 self._error(500, _messages.described(error), error)
 
         def _json(self, value: Any, status: int = 200) -> None:
-            body = json.dumps(value).encode()
+            """Answers with JSON that every page reads, a number that is NaN or infinite as null."""
+
+            def finite(item: Any) -> Any:
+                # A number less itself is zero unless it is NaN or infinite.
+                if isinstance(item, float) and item - item != 0:
+                    return None
+                if isinstance(item, dict):
+                    return {key: finite(inner) for key, inner in item.items()}
+                if isinstance(item, (list, tuple)):
+                    return [finite(inner) for inner in item]
+                return item
+
+            try:
+                body = json.dumps(value, allow_nan=False).encode()
+            except ValueError:
+                # A stored file of an older install may still hold such a number.
+                body = json.dumps(finite(value), allow_nan=False).encode()
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(body)))

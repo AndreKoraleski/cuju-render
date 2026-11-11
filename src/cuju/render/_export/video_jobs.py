@@ -17,7 +17,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -260,7 +259,14 @@ class VideoJobs:
                 'created': time.time(),
                 '_path': str(output),
             }
-            command = [sys.executable, '-m', 'cuju.render._export.video', match, '-o', str(output)]
+            command = [
+                *_home.python_command(),
+                '-m',
+                'cuju.render._export.video',
+                match,
+                '-o',
+                str(output),
+            ]
             # The child runs in the renderer's folder, so no module beside the server's working
             # folder shadows cuju, and reads its cancellation from a pipe of its own.
             process = subprocess.Popen(
@@ -271,7 +277,7 @@ class VideoJobs:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                cwd=_home.home(),
+                cwd=_home.process_folder(),
                 env=os.environ.copy(),
             )
             self._process = process

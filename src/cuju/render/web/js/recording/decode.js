@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Decodes a recording in a Web Worker, so the page keeps drawing and loading while the frames are
-// unpacked and read. Where a worker cannot start, or fails, the page reads the recording itself
-// with the same reader, so a recording opens either way with the same frames.
+// unpacked and read. Where a worker cannot start, the page reads the recording itself with the
+// same reader, so a recording opens either way with the same frames. A worker that started and
+// then failed on a recording leaves it unopened, since the page would only fail on it again.
+//
+// A worker could not start when making it throws, when it reports an error before it said it
+// started, or when its reader did not load.
 
 import { FormatError, parseRecording } from './format.js';
 
@@ -18,26 +22,32 @@ function startWorker() {
 
 // Decodes in a worker made by makeWorker, resolving with the recording or rejecting with the
 // worker's own error. A format error keeps its class and takes its message again from its id, in
-// the page's language, other failures carry `failed` so the caller falls back to the page.
+// the page's language, and a worker that could not start rejects with `unavailable`, so the
+// caller falls back to the page.
 function inWorker(bytes, makeWorker) {
     return new Promise((resolve, reject) => {
         let worker;
         try {
             worker = makeWorker();
         } catch (err) {
-            reject(Object.assign(new Error(`The decoder did not start, ${err.message}`), { failed: true }));
+            reject(Object.assign(new Error(`The decoder did not start, ${err && err.message}`), { unavailable: true }));
             return;
         }
         const id = ++nextId;
+        let started = false;
         const done = () => worker.terminate();
         worker.onmessage = (event) => {
             const data = event.data || {};
             if (data.id !== id) {
                 return;
             }
+            if (data.started) {
+                started = true;
+                return;
+            }
             done();
             if (data.error) {
-                reject(data.format ? new FormatError(data.messageId, data.messageValues) : Object.assign(new Error(data.error), { failed: true }));
+                reject(data.format ? new FormatError(data.messageId, data.messageValues) : Object.assign(new Error(data.error), { unavailable: !!data.unavailable }));
             } else {
                 resolve({ header: data.header, frames: data.frames, annotations: data.annotations || null });
             }
@@ -47,7 +57,7 @@ function inWorker(bytes, makeWorker) {
             if (event && typeof event.preventDefault === 'function') {
                 event.preventDefault();
             }
-            reject(Object.assign(new Error(`The decoder failed, ${(event && event.message) || 'it did not load'}`), { failed: true }));
+            reject(Object.assign(new Error(`The decoder failed, ${(event && event.message) || 'it did not load'}`), { unavailable: !started }));
         };
         worker.onmessageerror = worker.onerror;
         // The worker receives a copy, so the bytes stay whole for the page if it must read them.
@@ -68,7 +78,7 @@ export async function decodeRecording(input, options = {}) {
             lastDecoder = 'worker';
             return rec;
         } catch (err) {
-            if (!err.failed) {
+            if (!err.unavailable) {
                 throw err;
             }
             console.warn('decoding on the page instead', err.message);

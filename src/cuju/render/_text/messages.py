@@ -244,6 +244,10 @@ MESSAGES: dict[str, str] = {
     'server.teams.ability': 'expected an ability from 0 to 1, found {value}',
     'server.teams.ability_pair': 'expected a pair of abilities, left and right, found {ability}',
     'server.teams.agent_function': 'expected an agent function in the submission {identifier}',
+    'server.teams.archive.device': (
+        'expected archive members whose names open no device on Windows and end in no dot or '
+        'space, found {member}'
+    ),
     'server.teams.archive.limits': (
         'expected an archive of at most 10,000 files and 500 MB unpacked'
     ),
@@ -388,6 +392,9 @@ MESSAGES: dict[str, str] = {
     ),
     'server.tournament.entrants': 'expected from 2 to {most} entrants, found {count}',
     'server.tournament.flag': 'expected {setting} of {where} as true or false',
+    'server.tournament.foreign': (
+        'stopped, since this install did not write its file, resume it to play its matches'
+    ),
     'server.tournament.group_minimum': (
         'every group of {where} needs at least 2 entrants, and {count} entrants make groups of '
         '{sizes}'

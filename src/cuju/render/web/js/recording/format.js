@@ -71,9 +71,30 @@ export function isGzip(bytes) {
     return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
 }
 
-// A full match of 11 against 11 is about 13 MB once decompressed, far below this cap, which
-// stops a hostile file from inflating into all of the browser's memory.
-export const MAX_DECOMPRESSED_BYTES = 512 * 1024 * 1024;
+// A full match of 11 against 11 takes about 25 MB once decompressed, five of them fit in this
+// cap, which stops a small file from inflating into all of the browser's memory.
+export const MAX_DECOMPRESSED_BYTES = 128 * 1024 * 1024;
+
+// The frames that a recording may hold, and its frames times its players. A full match is 3001
+// frames of 22 players, 66022 player frames, so a recording of fifteen such matches opens, while
+// any file within these caps and the cap above takes at most about 600 MB of the page's memory as
+// it is read. A header lists at most MAX_PLAYERS players, and GRF plays at most 22.
+export const MAX_FRAMES = 50000;
+export const MAX_PLAYER_FRAMES = 1000000;
+export const MAX_PLAYERS = 64;
+
+// GRF runs ten steps a second, and a header whose rate is no number in this range reads as ten.
+const STEPS_PER_SECOND = 10;
+const MAX_STEPS_PER_SECOND = 100;
+
+// Refuses frames beyond the caps above, before any of them is decoded.
+export function checkFrameCount(count, players) {
+    if (count > MAX_FRAMES || count * players > MAX_PLAYER_FRAMES) {
+        throw new FormatError('format.error.too_many_frames', {
+            count, total: count * players, most: MAX_FRAMES, cells: MAX_PLAYER_FRAMES,
+        });
+    }
+}
 
 export async function gunzip(bytes, limit = MAX_DECOMPRESSED_BYTES) {
     const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
@@ -131,7 +152,16 @@ export function parseHeader(bytes) {
     return { header, offset: 12 + length };
 }
 
+// Whether a value is an object of JSON, not null and no list.
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// Checks a header and sets the defaults of its teams and its rate. The players, their teams and
+// their indices are what the frames and the views read by position, so a malformed entry refuses
+// the recording, while the teams and the rate, which only name and time the match, fall back.
 export function validateHeader(header) {
+    if (!isObject(header)) {
+        throw new FormatError('format.error.header_object');
+    }
     if (header.stream_sequence !== undefined && header.stream_sequence !== 1) {
         throw new FormatError('format.error.stream_numbering');
     }
@@ -145,6 +175,15 @@ export function validateHeader(header) {
     if (!Array.isArray(header.players) || header.players.length === 0) {
         throw new FormatError('format.error.no_players');
     }
+    if (header.players.length > MAX_PLAYERS) {
+        throw new FormatError('format.error.player_count', { count: header.players.length, most: MAX_PLAYERS });
+    }
+    header.players.forEach((player, k) => {
+        if (!isObject(player) || (player.team !== 0 && player.team !== 1)
+            || !Number.isInteger(player.index) || player.index < 0 || player.index >= header.players.length) {
+            throw new FormatError('format.error.player', { number: k + 1 });
+        }
+    });
     if (Array.isArray(header.nodes) && header.nodes.length !== NODE_COUNT) {
         throw new FormatError('format.error.nodes', { nodes: header.nodes.length, expected: NODE_COUNT });
     }
@@ -156,13 +195,17 @@ export function validateHeader(header) {
     if (header.frame_bytes !== expected) {
         throw new FormatError('format.error.frame_bytes', { bytes: String(header.frame_bytes), players: header.players.length, expected });
     }
+    const teams = [
+        { name: 'Left', color: [200, 40, 40], secondary: [240, 240, 240] },
+        { name: 'Right', color: [40, 80, 200], secondary: [30, 30, 40] },
+    ];
     if (!Array.isArray(header.teams) || header.teams.length < 2) {
-        header.teams = [
-            { name: 'Left', color: [200, 40, 40], secondary: [240, 240, 240] },
-            { name: 'Right', color: [40, 80, 200], secondary: [30, 30, 40] },
-        ];
+        header.teams = teams;
+    } else {
+        header.teams = header.teams.map((team, side) => (isObject(team) || side > 1 ? team : teams[side]));
     }
-    header.steps_per_second = header.steps_per_second || 10;
+    const rate = header.steps_per_second;
+    header.steps_per_second = typeof rate === 'number' && rate >= 1 && rate <= MAX_STEPS_PER_SECOND ? rate : STEPS_PER_SECOND;
 }
 
 // Wraps one frame. The bytes must be aligned to four bytes, the caller copies when they are not.
@@ -209,6 +252,10 @@ export async function parseRecording(input) {
         try {
             bytes = await gunzip(bytes);
         } catch (err) {
+            // The cap of decompressed bytes keeps its own message.
+            if (err instanceof FormatError) {
+                throw err;
+            }
             throw new FormatError('format.error.gunzip', { error: err.message });
         }
     }
@@ -225,12 +272,14 @@ export async function parseRecording(input) {
         const sections = readSections(bytes, offset);
         const coded = sections.get(FRAMES_TAG);
         count = header.frame_count;
+        checkFrameCount(count, header.players.length);
         if (!coded || coded.length !== sectionBytes(header.players.length, count)) {
             throw new FormatError('format.error.frames_section');
         }
         aligned = decodeFrames(coded, header.players.length, count, header.keyframe_interval);
         annotations = readAnnotations(sections.get(ANNOTATIONS_TAG));
     } else {
+        checkFrameCount(count, header.players.length);
         // The writer pads the header to four bytes, and a copy keeps older or foreign files readable.
         aligned = bytes.slice(offset, offset + count * size).buffer;
     }

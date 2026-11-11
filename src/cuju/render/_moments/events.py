@@ -167,10 +167,26 @@ class _Frame:
 
 
 def _frames(header: dict[str, Any], frames: Iterable[bytes]) -> list[_Frame]:
-    """Returns the frames of a recording as the rules read them."""
+    """Returns the frames of a recording as the rules read them, a thousand at a time."""
+    out: list[_Frame] = []
+    chunk: list[bytes] = []
+    for frame in frames:
+        chunk.append(frame)
+        if len(chunk) == _CHUNK_FRAMES:
+            out += _parse(header, chunk)
+            chunk = []
+    return out + _parse(header, chunk)
+
+
+# The frames that `_frames` turns into lists at once.
+_CHUNK_FRAMES = 1000
+
+
+def _parse(header: dict[str, Any], frames: list[bytes]) -> list[_Frame]:
+    """Returns frames of a recording as the rules read them, a whole frame alone for each."""
     players = len(header['players'])
-    data = b''.join(frames)
     size = _FRAME_HEAD + players * 196 + 3 * (-(-players // 4) * 4)
+    data = b''.join(frame for frame in frames if len(frame) == size)
     count = len(data) // size
     raw = np.frombuffer(data, dtype=np.uint8, count=count * size).reshape(count, size)
     ints = raw[:, :32].copy().view('<i4').tolist()

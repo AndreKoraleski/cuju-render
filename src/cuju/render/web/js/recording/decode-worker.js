@@ -32,8 +32,20 @@ export function frameBuffers(frames) {
 
 // Decodes one request, { id, bytes }, into the reply and the buffers that it moves. A format
 // error also sends the id and the values of its message, so the page shows it in its language.
-export async function decodeRequest({ id, bytes }) {
-    const { FormatError, parseRecording } = await format();
+// A reader that does not load replies with `unavailable`, and once it has loaded, `started`, when
+// given, receives the id before the recording is read, so the page tells a worker that could not
+// start from one that failed on the recording.
+export async function decodeRequest({ id, bytes }, started = null) {
+    let reader;
+    try {
+        reader = await format();
+    } catch (err) {
+        return { reply: { id, error: err && err.message ? err.message : String(err), unavailable: true }, transfer: [] };
+    }
+    const { FormatError, parseRecording } = reader;
+    if (started) {
+        started(id);
+    }
     try {
         const { header, frames, annotations } = await parseRecording(bytes);
         return { reply: { id, header, frames, annotations }, transfer: frameBuffers(frames) };
@@ -52,7 +64,7 @@ export async function decodeRequest({ id, bytes }) {
 // Inside a worker, each message is a request. Node's tests import this file for its functions.
 if (typeof self !== 'undefined' && typeof self.postMessage === 'function' && typeof document === 'undefined') {
     self.onmessage = async (event) => {
-        const { reply, transfer } = await decodeRequest(event.data);
+        const { reply, transfer } = await decodeRequest(event.data, (id) => self.postMessage({ id, started: true }));
         self.postMessage(reply, transfer);
     };
 }

@@ -303,6 +303,21 @@ test('the live memory budget keeps 15 minutes of eleven a side within 80 MiB', (
     assert.ok(limit * decoded <= 80 * 1024 * 1024);
 });
 
+test('the live memory budget holds whatever a header claims', () => {
+    const frame = (players) => (NODES_FLOAT + players * PLAYER_FLOATS) * 4 + 3 * players + 160;
+    // A minute of frames at a thousand steps a second of a thousand players passes the budget.
+    for (const [count, sps] of [[1000, 1000], [22, 1e9], [20000, 10], [2, 10]]) {
+        const players = Array.from({ length: count }, () => ({}));
+        const limit = liveLimit({ players, steps_per_second: sps });
+        assert.ok(Number.isInteger(limit) && limit >= 1, `${limit} frames`);
+        assert.ok(limit === 1 || limit * frame(count) <= 80 * 1024 * 1024, `${count} players at ${sps}`);
+    }
+    // A missing, negative or textual rate counts as ten steps a second.
+    for (const sps of [undefined, -5, 'fast', NaN, Infinity, 0]) {
+        assert.equal(liveLimit({ players: [{}, {}], steps_per_second: sps }), 30 * 60 * 10);
+    }
+});
+
 test('a grid tile keeps its last picture while the source refreshes it', () => {
     const tile = { environment: 3, step: 40, score: [1, 0], clock: 61000, mode: 0, ball: [0, 0, 0], teams: [], players: [], active: [] };
     const later = { ...tile, step: 52, score: [1, 1], clock: 75000 };

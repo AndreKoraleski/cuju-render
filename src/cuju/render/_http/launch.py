@@ -15,8 +15,8 @@ from __future__ import annotations
 import atexit
 import contextlib
 import errno
+import filecmp
 import getpass
-import gzip
 import http.client
 import http.server
 import json
@@ -320,7 +320,7 @@ def start(port: int | None = None, stay: bool = False, colab: bool = False) -> S
     home = check_home()
     if port is None:
         port = DEFAULT_PORT if port_free(DEFAULT_PORT) else 0
-    command = [sys.executable, '-m', 'cuju.render', '--home', str(home), 'serve', '--port']
+    command = [*_home.python_command(), '-m', 'cuju.render', '--home', str(home), 'serve', '--port']
     command.append(str(port))
     if not stay:
         command += ['--parent', str(os.getpid())]
@@ -343,7 +343,7 @@ def start(port: int | None = None, stay: bool = False, colab: bool = False) -> S
             stdin=subprocess.DEVNULL,
             stdout=stream,
             stderr=subprocess.STDOUT,
-            cwd=home,
+            cwd=_home.process_folder(),
             env=environment,
             **options,
         )
@@ -390,30 +390,37 @@ def import_recording(path: str | os.PathLike) -> str:
     if source.parent == folder and source.suffix == '.cjr' and _home.valid_identifier(source.stem):
         return source.stem
     try:
+        # The header comes checked, so the summary finds every field in its type.
         header = _recording.read_header(source)
-    except (OSError, ValueError, EOFError, gzip.BadGzipFile, Error):
-        raise ArgumentError(
-            f'expected a recording of cuju, found other bytes in {source}'
-        ) from None
-    size = source.stat().st_size
-    data = None
-    for other in folder.glob('*.cjr'):
-        if other.stat().st_size == size:
-            data = data if data is not None else source.read_bytes()
-            if other.read_bytes() == data and _library.path_of(other.stem) is not None:
+        size = source.stat().st_size
+        for other in folder.glob('*.cjr'):
+            if (
+                other.stat().st_size == size
+                and filecmp.cmp(source, other, shallow=False)
+                and _library.path_of(other.stem) is not None
+            ):
                 return other.stem
+    except Exception as error:
+        raise _not_a_recording(source, error) from None
     target = _library.reserve()
     try:
         shutil.copyfile(source, target)
-        count, last = 0, None
-        for frame in _recording.frames(target):
-            count, last = count + 1, frame
+        # A file of version 2 decodes its last frame alone, which the summary reads its score from.
+        count, last = _recording.ending(target)
         _library._write_summary(target, header, last, count)
-    except BaseException:
+    except BaseException as error:
         target.unlink(missing_ok=True)
         target.with_suffix('.json').unlink(missing_ok=True)
+        if isinstance(error, Exception):
+            raise _not_a_recording(source, error) from None
         raise
     return target.stem
+
+
+def _not_a_recording(source: Path, error: Exception) -> ArgumentError:
+    """Returns the error of a file that reads as no recording, with the reason that cuju gives."""
+    reason = f', {error}' if isinstance(error, Error | OSError) else ''
+    return ArgumentError(f'expected a recording of cuju, found other bytes in {source}{reason}')
 
 
 def resolve(target: str | os.PathLike | None) -> str:

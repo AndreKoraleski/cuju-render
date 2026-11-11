@@ -5,6 +5,7 @@
 // docs/rendering.md, live sources, teams with their styles, models and images, and folder uploads.
 
 import { formatNumber, serverText, t, tOr } from './i18n.js';
+import { summaryList } from './names.js';
 
 // An error of the server, whose message is in the language of the page when the server gives the
 // id of its message, else the server's own English text. The id and values stay on the error.
@@ -67,7 +68,7 @@ async function getJson(path) {
 const enc = encodeURIComponent;
 
 export const api = {
-    matches: () => getJson('/api/matches'),
+    matches: async () => summaryList(await getJson('/api/matches')),
     languages: () => getJson('/api/languages'),
     importLanguage: async (document) => (await request('POST', '/api/languages', { json: document })).json(),
     removeLanguage: async (code) => (await request('DELETE', `/api/languages/${enc(code)}`)).json(),
@@ -100,7 +101,7 @@ export const api = {
     // Deleting a recording moves it to the Trash, and only the Trash deletes one for good.
     deleteMatch: (id) => request('DELETE', `/api/matches/${enc(id)}`),
     matchDetails: (id) => getJson(`/api/matches/${enc(id)}/details`),
-    trash: () => getJson('/api/trash'),
+    trash: async () => summaryList(await getJson('/api/trash')),
     restoreMatch: async (id) => (await request('POST', `/api/trash/${enc(id)}/restore`)).json(),
     purgeMatch: (id) => request('DELETE', `/api/trash/${enc(id)}`),
     patchMatch: async (id, changes) => (await request('PATCH', `/api/matches/${enc(id)}`, { json: changes })).json().catch(() => null),

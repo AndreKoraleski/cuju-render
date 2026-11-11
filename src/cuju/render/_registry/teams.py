@@ -17,9 +17,11 @@ exported from the page carries them along, and a submission folder that holds on
 
 from __future__ import annotations
 
+import bz2
 import collections
 import contextlib
 import functools
+import gzip
 import hashlib
 import io
 import json
@@ -35,6 +37,7 @@ import threading
 import time
 import types
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -43,6 +46,13 @@ from cuju.errors import ArgumentError
 from .._store import home as _home
 from .._text import messages as _messages
 from .._text.messages import MessageError
+
+try:
+    import lzma
+except ImportError:
+    # A Python built without lzma reads no xz archive, as tarfile does then.
+    lzma = None  # type: ignore[assignment]
+_LZMA_ERRORS = () if lzma is None else (lzma.LZMAError,)
 
 BUILTIN = 'builtin'
 # The start of a submission folder as the page uploads it, an index and the files' bytes.
@@ -62,6 +72,11 @@ _MAXIMUM_BYTES = 100 * 1024 * 1024
 # An archive may unpack to this much and this many files, so a small upload cannot fill the disk.
 _MAXIMUM_UNPACKED = 500 * 1024 * 1024
 _MAXIMUM_FILES = 10000
+# The bytes of a tar archive after decompression that an upload reads at most, its members and
+# their headers, and the bytes of the headers of one member, so a small compressed archive cannot
+# make the server read or hold without end.
+_MAXIMUM_TAR_BYTES = _MAXIMUM_UNPACKED + 64 * 1024 * 1024
+_MAXIMUM_TAR_HEADER = 1024 * 1024
 _LOGGER = logging.getLogger('cuju')
 # One lock serializes every change of the registry, which the server makes from several threads.
 _LOCK = threading.RLock()
@@ -109,6 +124,8 @@ _IMPLIED = ('images', 'sounds', 'sounds_version', 'clips', 'name_id', 'name_valu
 # The folder of a submission that holds the renderer's files of its team.
 TEAM_FOLDER = 'cuju-team'
 _MAXIMUM_IMAGE_BYTES = 8 * 1024 * 1024
+# The longest file of a team's entry that the registry reads, in bytes.
+_MAXIMUM_ENTRY_BYTES = 1024 * 1024
 # The sounds a team may hold, each played when one of its players does that, or its fans sing.
 SOUND_SLOTS = ('goal', 'shot', 'pass', 'tackle', 'save', 'kick', 'celebration', 'chant')
 _MAXIMUM_SOUND_BYTES = 2 * 1024 * 1024
@@ -116,8 +133,12 @@ _SOUND_SUFFIXES = ('.ogg', '.mp3', '.wav')
 _IMAGE_SUFFIXES = ('.png', '.jpg', '.webp', '.json')
 # An imported file that fails its checks keeps its bytes under its name followed by this.
 _REJECTED = '.rejected'
-# Windows: these names open a device in any folder, whatever their extension.
-_DEVICES = re.compile(r'(con|prn|aux|nul|com[0-9]|lpt[0-9])', re.IGNORECASE)
+# Windows: these names open a device in any folder, whatever their extension or case, the ports
+# with a superscript digit as well.
+_SUPERSCRIPTS = r'\N{SUPERSCRIPT ONE}\N{SUPERSCRIPT TWO}\N{SUPERSCRIPT THREE}'
+_DEVICES = re.compile(
+    rf'(con|prn|aux|nul|conin\$|conout\$|(com|lpt)[0-9{_SUPERSCRIPTS}])', re.IGNORECASE
+)
 _KIT = {
     'pattern': 'plain',
     'primary': [214, 48, 49],
@@ -153,7 +174,7 @@ def _new_kit() -> dict[str, Any]:
     worn: collections.Counter[tuple[int, ...]] = collections.Counter()
     for path in _home.folder('teams').glob(f'*/{TEAM_FOLDER}/team.json'):
         with contextlib.suppress(OSError, ValueError, TypeError, KeyError, AttributeError):
-            team = json.loads(path.read_text(encoding='utf-8'))
+            team = _read_entry(path)
             worn[tuple(team['style']['kit']['primary'])] += 1
     primary, shorts = min(_NEW_KITS, key=lambda kit: worn[tuple(kit[0])])
     return {
@@ -223,7 +244,12 @@ def _color(value: Any, name: str) -> list[int]:
 
 
 def _printable(text: str) -> str:
-    """Returns `text` with its control characters, line breaks among them, turned into spaces."""
+    """Returns `text` with every character that prints nothing of its own turned into a space.
+
+    These are the control characters, the escapes of a terminal and line breaks among them, and
+    the format characters, the marks that turn the direction of text around among them, which
+    `str.isprintable` finds, and every space but the plain one.
+    """
     return ''.join(character if character.isprintable() else ' ' for character in text)
 
 
@@ -419,10 +445,10 @@ def _model_names() -> tuple[str, ...]:
 def _complete(entry: dict[str, Any], kit: dict[str, Any] | None = None) -> dict[str, Any]:
     """Returns a stored entry with its format, style, model and images filled and checked."""
     entry = dict(entry)
-    if entry.get('format') not in FORMATS:
+    if not isinstance(entry.get('format'), str) or entry['format'] not in FORMATS:
         entry['format'] = '11v11'
     base = default_style(entry['format'], kit)
-    saved = entry.get('style') or {}
+    saved = entry.get('style') if isinstance(entry.get('style'), dict) else {}
     try:
         entry['style'] = _resize(
             style(saved, {**base, **_known(saved, base)}, _model_names()), entry['format']
@@ -435,8 +461,9 @@ def _complete(entry: dict[str, Any], kit: dict[str, Any] | None = None) -> dict[
     except ArgumentError:
         entry['control'] = dict(DEFAULT_CONTROL)
     folder = _meta_path(entry['id']).parent
-    entry['images'] = [slot for slot in IMAGE_SLOTS if _image_file(folder, slot) is not None]
-    entry['sounds'] = [slot for slot in SOUND_SLOTS if _sound_file(folder, slot) is not None]
+    names = _names(folder)
+    entry['images'] = [slot for slot in IMAGE_SLOTS if _image_file(folder, slot, names)]
+    entry['sounds'] = [slot for slot in SOUND_SLOTS if _sound_file(folder, slot, names)]
     entry['sounds_version'] = _sounds_version(folder)
     from . import clips as _clips
 
@@ -452,8 +479,9 @@ def _sounds_version(folder: Path) -> str:
     anew always lands as a new file.
     """
     parts = []
+    names = _names(folder)
     for slot in SOUND_SLOTS:
-        path = _sound_file(folder, slot)
+        path = _sound_file(folder, slot, names)
         with contextlib.suppress(OSError):
             if path is not None:
                 stat = path.stat()
@@ -469,18 +497,43 @@ def _known(saved: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
 
 
 def _meta_path(identifier: str) -> Path:
-    """Returns the file of a team's entry, the built-in AI's included."""
+    """Returns the file of a team's entry, the built-in AI's included.
+
+    Raises:
+        ArgumentError: If the identifier could name a file outside the folder of teams.
+    """
+    if not isinstance(identifier, str) or not _home.valid_identifier(identifier):
+        raise MessageError('server.teams.unknown', identifier=repr(identifier))
     return _home.folder('teams') / identifier / TEAM_FOLDER / 'team.json'
+
+
+def _read_entry(path: Path) -> dict[str, Any]:
+    """Returns the stored entry of a team's file, or raises `ValueError` for any other content.
+
+    The file is at most `_MAXIMUM_ENTRY_BYTES` long and holds a JSON object.
+    """
+    with path.open('rb') as stream:
+        data = stream.read(_MAXIMUM_ENTRY_BYTES + 1)
+    if len(data) > _MAXIMUM_ENTRY_BYTES:
+        raise ValueError('the file of the team is too long')
+    try:
+        saved = json.loads(data)
+    except RecursionError as error:
+        raise ValueError('the file of the team nests too deeply') from error
+    if not isinstance(saved, dict):
+        raise ValueError('the file of the team holds no object')
+    return saved
 
 
 def _builtin() -> dict[str, Any]:
     """Returns the entry of the built-in AI, with the name and style its file keeps, if any."""
     entry = dict(_BUILTIN_ENTRY)
     with contextlib.suppress(OSError, ValueError):
-        saved = json.loads(_meta_path(BUILTIN).read_text())
-        entry.update(
-            {key: saved[key] for key in ('name', 'style', 'model', 'format') if key in saved}
-        )
+        saved = _read_entry(_meta_path(BUILTIN))
+        entry.update({key: saved[key] for key in ('style', 'model', 'format') if key in saved})
+        name = _printable(saved['name']).strip()[:80] if isinstance(saved.get('name'), str) else ''
+        if name:
+            entry['name'] = name
     return _complete(_builtin_name(entry), _BUILTIN_KIT)
 
 
@@ -511,15 +564,30 @@ def shown_name(team: dict[str, Any]) -> dict[str, Any] | str:
 
 
 def teams() -> list[dict[str, Any]]:
-    """Returns every team, the built-in AI first, then the submissions from newest to oldest."""
+    """Returns every team, the built-in AI first, then the submissions from newest to oldest.
+
+    A team's identifier is the name of its folder, whatever its file says, and a folder whose
+    name is no identifier, or whose file fails to read as an entry, is left out alone.
+    """
     entries = []
     for folder in _home.folder('teams').iterdir():
-        meta = folder / TEAM_FOLDER / 'team.json'
-        if folder.name == BUILTIN or not (folder.is_dir() and meta.is_file()):
+        if folder.name == BUILTIN or not _home.valid_identifier(folder.name):
             continue
+        meta = folder / TEAM_FOLDER / 'team.json'
         try:
-            entry = _complete(json.loads(meta.read_text()))
-        except (OSError, ValueError, KeyError):
+            if not (folder.is_dir() and meta.is_file()):
+                continue
+            saved = _read_entry(meta)
+            if not isinstance(saved.get('created'), str):
+                saved['created'] = ''
+            # A name of a file edited by hand prints in a terminal too, so its control and format
+            # characters, such as escapes and the marks that turn text around, become spaces.
+            name = saved.get('name')
+            name = _printable(name).strip()[:80] if isinstance(name, str) else ''
+            saved['name'] = name or folder.name
+            entry = _complete({**saved, 'id': folder.name, 'kind': 'kaggle'})
+        except Exception as error:
+            _LOGGER.warning('cuju render leaves out the team %s, %s', folder.name, error)
             continue
         entries.append(entry)
     entries.sort(key=lambda entry: entry.get('created') or '', reverse=True)
@@ -695,10 +763,36 @@ def update(
     return current
 
 
-def _image_file(folder: Path, slot: str) -> Path | None:
-    """Returns the file of an image slot of a team's folder, whatever its extension, or `None`."""
-    for path in folder.glob(f'{slot}.*'):
-        if path.suffix in ('.png', '.jpg', '.webp', '.json'):
+def _names(folder: Path) -> set[str]:
+    """Returns the names of the entries of a folder as written, or none if it is missing."""
+    try:
+        return set(os.listdir(folder))
+    except OSError:
+        return set()
+
+
+def _exact(folder: Path, name: str, names: set[str] | None = None) -> Path | None:
+    """Returns the file of a folder named exactly `name`, or `None`.
+
+    Windows and macOS find a file whatever the case of its name, so the name must be one of the
+    folder's own, `names` when given. A link, which could point outside the team's folder, counts
+    as no file.
+    """
+    if name not in (_names(folder) if names is None else names):
+        return None
+    path = folder / name
+    return path if path.is_file() and not path.is_symlink() else None
+
+
+def _image_file(folder: Path, slot: str, names: set[str] | None = None) -> Path | None:
+    """Returns the file of an image slot of a team's folder, of any of its extensions, or `None`.
+
+    Only the slot's own name with an extension of `_IMAGE_SUFFIXES`, in that case, names it.
+    """
+    names = _names(folder) if names is None else names
+    for suffix in _IMAGE_SUFFIXES:
+        path = _exact(folder, f'{slot}{suffix}', names)
+        if path is not None:
             return path
     return None
 
@@ -708,7 +802,7 @@ def _image_suffix(slot: str, data: bytes) -> str:
     if slot.endswith('-edit'):
         try:
             json.loads(data)
-        except ValueError as error:
+        except (ValueError, RecursionError) as error:
             raise MessageError('server.teams.editor', error=error) from error
         return '.json'
     if data.startswith(b'\x89PNG\r\n\x1a\n'):
@@ -766,10 +860,15 @@ def remove_image(identifier: str, slot: str) -> bool:
     return True
 
 
-def _sound_file(folder: Path, slot: str) -> Path | None:
-    """Returns the file of a sound slot of a team's folder, whatever its extension, or `None`."""
-    for path in folder.glob(f'sound-{slot}.*'):
-        if path.suffix in _SOUND_SUFFIXES:
+def _sound_file(folder: Path, slot: str, names: set[str] | None = None) -> Path | None:
+    """Returns the file of a sound slot of a team's folder, of any of its extensions, or `None`.
+
+    Only `sound-` and the slot with an extension of `_SOUND_SUFFIXES`, in that case, names it.
+    """
+    names = _names(folder) if names is None else names
+    for suffix in _SOUND_SUFFIXES:
+        path = _exact(folder, f'sound-{slot}{suffix}', names)
+        if path is not None:
             return path
     return None
 
@@ -904,6 +1003,11 @@ _MODEL = 'model.glb'
 _MAXIMUM_MODEL_BYTES = 30 * 1024 * 1024
 
 
+def _array(value: Any) -> list[Any]:
+    """Returns a value of a glTF document that should be an array, or an empty one if it is not."""
+    return value if isinstance(value, list) else []
+
+
 def _skin_joints(data: bytes) -> set[str]:
     """Returns the names of the joints of every skin of a binary glTF 2.0 file.
 
@@ -919,22 +1023,22 @@ def _skin_joints(data: bytes) -> set[str]:
         raise MessageError('server.teams.model.json_first')
     try:
         document = json.loads(data[20 : 20 + chunk_length])
-    except ValueError as error:
+    except (ValueError, RecursionError) as error:
         raise MessageError('server.teams.model.json', error=error) from error
     if not isinstance(document, dict):
         raise MessageError('server.teams.model.json_object')
     for kind in ('buffers', 'images'):
-        for item in document.get(kind) or []:
+        for item in _array(document.get(kind)):
             uri = item.get('uri') if isinstance(item, dict) else None
             if isinstance(uri, str) and not uri.startswith('data:'):
                 raise MessageError('server.teams.model.link', uri=repr(uri))
-    nodes = document.get('nodes') or []
-    skins = document.get('skins') or []
+    nodes = _array(document.get('nodes'))
+    skins = _array(document.get('skins'))
     if not skins:
         raise MessageError('server.teams.model.rigged')
     names = set()
     for skin in skins:
-        joints = skin.get('joints', []) if isinstance(skin, dict) else []
+        joints = _array(skin.get('joints')) if isinstance(skin, dict) else []
         for joint in joints:
             if (
                 isinstance(joint, int)
@@ -988,8 +1092,8 @@ def set_model(identifier: str, data: bytes, joints: dict[str, str]) -> dict[str,
 def remove_model(identifier: str) -> bool:
     """Takes a team's own player model away and returns whether it had one."""
     current = entry(identifier)
-    path = _meta_path(identifier).parent / _MODEL
-    if not path.is_file():
+    path = _exact(_meta_path(identifier).parent, _MODEL)
+    if path is None:
         return False
     path.unlink()
     had = True
@@ -1004,8 +1108,7 @@ def model_path(identifier: str) -> Path | None:
     """Returns the file of a team's player model, or `None`."""
     if identifier != BUILTIN and not _home.valid_identifier(identifier):
         return None
-    path = _meta_path(identifier).parent / _MODEL
-    return path if path.is_file() else None
+    return _exact(_meta_path(identifier).parent, _MODEL)
 
 
 def _replace(path: Path, data: bytes) -> None:
@@ -1213,26 +1316,14 @@ def _extract(data: bytes, filename: str, target: Path) -> None:
     elif lower.endswith('.py'):
         (target / _MAIN).write_bytes(data)
     elif lower.endswith(('.tar.gz', '.tgz', '.tar')):
-        try:
-            archive = tarfile.open(fileobj=io.BytesIO(data))
-        except (tarfile.TarError, EOFError, OSError) as error:
-            raise MessageError('server.teams.archive.tar', error=error) from error
-        with archive:
-            members = archive.getmembers()
-            _check_unpacked(len(members), sum(member.size for member in members))
-            for member in members:
-                _inside(target, _check_member(member.name))
-                if not (member.isfile() or member.isdir()):
-                    raise MessageError('server.teams.archive.plain', member=member.name)
-            # Python 3.12 brought the data filter, and the checks above cover older versions.
-            if hasattr(tarfile, 'data_filter'):
-                archive.extractall(target, filter='data')
-            else:
-                archive.extractall(target)
+        _untar(data, target)
     elif lower.endswith('.zip'):
+        # zipfile reads every entry of the central directory as it opens, so their count comes
+        # first, from the bytes alone.
+        _check_unpacked(_zip_entries(data), 0)
         try:
             archive = zipfile.ZipFile(io.BytesIO(data))
-        except (zipfile.BadZipFile, OSError) as error:
+        except (zipfile.BadZipFile, OSError, ValueError, EOFError) as error:
             raise MessageError('server.teams.archive.zip', error=error) from error
         with archive:
             members = archive.infolist()
@@ -1244,6 +1335,102 @@ def _extract(data: bytes, filename: str, target: Path) -> None:
         raise MessageError('server.teams.submission.kind', filename=repr(filename))
     if not (target / _MAIN).is_file():
         raise MessageError('server.teams.submission.main_top', main=_MAIN)
+
+
+class _Bounded:
+    """The bytes of a tar archive after decompression, read within limits.
+
+    No read or move goes past `_MAXIMUM_TAR_BYTES` from the start. While `scanning` holds, the
+    reads after each move, which are the headers of one member, take at most
+    `_MAXIMUM_TAR_HEADER` bytes, so a long name, pax records or a sparse map never grows without
+    end. tarfile moves past the bytes of each member to its next header, so the bytes of the
+    members are never read while it scans.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self._start = 0
+        self.scanning = True
+
+    def tell(self) -> int:
+        return self._inner.tell()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if whence != 0 or offset > _MAXIMUM_TAR_BYTES:
+            raise MessageError('server.teams.archive.limits')
+        self._start = offset
+        return self._inner.seek(offset)
+
+    def read(self, size: int = -1) -> bytes:
+        end = _MAXIMUM_TAR_BYTES
+        if self.scanning:
+            end = min(end, self._start + _MAXIMUM_TAR_HEADER)
+        if size is None or size < 0 or self._inner.tell() + size > end:
+            raise MessageError('server.teams.archive.limits')
+        return self._inner.read(size)
+
+
+def _decompressed(data: bytes) -> Any:
+    """Returns a file of a tar archive's bytes, decompressed as they are read when compressed.
+
+    gzip, bzip2 and xz are told apart by their first bytes, as tarfile tells them apart.
+    """
+    stream = io.BytesIO(data)
+    if data.startswith(b'\x1f\x8b'):
+        return gzip.GzipFile(fileobj=stream, mode='rb')
+    if data.startswith(b'BZh'):
+        return bz2.BZ2File(stream)
+    if data.startswith(b'\xfd7zXZ\x00') and lzma is not None:
+        return lzma.LZMAFile(stream)
+    return stream
+
+
+def _untar(data: bytes, target: Path) -> None:
+    """Writes the members of a tar archive into `target`, after checking every one of them.
+
+    The members are read one at a time and counted against the limits of an archive as they come,
+    so a small compressed archive of a great many members, or of members that claim a great size,
+    is refused at the first member past a limit, before any member is written.
+    """
+    stream = _Bounded(_decompressed(data))
+    unreadable = (tarfile.TarError, EOFError, OSError, zlib.error, RecursionError, *_LZMA_ERRORS)
+    try:
+        archive = tarfile.open(fileobj=stream, mode='r:')
+    except unreadable as error:
+        raise MessageError('server.teams.archive.tar', error=error) from error
+    with archive:
+        count = size = 0
+        try:
+            while (member := archive.next()) is not None:
+                count += 1
+                size += member.size
+                _check_unpacked(count, size)
+                _inside(target, _check_member(member.name))
+                if not (member.isfile() or member.isdir()):
+                    raise MessageError('server.teams.archive.plain', member=member.name)
+        except unreadable as error:
+            raise MessageError('server.teams.archive.tar', error=error) from error
+        stream.scanning = False
+        try:
+            # Python 3.12, 3.11.4 and 3.10.12 brought the data filter. Older versions write each
+            # member without its mode, owner or times, and the checks above cover the rest.
+            if hasattr(tarfile, 'data_filter'):
+                archive.extractall(target, filter='data')
+            else:
+                for member in archive.getmembers():
+                    archive.extract(member, target, set_attrs=False)
+        except (tarfile.TarError, EOFError, zlib.error, *_LZMA_ERRORS) as error:
+            raise MessageError('server.teams.archive.tar', error=error) from error
+
+
+def _zip_entries(data: bytes) -> int:
+    """Returns at least as many entries as the central directory of a zip file can hold.
+
+    Every entry that zipfile reads from the central directory starts with the signature of an
+    entry, and no two overlap, so the signatures of the whole file bound the entries, whichever end
+    record and zip64 record a version of zipfile trusts.
+    """
+    return data.count(b'PK\x01\x02')
 
 
 def add_folder(
@@ -1272,10 +1459,23 @@ def add_folder(
         raise MessageError(
             'server.teams.submission.main_folder', main=_MAIN, folder=repr(str(folder))
         )
+    # A link inside the folder could point anywhere, such as at a key of the user's, and its
+    # target would then travel with every export of the team, so links are left out and logged.
+    paths = []
+    for root, folders, names in os.walk(folder):
+        here = Path(root)
+        for item in [*folders, *names]:
+            if (here / item).is_symlink():
+                _LOGGER.warning(
+                    'cuju render leaves out %s of the submission folder, since it is a link',
+                    (here / item).relative_to(folder).as_posix(),
+                )
+        folders[:] = [item for item in folders if item != '__pycache__']
+        paths += [here / item for item in names if not (here / item).is_symlink()]
     files = [
         (path.relative_to(folder).as_posix(), path.read_bytes())
-        for path in sorted(folder.rglob('*'))
-        if path.is_file() and '__pycache__' not in path.parts
+        for path in sorted(paths)
+        if path.is_file()
     ]
     return add(name or folder.resolve().name, folder.name, folder_bundle(files), format, control)
 
@@ -1284,7 +1484,9 @@ def _check_member(name: str) -> PurePosixPath:
     """Returns an archive member's path, refusing one that could land outside the team's folder.
 
     Windows reads `D:name` as a path on another drive and a backslash as a separator, so a part
-    may hold neither a colon, a backslash nor a null, whatever system unpacks it.
+    may hold neither a colon, a backslash nor a null, whatever system unpacks it. A part that
+    opens a device on Windows, or ends in a dot or a space, is refused on every system too, so a
+    submission imports alike everywhere.
     """
     path = PurePosixPath(name)
     if (
@@ -1294,7 +1496,19 @@ def _check_member(name: str) -> PurePosixPath:
         or any(part in ('', '.', '..') or any(c in part for c in ':\\\0') for part in path.parts)
     ):
         raise MessageError('server.teams.archive.outside', member=repr(name))
+    if any(_device(part) for part in path.parts):
+        raise MessageError('server.teams.archive.device', member=repr(name))
     return path
+
+
+def _device(part: str) -> bool:
+    """Returns whether a part of a path opens a device on Windows or names another file there.
+
+    Windows reads the part before the first dot, without the spaces at its end, as a device's
+    name, and drops the dots and spaces at the end of a part, so `nul.txt`, `con .py` and
+    `main.py.` all name something else than they seem.
+    """
+    return part.endswith(('.', ' ')) or bool(_DEVICES.fullmatch(part.split('.')[0].rstrip(' ')))
 
 
 def _inside(target: Path, path: PurePosixPath) -> Path:
@@ -1341,31 +1555,38 @@ def add(
     name_given = bool(name and name.strip())
     name = _printable((name or '').strip() or Path(filename).stem.strip() or 'team').strip()[:80]
     identifier, folder = _new_folder()
+    # Every failure after the folder is made removes it, so no half imported folder, with the
+    # unchecked team file of an archive, is ever left for the list of teams to read.
     try:
-        _extract(data, filename, folder)
-    except OSError as error:
-        shutil.rmtree(folder, ignore_errors=True)
-        raise MessageError('server.teams.submission.unpack', error=error) from error
-    except Exception:
+        try:
+            _extract(data, filename, folder)
+        except OSError as error:
+            raise MessageError('server.teams.submission.unpack', error=error) from error
+        entry = {
+            'id': identifier,
+            'name': name,
+            'kind': 'kaggle',
+            'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'format': format,
+            'style': default_style(format, _new_kit()),
+            'model': None,
+        }
+        # A folder exported from the page brings its format, style, images and model along, each
+        # checked as an upload is. Whatever fails a check is set aside under a name that the page
+        # never reads, and the other files of the folder stay as they came.
+        try:
+            _import(folder / TEAM_FOLDER, entry, name_given)
+        except ArgumentError:
+            raise
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError) as error:
+            raise MessageError('server.teams.submission.unpack', error=error) from error
+        if control is not None:
+            entry['control'] = check_control(control, entry['format'])
+        completed = _complete(entry)
+        _write(identifier, completed)
+    except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
-    entry = {
-        'id': identifier,
-        'name': name,
-        'kind': 'kaggle',
-        'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
-        'format': format,
-        'style': default_style(format, _new_kit()),
-        'model': None,
-    }
-    # A folder exported from the page brings its format, style, images and model along, each
-    # checked as an upload is. Whatever fails a check is set aside under a name that the page
-    # never reads, and the other files of the folder stay as they came.
-    _import(folder / TEAM_FOLDER, entry, name_given)
-    if control is not None:
-        entry['control'] = check_control(control, entry['format'])
-    completed = _complete(entry)
-    _write(identifier, completed)
     return completed
 
 
@@ -1419,8 +1640,8 @@ def _kept(path: Path) -> bool:
     """
     if path.is_symlink():
         reason = 'it is a link'
-    elif _DEVICES.fullmatch(path.name.split('.')[0].rstrip(' ')):
-        reason = 'its name opens a device on Windows'
+    elif _device(path.name):
+        reason = 'its name opens a device on Windows or ends in a dot or a space'
     else:
         return True
     _LOGGER.warning('cuju render removes %s of an imported team, since %s', path.name, reason)
@@ -1431,20 +1652,27 @@ def _kept(path: Path) -> bool:
     return False
 
 
+def _near_slot(name: str) -> bool:
+    """Returns whether a name that no slot reads starts as the file of an image, sound or model."""
+    lower = name.lower()
+    if lower.endswith(_REJECTED):
+        return False
+    starts = [f'{slot}.' for slot in IMAGE_SLOTS] + [f'sound-{slot}.' for slot in SOUND_SLOTS]
+    return lower == _MODEL or lower.startswith(tuple(starts))
+
+
 def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
     """Takes the format, style, images and model of an exported team into `entry`."""
     if not team_folder.is_dir():
         return
-    saved: Any = {}
+    saved: dict[str, Any] = {}
     with contextlib.suppress(OSError, ValueError):
-        saved = json.loads((team_folder / 'team.json').read_text())
-    if not isinstance(saved, dict):
-        saved = {}
-    if saved.get('format') in FORMATS:
+        saved = _read_entry(team_folder / 'team.json')
+    if isinstance(saved.get('format'), str) and saved['format'] in FORMATS:
         entry['format'] = saved['format']
-    with contextlib.suppress(ArgumentError):
+    with contextlib.suppress(ArgumentError, TypeError, KeyError, AttributeError, ValueError):
         entry['control'] = check_control(saved.get('control'), entry['format'])
-    with contextlib.suppress(ArgumentError, TypeError, KeyError, AttributeError):
+    with contextlib.suppress(ArgumentError, TypeError, KeyError, AttributeError, ValueError):
         # A team file that names no kit keeps the kit the new team took in turn, so teams of
         # such files differ as teams added on the page do.
         base = default_style(entry['format'], (entry.get('style') or {}).get('kit'))
@@ -1457,16 +1685,22 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
                 entry['style']['players'],
                 _model_names(),
             )
-    if not name_given and isinstance(saved.get('name'), str) and saved['name'].strip():
-        entry['name'] = saved['name'].strip()[:80]
+    name = _printable(saved['name']).strip()[:80] if isinstance(saved.get('name'), str) else ''
+    if not name_given and name:
+        entry['name'] = name
     for path in list(team_folder.iterdir()):
         slot, suffix = path.stem, path.suffix
         if path.name in ('team.json', _MODEL, 'clips', 'presentation') or not _kept(path):
             continue
         sound = slot.startswith('sound-')
-        if sound and not (slot[len('sound-') :] in SOUND_SLOTS and suffix in _SOUND_SUFFIXES):
-            continue
-        if not sound and not (slot in IMAGE_SLOTS and suffix in _IMAGE_SUFFIXES):
+        served = (sound and slot[len('sound-') :] in SOUND_SLOTS and suffix in _SOUND_SUFFIXES) or (
+            not sound and slot in IMAGE_SLOTS and suffix in _IMAGE_SUFFIXES
+        )
+        if not served:
+            # A name that differs from a slot's file only in its case, or holds more after the
+            # slot, is set aside, so no system that finds names whatever their case reads it.
+            if _near_slot(path.name):
+                set_aside(path, 'its name is close to the name of a file the page reads')
             continue
         # A file that the page would read as an image or a sound is checked as an upload is, and
         # one that fails is set aside. Every other file stays as the submission brought it.
@@ -1476,7 +1710,8 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
                 valid = len(data) <= _MAXIMUM_SOUND_BYTES and _sound_suffix(data) == suffix
             else:
                 valid = len(data) <= _MAXIMUM_IMAGE_BYTES and _image_suffix(slot, data) == suffix
-        except (OSError, ArgumentError):
+        except Exception:
+            # A file that fails any part of its check, however it fails, counts as failing.
             valid = False
         if not valid:
             set_aside(path, 'it fails the checks of an upload')
@@ -1498,9 +1733,10 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
 
         joints, guessed = _joints.resolve(joints, _skin_joints(data))
         entry['model'] = {'joints': joints, 'bytes': len(data)}
-        if guessed and not (saved.get('style') or {}).get('model'):
+        style_saved = saved.get('style')
+        if guessed and not (style_saved.get('model') if isinstance(style_saved, dict) else None):
             entry['style']['model'] = 'custom'
-    except (OSError, ArgumentError, AttributeError):
+    except Exception:
         if model.exists() or model.is_symlink():
             set_aside(model, 'it fails the checks of an uploaded model')
         entry['model'] = None

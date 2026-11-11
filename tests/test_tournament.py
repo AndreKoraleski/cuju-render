@@ -832,6 +832,41 @@ def test_runner_skips_invalid_files_and_keeps_others(render_home):
     again.close()
 
 
+def test_a_tournament_file_dropped_into_the_folder_waits_stopped(render_home):
+    """A running file that this install did not write plays nothing until a person resumes it."""
+    calls = []
+    cups = runner.Tournaments(player=_fake_player(calls), start=False)
+    own = cups.create(_builtin_config(4))
+    cups.close()
+    folder = runner.folder()
+    stored = json.loads((folder / f'{own["id"]}.json').read_text())
+    assert isinstance(stored.pop('seal'), str)
+    dropped = {**stored, 'id': 'cup-20261111-000000-beef'}
+    dropped['config'] = {**stored['config'], 'concurrency': 1000}
+    (folder / f'{dropped["id"]}.json').write_text(json.dumps(dropped))
+    # A file of this install that someone edited by hand counts as dropped as well.
+    edited = {**stored, 'id': 'cup-20261111-000000-cafe', 'seal': '0' * 64}
+    (folder / f'{edited["id"]}.json').write_text(json.dumps(edited))
+    again = runner.Tournaments(player=_fake_player(calls), start=False, interval=0.01)
+    states = {entry['id']: entry for entry in again.entries()}
+    assert states[own['id']]['state'] == 'running'
+    for identifier in (dropped['id'], edited['id']):
+        assert states[identifier]['state'] == 'stopped'
+        assert states[identifier]['error_id'] == 'server.tournament.foreign'
+    assert again.get(dropped['id'])['config']['concurrency'] == rules.MAX_CONCURRENCY
+    again.tick()
+    assert _wait(lambda: again.get(own['id'])['played'] >= 1)
+    time.sleep(0.2)
+    assert all(again.get(i)['played'] == 0 for i in (dropped['id'], edited['id']))
+    # Resuming it is the person's choice, and the file it writes then carries the seal.
+    assert again.resume(dropped['id'])['state'] == 'running'
+    again.close()
+    third = runner.Tournaments(player=_fake_player(calls), start=False, interval=0.01)
+    assert third.get(dropped['id'])['state'] == 'running'
+    assert third.run(dropped['id'], report=lambda line: None) == 'done'
+    third.close()
+
+
 def test_cancel_forfeit_and_remove(render_home):
     cups = runner.Tournaments(player=_fake_player(), start=False)
     entry = cups.create(_builtin_config(4))

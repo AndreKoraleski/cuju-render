@@ -246,8 +246,10 @@ function attribute(store, header, events, shots, i, team) {
             }
         }
     }
-    if (header.engine_scorer && ((store.get(i).flags >>> 8) & 31)) {
-        scorer = ((store.get(i).flags >>> 8) & 31) - 1;
+    // The engine's scorer counts only when it names a player of the header.
+    const engine = header.engine_scorer ? ((store.get(i).flags >>> 8) & 31) - 1 : -1;
+    if (engine >= 0 && engine < n) {
+        scorer = engine;
         from = events.findLastIndex((e) => e.k === scorer && e.i <= i);
     }
     const own = scorer >= 0 && header.players[scorer].team !== team;

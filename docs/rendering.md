@@ -298,10 +298,19 @@ The page opens a recording in stages and shows each on a bar over the view, the 
 share, the reading of the frames, and the players and the stadium while their files still load. A
 background worker of the browser unpacks the recording and reads its frames, so the page keeps
 drawing and loading meanwhile, and where a worker cannot start the page reads the recording itself
-into the same frames. The art of the players, the ball, the goals and the stands loads all at once
+into the same frames. A worker that starts and then fails on a recording leaves it unopened and
+shows why. The art of the players, the ball, the goals and the stands loads all at once
 beside the recording, and the players of a recording are built once, with their models. The rest
 loads when the page first needs it, the montage of Home when Home shows, the sounds when the sound
 is turned on, and the models and animations of other characters when a team wears them.
+
+The page opens a recording that decompresses to at most 128 MB, holds at most 50,000 frames and
+at most 1,000,000 frames times players, and lists at most 64 players, which leaves room for fifteen
+full matches of eleven a side in one file. It refuses a larger recording with a message before it
+reads the frames. It also refuses a header that is no JSON object and a header whose player
+entries lack a team of 0 or 1 or a whole index within the team. A header whose teams are no
+objects reads with the teams Left and Right in their place, and a rate of steps that is no number
+from 1 to 100 reads as ten steps a second.
 
 ## Live sources
 
@@ -318,14 +327,16 @@ source = cuju.render.watch(batch, environment=0, title='Self-play, league match'
 ```
 
 A source listens on a free port of the loopback interface and announces itself with a small file in
-the renderer's folder, which the server lists and relays to the page. While a viewer watches, the
-source reads passages of 50 consecutive steps, five seconds of play, and starts the next passage
-when the wall clock has caught up. A batch that runs faster than real time therefore reaches the
-page as continuous passages, which the page joins with cuts, and pays for about ten state reads per
-second of wall time, about 5 milliseconds each. A batch that runs slower than real time is shown
-step by step. Each step checks whether the batch has step observers, and a batch without any
-does nothing more. An attached source also checks its viewers under a lock and reads states for
-viewers or the backlog.
+the renderer's folder, which the server lists and relays to the page. The server lists a file only
+while its process runs and when each field it reads has its kind, with a port from 1024 on, and
+leaves out any other file alone, so the list of every other source stays whole. While a viewer
+watches, the source reads passages of 50 consecutive steps, five seconds of play, and starts the
+next passage when the wall clock has caught up. A batch that runs faster than real time therefore
+reaches the page as continuous passages, which the page joins with cuts, and pays for about ten
+state reads per second of wall time, about 5 milliseconds each. A batch that runs slower than real
+time is shown step by step. Each step checks whether the batch has step observers, and a batch
+without any does nothing more. An attached source also checks its viewers under a lock and reads
+states for viewers or the backlog.
 On the GPU, each read also waits for the step in flight, as `get_state` does, and a GPU batch that
 queues many steps ahead of the device may take tens of seconds to send its first frame.
 
@@ -665,7 +676,9 @@ cuju render team export t-20261106-101500-3fa9 --out baseline.zip
 ```
 
 The team add command also accepts exported zip files, keeping the team name, format, control
-settings and assets. The option `--name` can rename the import.
+settings and assets. The option `--name` can rename the import. From a folder it takes the files
+themselves, leaves out `__pycache__` and every link, to a file or to a folder, and names each link
+it leaves out in the log, so no file outside the folder reaches the team or its exports.
 
 `cuju render team show ID` prints a team with its control, and `cuju render team set ID` changes
 its name with `--name`, its format with `--format` and its control with the options that `add`
@@ -693,7 +706,11 @@ a match of the command line shows under Recordings alone.
 
 A match requested on the page plays in a process of its own on the CPU and becomes a recording in
 the library. The play command also takes a device. Each submission runs from its own folder,
-with its own modules, as on Kaggle. Full matches follow the format of the team, five or eleven a
+with its own modules, as on Kaggle. Every Python process that the renderer starts, for a match, a
+game, a tournament, a challenge, an export or the server, runs with `-P` on Python 3.11 and later,
+which keeps the renderer's folder off its path of modules, so folders such as `teams` and
+`requests` never import as packages, and on Python 3.10 it starts in the empty folder `run` of the
+renderer's folder instead. Full matches follow the format of the team, five or eleven a
 side. Academy scenarios accept either format when the requested players exist on that side.
 The default scenario is the Kaggle competition scenario. The built in AI plays any scenario.
 
@@ -772,6 +789,12 @@ GRF's example scenario `test_example_multiagent`, which stay playable from Pytho
 The add form also accepts a single `main.py` or a `.zip` or `.tar.gz` archive. Uploads allow up to
 100 MB,
 with at most 10000 files and 500 MB after unpacking. The submission needs `main.py` at its root.
+A tar archive may be plain or compressed with gzip, bzip2 or xz. The server counts the entries of
+a zip archive from its bytes before it opens it, and counts the members of a tar archive and their
+sizes as it reads them, so an archive past a limit is refused at once, however small it is. An
+archive with a file or folder whose name opens a device on Windows, such as `nul`, `con.txt` or
+`COM1.log`, or whose name ends in a dot or a space, is refused on every system, so a submission
+imports alike everywhere.
 
 A submission is Python code that runs with the permissions of the server's user, so only trusted
 code belongs in the registry, and a submission that imports Kaggle's helpers needs the package
@@ -1144,9 +1167,18 @@ An import keeps every file of `cuju-team` that the page leaves unread, such as n
 or a folder of drafts, so these files travel on with the next export. Each image, sound, model and
 clip that the page reads is checked as an upload is, and a file that fails its check stays in the
 folder under its own name followed by `.rejected`, which the page never reads, so the team plays
-without it and its bytes remain for its owner. A link, which could point outside the team's folder,
+without it and its bytes remain for its owner. A file whose name is the name of such a file in
+another case or with more after the slot, such as `Shirt-Front.png`, `shirt-front.x.png` or
+`clips/wave.GLB`, is set aside as well, and the server serves each image, sound, model and clip of
+a team by its exact name alone and never through a link, on every system, whether or not the
+system finds names whatever their case. A link, which could point outside the team's folder,
 and a file whose name opens a device on Windows, such as `con.txt`, are removed. The server's log
-names every file set aside or removed and the reason.
+names every file set aside or removed and the reason. The team takes the identifier of its new
+folder whatever its `team.json` says, values of the wrong type in that file fall back to the
+defaults, and an import that fails at any step removes the folder it began, so the registry lists
+only whole teams. The name in a team file, imported or edited by hand, keeps the characters that
+print, and the escapes of a terminal, line breaks and the marks that turn the direction of text
+become spaces, so `cuju render team list` prints the name as the page shows it.
 
 Duplicate saved team, in the same section, makes a new team of the registry from a submission
 team as it was last saved, with the submission's files, its format, controls, style, roster,
@@ -1384,7 +1416,8 @@ player shows for a moment. A drag still turns the camera, and the brackets choos
 player from the keyboard.
 
 A live source plays like a digital video recorder, three seconds behind the newest step, and keeps
-up to 30 minutes within an 80 MiB memory budget, about 15 minutes for eleven a side.
+up to 30 minutes within an 80 MiB memory budget, about 15 minutes for eleven a side. The budget
+holds for any header, so a stream of very many players or steps keeps fewer frames.
 The view pauses, rewinds and scrubs while the stream continues. The controls show how far the view
 lies behind, and a button returns to the present. A viewer who joins
 late starts with the history that the source holds, up to 10 seconds, and a speed other than real
@@ -2453,6 +2486,13 @@ as such at once. A process that gives no answer within ten seconds leaves the ch
 the refusal names the route of its server to send it to, such as
 `POST /api/tournaments/ID/forfeit`. A tournament that stopped leaves its lock, so the command line
 awards or resumes it while a server runs, and the server plays it on.
+
+Each tournament file that the renderer writes carries a seal, a keyed digest of the file under a
+key that the home folder keeps in `tournaments.key`. A running tournament whose file has no valid
+seal, a file copied in from elsewhere or edited by hand, loads stopped with a note that says so, and
+it plays once a person resumes it on the page or runs it from the command line, which seals its
+file again. Every tournament file plays at most eight matches at once, the most that a new
+tournament may ask for.
 
 The show command prints each stage with its tables and results, a tie that has played none of its
 matches as not played, and then every match still to play with its key, label, sides and state,
@@ -3544,7 +3584,11 @@ sources and the shipped samples each travel as a label. A label holds the Englis
 field, such as `title` or `name`, and beside it `title_id` and `title_values`, or `name_id` and
 `name_values`. A value may be a label of its own, a scenario, which the page shows by its name, or
 a challenge, which the page shows by its title. A recording keeps its labels in its header, and a
-summary of the library adds `team_labels`, the label of each team or null. A name that a person
+summary of the library adds `team_labels`, the label of each team or null. The page shows a label
+of a title or a name in its language when the label names one of the messages that names and
+titles carry, those whose identifiers start with `server.names.` or `server.tournament.label.`,
+and shows the English text of any other label. A title, a scenario or a team name that is no text
+shows as the empty text, or as the digits of a number. A name that a person
 gave, a renamed built-in AI and a title typed on the Recordings page stay plain text and show as
 given, and a recording of an earlier version shows the English text it holds. The command line and
 every English answer read the same text as before. The slate messages of the feed, its list of
@@ -3635,6 +3679,21 @@ names of the fourteen joints and the parent of each, one entry per player with i
 within the team, whether it is the goalkeeper and whether an agent controls it, the name and colors
 of each team, the size of a frame as version 1 stores it and the number of frames, which a live
 stream gives as null.
+
+The library and the module `cuju.render` read a recording of at most 256 MiB once decompressed,
+with a header of at most 1 MiB, at most 32 players and at most 50,000 frames, far above the
+largest that cuju writes, a tournament match of 5000 steps of eleven a side, which takes 41 MB in
+version 2. A file of version 1 gives the size of a frame of its players, a file of version 2 the
+keyframe interval of 100, and a file past any of these limits ends its reading with an error that
+names the limit. A header holds the numbers of JSON alone, which leave out NaN and the infinities.
+Each field of the header that the library reads holds its type. The title, the scenario and the
+name of each team are text or null, each player names its team, 0 or 1, its index and its flags,
+true or false, and the steps per second are a number above 0. Importing a file whose header holds
+another type ends with an error that names the field, and such a file copied into the folder of
+the library lists under its identifier. A title or team name that names a message by `title_id` or
+`name_id` names one of the names that cuju makes, under `server.names` or
+`server.tournament.label`, and the library reads a name with any other message as its text. A last
+frame of version 1 cut short is left out, as the page leaves it out.
 
 The header also holds a `provenance` object, which records what was known of the recording's
 origin when it was made. Every recording names the version of cuju that made it as

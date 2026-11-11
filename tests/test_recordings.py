@@ -811,3 +811,160 @@ def test_filter_summary_numbers_players_as_annotate_takes_them():
     # Without the header the summary keeps the index of the file, as before.
     record = {**_annotations.note(lineup, text='x', player=0), 'f': 0}
     assert _annotations.public(record, frames)['player'] == 5
+
+
+# The limits of the readers, which hold a hostile file to little memory and time.
+
+
+def _crafted(path, document, *parts):
+    """Writes a recording of a header and the bytes after it, as a hostile file may hold them."""
+    text = json.dumps(document).encode()
+    with gzip.open(path, 'wb', compresslevel=1) as stream:
+        stream.write(_recording.MAGIC + struct.pack('<I', len(text)) + text)
+        for part in parts:
+            stream.write(part)
+    return path
+
+
+def _lineup(players):
+    return [
+        {'team': k % 2, 'index': k // 2, 'goalkeeper': False, 'controlled': False}
+        for k in range(players)
+    ]
+
+
+def _coded(players, count, **fields):
+    """Returns a header of version 2 of zero frames, and its frames section."""
+    document = {
+        'version': 2,
+        'players': _lineup(players),
+        'frame_bytes': _recording.frame_bytes(players),
+        'frame_count': count,
+        'keyframe_interval': 100,
+        **fields,
+    }
+    size = _recording._codec.section_bytes(players, count)
+    return document, _recording._section(_recording.FRAMES_TAG, bytes(size))
+
+
+def test_reader_refuses_a_large_header_and_skips_unknown_sections(tmp_path, monkeypatch):
+    path = tmp_path / 'header.cjr'
+    with gzip.open(path, 'wb') as stream:
+        stream.write(_recording.MAGIC + struct.pack('<I', 2 << 20) + b'[' + bytes(2 << 20))
+    with pytest.raises(cuju.StateError, match='header of at most'):
+        _recording.read_header(path)
+    document, frames = _coded(2, 3)
+    junk = struct.pack('<4sI', b'JUNK', 3 << 20) + bytes(3 << 20)
+    path = _crafted(tmp_path / 'junk.cjr', document, junk, frames, junk)
+    assert list(_recording.frames(path)) == [bytes(_recording.frame_bytes(2))] * 3
+    # The bytes that a file decompresses to count against one budget, unknown sections too.
+    monkeypatch.setattr(_recording, 'MAX_BYTES', 2 << 20)
+    with pytest.raises(cuju.StateError, match='at most 2 MiB'):
+        list(_recording.frames(path))
+    with pytest.raises(cuju.StateError, match='at most 2 MiB'):
+        _recording.annotations(path)
+
+
+@pytest.mark.parametrize(
+    'fields',
+    [
+        {'frame_count': _recording.MAX_FRAMES + 1},
+        {'keyframe_interval': 1},
+        {'keyframe_interval': 10**30},
+        {
+            'players': _lineup(_recording.MAX_PLAYERS + 2),
+            'frame_bytes': _recording.frame_bytes(_recording.MAX_PLAYERS + 2),
+        },
+        {'version': True},
+        {'frame_bytes': 1},
+    ],
+)
+def test_reader_refuses_frames_past_its_limits(tmp_path, fields):
+    document, frames = _coded(2, 1)
+    path = _crafted(tmp_path / 'bad.cjr', {**document, **fields}, frames)
+    with pytest.raises(cuju.StateError):
+        list(_recording.frames(path))
+
+
+def test_reader_of_version_1_checks_the_frame_size(tmp_path, monkeypatch):
+    size = _recording.frame_bytes(2)
+    for value in (-1, None, True, 'x', 1.5, size + 4):
+        document = {'version': 1, 'players': _lineup(2), 'frame_bytes': value}
+        path = _crafted(tmp_path / 'size.cjr', document, bytes(5000))
+        with pytest.raises(cuju.StateError, match='expected frames of'):
+            _recording.read_header(path)
+    # A last frame cut short is left out, as the page leaves it out.
+    document = {'version': 1, 'players': _lineup(2), 'frame_bytes': size}
+    path = _crafted(tmp_path / 'short.cjr', document, bytes(2 * size + 10))
+    assert list(_recording.frames(path)) == [bytes(size)] * 2
+    assert _recording.ending(path) == (2, bytes(size))
+    monkeypatch.setattr(_recording, 'MAX_FRAMES', 1)
+    with pytest.raises(cuju.StateError, match='at most 1 frames'):
+        _recording.ending(path)
+
+
+def test_version_2_decodes_in_chunks_to_the_same_frames():
+    from cuju.render._moments import events as _events
+
+    path = _library._SAMPLES / 'sample-5v5.cjr'
+    document = _recording.read_header(path)
+    count = document['frame_count']
+    with gzip.open(path, 'rb') as raw:
+        stream = _recording._Budget(raw)
+        _recording._parse_header(stream)
+        data = _recording._sections(stream, (_recording.FRAMES_TAG,))[_recording.FRAMES_TAG]
+    whole = [row.tobytes() for row in _recording._codec.decode(data, 10, count)]
+    assert count > 2 * _recording._DECODE_FRAMES
+    assert list(_recording.frames(path)) == whole
+    assert list(_recording.frames(path, 950, 2050)) == whole[950:2050]
+    assert _recording.ending(path) == (count, whole[-1])
+    parsed = _events._frames(document, whole)
+    single = _events._parse(document, whole)
+    assert [(f.step, f.roots, f.touches) for f in parsed] == [
+        (f.step, f.roots, f.touches) for f in single
+    ]
+
+
+def test_a_header_names_its_title_and_teams_by_the_names_of_cuju_alone():
+    from cuju.render._text import messages as _messages
+
+    title = _messages.label(
+        'server.names.against',
+        left=_messages.label('server.names.you'),
+        right=_messages.label('server.names.builtin'),
+    )
+    head = _recording.header(title, '5_vs_5', _names_lineup())
+    document = _recording._parse_header(io.BytesIO(head))
+    assert _recording.label_of(document, 'title') == title
+    assert document['teams'][1]['name_id'] == 'server.names.right'
+    # A label of any other message of the page, or with such a label among its values, is text.
+    for found in (
+        {'title_id': 'server.body_size', 'title_values': {}},
+        {
+            'title_id': 'server.names.against',
+            'title_values': {'left': _messages.label('server.body_size'), 'right': 'x'},
+        },
+    ):
+        crafted = json.loads(head[len(_recording.MAGIC) + 4 :])
+        crafted.update(found)
+        crafted['teams'][0].update(name='A', name_id='server.game.busy', name_values={})
+        parsed = _recording.validate_header(crafted)
+        assert 'title_id' not in parsed and 'title_values' not in parsed
+        assert parsed['title'] == "You against GRF's built-in AI"
+        assert 'name_id' not in parsed['teams'][0] and parsed['teams'][0]['name'] == 'A'
+        assert parsed['teams'][1]['name_id'] == 'server.names.right'
+
+
+def test_annotations_leave_out_records_of_no_frame():
+    from cuju.render._format import annotations as _annotations
+
+    deep = b'{"records":' + b'[' * 100000 + b']' * 100000 + b'}'
+    assert _annotations.decode(deep) == []
+    assert _annotations.decode(b'\xff\xfe') == []
+    records = _annotations.decode(
+        b'{"records":[{"f":-3,"v":{}},{"f":true},{"f":1.0},{"f":"1"},5,{"f":1,"t":"kept"}]}'
+    )
+    assert records == [{'f': 1, 't': 'kept'}]
+    frames = [struct.pack('<i', 77) + bytes(76)]
+    assert _annotations.public({'f': -1, 'v': {}}, frames)['step'] is None
+    assert _annotations.public({'f': 0, 'v': {}}, frames)['step'] == 77

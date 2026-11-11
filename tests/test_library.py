@@ -536,6 +536,7 @@ def test_feed_route_and_resolve(render_home):
             'title': 'Evaluation',
             'scenario': '5_vs_5',
             'environment': 0,
+            'port': 8781,
             'pid': os.getpid(),
         }
         live = _home.folder('live') / 'live-20261110-101500-aaaa.json'
@@ -629,3 +630,165 @@ def test_names_of_the_samples_come_by_their_name(render_home):
     assert summary['team_labels'] == [None, None]
     _library.update('sample-5v5', title='Five')
     assert 'title_id' not in _library.details('sample-5v5')
+
+
+def _strict(text):
+    """Returns JSON that holds no NaN or infinity, as a page reads it."""
+
+    def refuse(name):
+        raise ValueError(name)
+
+    return json.loads(text, parse_constant=refuse)
+
+
+def test_a_header_or_summary_with_nan_keeps_the_library_list(render_home, tmp_path):
+    import gzip
+    import struct
+
+    text = (
+        b'{"version":1,"title":"t","scenario":"s","teams":[{"name":"A"},{"name":"B"}],'
+        b'"players":[],"frame_bytes":76,"provenance":{"seed":NaN,"x":-Infinity}}'
+    )
+    crafted = tmp_path / 'nan.cjr'
+    with gzip.open(crafted, 'wb') as stream:
+        stream.write(_recording.MAGIC + struct.pack('<I', len(text)) + text + bytes(76))
+    with pytest.raises(cuju.errors.StateError, match='NaN'):
+        _recording.read_header(crafted)
+    with pytest.raises(cuju.ArgumentError, match='other bytes'):
+        _launch.import_recording(crafted)
+    # A summary of an older install that holds NaN lists with null in its place.
+    (path,) = _library.add_samples(['sample-5v5'])
+    summary = json.loads(path.with_suffix('.json').read_text())
+    summary['provenance'] = {'seed': float('nan'), 'scale': [float('inf'), 1.5]}
+    path.with_suffix('.json').write_text(json.dumps(summary))
+    server, address = _help_server()
+    try:
+        with urllib.request.urlopen(address + '/api/matches', timeout=10) as response:
+            (entry,) = _strict(response.read())
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert entry['provenance'] == {'seed': None, 'scale': [None, 1.5]}
+
+
+def _header_file(path, **fields):
+    """Writes a recording of version 1 of one frame and two players, with fields of its header."""
+    import gzip
+    import struct
+
+    size = _recording.frame_bytes(2)
+    document = {
+        'version': 1,
+        'title': 'fine',
+        'scenario': 's',
+        'teams': [{'name': 'A'}, {'name': 'B'}],
+        'players': [{'team': side, 'index': 0, 'goalkeeper': True} for side in (0, 1)],
+        'frame_bytes': size,
+        **fields,
+    }
+    text = json.dumps(document).encode()
+    with gzip.open(path, 'wb') as stream:
+        stream.write(_recording.MAGIC + struct.pack('<I', len(text)) + text + bytes(size))
+    return path
+
+
+@pytest.mark.parametrize(
+    'fields',
+    [
+        {'title': 5},
+        {'title': [1]},
+        {'scenario': {'x': 1}},
+        {'teams': [{'name': {'a': 1}}, {'name': 7}]},
+        {'teams': [{'name': 'A', 'id': [1]}, {}]},
+        {'teams': 'AB'},
+        {'players': [{'team': 0}, {'team': 1}]},
+        {'players': [{'team': 2, 'index': 0}, {'team': True, 'index': 0}]},
+        {'players': [{'team': 0, 'index': 0, 'goalkeeper': 1}, {'team': 1, 'index': 0}]},
+        {'players': ['a', 'b']},
+        {'provenance': [1]},
+        {'steps_per_second': 0},
+        {'steps_per_second': True},
+        {'second_half': 'x'},
+    ],
+)
+def test_header_fields_of_the_wrong_type_are_refused(render_home, tmp_path, fields):
+    from cuju.render._moments import search as _search
+
+    path = _header_file(tmp_path / 'bad.cjr', **fields)
+    with pytest.raises(cuju.errors.StateError, match='expected'):
+        _recording.read_header(path)
+    # An import says what is wrong, without a traceback of the reader.
+    with pytest.raises(cuju.ArgumentError, match='other bytes'):
+        _launch.import_recording(path)
+    assert _library.matches() == []
+    # The same file copied into the folder lists under its identifier and searches as none.
+    copied = _home.folder('matches') / 'm-copied.cjr'
+    copied.write_bytes(path.read_bytes())
+    (entry,) = _library.matches()
+    assert entry['title'] == 'm-copied' and entry['teams'] == ['', '']
+    found = _search.search('')
+    assert found['recordings'] == 1 and found['total'] == 0
+
+
+def test_a_header_without_its_optional_fields_imports(render_home, tmp_path):
+    path = _header_file(tmp_path / 'bare.cjr', title=None, scenario=None, teams=None)
+    identifier = _launch.import_recording(path)
+    entry = _library.details(identifier)
+    assert (entry['title'], entry['scenario'], entry['teams']) == (identifier, '', [None, None])
+    assert entry['steps'] == 1
+
+
+def test_readers_take_fields_of_the_wrong_type_of_an_older_install(render_home):
+    from cuju.render._moments import captions as _captions
+    from cuju.render._moments import search as _search
+
+    (path,) = _library.add_samples(['sample-5v5'])
+    _search.sync()
+    summary = json.loads(path.with_suffix('.json').read_text())
+    summary.update(title={'text': 1}, scenario={'a': 1}, teams=[{}, 7], created=5)
+    path.with_suffix('.json').write_text(json.dumps(summary))
+    index = _home.folder('index') / 'sample-5v5.json'
+    entry = json.loads(index.read_text())
+    entry['header'].update(
+        title=5,
+        scenario={'a': 1},
+        teams=[{'name': {}, 'id': [1], 'style': 3}, 'x'],
+        players=[{'team': 0}, 'x', {'team': [1], 'index': None}],
+    )
+    index.write_text(json.dumps(entry))
+    _search._CACHES.clear()
+    (listed,) = _library.matches()
+    assert (listed['title'], listed['scenario'], listed['teams']) == ('sample-5v5', '', ['', ''])
+    found = _search.search('goal')
+    assert found['total'] > 0
+    assert {result['title'] for result in found['results']} == {'sample-5v5'}
+    assert _search.moments_of('sample-5v5')['moments']
+    context = _captions.context(entry['header'], [])
+    assert context['teams'] == [None, None] and len(context['players']) == 3
+
+
+def test_a_summary_left_empty_by_a_hard_stop_is_made_once(render_home, monkeypatch):
+    (path,) = _library.add_samples(['sample-5v5'])
+    summary = path.with_suffix('.json')
+    summary.write_text('')
+    # A summary that a save may still be writing stays as it is.
+    assert [entry['id'] for entry in _library.matches()] == ['sample-5v5']
+    assert summary.read_text() == ''
+    old = time.time() - 120
+    for item in (path, summary):
+        os.utime(item, (old, old))
+    (entry,) = _library.matches()
+    kept = json.loads(summary.read_text())
+    assert kept['id'] == 'sample-5v5' and kept['title'] == entry['title']
+
+    def again(path):
+        raise AssertionError('the summary was made again')
+
+    made = _library._summarize
+    monkeypatch.setattr(_library, '_summarize', again)
+    assert [entry['id'] for entry in _library.matches()] == ['sample-5v5']
+    # A summary that is missing is made and kept the same way.
+    summary.unlink()
+    monkeypatch.setattr(_library, '_summarize', made)
+    _library.matches()
+    assert json.loads(summary.read_text())['id'] == 'sample-5v5'

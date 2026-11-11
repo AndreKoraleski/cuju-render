@@ -262,14 +262,15 @@ function findDecision(store, header, i, teleport, mode) {
             }
             continue;
         }
-        if (f.foul.type > 0 && g.foul.type === 0) {
+        // A foul whose offender lies beyond the players of the header is no call of this match.
+        if (f.foul.type > 0 && g.foul.type === 0 && f.foul.player < header.players.length) {
             const off = f.foul.player;
             const secondYellow = f.foul.type === 2 && off >= 0 && !!(g.playerFlags[off] & 2);
             const type = f.foul.type === 3 || secondYellow ? 'red' : (f.foul.type === 2 ? 'yellow' : 'foul');
             return {
                 type,
                 offender: off,
-                victim: f.foul.victim,
+                victim: f.foul.victim < header.players.length ? f.foul.victim : -1,
                 call: j,
                 contact: j < i ? j : (teleport ? i - 1 : i),
                 secondYellow,

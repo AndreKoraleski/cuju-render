@@ -17,12 +17,16 @@ import { FrameStore } from './timeline.js';
 export const LIVE_KEEP_MINUTES = 30;
 const LIVE_BUDGET_BYTES = 80 * 1024 * 1024;
 
-// Frames a live store keeps, from the size of one decoded frame.
+// Frames a live store keeps, from the size of one decoded frame. The budget bounds the store
+// whatever the header says, so a header of a great many players or steps keeps fewer frames, and
+// always at least one.
 export function liveLimit(header) {
     const players = header.players.length;
     const frameBytes = (NODES_FLOAT + players * PLAYER_FLOATS) * 4 + 3 * players + 160;
-    const sps = header.steps_per_second || 10;
-    return Math.max(60 * sps, Math.min(LIVE_KEEP_MINUTES * 60 * sps, Math.floor(LIVE_BUDGET_BYTES / frameBytes)));
+    const given = header.steps_per_second;
+    const sps = Number.isFinite(given) && given > 0 ? given : 10;
+    const kept = Math.min(LIVE_KEEP_MINUTES * 60 * sps, Math.floor(LIVE_BUDGET_BYTES / frameBytes));
+    return Math.max(1, Math.floor(kept));
 }
 // A lost connection retries this many times in each outage, after a delay that doubles from the
 // first up to the last.

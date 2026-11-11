@@ -13,7 +13,9 @@ from __future__ import annotations
 import functools
 import gzip
 import json
+import math
 import struct
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,20 @@ VERSIONS = (1, 2)
 # The tag and length that open every section of a recording of version 2.
 _SECTION = struct.Struct('<4sI')
 FRAMES_TAG = b'FRMS'
+# The limits that the readers hold a recording to, far above any recording that cuju writes. A
+# header of 22 players takes about 4 KB, GRF plays at most 11 a side, and the longest match, one
+# of a tournament, lasts 5000 steps, 22 MB once decompressed in version 1 and 41 MB in version 2.
+MAX_HEADER_BYTES = 1 << 20
+MAX_PLAYERS = 32
+MAX_FRAMES = 50_000
+MAX_BYTES = 256 << 20
+# The frames of version 2 that the reader decodes at once, ten keyframe intervals.
+_DECODE_FRAMES = 10 * _codec.KEYFRAME_INTERVAL
+# The bytes that the reader passes over at once in a section that it skips.
+_SKIP_BYTES = 1 << 20
+# The messages that a recording names its title and its teams by, those of the names that cuju
+# makes, so a header names no other message of the page.
+_LABEL_PREFIXES = ('server.names.', 'server.tournament.label.')
 NODES = (
     'player',
     'body',
@@ -548,101 +564,279 @@ def write(
     temporary.replace(path)
 
 
+def _whole(value: Any) -> bool:
+    """Returns whether a value of a header is a whole number, which `True` is not."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def validate_header(document: Any) -> dict[str, Any]:
+    """Returns a header after checking that every field the readers use holds its type.
+
+    A field that a header may leave out, such as the title, the teams or the provenance, may also
+    be null, and the readers then take its default.
+
+    Raises:
+        StateError: If the header is not an object, names a version that this module does not
+            read, holds players, a frame size, a number of frames or a keyframe interval that does
+            not fit its version or the limits of a recording, or holds a field of the wrong type.
+    """
+    if not isinstance(document, dict):
+        raise StateError(f'expected a header object, found {type(document).__name__}')
+    version = document.get('version', 1)
+    if not _whole(version) or version not in VERSIONS:
+        raise StateError(f'expected a recording version from {VERSIONS}, found {version!r}')
+    players = document.get('players')
+    if not isinstance(players, list) or len(players) > MAX_PLAYERS:
+        raise StateError(f'expected a list of at most {MAX_PLAYERS} players in the header')
+    for player in players:
+        if not (
+            isinstance(player, dict)
+            and _whole(player.get('team'))
+            and player['team'] in (0, 1)
+            and _whole(player.get('index'))
+            and 0 <= player['index'] < MAX_PLAYERS
+            and all(
+                isinstance(player.get(key, False), bool) for key in ('goalkeeper', 'controlled')
+            )
+        ):
+            raise StateError(
+                'expected each player of the header with its team, 0 or 1, its index and flags, '
+                f'found {str(player)[:80]}'
+            )
+    size = document.get('frame_bytes')
+    if (version == 1 or size is not None) and not (
+        _whole(size) and size == frame_bytes(len(players))
+    ):
+        raise StateError(
+            f'expected frames of {frame_bytes(len(players))} bytes for {len(players)} players, '
+            f'found {size!r}'
+        )
+    count = document.get('frame_count')
+    if (version == 2 or count is not None) and not (_whole(count) and 0 <= count <= MAX_FRAMES):
+        raise StateError(f'expected a number of frames from 0 to {MAX_FRAMES}, found {count!r}')
+    interval = document.get('keyframe_interval')
+    if version == 2 and not (_whole(interval) and interval == _codec.KEYFRAME_INTERVAL):
+        raise StateError(
+            f'expected a keyframe interval of {_codec.KEYFRAME_INTERVAL}, found {interval!r}'
+        )
+    for field, kinds in (('title', str), ('scenario', str), ('provenance', dict)):
+        if document.get(field) is not None and not isinstance(document[field], kinds):
+            raise StateError(f'expected the {field} of the header as {kinds.__name__}')
+    speed = document.get('steps_per_second')
+    if speed is not None and not (
+        isinstance(speed, int | float)
+        and not isinstance(speed, bool)
+        and math.isfinite(speed)
+        and 0 < speed <= 1000
+    ):
+        raise StateError(f'expected steps per second above 0 and at most 1000, found {speed!r}')
+    second = document.get('second_half')
+    if second is not None and not (_whole(second) and second >= 0):
+        raise StateError(f'expected the step of the second half, found {second!r}')
+    teams = document.get('teams')
+    if teams is not None and not (
+        isinstance(teams, list)
+        and all(
+            isinstance(team, dict)
+            and all(
+                team.get(key) is None or isinstance(team[key], kind)
+                for key, kind in (('name', str), ('id', str), ('style', dict))
+            )
+            for team in teams
+        )
+    ):
+        raise StateError('expected the teams of the header, each with a name as text')
+    # A label of a message that no recording carries leaves its name as the text beside it.
+    for holder, field in [(document, 'title'), *((team, 'name') for team in teams or ())]:
+        fields = (f'{field}_id', f'{field}_values')
+        if any(key in holder for key in fields) and not _carried(
+            {
+                'id': holder.get(fields[0]),
+                'text': holder.get(field),
+                'values': holder.get(fields[1]),
+            }
+        ):
+            for key in fields:
+                holder.pop(key, None)
+    return document
+
+
+def _carried(label: Any) -> bool:
+    """Returns whether a label names a message of the names of cuju, as each label of its values."""
+
+    def named(value: dict[str, Any]) -> bool:
+        return 'kind' in value or (
+            value['id'].startswith(_LABEL_PREFIXES)
+            and all(isinstance(item, str) or named(item) for item in value['values'].values())
+        )
+
+    try:
+        return _messages.valid_label(label) and named(label)
+    except RecursionError:
+        return False
+
+
+class _Budget:
+    """Reads a decompressed recording, counting its bytes against the limit of a recording.
+
+    A read never asks for more than the limit leaves, so a length that a file gives reserves no
+    more memory than the limit allows, and a fault of the compression turns into a `StateError`.
+    """
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self.left = MAX_BYTES
+
+    def read(self, size: int) -> bytes:
+        try:
+            data = self._stream.read(min(size, self.left + 1))
+        except (EOFError, zlib.error, gzip.BadGzipFile) as error:
+            raise StateError(f'expected a whole gzip stream, found {error}') from None
+        self.left -= len(data)
+        if self.left < 0:
+            raise StateError(
+                f'expected a recording of at most {MAX_BYTES >> 20} MiB once decompressed'
+            )
+        return data
+
+
+def _constant(name: str) -> Any:
+    """Refuses NaN and the infinities, which Python reads in JSON and a page does not."""
+    raise ValueError(f'expected numbers of JSON, found {name}')
+
+
 def _parse_header(stream: Any) -> dict[str, Any]:
-    """Returns the header at the start of `stream`, after checking the magic."""
+    """Returns the header at the start of `stream`, after checking the magic and its fields."""
     start = stream.read(len(MAGIC) + 4)
     if start[: len(MAGIC)] != MAGIC:
         raise StateError('expected a recording of cuju, found other bytes')
+    if len(start) < len(MAGIC) + 4:
+        raise StateError('expected the length of a header, found the recording cut short')
     (length,) = struct.unpack_from('<I', start, len(MAGIC))
-    return json.loads(stream.read(length))
+    if length > MAX_HEADER_BYTES:
+        raise StateError(f'expected a header of at most {MAX_HEADER_BYTES} bytes, found {length}')
+    text = stream.read(length)
+    if len(text) < length:
+        raise StateError('expected a whole header, found the recording cut short')
+    try:
+        document = json.loads(text, parse_constant=_constant)
+    except (ValueError, RecursionError) as error:
+        raise StateError(f'expected a header of JSON, found {error}') from None
+    return validate_header(document)
 
 
 def read_header(path: Path) -> dict[str, Any]:
     """Returns the header of a recording file, reading only its start."""
     with gzip.open(path, 'rb') as stream:
-        return _parse_header(stream)
+        return _parse_header(_Budget(stream))
 
 
-def _sections(stream: Any) -> dict[bytes, bytes]:
-    """Returns the sections of version 2 that follow the header in `stream`, by tag."""
+def _sections(stream: Any, tags: tuple[bytes, ...]) -> dict[bytes, bytes]:
+    """Returns the sections of version 2 of `tags` that follow the header in `stream`, by tag.
+
+    The first section of each tag counts, and the reader passes over any other in chunks.
+    """
     found = {}
     while head := stream.read(_SECTION.size):
         if len(head) < _SECTION.size:
             raise StateError('expected a whole section of the recording, found it cut short')
         tag, length = _SECTION.unpack(head)
-        payload = stream.read(length + (-length % 4))[:length]
-        if len(payload) < length:
-            raise StateError('expected a whole section of the recording, found it cut short')
-        found.setdefault(tag, payload)
+        rest = length + (-length % 4)
+        if tag in tags and tag not in found:
+            payload = stream.read(length)
+            if len(payload) < length:
+                raise StateError('expected a whole section of the recording, found it cut short')
+            found[tag] = payload
+            rest -= length
+        while rest > 0:
+            skipped = len(stream.read(min(rest, _SKIP_BYTES)))
+            if skipped == 0:
+                raise StateError('expected a whole section of the recording, found it cut short')
+            rest -= skipped
     return found
 
 
 def _coded_frames(document: dict[str, Any], sections: dict[bytes, bytes]) -> tuple[bytes, int]:
     """Returns the frames section of a recording of version 2 and the number of its players."""
-    players, count = len(document.get('players') or ()), document.get('frame_count')
-    interval = document.get('keyframe_interval')
+    players = len(document['players'])
     data = sections.get(FRAMES_TAG)
     if (
-        not isinstance(count, int)
-        or not isinstance(interval, int)
-        or count < 0
-        or interval < 1
-        or not players
+        not players
         or data is None
-        or len(data) != _codec.section_bytes(players, count)
+        or len(data) != _codec.section_bytes(players, document['frame_count'])
     ):
         raise StateError('expected the frames of a recording of version 2, found them malformed')
     return data, players
 
 
-def _version(document: dict[str, Any]) -> int:
-    """Returns the version of a header, after checking that this module reads it."""
-    version = document.get('version', 1)
-    if version not in VERSIONS:
-        raise StateError(f'expected a recording version from {VERSIONS}, found {version!r}')
-    return version
-
-
 def annotations(path: Path) -> list[dict[str, Any]]:
     """Returns the records of the annotations of a recording file, none for version 1."""
-    with gzip.open(path, 'rb') as stream:
-        if _version(_parse_header(stream)) == 1:
+    with gzip.open(path, 'rb') as raw:
+        stream = _Budget(raw)
+        if _parse_header(stream).get('version', 1) == 1:
             return []
-        payload = _sections(stream).get(_annotations.TAG)
+        payload = _sections(stream, (_annotations.TAG,)).get(_annotations.TAG)
     return _annotations.decode(payload) if payload is not None else []
 
 
 def frames(path: Path, start: int = 0, stop: int | None = None) -> Iterator[bytes]:
     """Yields the frames of a recording file one after another, each as version 1 stores it.
 
-    A file of version 2 decodes from the keyframe before `start`, so the last frames come quickly.
+    A file of version 2 decodes from the keyframe before `start`, so the last frames come quickly,
+    and a thousand frames at a time, so a long recording takes little memory beyond its file.
 
     Args:
         path: The path of the file.
         start: The first frame to yield.
         stop: The frame after the last to yield, by default the end.
+
+    Raises:
+        StateError: If the file is not a recording or reaches past the limits of one.
     """
-    with gzip.open(path, 'rb') as stream:
+    with gzip.open(path, 'rb') as raw:
+        stream = _Budget(raw)
         document = _parse_header(stream)
-        if _version(document) == 1:
+        if document.get('version', 1) == 1:
             size = document['frame_bytes']
             index = 0
-            while (stop is None or index < stop) and (chunk := stream.read(size)):
+            # A last frame cut short is left out, as the page leaves it out.
+            while (stop is None or index < stop) and len(chunk := stream.read(size)) == size:
+                if index >= MAX_FRAMES:
+                    raise StateError(f'expected a recording of at most {MAX_FRAMES} frames')
                 if index >= start:
                     yield chunk
                 index += 1
             return
-        data, players = _coded_frames(document, _sections(stream))
-    decoded = _codec.decode(
-        data,
-        players,
-        document['frame_count'],
-        document['keyframe_interval'],
-        max(0, start),
-        stop,
-    )
-    for row in decoded:
-        yield row.tobytes()
+        data, players = _coded_frames(document, _sections(stream, (FRAMES_TAG,)))
+    count = document['frame_count']
+    end = count if stop is None else max(0, min(stop, count))
+    at = max(0, start)
+    while at < end:
+        upto = min(end, (at // _DECODE_FRAMES + 1) * _DECODE_FRAMES)
+        for row in _codec.decode(data, players, count, _codec.KEYFRAME_INTERVAL, at, upto):
+            yield row.tobytes()
+        at = upto
+
+
+def ending(path: Path) -> tuple[int, bytes | None]:
+    """Returns the number of frames of a recording file and its last frame, `None` for none.
+
+    A file of version 2 decodes its last frame alone, and one of version 1 reads one frame at a
+    time, so neither holds more than its file and a few frames at once.
+
+    Raises:
+        StateError: If the file is not a recording or reaches past the limits of one.
+    """
+    document = read_header(path)
+    count, last = 0, None
+    if document.get('version', 1) == 2:
+        count = document['frame_count']
+        for frame in frames(path, start=max(0, count - 1)):
+            last = frame
+        return count, last
+    for frame in frames(path):
+        count, last = count + 1, frame
+    return count, last
 
 
 def scenario_timing(state: bytes) -> dict[str, Any]:

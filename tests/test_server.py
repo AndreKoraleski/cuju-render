@@ -549,6 +549,75 @@ def test_cancel_during_child_start(monkeypatch, render_home):
     assert entry['error'] == 'cancelled'
 
 
+def test_child_processes_keep_the_home_off_their_path(monkeypatch, render_home):
+    """A process of a match, a game or a tournament imports nothing from the renderer's home."""
+    from cuju.render._tournaments import tournament_runner as _runner
+
+    seen = []
+
+    class StartError(Exception):
+        pass
+
+    def start(command, **options):
+        seen.append((command, options.get('cwd')))
+        raise StartError
+
+    original = subprocess.Popen
+    monkeypatch.setattr(_server.subprocess, 'Popen', start)
+    with pytest.raises(StartError):
+        _server._Games._spawn(['--warm'])
+    requests = object.__new__(_server._Requests)
+    requests._folder = _home.folder('requests')
+    requests._lock = threading.Lock()
+    requests._processes = {}
+    entry = {
+        'id': 'child',
+        'state': 'queued',
+        'left': 'builtin',
+        'right': 'builtin',
+        'scenario': '5_vs_5',
+        'seed': 7,
+        'ability': [None, None],
+        'progress': 0,
+        'match': None,
+        'error': None,
+        'created': time.time(),
+        'started': None,
+        'finished': None,
+    }
+    requests._entries = [entry]
+    with pytest.raises(StartError):
+        requests._play_child(entry)
+    cups = _runner.Tournaments(player=lambda *a: {'score': [0, 0]}, start=False)
+    match = {'key': 'k', 'scenario': '5_vs_5', 'seed': 1, 'length': None, 'ability': [None, None]}
+    with pytest.raises(StartError):
+        cups._play_process(match, ['builtin', 'builtin'], {'id': 'cup-x'}, lambda *a: None)
+    cups.close()
+    assert len(seen) == 3
+    safe = ['-P'] if sys.version_info >= (3, 11) else []
+    for command, folder in seen:
+        assert command[: 1 + len(safe)] == [sys.executable, *safe], command
+        assert command[command.index('-m') + 1].startswith('cuju.render.'), command
+        assert folder == _home.process_folder()
+    # The folders of the home, such as teams and requests, import as no package in such a process,
+    # where a namespace package, which has no origin, would stand for each of them.
+    monkeypatch.setattr(_server.subprocess, 'Popen', original)
+    names = ('teams', 'matches', 'requests')
+    for kind in names:
+        _home.folder(kind)
+    namespace = '(s := u.find_spec(n)) is not None and s.origin is None'
+    probe = f'import importlib.util as u; print(*[{namespace} for n in {names!r}])'
+
+    def namespaces(command, folder):
+        found = subprocess.run(
+            [*command, '-c', probe], cwd=folder, capture_output=True, text=True, timeout=60
+        )
+        return found.stdout.split().count('True')
+
+    assert namespaces([sys.executable], _home.home()) >= 2
+    assert namespaces(_home.python_command(), _home.process_folder()) == 0
+
+
 def test_requests_survive_restart(monkeypatch, render_home):
     monkeypatch.setattr(_server._Requests, '_run', lambda self: None)
     first = _server._Requests()
@@ -793,9 +862,28 @@ def test_responses_refuse_framing_and_bad_announcements_are_skipped(render_home)
     (live / 'text.json').write_text('{"id": "text", "pid": "many"}')
     (live / 'null.json').write_text('{"id": "null", "pid": null}')
     (live / 'list.json').write_text('[1, 2]')
-    running = {'id': 'running', 'title': 'a', 'scenario': 'b', 'environment': 0}
+    running = {'id': 'running', 'title': 'a', 'scenario': 'b', 'environment': 0, 'port': 8781}
     (live / 'running.json').write_text(json.dumps({**running, 'pid': os.getpid()}))
+    # An announcement of a running process with any field the server cannot read is skipped alone.
+    for name, change in [
+        ('untitled', {'title': None}),
+        ('portless', {'port': None}),
+        ('textport', {'port': '8781'}),
+        ('boolport', {'port': True}),
+        ('lowport', {'port': 22}),
+        ('highport', {'port': 70000}),
+        ('environs', {'environment': '0'}),
+        ('counted', {'environment_count': 1.5}),
+        ('outside', {'id': '../../x'}),
+    ]:
+        bad = {**running, 'id': name, 'pid': os.getpid(), **change}
+        (live / f'{name}.json').write_text(json.dumps(bad))
+    keyless = {**running, 'id': 'keyless', 'pid': os.getpid()}
+    del keyless['scenario']
+    (live / 'keyless.json').write_text(json.dumps(keyless))
     assert [source['id'] for source in _server._sources()] == ['running']
+    # The list leaves the port out.
+    del running['port']
     server = _server.http.server.ThreadingHTTPServer(
         ('127.0.0.1', 0), _server.make_handler(_server._Requests())
     )

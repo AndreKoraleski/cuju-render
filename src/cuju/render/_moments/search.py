@@ -461,15 +461,23 @@ def _filter(key: str, value: str) -> Any:
     raise ArgumentError(f'expected a filter, found {key}:')
 
 
+def _text_of(*values: Any) -> str:
+    """Returns the first of values that is text and not empty, or the empty text."""
+    return next((value for value in values if isinstance(value, str) and value), '')
+
+
 def _record(entry_: dict[str, Any], summary: dict[str, Any], registry: list[Any]) -> dict[str, Any]:
-    header = entry_['header']
+    # An entry of the index or a summary of an older install may hold fields of another type.
+    header = entry_['header'] if isinstance(entry_.get('header'), dict) else {}
+    teams = header.get('teams') if isinstance(header.get('teams'), list) else []
     return {
         'id': entry_['id'],
-        'title': summary.get('title') or header.get('title') or entry_['id'],
-        'scenario': summary.get('scenario') or header.get('scenario') or '',
-        'created': summary.get('created') or '',
+        'title': _text_of(summary.get('title'), header.get('title'), entry_['id']),
+        'scenario': _text_of(summary.get('scenario'), header.get('scenario')),
+        'created': _text_of(summary.get('created')),
         'provenance': summary.get('provenance') or {},
-        'teams': summary.get('teams') or [team.get('name') for team in header.get('teams', [])],
+        'teams': summary.get('teams')
+        or [team.get('name') if isinstance(team, dict) else None for team in teams],
         'tags': summary.get('tags') or [],
         'folder': summary.get('folder') or '',
         'context': _captions.context(header, registry),

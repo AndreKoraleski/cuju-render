@@ -6,7 +6,7 @@
 // example of several agents stay playable from Python and the API, and the page lists leave them
 // out.
 
-import { formatNumber, has, setValueKind, t, tOr } from './i18n.js';
+import { formatNumber, has, plainText, setValueKind, t, tOr } from './i18n.js';
 
 const HIDDEN = /^(benchmark_full_game_|test_)/;
 
@@ -54,8 +54,10 @@ function agentsText(left, right) {
 
 // The name of a scenario as the page shows it. A scenario without its own name, such as a
 // training variant or a custom file, reads in words, with its underscores as spaces. The suffix
-// of agents on each side, as in 5_vs_5_l0_r0, reads in words after the scenario's name.
-export function scenarioName(name) {
+// of agents on each side, as in 5_vs_5_l0_r0, reads in words after the scenario's name. A name
+// that is no text, as in a malformed file, reads as plainText reads it.
+export function scenarioName(value) {
+    const name = plainText(value);
     if (!name) {
         return '';
     }
@@ -74,14 +76,16 @@ export function scenarioName(name) {
             left: marl[1], right: marl[2], level: tOr(`scenario.marl.level.${marl[3]}`, marl[3]),
         });
     }
-    const words = String(name).replace(/_/g, ' ').trim();
+    const words = name.replace(/_/g, ' ').trim();
     return tOr(`scenario.${name}.name`, words.charAt(0).toUpperCase() + words.slice(1));
 }
 
 // A title as the page shows it. Titles that a batch or a recorder made by itself start with the
 // name of their scenario, which reads in the language of the page here, so older recordings show the
-// same.
-export function titleText(title, scenario) {
+// same. A title or a scenario that is no text reads as plainText reads it.
+export function titleText(titleValue, scenarioValue) {
+    const title = plainText(titleValue);
+    const scenario = plainText(scenarioValue);
     if (!title) {
         return '';
     }
@@ -102,4 +106,4 @@ export function scenarioText(name) {
 }
 
 // A scenario that a message of the server names shows by its name on the page.
-setValueKind('scenario', (name) => scenarioName(String(name || '')));
+setValueKind('scenario', (name) => scenarioName(name));

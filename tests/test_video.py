@@ -451,7 +451,8 @@ def test_server_exports(render_home, monkeypatch):
     popen = subprocess.Popen
 
     def fake(command, **options):
-        return popen([sys.executable, '-c', _FAKE, *command[3:]], **options)
+        rest = command[command.index('cuju.render._export.video') + 1 :]
+        return popen([sys.executable, '-c', _FAKE, *rest], **options)
 
     monkeypatch.setattr(_video_jobs.subprocess, 'Popen', fake)
     available = {'available': True, 'missing': []}

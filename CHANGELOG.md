@@ -544,10 +544,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     team's name, in English and Portuguese. Recordings keep the rule of the Title cell across a row
     whose other cells wrap, a folder of one file reads as 1 file, a black kit keeps its outline on
     the dark Teams list, and a team's control names its action set as such.
+- A recording of version 1 must have the frame size of its players, as the page requires, and
+    a last frame cut short is left out.
+- Importing a broken recording raises an ArgumentError that says why, in place of a raw
+    traceback.
+- A recording that decompresses beyond the cap names the cap in a message of its own rather than
+    inside the message of a failed decompression, and one beyond the caps of frames names its
+    frames and its frames times players.
+- Annotations of a negative or non-integer frame, and annotation files nested too deeply, are
+    left out.
+- The summary of a recording that a hard stop left empty during an import is made once and kept,
+    and every summary is written through a temporary file.
+- The server skips alone a live announcement with a field it cannot read or a port below 1024, so
+    the list of the other live sources stays whole, and the page keeps a live stream within its
+    80 MiB budget whatever its header claims.
 - NOTICE names the icons of the installable page, drawn from cuju's logo, under CC BY 4.0, and
     every asset that `web/assets/manifest.json` lists as converted from Gameplay Football, and the
     README links the guides, the changelog, NOTICE and the licenses by their full addresses, so
     they open from PyPI.
+- A reset of the lessons waits out a look at the server's lessons under way and drops an answer
+    that the reset overtook, so a lesson done right after a reset is reported to the server and
+    stays done.
 
 ### Security
 
@@ -557,6 +574,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     as well as the network, every response keeps its window apart from a window of another site
     that opened it, and the service worker answers only with copies that carry the digest of their
     file, so a page of another site can no longer plant a page in the cache.
+- An imported team takes the identifier of its folder and never the one its `team.json` names, an
+    import that fails at any step removes the folder it began, the registry reads a team file of
+    at most 1 MiB that holds an object and leaves out alone a folder that fails to read, and
+    values of the wrong type in a team file, a model, a clip or a package model fall back or fail
+    their check by name. A crafted archive can no longer break the list of teams or reach files
+    outside the folder of teams.
 - A team's AudioWorklet module loads into an audio context of the team's own, whose sound streams
     into the team's buses through their governor and limiter, so a module can no longer change
     the renderer's meters, governors or limiters. The server reads each module as JavaScript does
@@ -570,6 +593,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     most 65536 words of code a vertex or a fragment through loops, helpers and macros, on the
     server and on the page. A team worker draws with the 2D context alone, with no WebGL, WebGPU
     or nested worker, so a package can no longer hang the GPU.
+- An uploaded tar archive is read one member at a time and refused at the first member past the
+    limits of 10,000 files and 500 MB, with at most 1 MiB of headers for each member and 564 MB
+    read in all, and the entries of a zip archive are counted from its bytes before zipfile reads
+    its directory, so a compressed archive of a few kilobytes that holds 200,000 members is
+    refused at once. On a Python without the data filter of tar, the members land without their
+    mode, owner or times.
+- The Python reader of recordings holds a header to 1 MiB, a file to 256 MiB once decompressed,
+    a recording to 32 players and 50,000 frames, and decodes version 2 a thousand frames at a time,
+    so a small crafted file no longer takes gigabytes of memory.
+- A recording header that holds NaN or an infinity is refused, and the server answers the page
+    with strict JSON, so one crafted recording no longer breaks the library list.
+- The type of every header field that the library reads is checked at import and when a
+    summary is made, and search, captions and moments keep working with the files of an older
+    install that hold others.
+- A recording whose title, scenario or team names are numbers, lists or objects lists on Home,
+    Recordings, the palette and the Match menu by its id or by the digits of the number, every
+    summary of the library reaches the lists with its fields made text, and labels nest at most
+    16 deep. A title or a name shows a message of the page only when its id starts with
+    `server.names.` or `server.tournament.label.`, so a crafted header can no longer break the
+    lists, overflow the stack or show any message of the page as its title.
+- The server keeps the message of a recording's title and team names to the names that cuju
+    makes, so a crafted header can no longer show any other message of the page.
+- The page opens a recording that decompresses to at most 128 MB, down from 512 MB, holds at
+    most 50,000 frames and 1,000,000 frames times players and lists at most 64 players, and reads
+    a recording itself only when the decoding worker cannot start, so a small crafted file can no
+    longer take gigabytes of the browser's memory or be decoded twice. A header that is no object
+    or whose players lack a team or an index is refused with a message, malformed teams and rates
+    of steps fall back to Left, Right and ten steps a second, and an engine scorer or a foul that
+    names a player beyond the header is set aside.
 - Save captions writes each cue on one line, with a line break of a team name as a space and
     `&`, `<` and `>` as character references, so a team name can no longer add cues or markup to
     the WebVTT file.
@@ -578,12 +630,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The page takes from a team worker plain data alone and bitmaps only in its overlays at the size
     of their slots, and the sandbox's wrapper keeps its port out of the module's reach, so a
     worker can no longer send bitmaps of any size or answers around the reply limit.
+- The server serves the images, sounds, model and clips of a team by their exact names alone and
+    never through a link, and an import sets aside a file named as one of them in another case or
+    with more after the slot, such as `Shirt-Front.png`, `shirt-front.x.png` or `clips/foo.GLB`,
+    so no file of an archive reaches the page unchecked where names match whatever their case.
+- An archive with a member whose name opens a device on Windows, such as `nul`, `con.txt`,
+    `COM¹` or `CONIN$`, or whose name ends in a dot or a space, is refused on every system, so an
+    upload can no longer open a device, lose members or hang.
+- The name that a team file brings, imported or edited by hand, keeps only the characters that
+    print, so the escapes of a terminal and the marks that turn the direction of text become
+    spaces before `cuju render team list` prints it.
+- A tournament file carries a seal, a keyed digest under a key of the home folder, and a running
+    tournament whose file has no valid seal, one dropped into the folder or edited by hand, loads
+    stopped until a person resumes it, and every file plays at most eight matches at once, so a
+    dropped file can no longer play the teams it names unasked.
 - Behind the proxy of Google Colab the server takes a request that changes data only from an
     origin that names the host of the request, so the page of another notebook can no longer
     change the data of this one.
 - The doctor's report writes the renderer's home folder outside the user's home as
     `$CUJU_RENDER_HOME` and the user's name as `<user>`, and on Windows matches either path
     whatever its case, so a pasted report keeps them private.
+- A team added from a folder leaves out every link of the folder, to a file or to a folder, and
+    logs it, so a link to a key of the user's can no longer travel into the team and its exports.
+- Every Python process that the renderer starts runs with `-P` on Python 3.11 and later, and on
+    Python 3.10 starts in an empty folder, so the folders of the home such as `teams` and
+    `requests` never import as packages there.
+- A path inside a team package is refused by the rule of Windows devices that archive members
+    follow, so a part such as `nul.glb` or one that ends in a dot never reaches the folder.
 
 ### Known limits
 

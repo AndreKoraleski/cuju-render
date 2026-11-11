@@ -81,19 +81,24 @@ def context(header: dict[str, Any], registry: list[dict[str, Any]] | None = None
         except Exception:
             registry = []
     known = {entry.get('id'): entry for entry in registry if isinstance(entry, dict)}
-    teams = header.get('teams') or []
+    # A header kept by the index of an older install may hold fields of another type, which
+    # take their defaults.
+    teams = header.get('teams') if isinstance(header.get('teams'), list) else []
     names: list[str | None] = []
     rosters = []
     for side in (0, 1):
         team = teams[side] if side < len(teams) and isinstance(teams[side], dict) else {}
         name = team.get('name')
         names.append(name.strip() if isinstance(name, str) and name.strip() else None)
-        entry = known.get(team.get('id')) if team.get('id') is not None else None
+        entry = known.get(team['id']) if isinstance(team.get('id'), str) else None
         style = entry.get('style') if entry is not None else team.get('style')
         rosters.append(_style_players(style or {}))
     players = []
-    for player in header.get('players') or []:
+    listed = header.get('players') if isinstance(header.get('players'), list) else []
+    for player in listed:
+        player = player if isinstance(player, dict) else {}
         side, index = player.get('team', 0), player.get('index', 0)
+        index = index if isinstance(index, int) and not isinstance(index, bool) else 0
         roster = rosters[side] if side in (0, 1) else []
         entry = (
             roster[index] if 0 <= index < len(roster) and isinstance(roster[index], dict) else None

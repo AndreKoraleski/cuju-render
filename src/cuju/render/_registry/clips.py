@@ -35,8 +35,6 @@ MAXIMUM_CLIPS = 16
 MAXIMUM_ANIMATIONS = 32
 # A clip's name, which the page makes from the file's name, is its file's name too.
 _NAME = re.compile(r'[a-z0-9_]{1,40}')
-# Windows: these names open a device in any folder, whatever their extension.
-_DEVICES = re.compile(r'(con|prn|aux|nul|com[0-9]|lpt[0-9])', re.IGNORECASE)
 # glTF: the chunk types of a binary file, its JSON and its binary buffer.
 _JSON_CHUNK = 0x4E4F534A
 _BIN_CHUNK = 0x004E4942
@@ -46,7 +44,7 @@ _UNSUPPORTED = ('KHR_draco_mesh_compression', 'EXT_meshopt_compression', 'KHR_te
 
 def check_name(name: Any) -> str:
     """Returns the name of a clip, or raises `ArgumentError` for one that is no safe file name."""
-    if not isinstance(name, str) or not _NAME.fullmatch(name) or _DEVICES.fullmatch(name):
+    if not isinstance(name, str) or not _NAME.fullmatch(name) or _teams._device(name):
         raise MessageError('server.clips.name', name=repr(name))
     return name
 
@@ -109,24 +107,26 @@ def check(data: bytes) -> dict[str, Any]:
     _, start, size = chunks[0]
     try:
         document = json.loads(data[start : start + size])
-    except (ValueError, UnicodeDecodeError) as error:
+        outside = _uris(document)
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
         raise MessageError('server.clips.json', error=error) from error
     if not isinstance(document, dict):
         raise MessageError('server.clips.json_object')
     asset = document.get('asset')
     if not isinstance(asset, dict) or not str(asset.get('version', '')).startswith('2.'):
         raise MessageError('server.clips.asset_version')
-    outside = _uris(document)
     if outside:
         raise MessageError('server.clips.link', uri=repr(outside[0]))
     binary = next((size for kind, _, size in chunks if kind == _BIN_CHUNK), None)
-    for buffer in document.get('buffers') or []:
+    for buffer in _teams._array(document.get('buffers')):
         if isinstance(buffer, dict) and 'uri' not in buffer:
             if binary is None or not isinstance(buffer.get('byteLength'), int):
                 raise MessageError('server.clips.buffer')
             if buffer['byteLength'] > binary:
                 raise MessageError('server.clips.buffer_length')
-    required = [name for name in document.get('extensionsRequired') or [] if name in _UNSUPPORTED]
+    required = [
+        name for name in _teams._array(document.get('extensionsRequired')) if name in _UNSUPPORTED
+    ]
     if required:
         raise MessageError('server.clips.extension', extension=required[0])
     nodes = document.get('nodes') or []
@@ -135,7 +135,7 @@ def check(data: bytes) -> dict[str, Any]:
         raise MessageError('server.clips.skinned')
     bones = set()
     for skin in skins:
-        for joint in (skin.get('joints') or []) if isinstance(skin, dict) else []:
+        for joint in _teams._array(skin.get('joints')) if isinstance(skin, dict) else []:
             if (
                 isinstance(joint, int)
                 and 0 <= joint < len(nodes)
@@ -205,6 +205,20 @@ def _sidecar(path: Path) -> Path:
     return path.with_suffix('.json')
 
 
+def _clip_files(folder: Path) -> list[Path]:
+    """Returns the clips of a folder of clips, the files named exactly as a clip, in name order.
+
+    Windows and macOS find a file whatever the case of its name, so the names come from the
+    folder's own listing, and a link, which could point outside the team's folder, is left out.
+    """
+    return sorted(
+        path
+        for name in _teams._names(folder)
+        if name.endswith('.glb') and _NAME.fullmatch(name[: -len('.glb')])
+        if (path := folder / name).is_file() and not path.is_symlink()
+    )
+
+
 def listing(team_folder: Path) -> list[dict[str, Any]]:
     """Returns the clips of a team's `cuju-team` folder, each its name, size, animations and joints.
 
@@ -213,9 +227,7 @@ def listing(team_folder: Path) -> list[dict[str, Any]]:
     """
     folder = team_folder / FOLDER
     clips = []
-    for path in sorted(folder.glob('*.glb')) if folder.is_dir() else []:
-        if not _NAME.fullmatch(path.stem) or path.is_symlink() or not path.is_file():
-            continue
+    for path in _clip_files(folder):
         try:
             meta = json.loads(_sidecar(path).read_text())
             animations = meta['animations']
@@ -275,9 +287,7 @@ def set_clip(
     folder = _folder(identifier)
     path = folder / f'{name}.glb'
     with _teams._LOCK:
-        others = [
-            other for other in (folder.glob('*.glb') if folder.is_dir() else []) if other != path
-        ]
+        others = [other for other in _clip_files(folder) if other != path]
         if len(others) >= MAXIMUM_CLIPS:
             raise MessageError('server.clips.count', most=MAXIMUM_CLIPS)
         total = sum(other.stat().st_size for other in others) + len(data)
@@ -308,8 +318,7 @@ def clip_path(identifier: str, name: str) -> Path | None:
         check_name(name)
     except ArgumentError:
         return None
-    path = _folder(identifier) / f'{name}.glb'
-    return path if path.is_file() and not path.is_symlink() else None
+    return _teams._exact(_folder(identifier), f'{name}.glb')
 
 
 def remove_clip(identifier: str, name: str) -> bool:
@@ -354,13 +363,21 @@ def import_folder(team_folder: Path) -> None:
     kept = 0
     total = 0
     for path in sorted(folder.iterdir()):
-        if not _teams._kept(path) or path.suffix != '.glb' or not _NAME.fullmatch(path.stem):
+        if not _teams._kept(path):
+            continue
+        if path.suffix != '.glb' or not _NAME.fullmatch(path.stem):
+            # A name that is a clip's name in another case, such as `foo.GLB`, is set aside, so no
+            # system that finds names whatever their case reads it as a clip.
+            lower = path.name.lower()
+            if lower.endswith('.glb') and _NAME.fullmatch(lower[: -len('.glb')]):
+                _teams.set_aside(path, 'its name is the name of a clip in another case')
             continue
         try:
             data = path.read_bytes()
             found = check(data)
             valid = kept < MAXIMUM_CLIPS and total + len(data) <= MAXIMUM_TEAM_BYTES
-        except (OSError, ArgumentError):
+        except Exception:
+            # A clip that fails any part of its check, however it fails, counts as failing.
             valid = False
         if not valid:
             _teams.set_aside(path, 'it fails the checks of a clip or the limits of a team')

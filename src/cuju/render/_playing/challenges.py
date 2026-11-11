@@ -1291,7 +1291,7 @@ class _Jobs:
 
     def _play(self, job: dict[str, Any]) -> None:
         command = [
-            sys.executable,
+            *_home.python_command(),
             '-m',
             'cuju.render._playing.challenges',
             job['challenge'],
@@ -1315,7 +1315,7 @@ class _Jobs:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                cwd=_home.home(),
+                cwd=_home.process_folder(),
                 env=os.environ.copy(),
             )
             self._processes[job['id']] = process

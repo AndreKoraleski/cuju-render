@@ -172,6 +172,113 @@ def format_checks(client):
     return 1
 
 
+def malformed_summary_checks(client):
+    """Checks that the lists of recordings show summaries whose fields are of the wrong kinds."""
+    result = client.evaluate("""
+        (async () => {
+            const fetched = window.fetch;
+            const real = await (await fetched('/api/matches')).json();
+            const odd = JSON.parse('{"toString": 1, "valueOf": 2}');
+            const at = Date.now() / 1000;
+            const bad = [5, [1], {}, odd, true].map((title, i) => ({
+                id: `m-odd-${i}`, title, title_id: i ? odd : 'help.title', title_values: odd,
+                scenario: [odd, 5, {}, 'x_y', null][i],
+                teams: [[5, odd], odd, null, [odd], 'ab'][i],
+                team_labels: [[odd, { id: 'server.names.you', text: odd }], 5, null, [odd], 1][i],
+                tags: [odd, [odd], 'tag', null, [5]][i], notes: odd, folder: '', created: at + i,
+                steps: 10, bytes: 100, score: [1, 0],
+            }));
+            const ids = bad.map((m) => m.id);
+            // The server's list of recordings holds the malformed summaries first.
+            const text = JSON.stringify([...bad, ...real]);
+            const headers = { 'Content-Type': 'application/json' };
+            window.fetch = (input, init) => (String(input).endsWith('/api/matches')
+                ? Promise.resolve(new Response(text, { headers })) : fetched(input, init));
+            try {
+                cuju.showPage('recordings');
+                await cuju.recordings.refresh();
+                const row = (id) => document.querySelector(`tr[data-id="${id}"]`);
+                const rows = ids.filter(row);
+                const shown = ids.map((id) => row(id)?.querySelector('.ellipsis')?.textContent);
+                cuju.recordings.query = 'odd';
+                cuju.recordings.sortKey = 'title';
+                cuju.recordings.render();
+                const searched = ids.filter(row);
+                cuju.recordings.query = '';
+                cuju.recordings.sortKey = 'teams';
+                cuju.recordings.render();
+                cuju.recordings.sortKey = 'created';
+                cuju.recordings.render();
+                cuju.showPage('home');
+                await cuju.home.refresh();
+                const home = document.querySelectorAll('.home-recordings .home-item').length;
+                const { api } = await import('./js/core/api.js');
+                cuju.palette.recent = await api.matches();
+                const palette = cuju.palette.actions()
+                    .filter((a) => ids.some((id) => a.keywords.includes(id))).length;
+                cuju.showPage('watch');
+                cuju.menus.match.open();
+                let menu = '';
+                for (let i = 0; i < 50 && !menu.includes('m-odd-'); i++) {
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                    menu = document.getElementById('match-menu').textContent;
+                }
+                cuju.menus.match.close(false);
+                return { rows, shown, searched, home, palette, menu: menu.includes('m-odd-') };
+            } finally {
+                window.fetch = fetched;
+                cuju.showPage('home');
+            }
+        })()
+    """)
+    assert len(result['rows']) == 5, result
+    assert result['shown'] == ['5', 'm-odd-1', 'm-odd-2', 'm-odd-3', 'true'], result
+    assert result['home'] > 0 and result['palette'] == 5 and result['menu'], result
+    print(f'Malformed summaries list as {result["shown"]}.', flush=True)
+    return 3
+
+
+def malformed_index_checks(client):
+    """Checks that the show and the restarts skip player indices of a frame beyond the header."""
+    result = client.evaluate("""
+        (async () => {
+            const { findGoals, parseRecording } = await import('./js/recording/format.js');
+            const { FrameStore } = await import('./js/recording/timeline.js');
+            const { scorerAt } = await import('./js/broadcast/show.js');
+            const { scanRestarts } = await import('./js/broadcast/transition.js');
+            const response = await fetch('/api/mock/samples/sample-5v5');
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            const { header, frames } = await parseRecording(bytes);
+            const n = header.players.length;
+            const goals = findGoals(frames);
+            // The engine's scorer bits name player 30, beyond the ten of the header.
+            const flagged = { ...header, engine_scorer: true };
+            for (const goal of goals) {
+                frames[goal.index].flags |= 31 << 8;
+            }
+            const store = new FrameStore(flagged, frames);
+            const scorers = goals.map((g) => scorerAt(store, g.index, g.team, flagged).scorer);
+            // A foul whose offender and victim lie beyond the header, on every restart.
+            const last = frames.length - 1;
+            const clean = scanRestarts(new FrameStore(header, frames), header, 1, last, []);
+            for (const restart of clean) {
+                if (!restart.decision && frames[restart.index - 1].foul.type === 0) {
+                    frames[restart.index].foul = { player: 50, victim: 70, type: 1 };
+                }
+            }
+            const fouled = scanRestarts(new FrameStore(header, frames), header, 1, last, []);
+            const named = fouled.filter((r) => r.decision)
+                .flatMap((r) => [r.decision.offender, r.decision.victim]);
+            return { n, goals: goals.length, scorers, restarts: clean.length, named };
+        })()
+    """)
+    n = result['n']
+    assert result['goals'] > 0 and result['restarts'] > 0, result
+    assert all(-1 <= k < n for k in result['scorers']), result
+    assert all(-1 <= k < n for k in result['named']), result
+    return 2
+
+
 def annotation_checks(client):
     """Checks the overlay of annotations, hidden without them, its labels, lines and panel."""
     result = client.evaluate("""
@@ -3599,6 +3706,8 @@ def main():
             checks += page_grid.check_flat(client, f'http://127.0.0.1:{port}/')
             checks += loading_checks(client, port)
             checks += format_checks(client)
+            checks += malformed_index_checks(client)
+            checks += malformed_summary_checks(client)
             checks += annotation_checks(client)
             checks += presentation_checks(client, port)
             checks += sandbox_top_checks(client, port, debug)

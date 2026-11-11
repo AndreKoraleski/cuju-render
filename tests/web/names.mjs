@@ -37,6 +37,7 @@ Object.defineProperty(globalThis, 'navigator', { value: { languages: ['pt-BR'], 
 globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
 const i18n = await import(pathToFileURL(join(folder, 'core/i18n.js')).href);
 const names = await import(pathToFileURL(join(folder, 'core/names.js')).href);
+const scenarios = await import(pathToFileURL(join(folder, 'core/scenarios.js')).href);
 const pt = (id) => shipped.pt[id];
 const label = (id, values = {}) => ({ id, text: shipped.en[id], values });
 
@@ -88,4 +89,94 @@ test('a title of before keeps its text with its scenario in words', () => {
     assert.equal(names.recordingTitle({ title: 'My match', scenario: '5_vs_5' }), 'My match');
     assert.ok(!names.recordingTitle({ title: '5_vs_5, environment 0', scenario: '5_vs_5' }).startsWith('5_vs_5'));
     assert.equal(names.recordingTitle(null), '');
+});
+
+// An object that throws when made text, as JSON with a key toString makes one.
+const hostile = () => JSON.parse('{"toString": 1, "valueOf": 2}');
+
+test('a title, scenario or team of a malformed file shows as text and never throws', () => {
+    const cases = [[5, '5'], [[1], ''], [{}, ''], [true, 'true'], [{ text: 1 }, ''], [null, ''], [hostile(), ''], [[hostile()], '']];
+    for (const [title, shown] of cases) {
+        assert.equal(names.recordingTitle({ id: 'm-x', title, scenario: '' }), shown, JSON.stringify(title));
+        assert.equal(names.recordingTitle({ id: 'm-x', title, scenario: hostile() }), shown);
+        assert.equal(names.recordingTitle({ id: 'm-x', title, title_id: 'server.names.demo', title_values: hostile() }), shown);
+        assert.equal(scenarios.titleText(title, [5]), shown);
+    }
+    for (const scenario of [5, [], {}, hostile(), null]) {
+        assert.equal(typeof scenarios.scenarioName(scenario), 'string');
+    }
+    assert.equal(scenarios.scenarioName(5), '5');
+    assert.equal(scenarios.scenarioName({}), '');
+    const summary = { teams: [5, hostile(), null, 'Rex'], team_labels: [null, { id: 'server.names.builtin', text: hostile() }, 7, null] };
+    assert.deepEqual(names.summaryTeams(summary), ['5', pt('server.names.builtin'), '', 'Rex']);
+    assert.deepEqual(names.summaryTeams({ teams: hostile(), team_labels: 5 }), []);
+    assert.deepEqual(names.textList([1, 'a', hostile(), null]), ['1', 'a', '', '']);
+    assert.deepEqual(names.textList(hostile()), []);
+    assert.equal(names.teamName({ name: 'Rex', name_id: hostile(), name_values: hostile() }), 'Rex');
+    assert.equal(names.teamName({ name: hostile() }), '');
+    const scenario = { kind: 'scenario', name: hostile(), text: hostile() };
+    assert.equal(typeof names.recordingTitle({ title: 'x', title_id: 'server.names.recorder', title_values: { scenario, environment: hostile() } }), 'string');
+});
+
+test('a title or a name shows a message only of those that recordings carry', () => {
+    for (const id of ['format.error.magic', 'home.recordings.title', 'server.origin', 'server.namesx.demo', 'constructor', '__proto__']) {
+        assert.equal(names.recordingTitle({ title: 'Mine', title_id: id, title_values: {} }), 'Mine', id);
+        assert.equal(names.teamName({ name: 'Rex', name_id: id, name_values: {} }), 'Rex', id);
+        assert.deepEqual(names.summaryTeams({ teams: ['Rex'], team_labels: [{ id, text: 'Rex', values: {} }] }), ['Rex']);
+    }
+    // A label inside the values that names another message shows its English text.
+    const against = label('server.names.against', { left: { id: 'format.error.magic', text: 'Lefty', values: {} }, right: label('server.names.you') });
+    assert.equal(names.recordingTitle({ title: 'Lefty against You', title_id: against.id, title_values: against.values }), 'Lefty contra Você');
+    // The labels of tournaments show in the language.
+    const title = label('server.tournament.label.title', {
+        tournament: 'Spring cup', match: label('server.tournament.label.final'), home: 'Rex',
+        away: label('server.tournament.label.builtin_ability', { ability: '0.80' }),
+    });
+    assert.equal(names.recordingTitle({ title: 'x', title_id: title.id, title_values: title.values }),
+        `Spring cup, ${pt('server.tournament.label.final')}, Rex x ${pt('server.tournament.label.builtin_ability').replace('{ability}', '0,80')}`);
+    assert.equal(names.teamName({ name: 'Built-in AI', name_id: 'server.tournament.label.builtin', name_values: {} }), pt('server.tournament.label.builtin'));
+});
+
+test('labels nested beyond their depth show their text, however deep', () => {
+    let deep = { text: 'a', id: 'server.names.you', values: {} };
+    for (let i = 0; i < 200000; i++) {
+        deep = { text: 'a', id: 'server.names.against', values: { left: deep, right: 'b' } };
+    }
+    assert.equal(typeof names.recordingTitle({ title: 'x', title_id: 'server.names.against', title_values: { left: deep, right: 'b' } }), 'string');
+    assert.equal(typeof names.teamName({ name: 'x', name_id: 'server.names.person_with', name_values: { person: deep, team: 'b' } }), 'string');
+    assert.equal(names.recordingTitle({ title: 'x', title_id: 'nope', title_values: { v: deep } }), 'x');
+    // A title of tournament labels a few levels deep shows in full.
+    const leg = label('server.tournament.label.leg', { match: label('server.tournament.label.decider', { match: label('server.tournament.label.final') }), number: '2' });
+    const person = label('server.names.person_with', { person: label('server.names.you'), team: label('server.names.builtin') });
+    const title = label('server.tournament.label.title', { tournament: 'Cup', match: leg, home: person, away: 'Rex' });
+    const shown = names.recordingTitle({ title: 'x', title_id: title.id, title_values: title.values });
+    assert.ok(shown.startsWith('Cup, ') && shown.endsWith(' x Rex') && shown.includes(pt('server.names.builtin')), shown);
+});
+
+test('the summaries of the library list with their fields of the wrong kinds made plain', () => {
+    const odd = hostile();
+    const list = names.summaryList([
+        { id: 'a', title: odd, scenario: 5, notes: odd, folder: [], teams: odd, tags: [odd, 'x'], team_labels: 5,
+            score: [1, odd], created: odd, steps: 'x', bytes: NaN, provenance: 5, group: [1], extra: odd },
+        { id: 'b', title: 'Fine', teams: ['L', 'R'], team_labels: [null, label('server.names.you')], score: [2, 1], created: 5 },
+        null, 5, { title: 'no id' }, { id: 7 },
+    ]);
+    assert.deepEqual(list.map((m) => m.id), ['a', 'b']);
+    const [a, b] = list;
+    assert.equal(a.title, '');
+    assert.equal(a.scenario, '5');
+    assert.equal(a.notes, '');
+    assert.equal(a.folder, '');
+    assert.deepEqual(a.teams, []);
+    assert.deepEqual(a.tags, ['', 'x']);
+    assert.equal(a.team_labels, null);
+    for (const key of ['score', 'created', 'bytes', 'provenance', 'group']) {
+        assert.ok(!(key in a), key);
+    }
+    assert.equal(a.steps, 'x');
+    assert.equal(a.extra, odd);
+    assert.equal(names.recordingTitle(a) || a.id, 'a');
+    assert.deepEqual(names.summaryTeams(b), ['L', pt('server.names.you')]);
+    assert.deepEqual(b.score, [2, 1]);
+    assert.deepEqual(names.summaryList({ length: 1, 0: { id: 'x' } }), []);
 });

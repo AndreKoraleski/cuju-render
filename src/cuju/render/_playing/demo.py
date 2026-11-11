@@ -31,6 +31,7 @@ import urllib.request
 from typing import Any, TextIO
 
 from .._http import launch as _launch
+from .._store import home as _home
 from .._text import messages as _messages
 
 # The scenario of each format, a short five a side match by default and eleven a side on request.
@@ -142,7 +143,7 @@ def _stop(
 def _child(arguments: list[str]) -> subprocess.Popen:
     """Starts `python -m` with `arguments`, with piped input and output and the same folder."""
     return subprocess.Popen(
-        [sys.executable, '-m', *arguments],
+        [*_home.python_command(), '-m', *arguments],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,

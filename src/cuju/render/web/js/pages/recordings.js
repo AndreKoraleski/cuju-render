@@ -7,7 +7,7 @@
 // one run of a challenge show as one group row, which opens to the rows of its attempts.
 
 import { api, formatBytes, formatDate } from '../core/api.js';
-import { serverText, t, tn } from '../core/i18n.js';
+import { plainText, serverText, t, tn } from '../core/i18n.js';
 import { h, listKeys } from '../teams/library.js';
 import { Dropdown, enhanceSelect, menuHeading, menuItem } from '../core/menu.js';
 import { recordingTitle, summaryTeams } from '../core/names.js';
@@ -236,7 +236,7 @@ export class RecordingsPage {
         let rows = this.list.filter((m) => {
             if (q) {
                 const group = m.group ? [m.group.title, serverText(m.group, 'title')] : [];
-                const text = [m.title, recordingTitle(m), ...(m.teams || []), ...summaryTeams(m), ...(m.tags || []), m.notes, m.scenario, scenarioName(m.scenario), m.folder, ...group].join(' ').toLowerCase();
+                const text = [m.title, recordingTitle(m), ...(m.teams || []), ...summaryTeams(m), ...(m.tags || []), m.notes, m.scenario, scenarioName(m.scenario), m.folder, ...group].map(plainText).join(' ').toLowerCase();
                 if (!text.includes(q)) {
                     return false;
                 }

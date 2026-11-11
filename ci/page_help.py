@@ -277,12 +277,14 @@ def lesson_checks(client):
             // A lesson counts as reported when the page reported it, or when the server already
             // knew it done, which Help takes in each time it shows. The reports travel on their
             // own, so the check asks again for a while.
+            let unknown = [];
             const reportedNow = async () => {
                 const server = await (await fetch('/api/help/tutorial')).json();
                 const known = (id) => server.page.includes(id)
                     || (server.lessons || []).some((entry) => entry.id === id && entry.done);
-                return ['open_sample', 'seek_goal', 'switch_camera', 'follow_player',
-                    'make_photo'].every(known);
+                unknown = ['open_sample', 'seek_goal', 'switch_camera', 'follow_player',
+                    'make_photo'].filter((id) => !known(id));
+                return unknown.length === 0;
             };
             let reported = await reportedNow();
             for (let i = 0; i < 50 && !reported; i++) {
@@ -307,7 +309,7 @@ def lesson_checks(client):
                 stored: 'make_photo' in stored.done, reported, praised: status.startsWith('Done'),
                 closed, summary, cleared,
             };
-            return Object.values(all).every(Boolean) || JSON.stringify(all);
+            return Object.values(all).every(Boolean) || JSON.stringify({ ...all, unknown });
             """,
         ),
     ]

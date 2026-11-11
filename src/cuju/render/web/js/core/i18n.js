@@ -287,10 +287,21 @@ export function t(id, values) {
 // The text of a message whose id the server or a table may lack, such as the title of a
 // challenge, else the given fallback, which is the server's own English text.
 export function tOr(id, fallback, values) {
-    if (!id || !lookup(id)) {
-        return fallback === undefined || fallback === null ? '' : fill(String(fallback), values);
+    if (typeof id !== 'string' || !id || !lookup(id)) {
+        return fill(plainText(fallback), values);
     }
     return t(id, values);
+}
+
+// A value as text, a text as it is and a number or a truth value in digits or words. Anything
+// else, such as an object of a malformed file, is the empty text, since some objects throw when
+// made text.
+export function plainText(value) {
+    const kind = typeof value;
+    if (kind === 'string') {
+        return value;
+    }
+    return kind === 'number' || kind === 'boolean' || kind === 'bigint' ? String(value) : '';
 }
 
 // Whether a language holds the id.
@@ -301,28 +312,38 @@ export function has(id) {
 // The text of a message from the server, an object with the English text in `field` and, when
 // the server gives them, its id in `field_id` and its values in `field_values`. A name that the
 // server makes, such as that of the built-in AI or of a round, comes the same way, while a name
-// that a person gave comes as text alone and shows as given.
-export function serverText(object, field = 'error') {
+// that a person gave comes as text alone and shows as given. `allow`, when given, says which
+// message ids may show, in the object and in the labels of its values, and a label of any other
+// id shows its English text.
+export function serverText(object, field = 'error', allow = null) {
     if (!object || typeof object !== 'object') {
-        return object === undefined || object === null ? '' : String(object);
+        return plainText(object);
     }
-    const values = object[`${field}_values`] && typeof object[`${field}_values`] === 'object' ? object[`${field}_values`] : undefined;
-    return tOr(object[`${field}_id`], object[field], values && serverValues(values));
+    return labelText({ id: object[`${field}_id`], text: object[field], values: object[`${field}_values`] }, allow);
 }
+
+// Labels nest this deep at most, as an entrant inside a match inside the title of a tournament
+// recording does, and a deeper label shows its English text.
+const LABEL_DEPTH = 16;
 
 // The text of a label of the server, an object with its English `text`, its message `id` and
 // its `values`, as a value of another message holds one, or a plain text. A label with a `kind`
-// names a thing that a module of the page shows, such as a scenario by its `name`.
-export function labelText(label) {
+// names a thing that a module of the page shows, such as a scenario by its `name`. `allow` reads
+// as in serverText.
+export function labelText(label, allow = null, depth = 0) {
     if (!label || typeof label !== 'object') {
-        return label === undefined || label === null ? '' : String(label);
+        return plainText(label);
     }
     if (typeof label.kind === 'string') {
         const show = valueKinds.get(label.kind);
-        return show ? show(label.name, label) : String(label.text ?? label.name ?? '');
+        return show ? show(plainText(label.name), label) : plainText(label.text ?? label.name);
     }
-    const values = label.values && typeof label.values === 'object' ? serverValues(label.values) : undefined;
-    return tOr(label.id, label.text, values);
+    const id = typeof label.id === 'string' && (!allow || allow(label.id)) ? label.id : null;
+    if (!id || depth >= LABEL_DEPTH) {
+        return plainText(label.text);
+    }
+    const values = label.values && typeof label.values === 'object' ? serverValues(label.values, allow, depth + 1) : undefined;
+    return tOr(id, label.text, values);
 }
 
 // How the page shows each kind of label, such as `scenario`, which scenarios.js gives, so this
@@ -338,11 +359,11 @@ const DECIMAL = /^-?\d+\.\d+$/;
 
 // The values of a server message for the page's language. A value is text, or a label of its
 // own, such as the name of an entrant inside the title of a recording.
-function serverValues(values) {
+function serverValues(values, allow, depth) {
     const out = {};
     for (const [key, value] of Object.entries(values)) {
         if (value && typeof value === 'object') {
-            out[key] = labelText(value);
+            out[key] = labelText(value, allow, depth);
         } else if (typeof value === 'string' && DECIMAL.test(value)) {
             const digits = value.length - value.indexOf('.') - 1;
             out[key] = formatNumber(Number(value), { minimumFractionDigits: digits, maximumFractionDigits: digits });

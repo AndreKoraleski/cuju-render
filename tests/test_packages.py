@@ -846,3 +846,15 @@ def test_team_sound_command_line(render_home, tmp_path, capsys):
     assert 'expected the moment of a sound among goal, shot, pass' in capsys.readouterr().err
     assert main(['team', 'sound', team['id'], 'shot', '--remove']) == 0
     assert capsys.readouterr().out.strip() == 'Singers, sounds none'
+
+
+@pytest.mark.parametrize(
+    'name',
+    ['con.js', 'models/nul.glb', 'sounds/com1.ogg', 'lpt9/a.js', 'models/halo.glb.', 'a./b.js'],
+)
+def test_package_paths_refuse_the_names_of_windows_devices(name):
+    from cuju.render._packages import presentation as _presentation
+
+    with pytest.raises(cuju.ArgumentError):
+        _presentation.check_path(name)
+    assert _presentation.check_path('models/halo.glb') == 'models/halo.glb'

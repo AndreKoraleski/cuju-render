@@ -196,17 +196,20 @@ def decode(payload: bytes) -> list[dict[str, Any]]:
     """Returns the records of an annotations section, leaving out any that is malformed."""
     try:
         records = json.loads(payload)['records']
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, RecursionError):
         return []
     return (
-        [
-            record
-            for record in records
-            if isinstance(record, dict) and isinstance(record.get('f'), int)
-        ]
+        [record for record in records if _frame(record) is not None]
         if isinstance(records, list)
         else []
     )
+
+
+def _frame(record: Any) -> int | None:
+    """Returns the frame of a record, a whole number from 0, or `None` for a malformed record."""
+    frame = record.get('f') if isinstance(record, dict) else None
+    whole = isinstance(frame, int) and not isinstance(frame, bool)
+    return frame if whole and frame >= 0 else None
 
 
 def public(
@@ -223,7 +226,7 @@ def public(
         player = player_number(lineup, player)
     return {
         'frame': frame,
-        'step': struct.unpack_from('<i', frames[frame])[0] if frame < len(frames) else None,
+        'step': struct.unpack_from('<i', frames[frame])[0] if 0 <= frame < len(frames) else None,
         'player': player,
         'values': dict(record.get('v', {})),
         'text': record.get('t'),

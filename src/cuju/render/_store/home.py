@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import sys
 import time
 from pathlib import Path
 
@@ -28,6 +29,26 @@ def folder(kind: str) -> Path:
     path = home() / kind
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def python_command() -> list[str]:
+    """Returns the start of the command of a Python process that the renderer starts.
+
+    Python 3.11 brought `-P`, which keeps the working folder off the path of modules, so no folder
+    of the home, such as `teams` or `requests`, imports as a package in the process.
+    """
+    return [sys.executable, '-P'] if sys.version_info >= (3, 11) else [sys.executable]
+
+
+def process_folder() -> Path:
+    """Returns the working folder of a Python process that the renderer starts, made when missing.
+
+    That is the home folder, which `-P` keeps off the path of modules. Python 3.10 has no `-P`,
+    so there the process starts in the folder `run` of the home, which the renderer keeps empty.
+    """
+    folder = home() if sys.version_info >= (3, 11) else home() / 'run'
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def new_identifier(prefix: str) -> str:

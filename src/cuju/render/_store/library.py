@@ -11,6 +11,7 @@ went to the Trash, so marking, tagging and trashing never rewrite the frames.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 import struct
@@ -39,6 +40,8 @@ _SAMPLE_TITLES = {
 }
 # The limits of the details that the page edits.
 _TAGS, _TAG_LENGTH, _NOTES_LENGTH = 20, 40, 10000
+# The seconds that a recording and its summary stand unchanged before a summary made again is kept.
+_SETTLED_SECONDS = 60
 # One server thread at a time reads and writes the summaries, so no change undoes another.
 _LOCK = RLock()
 _Function = TypeVar('_Function', bound=Callable[..., Any])
@@ -59,14 +62,19 @@ def _summary(path: Path) -> dict[str, Any]:
     """Returns the summary of a recording, with every field the page reads in its expected type.
 
     A missing or unreadable summary is made again from the header, and a field of the wrong type,
-    from a hand edit or another version, falls back to its default.
+    from a hand edit or another version, falls back to its default. A summary that is missing,
+    empty or cut short, as a hard stop during a save leaves it, is made once and kept, once the
+    recording and its summary have stood unchanged for a minute, so no save is still writing them.
     """
     try:
         entry = json.loads(path.with_suffix('.json').read_text())
         if not isinstance(entry, dict):
             raise ValueError('expected a summary object')
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
         entry = _summarize(path)
+        if isinstance(error, FileNotFoundError | ValueError) and _settled(path):
+            with contextlib.suppress(OSError):
+                _store(path, entry)
     for key, kind, default in (
         ('folder', str, ''),
         ('provenance', dict, {}),
@@ -77,6 +85,18 @@ def _summary(path: Path) -> dict[str, Any]:
         if not isinstance(entry.get(key), kind):
             entry[key] = default
     entry['tags'] = [tag for tag in entry['tags'] if isinstance(tag, str)]
+    # A summary of an older install may hold a title, scenario or team name of another type.
+    if not isinstance(entry.get('title'), str):
+        entry['title'] = path.stem
+        entry.pop('title_id', None)
+    for key, default in (('scenario', ''), ('created', '')):
+        if not isinstance(entry.get(key), str):
+            entry[key] = default
+    teams = entry.get('teams')
+    entry['teams'] = [
+        name if name is None or isinstance(name, str) else ''
+        for name in (teams if isinstance(teams, list) else ['', ''])
+    ]
     if not isinstance(entry.get('deleted_at'), str):
         entry.pop('deleted_at', None)
     group = _group_of(entry.get('group'))
@@ -147,13 +167,27 @@ def _labelled(entry: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def _teams_of(document: dict[str, Any]) -> list[dict[str, Any]]:
+    """Returns the teams of a header that `_recording.validate_header` checked, two by default."""
+    return document.get('teams') or [{}, {}]
+
+
 def _team_labels(document: dict[str, Any]) -> list[dict[str, Any] | None]:
     """Returns the label of each team of a header, `None` for a name that a person gave."""
     labels = []
-    for team in document['teams']:
+    for team in _teams_of(document):
         found = _recording.label_of(team, 'name')
         labels.append(found if isinstance(found, dict) else None)
     return labels
+
+
+def _settled(path: Path) -> bool:
+    """Returns whether a recording and its summary, if any, stood unchanged for a minute."""
+    times = []
+    for item in (path, path.with_suffix('.json')):
+        with contextlib.suppress(FileNotFoundError):
+            times.append(item.stat().st_mtime)
+    return bool(times) and time.time() - max(times) > _SETTLED_SECONDS
 
 
 def _store(path: Path, summary: dict[str, Any]) -> None:
@@ -218,12 +252,17 @@ def reserve() -> Path:
 def _write_summary(
     path: Path, document: dict[str, Any], last: bytes | None, steps: int
 ) -> dict[str, Any]:
-    """Writes the summary of the recording at `path` beside it and returns the summary."""
+    """Writes the summary of the recording at `path` beside it and returns the summary.
+
+    The header is one that `_recording.validate_header` checked, and a field that it leaves out
+    takes its default, the identifier for the title and the empty text for the scenario.
+    """
+    title = _recording.label_of(document, 'title')
     summary = {
         'id': path.stem,
-        **_messages.named('title', _recording.label_of(document, 'title')),
-        'scenario': document['scenario'],
-        'teams': [team['name'] for team in document['teams']],
+        **_messages.named('title', path.stem if title is None else title),
+        'scenario': document.get('scenario') or '',
+        'teams': [team.get('name') for team in _teams_of(document)],
         'team_labels': _team_labels(document),
         'score': list(_SCORE.unpack_from(last, 8)) if last else [0, 0],
         'steps': steps,
@@ -235,7 +274,7 @@ def _write_summary(
         if isinstance(document.get('provenance'), dict)
         else {},
     }
-    path.with_suffix('.json').write_text(json.dumps(summary))
+    _store(path, summary)
     return _labelled(summary)
 
 
@@ -275,7 +314,7 @@ def _add_sample(name: str) -> Path | None:
     # A sample dates from its shipped file, so the user's own recordings list above it.
     shipped = (_SAMPLES / f'{name}.cjr').stat().st_mtime
     summary['created'] = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(shipped))
-    path.with_suffix('.json').write_text(json.dumps(summary))
+    _store(path, summary)
     return path
 
 
@@ -367,11 +406,13 @@ def _summarize(path: Path) -> dict[str, Any]:
     provenance: Any = {}
     labels: list[dict[str, Any] | None] = [None, None]
     try:
+        # The header comes checked, so each field holds its type or is left out.
         document = _recording.read_header(path)
-        teams = [team['name'] for team in document['teams']]
-        title, scenario = _recording.label_of(document, 'title'), document['scenario']
+        teams = [team.get('name') for team in _teams_of(document)]
+        title = _recording.label_of(document, 'title') or path.stem
+        scenario = document.get('scenario') or ''
         labels = _team_labels(document)
-        provenance = document.get('provenance', {})
+        provenance = document.get('provenance') or {}
     except Exception:
         teams, title, scenario = ['', ''], path.stem, ''
     created = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(path.stat().st_mtime))

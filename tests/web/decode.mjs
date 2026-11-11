@@ -141,3 +141,65 @@ test('a recording that the worker refuses keeps its message', async () => {
         return true;
     });
 });
+
+// A worker that says it started and then fails, on the recording or as it answers.
+function failingWorker(how) {
+    const worker = {
+        terminate() {},
+        postMessage({ id }) {
+            setTimeout(() => {
+                worker.onmessage({ data: { id, started: true } });
+                if (how === 'error') {
+                    worker.onerror({ message: 'out of memory' });
+                } else {
+                    worker.onmessage({ data: { id, error: 'Array buffer allocation failed', format: false } });
+                }
+            }, 0);
+        },
+    };
+    return worker;
+}
+
+// A worker whose reader did not load.
+function readerlessWorker() {
+    const worker = {
+        terminate() {},
+        postMessage({ id }) {
+            setTimeout(() => worker.onmessage({ data: { id, error: 'no reader', unavailable: true } }), 0);
+        },
+    };
+    return worker;
+}
+
+test('a worker that started and failed on the recording leaves it unread', async () => {
+    const bytes = sample('sample-5v5');
+    const warn = console.warn;
+    const warned = [];
+    console.warn = (...args) => warned.push(args);
+    try {
+        for (const how of ['error', 'reply']) {
+            await assert.rejects(decoder.decodeRecording(bytes, { makeWorker: () => failingWorker(how) }), (err) => {
+                assert.ok(!(err instanceof FormatError));
+                assert.ok(!err.unavailable);
+                return true;
+            });
+        }
+        assert.equal(warned.length, 0);
+        const actual = await decoder.decodeRecording(bytes, { makeWorker: readerlessWorker });
+        assert.equal(decoder.lastDecoder, 'page');
+        assertSame(actual, await pageRead('sample-5v5'));
+        assert.equal(warned.length, 1);
+    } finally {
+        console.warn = warn;
+    }
+});
+
+test('the worker says it started before it reads, and a format error still comes back', async () => {
+    const { decodeRequest } = await import(url('recording/decode-worker.js'));
+    const seen = [];
+    const { reply } = await decodeRequest({ id: 7, bytes: new Uint8Array([1, 2, 3]) }, (id) => seen.push(id));
+    assert.deepEqual(seen, [7]);
+    assert.equal(reply.id, 7);
+    assert.equal(reply.format, true);
+    assert.equal(reply.messageId, 'format.error.truncated_header');
+});

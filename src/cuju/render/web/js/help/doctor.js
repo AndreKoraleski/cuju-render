@@ -296,6 +296,10 @@ function workerFacts() {
             return;
         }
         worker.onmessage = (event) => {
+            // The worker first says that it started, and its answer to the bytes follows.
+            if (event.data && event.data.started) {
+                return;
+            }
             clearTimeout(timer);
             worker.terminate();
             resolve(event.data && event.data.format ? t('doctor.worker.runs') : t('doctor.worker.odd'));

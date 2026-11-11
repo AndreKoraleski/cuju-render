@@ -85,12 +85,19 @@ export class Lessons {
     // Takes in the lessons that the server knows done, those other pages reported and those whose
     // checks of the library hold, so a fresh browser shows the progress the server has.
     async sync() {
+        // An answer to a look that began before a reset holds the lessons the reset forgot, so a
+        // look waits for a reset under way and drops an answer that a reset overtook.
+        await this.resetting;
+        const resets = this.resets || 0;
         try {
             const res = await fetch('/api/help/tutorial', { cache: 'no-store' });
             if (!res.ok) {
                 return this.state();
             }
             const server = await res.json();
+            if ((this.resets || 0) !== resets) {
+                return this.state();
+            }
             const done = (server.lessons || []).filter((entry) => entry.done && !(entry.id in this.progress.done));
             if (done.length) {
                 const when = new Date().toISOString();
@@ -394,6 +401,7 @@ export class Lessons {
 
     // Forgets every lesson done, in the browser and on the server.
     async reset() {
+        this.resets = (this.resets || 0) + 1;
         this.stop(false);
         this.progress = progressState(null, this.ids);
         this.background = {};
@@ -401,14 +409,17 @@ export class Lessons {
         // The page lessons take their starting point at once, so a step that follows the reset
         // before the next look still counts.
         this.watch();
-        try {
-            await fetch('/api/help/tutorial', {
-                method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reset: true }),
-            });
-        } catch {
-            // The server is away, the browser has forgotten the lessons all the same.
-        }
+        this.resetting = (async () => {
+            try {
+                await fetch('/api/help/tutorial', {
+                    method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reset: true }),
+                });
+            } catch {
+                // The server is away, the browser has forgotten the lessons all the same.
+            }
+        })();
+        await this.resetting;
         return this.state();
     }
 

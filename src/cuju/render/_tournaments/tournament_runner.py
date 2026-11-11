@@ -12,18 +12,25 @@ The matches of agents play headless in processes of their own, as requested matc
 once as the tournament allows. A match with a person waits for that person to start it on the Play
 page, and its result comes from the game's recording. One process at a time runs a tournament, the
 server or `cuju render tournament run`, which a lock file beside the tournament names.
+
+Every file that the renderer writes carries a seal, a keyed digest of its content under a key that
+only this home folder holds. A file without a valid seal, one dropped into the folder or edited by
+hand, loads stopped, so it plays only once a person resumes it, and every file plays at most as
+many matches at once as the rules allow.
 """
 
 from __future__ import annotations
 
 import collections
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
 import struct
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -48,6 +55,9 @@ _SCORE = struct.Struct('<2i')
 _FILE_VERSION = 1
 # How long a change waits for the process that runs its tournament to apply it, in seconds.
 _ASK_SECONDS = 10.0
+# The file of the home folder that holds the key of the seals of its tournament files.
+_KEY_FILE = 'tournaments.key'
+_KEYS: dict[str, bytes] = {}
 
 
 def folder() -> Path:
@@ -65,6 +75,68 @@ def _write(path: Path, value: Any) -> None:
         with contextlib.suppress(OSError):
             temporary.unlink()
         raise
+
+
+def _key() -> bytes | None:
+    """Returns the key that seals the tournament files of this home folder, made on first use.
+
+    Returns `None` when the key cannot be read or made, and every file then loads as one that
+    another install wrote.
+    """
+    path = _home.home() / _KEY_FILE
+    if str(path) in _KEYS:
+        return _KEYS[str(path)]
+    for _ in range(50):
+        try:
+            text = path.read_text(encoding='ascii').strip()
+        except FileNotFoundError:
+            try:
+                descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                continue
+            except OSError as error:
+                _LOGGER.warning('cuju render cannot make the key of its tournaments, %s', error)
+                return None
+            with os.fdopen(descriptor, 'w', encoding='ascii') as stream:
+                stream.write(secrets.token_hex(32))
+            continue
+        except (OSError, ValueError) as error:
+            _LOGGER.warning('cuju render cannot read the key of its tournaments, %s', error)
+            return None
+        if len(text) == 64:
+            with contextlib.suppress(ValueError):
+                _KEYS[str(path)] = bytes.fromhex(text)
+                return _KEYS[str(path)]
+        # Another process may be writing the key this moment.
+        time.sleep(0.02)
+    _LOGGER.warning('cuju render reads no key of its tournaments in %s', path.name)
+    return None
+
+
+def _seal(text: str) -> str | None:
+    """Returns the seal of the text of a tournament file, or `None` without a key."""
+    key = _key()
+    return None if key is None else hmac.new(key, text.encode(), hashlib.sha256).hexdigest()
+
+
+def _write_record(path: Path, record: dict[str, Any]) -> None:
+    """Writes a tournament with the seal of its content last, which `_sealed` checks."""
+    body = {key: value for key, value in record.items() if key != 'seal'}
+    seal = _seal(json.dumps(body))
+    _write(path, body if seal is None else {**body, 'seal': seal})
+
+
+def _sealed(entry: dict[str, Any]) -> bool:
+    """Takes the seal out of a tournament read from its file and returns whether it is valid.
+
+    The JSON text of what a file holds, written again, is the text it was written from, so the
+    seal of the rest of the entry is the seal written beside it.
+    """
+    seal = entry.pop('seal', None)
+    if not isinstance(seal, str):
+        return False
+    expected = _seal(json.dumps(entry))
+    return expected is not None and hmac.compare_digest(seal, expected)
 
 
 def _read(path: Path, default: Any) -> Any:
@@ -310,6 +382,7 @@ def preview(config: Any) -> dict[str, Any]:
 def _stored(path: Path) -> dict[str, Any] | None:
     """Returns the tournament that a file holds, or `None` with a warning."""
     entry = _read(path, None)
+    sealed = isinstance(entry, dict) and _sealed(entry)
     problem = None
     if not isinstance(entry, dict):
         problem = 'which holds no object'
@@ -332,6 +405,11 @@ def _stored(path: Path) -> dict[str, Any] | None:
                 str(key): rules.check_result(value) for key, value in entry['results'].items()
             }
             rules.evaluate(config, entry['results'])
+            # No file plays more matches at once than the rules allow a new tournament.
+            concurrency = config.get('concurrency')
+            if not isinstance(concurrency, int) or isinstance(concurrency, bool):
+                concurrency = 1
+            config['concurrency'] = min(max(concurrency, 1), rules.MAX_CONCURRENCY)
         except (rules.TournamentError, KeyError, TypeError, ValueError, IndexError) as error:
             problem = f'whose tournament cannot be read, {error}'
     if problem:
@@ -355,6 +433,13 @@ def _stored(path: Path) -> dict[str, Any] | None:
         entry['error_id'] = entry['error_values'] = None
     elif entry['error_values'] is None:
         entry['error_id'] = None
+    # A running file that this install did not write, or that changed since, waits for a person.
+    if not sealed and entry['state'] == 'running':
+        _LOGGER.warning(
+            'cuju render loads the tournament file %s stopped, since this install did not write it',
+            path.name,
+        )
+        entry.update(state='stopped', **_messages.fields('server.tournament.foreign'))
     return entry
 
 
@@ -531,7 +616,7 @@ class Tournaments:
         """Writes a tournament, and keeps a failed write as its error instead of stopping."""
         self._versions[record['id']] += 1
         try:
-            _write(self._path(record['id']), record)
+            _write_record(self._path(record['id']), record)
             self._stamps[record['id']] = self._path(record['id']).stat().st_mtime_ns
             record.pop('persistence_error', None)
         except OSError as error:
@@ -727,7 +812,7 @@ class Tournaments:
                 'games': {},
                 'notes': {},
             }
-            _write(self._path(identifier), record)
+            _write_record(self._path(identifier), record)
             self._stamps[identifier] = self._path(identifier).stat().st_mtime_ns
             self._records[identifier] = record
             return self._summary(record)
@@ -1173,7 +1258,7 @@ class Tournaments:
     ) -> dict[str, Any]:
         """Plays a match of agents in a child process and returns its result."""
         command = [
-            sys.executable,
+            *_home.python_command(),
             '-m',
             'cuju.render._playing.play',
             '--left',
@@ -1192,7 +1277,6 @@ class Tournaments:
         for side, value in zip(('left', 'right'), match['ability'], strict=True):
             if value is not None:
                 command += [f'--{side}-ability', repr(value)]
-        _home.home().mkdir(parents=True, exist_ok=True)
         process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
@@ -1201,7 +1285,7 @@ class Tournaments:
             text=True,
             encoding='utf-8',
             errors='replace',
-            cwd=_home.home(),
+            cwd=_home.process_folder(),
             env=os.environ.copy(),
         )
         key = (provenance['id'], match['key'])

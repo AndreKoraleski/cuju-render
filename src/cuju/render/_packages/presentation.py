@@ -86,7 +86,6 @@ CONTENT_TYPES = {
 }
 # One part of a file's path inside the package, lowercase.
 _PART = re.compile(r'[a-z0-9][a-z0-9_.-]{0,59}')
-_DEVICES = re.compile(r'(con|prn|aux|nul|com[0-9]|lpt[0-9])', re.IGNORECASE)
 _ID = re.compile(r'[A-Za-z0-9_.-]{1,40}')
 # The pieces of JavaScript that `module_problem` tells apart, to find imports and re-exports.
 _LINE_ENDS = '\n\r\u2028\u2029'
@@ -836,17 +835,19 @@ def _glb(data: bytes) -> None:
     size, kind = struct.unpack_from('<II', data, 12)
     if version != 2 or length != len(data) or kind != 0x4E4F534A or 20 + size > len(data):
         raise ArgumentError('expected a whole binary glTF 2.0 file')
+    from .._registry import clips as _clips
+
     try:
         document = json.loads(data[20 : 20 + size])
-    except (ValueError, UnicodeDecodeError) as error:
+        outside = _clips._uris(document)
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
         raise ArgumentError(f'expected the JSON chunk of a glTF file, found {error}') from error
     if not isinstance(document, dict):
         raise ArgumentError('expected the JSON chunk of a glTF file to hold an object')
-    from .._registry import clips as _clips
-
-    if _clips._uris(document):
+    if outside:
         raise ArgumentError('expected a self-contained file')
-    if any(name in _clips._UNSUPPORTED for name in document.get('extensionsRequired') or []):
+    required = _teams._array(document.get('extensionsRequired'))
+    if any(name in _clips._UNSUPPORTED for name in required):
         raise ArgumentError('expected a file without an extension that the page cannot read')
 
 
@@ -861,7 +862,7 @@ def check_path(name: str) -> str:
     if (
         not parts
         or not all(_PART.fullmatch(part) and '..' not in part for part in parts)
-        or any(_DEVICES.fullmatch(part.split('.')[0]) for part in parts)
+        or any(_teams._device(part) for part in parts)
     ):
         raise ArgumentError(
             'expected a path of lowercase letters, digits, dots, dashes and underscores, found '
@@ -1180,7 +1181,8 @@ def _assets(team_folder: Path, remove: bool) -> dict[str, str]:
                 data = path.read_bytes()
                 check_file(name, data)
                 valid = len(found) < MAXIMUM_FILES and total + len(data) <= MAXIMUM_TOTAL_BYTES
-            except (OSError, ArgumentError):
+            except Exception:
+                # A file that fails any part of its check, however it fails, counts as failing.
                 valid = False
         if valid:
             total += len(data)
