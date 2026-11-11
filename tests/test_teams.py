@@ -300,15 +300,15 @@ def test_earlier_team_control_migrates(render_home, tmp_path):
     """Earlier metadata selects the same players after loading and export."""
     team = _toy_team(tmp_path, 'earlier', _SEVERAL, '11v11')
     meta = _teams._meta_path(team['id'])
-    saved = json.loads(meta.read_text())
+    saved = json.loads(meta.read_text(encoding='utf-8'))
     saved['control'] = {'players': 10, 'goalkeeper': 'builtin'}
-    meta.write_text(json.dumps(saved))
+    meta.write_text(json.dumps(saved), encoding='utf-8')
     control = _teams.entry(team['id'])['control']
     assert control == _control(10, 'fixed', list(range(1, 11)), 'builtin')
     _, archive = _teams.export(team['id'])
     assert _teams.add('copy', 'copy.zip', archive)['control'] == control
     saved['control'] = {'players': 2, 'goalkeeper': 'agent'}
-    meta.write_text(json.dumps(saved))
+    meta.write_text(json.dumps(saved), encoding='utf-8')
     assert _teams.entry(team['id'])['control'] == _control(2)
 
 
@@ -378,14 +378,28 @@ def test_team_names_from_files_print_no_escapes_or_turned_text(render_home, caps
     assert team['name'].isprintable() and escape not in team['name']
     assert team['name'].startswith('[2J [31mRed') and 'FC' in team['name']
     meta = _teams._meta_path(team['id'])
-    meta.write_text(json.dumps({**json.loads(meta.read_text()), 'name': hostile}))
+    meta.write_text(
+        json.dumps({**json.loads(meta.read_text(encoding='utf-8')), 'name': hostile}),
+        encoding='utf-8',
+    )
     builtin = _teams._meta_path(_teams.BUILTIN)
     builtin.parent.mkdir(parents=True)
-    builtin.write_text(json.dumps({'name': hostile}))
+    builtin.write_text(json.dumps({'name': hostile}), encoding='utf-8')
     assert all(entry['name'].isprintable() for entry in _teams.teams())
     assert main(['team', 'list']) == 0
     printed = capsys.readouterr().out
     assert 'Red' in printed and all(line.isprintable() for line in printed.splitlines())
+
+
+def test_a_submission_reads_by_its_own_source_encoding(render_home):
+    """A main.py reads as UTF-8, or by its encoding line, whatever the code page of the system."""
+    name = 'Ação 中文 FC'
+    utf8 = f'NAME = {name!r}\ndef agent(obs):\n    return [len(NAME)]\n'.encode()
+    latin = b'# -*- coding: latin-1 -*-\nNAME = "\xe7"\ndef agent(obs):\n    return [NAME]\n'
+    team = _teams.add('', 'team.zip', _archive({'main.py': utf8}))
+    assert _teams.load_agent(team['id'])({}) == [len(name)]
+    team = _teams.add('', 'team.zip', _archive({'main.py': latin}))
+    assert _teams.load_agent(team['id'])({}) == ['ç']
 
 
 def test_cli_team_archive_round_trip(render_home, tmp_path, capsys):
@@ -394,7 +408,7 @@ def test_cli_team_archive_round_trip(render_home, tmp_path, capsys):
 
     folder = tmp_path / 'submission'
     folder.mkdir()
-    (folder / 'main.py').write_text('def agent(obs):\n    return [0]\n')
+    (folder / 'main.py').write_text('def agent(obs):\n    return [0]\n', encoding='utf-8')
     assert main(['team', 'add', str(folder), '--name', 'Visitors', '--format', '5v5']) == 0
     team = _teams.teams()[-1]
     control = {'players': 2, 'assignment': 'fixed', 'selection': [1, 2]}
@@ -865,11 +879,13 @@ def test_a_team_file_never_names_the_folder_of_its_team(render_home, tmp_path):
     # A folder that a stopped import left behind lists under its own name, whatever its file says.
     left = _home.folder('teams') / 't-left' / _teams.TEAM_FOLDER
     left.mkdir(parents=True)
-    (left / 'team.json').write_text(json.dumps({**team_json, 'kind': 'builtin', 'format': []}))
+    (left / 'team.json').write_text(
+        json.dumps({**team_json, 'kind': 'builtin', 'format': []}), encoding='utf-8'
+    )
     (left.parent / 'main.py').write_bytes(_MAIN_PY)
     odd = _home.folder('teams') / 'Not An Identifier' / _teams.TEAM_FOLDER
     odd.mkdir(parents=True)
-    (odd / 'team.json').write_text(json.dumps({'name': 'Odd'}))
+    (odd / 'team.json').write_text(json.dumps({'name': 'Odd'}), encoding='utf-8')
     listed = {t['id']: t for t in _teams.teams()}
     assert set(listed) == {'builtin', team['id'], 't-left'}
     assert listed['t-left']['kind'] == 'kaggle' and listed['t-left']['format'] == '11v11'
@@ -1129,9 +1145,9 @@ def test_team_sounds_version_follows_the_files(render_home):
     third = _teams.set_sound(team['id'], 'goal', _OGG + bytes(61))
     assert third['sounds_version'] != second['sounds_version']
     meta = _home.folder('teams') / team['id'] / _teams.TEAM_FOLDER / 'team.json'
-    assert 'sounds_version' not in json.loads(meta.read_text())
+    assert 'sounds_version' not in json.loads(meta.read_text(encoding='utf-8'))
     _teams.update(team['id'], name='Choir')
-    assert 'sounds_version' not in json.loads(meta.read_text())
+    assert 'sounds_version' not in json.loads(meta.read_text(encoding='utf-8'))
     with zipfile.ZipFile(io.BytesIO(_teams.export(team['id'])[1])) as archive:
         assert 'sounds_version' not in json.loads(archive.read('cuju-team/team.json'))
     assert _teams.remove_sound(team['id'], 'goal')
@@ -1164,7 +1180,7 @@ def _package_manifest():
     from pathlib import Path
 
     path = Path(__file__).parent / 'support/team/cuju-team/presentation/presentation.json'
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding='utf-8'))
 
 
 def test_presentation_package_imports_checks_and_exports(render_home):
@@ -1275,7 +1291,9 @@ def test_presentation_package_refuses_bad_files_and_parts(render_home):
     newer = {f'{folder}presentation.json': json.dumps({'contract': '1.9'}).encode()}
     later = _package_team('Later', newer)
     path = _home.folder('teams') / later['id'] / _teams.TEAM_FOLDER / 'presentation'
-    assert json.loads((path / 'presentation.json').read_text()) == {'contract': '1.9'}
+    assert json.loads((path / 'presentation.json').read_text(encoding='utf-8')) == {
+        'contract': '1.9'
+    }
     assert _presentation.served(later['id'])['manifest'] is None
     assert 'contract 1.9' in _presentation.served(later['id'])['warnings'][0]
     # A manifest that is no JSON goes on import.
@@ -1329,7 +1347,9 @@ def test_pack_preview_updates_its_team_and_opens_no_browser(
     assert first['name'] == 'Lanterns' and first['place'].endswith('&preview=right')
     count = len(_teams.teams())
     manifest = folder / 'cuju-team/presentation/presentation.json'
-    manifest.write_text(manifest.read_text().replace('Lanterns', 'Lanterns two'))
+    manifest.write_text(
+        manifest.read_text(encoding='utf-8').replace('Lanterns', 'Lanterns two'), encoding='utf-8'
+    )
     second = _pack.register_preview(manifest, 'right')
     assert second['team'] == first['team'] and len(_teams.teams()) == count
     assert _teams.entry(first['team'])['name'] == 'Lanterns two'
@@ -1365,9 +1385,9 @@ def test_teams_without_a_kit_take_kits_in_turn(render_home, tmp_path):
     # A team file that names a kit keeps it.
     named = tmp_path / 'named'
     _pack.new(named, 'Named')
-    team = json.loads((named / 'cuju-team/team.json').read_text())
+    team = json.loads((named / 'cuju-team/team.json').read_text(encoding='utf-8'))
     team['style'] = {'kit': {'primary': [10, 200, 30]}}
-    (named / 'cuju-team/team.json').write_text(json.dumps(team))
+    (named / 'cuju-team/team.json').write_text(json.dumps(team), encoding='utf-8')
     shown = _pack.register_preview(named)
     assert _teams.entry(shown['team'])['style']['kit']['primary'] == [10, 200, 30]
 
@@ -1463,12 +1483,14 @@ def test_challenge_leaderboard_ranks_and_keeps_personal_bests(render_home, monke
     late = record('empty_goal', _board_entry('Late', 0, 0.0, 999))
     assert late['rank'] is None and late['personal_best']['rank'] is None
     # Invalid entries and files are skipped with one warning each.
-    document = json.loads(path.read_text())
+    document = json.loads(path.read_text(encoding='utf-8'))
     document['entries'].append({**document['entries'][0], 'value': 'many'})
     document['entries'].append({**document['entries'][0], 'kind': 'robot'})
-    path.write_text(json.dumps(document))
-    (path.parent / 'run_to_score.json').write_text('{')
-    (path.parent / 'counterattack_easy.json').write_text('{"challenge": "corner", "entries": []}')
+    path.write_text(json.dumps(document), encoding='utf-8')
+    (path.parent / 'run_to_score.json').write_text('{', encoding='utf-8')
+    (path.parent / 'counterattack_easy.json').write_text(
+        '{"challenge": "corner", "entries": []}', encoding='utf-8'
+    )
     with caplog.at_level(logging.WARNING, logger='cuju'):
         assert len(_challenges.board('corner')) == 4
         assert _challenges.board('run_to_score') == []
@@ -1513,7 +1535,7 @@ def test_cli_team_control_show_set_and_json(render_home, tmp_path, capsys):
 
     folder = tmp_path / 'submission'
     folder.mkdir()
-    (folder / 'main.py').write_text('def agent(obs):\n    return [0]\n')
+    (folder / 'main.py').write_text('def agent(obs):\n    return [0]\n', encoding='utf-8')
     assert (
         main(['team', 'add', str(folder), '--format', '5v5', '--selection', '1,2', '--json']) == 0
     )
@@ -1551,7 +1573,7 @@ def test_cli_team_control_show_set_and_json(render_home, tmp_path, capsys):
 def test_new_teams_take_kits_in_turn(render_home, tmp_path):
     folder = tmp_path / 'submission'
     folder.mkdir()
-    (folder / 'main.py').write_text('def agent(obs):\n    return [0]\n')
+    (folder / 'main.py').write_text('def agent(obs):\n    return [0]\n', encoding='utf-8')
     kits = [_teams.add_folder(folder, f'Team {k}')['style']['kit']['primary'] for k in range(3)]
     assert len({tuple(kit) for kit in kits}) == 3
 
@@ -1595,7 +1617,7 @@ def test_names_of_the_built_in_ai_travel_as_a_label_until_renamed(render_home):
     renamed = _teams.update(_teams.BUILTIN, name='House AI')
     assert renamed['name'] == 'House AI' and 'name_id' not in renamed
     assert 'name_id' not in _teams.entry(_teams.BUILTIN)
-    stored = json.loads(_teams._meta_path(_teams.BUILTIN).read_text())
+    stored = json.loads(_teams._meta_path(_teams.BUILTIN).read_text(encoding='utf-8'))
     assert stored['name'] == 'House AI' and 'name_id' not in stored
     _teams.update(_teams.BUILTIN, name="GRF's built-in AI")
     assert _teams.entry(_teams.BUILTIN)['name_id'] == 'server.names.builtin'

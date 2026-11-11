@@ -103,7 +103,7 @@ def _short_matches(monkeypatch, steps):
 def _toy_team(tmp_path, name, source, format, control=None):
     folder = tmp_path / name
     folder.mkdir()
-    (folder / 'main.py').write_text(source)
+    (folder / 'main.py').write_text(source, encoding='utf-8')
     team = _teams.add_folder(folder, name, format)
     return _teams.update(team['id'], control=control) if control else team
 
@@ -234,9 +234,9 @@ def _template_variant(tmp_path, name, change):
     folder = tmp_path / name
     _pack.new(folder, 'Lanterns')
     package = folder / 'cuju-team/presentation'
-    manifest = json.loads((package / 'presentation.json').read_text())
+    manifest = json.loads((package / 'presentation.json').read_text(encoding='utf-8'))
     change(package, manifest)
-    (package / 'presentation.json').write_text(json.dumps(manifest))
+    (package / 'presentation.json').write_text(json.dumps(manifest), encoding='utf-8')
     return folder
 
 

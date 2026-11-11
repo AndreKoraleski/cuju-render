@@ -233,7 +233,7 @@ def test_missing_tools(monkeypatch, tmp_path):
     with pytest.raises(_video.VideoError, match='expected a program'):
         _video.find_ffmpeg(str(tmp_path / 'no-ffmpeg'))
     program = tmp_path / 'ffmpeg-here'
-    program.write_text('')
+    program.write_text('', encoding='utf-8')
     monkeypatch.setenv('CUJU_FFMPEG', str(program))
     assert _video.find_ffmpeg() == str(program)
     assert not list(tmp_path.glob('*.mp4'))
@@ -325,7 +325,7 @@ def test_missing_tools_name_what_the_server_takes(render_home, monkeypatch):
 
 def test_the_server_exports_with_a_browser_alone(monkeypatch, tmp_path):
     program = tmp_path / 'chrome-here'
-    program.write_text('')
+    program.write_text('', encoding='utf-8')
     monkeypatch.setenv('CUJU_CHROME', str(program))
     monkeypatch.delenv('CUJU_FFMPEG', raising=False)
     monkeypatch.setattr(_video.shutil, 'which', lambda name: None)
@@ -632,6 +632,8 @@ def _probe(output):
         ],
         capture_output=True,
         text=True,
+        encoding='utf-8',
+        errors='replace',
         check=True,
     )
     assert 'audio' not in probe.stdout

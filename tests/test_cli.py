@@ -87,7 +87,7 @@ def test_pack_new_writes_readable_json_and_its_next_steps(tmp_path, capsys):
     assert main(['pack', 'new', str(folder)]) == 0
     printed = capsys.readouterr().out
     assert f'cuju render pack check {folder}' in printed and 'cuju render team add' in printed
-    text = (folder / 'cuju-team/presentation/presentation.json').read_text()
+    text = (folder / 'cuju-team/presentation/presentation.json').read_text(encoding='utf-8')
     assert '"axis": [0, 1, 0]' in text and '"keys": [[0, 1], [7, 4]]' in text
     assert max(len(line) for line in text.splitlines()) <= 100
 

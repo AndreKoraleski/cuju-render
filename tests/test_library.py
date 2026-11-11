@@ -111,10 +111,10 @@ def test_recording_details_and_trash(render_home):
 def test_recording_summary_fields_of_the_wrong_type_fall_back(render_home):
     _library.add_samples(['sample-5v5'])
     summary = _home.folder('matches') / 'sample-5v5.json'
-    stored = json.loads(summary.read_text())
+    stored = json.loads(summary.read_text(encoding='utf-8'))
     stored.update(favorite='yes', tags=['kept', 3], notes=None, provenance=[], folder=7)
     stored['deleted_at'] = 12
-    summary.write_text(json.dumps(stored))
+    summary.write_text(json.dumps(stored), encoding='utf-8')
     entry = _library.matches()[0]
     assert (entry['favorite'], entry['tags'], entry['notes']) == (False, ['kept'], '')
     assert (entry['provenance'], entry['folder']) == ({}, '')
@@ -124,10 +124,12 @@ def test_recording_summary_fields_of_the_wrong_type_fall_back(render_home):
 def test_samples_keep_the_users_files(render_home, monkeypatch):
     matches = _home.folder('matches')
     (matches / 'sample-11v11.cjr').write_bytes(b'mine')
-    (matches / 'sample-5v5.json').write_text('{"id": "sample-5v5", "title": "mine"}')
+    (matches / 'sample-5v5.json').write_text(
+        '{"id": "sample-5v5", "title": "mine"}', encoding='utf-8'
+    )
     _serve_once(monkeypatch)
     assert (matches / 'sample-11v11.cjr').read_bytes() == b'mine'
-    assert json.loads((matches / 'sample-5v5.json').read_text())['title'] == 'mine'
+    assert json.loads((matches / 'sample-5v5.json').read_text(encoding='utf-8'))['title'] == 'mine'
     assert not (matches / 'sample-5v5.cjr').exists()
     assert _library.add_samples() == []
 
@@ -303,12 +305,12 @@ def test_challenge_runs_group_their_recordings(render_home, tmp_path, monkeypatc
     assert command.main(['recordings', '--group', 'g-none']) == 1
     # A group of a hand edited summary that does not fit is left out, and the rest stays.
     path = render_home / 'matches' / f'{ids[0]}.json'
-    summary = json.loads(path.read_text())
+    summary = json.loads(path.read_text(encoding='utf-8'))
     summary['group'] = {'id': '../evil', 'title': 'x'}
-    path.write_text(json.dumps(summary))
+    path.write_text(json.dumps(summary), encoding='utf-8')
     assert 'group' not in _library.details(ids[0])
     summary['group'] = {'id': group, 'attempt': 'first', 'practice': 1, 'title': 7}
-    path.write_text(json.dumps(summary))
+    path.write_text(json.dumps(summary), encoding='utf-8')
     assert _library.details(ids[0])['group'] == {
         'id': group,
         'title': group,
@@ -386,7 +388,7 @@ def test_tutorial_checks_each_lesson_from_the_home_folder(render_home, monkeypat
     from cuju.render._store import samples as _samples
 
     lessons = _tutorial.lessons()
-    page = json.loads((_server._WEB / 'lessons.json').read_text())['lessons']
+    page = json.loads((_server._WEB / 'lessons.json').read_text(encoding='utf-8'))['lessons']
     assert [lesson['id'] for lesson in lessons] == [lesson['id'] for lesson in page]
     assert {lesson['agent']['check'] for lesson in lessons} <= set(_tutorial.CHECKS)
     state = _tutorial.state()
@@ -411,7 +413,9 @@ def test_tutorial_checks_each_lesson_from_the_home_folder(render_home, monkeypat
     assert _tutorial.lesson_state('play_game')['done']
     assert not _tutorial.lesson_state('start_challenge')['done']
     (render_home / 'challenges').mkdir()
-    (render_home / 'challenges' / 'corner.json').write_text('{"entries": [{"name": "Ana"}]}')
+    (render_home / 'challenges' / 'corner.json').write_text(
+        '{"entries": [{"name": "Ana"}]}', encoding='utf-8'
+    )
     assert _tutorial.lesson_state('start_challenge')['done']
     with pytest.raises(cuju.errors.ArgumentError):
         _tutorial.lesson_state('nowhere')
@@ -448,8 +452,12 @@ def test_doctor_through_the_server_and_the_command_line(render_home, capsys, mon
     out = tmp_path / 'report.txt'
     main(['doctor', '--out', str(out)])
     text = capsys.readouterr().out
-    assert text.startswith('cuju render diagnostic report') and out.read_text() == text
-    (render_home / _launch.LOG_FILE).write_text('started\nTraceback (most recent call last)\n')
+    assert (
+        text.startswith('cuju render diagnostic report') and out.read_text(encoding='utf-8') == text
+    )
+    (render_home / _launch.LOG_FILE).write_text(
+        'started\nTraceback (most recent call last)\n', encoding='utf-8'
+    )
     assert any(e['level'] == 'LOG' for e in _doctor.report()['errors'])
 
 
@@ -540,7 +548,7 @@ def test_feed_route_and_resolve(render_home):
             'pid': os.getpid(),
         }
         live = _home.folder('live') / 'live-20261110-101500-aaaa.json'
-        live.write_text(json.dumps(announcement))
+        live.write_text(json.dumps(announcement), encoding='utf-8')
         assert resolve('auto') == {
             'kind': 'live',
             'id': 'live-20261110-101500-aaaa',
@@ -611,7 +619,7 @@ def test_names_reach_the_library_summary_and_a_new_title_drops_them(render_home)
         'server.names.right',
     ]
     # The stored summary keeps the label, so a list read from the files shows it again.
-    stored = json.loads(path.with_suffix('.json').read_text())
+    stored = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
     assert stored['title_id'] == 'server.names.demo'
     renamed = _library.update(path.stem, title='Our demo')
     assert renamed['title'] == 'Our demo' and 'title_id' not in renamed
@@ -658,9 +666,9 @@ def test_a_header_or_summary_with_nan_keeps_the_library_list(render_home, tmp_pa
         _launch.import_recording(crafted)
     # A summary of an older install that holds NaN lists with null in its place.
     (path,) = _library.add_samples(['sample-5v5'])
-    summary = json.loads(path.with_suffix('.json').read_text())
+    summary = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
     summary['provenance'] = {'seed': float('nan'), 'scale': [float('inf'), 1.5]}
-    path.with_suffix('.json').write_text(json.dumps(summary))
+    path.with_suffix('.json').write_text(json.dumps(summary), encoding='utf-8')
     server, address = _help_server()
     try:
         with urllib.request.urlopen(address + '/api/matches', timeout=10) as response:
@@ -744,18 +752,18 @@ def test_readers_take_fields_of_the_wrong_type_of_an_older_install(render_home):
 
     (path,) = _library.add_samples(['sample-5v5'])
     _search.sync()
-    summary = json.loads(path.with_suffix('.json').read_text())
+    summary = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
     summary.update(title={'text': 1}, scenario={'a': 1}, teams=[{}, 7], created=5)
-    path.with_suffix('.json').write_text(json.dumps(summary))
+    path.with_suffix('.json').write_text(json.dumps(summary), encoding='utf-8')
     index = _home.folder('index') / 'sample-5v5.json'
-    entry = json.loads(index.read_text())
+    entry = json.loads(index.read_text(encoding='utf-8'))
     entry['header'].update(
         title=5,
         scenario={'a': 1},
         teams=[{'name': {}, 'id': [1], 'style': 3}, 'x'],
         players=[{'team': 0}, 'x', {'team': [1], 'index': None}],
     )
-    index.write_text(json.dumps(entry))
+    index.write_text(json.dumps(entry), encoding='utf-8')
     _search._CACHES.clear()
     (listed,) = _library.matches()
     assert (listed['title'], listed['scenario'], listed['teams']) == ('sample-5v5', '', ['', ''])
@@ -770,15 +778,15 @@ def test_readers_take_fields_of_the_wrong_type_of_an_older_install(render_home):
 def test_a_summary_left_empty_by_a_hard_stop_is_made_once(render_home, monkeypatch):
     (path,) = _library.add_samples(['sample-5v5'])
     summary = path.with_suffix('.json')
-    summary.write_text('')
+    summary.write_text('', encoding='utf-8')
     # A summary that a save may still be writing stays as it is.
     assert [entry['id'] for entry in _library.matches()] == ['sample-5v5']
-    assert summary.read_text() == ''
+    assert summary.read_text(encoding='utf-8') == ''
     old = time.time() - 120
     for item in (path, summary):
         os.utime(item, (old, old))
     (entry,) = _library.matches()
-    kept = json.loads(summary.read_text())
+    kept = json.loads(summary.read_text(encoding='utf-8'))
     assert kept['id'] == 'sample-5v5' and kept['title'] == entry['title']
 
     def again(path):
@@ -791,4 +799,4 @@ def test_a_summary_left_empty_by_a_hard_stop_is_made_once(render_home, monkeypat
     summary.unlink()
     monkeypatch.setattr(_library, '_summarize', made)
     _library.matches()
-    assert json.loads(summary.read_text())['id'] == 'sample-5v5'
+    assert json.loads(summary.read_text(encoding='utf-8'))['id'] == 'sample-5v5'

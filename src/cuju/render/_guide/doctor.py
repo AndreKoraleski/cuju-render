@@ -371,7 +371,7 @@ def _log_errors() -> list[dict[str, Any]]:
     """Returns the lines of server.log near its end that name an error."""
     path = _home.home() / _launch.LOG_FILE
     try:
-        lines = path.read_text(errors='replace').splitlines()[-_LOG_LINES:]
+        lines = path.read_text(encoding='utf-8', errors='replace').splitlines()[-_LOG_LINES:]
     except OSError:
         return []
     found = [line for line in lines if any(word in line.lower() for word in _LOG_WORDS)]

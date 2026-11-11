@@ -26,9 +26,7 @@ it on.
 
 from __future__ import annotations
 
-import base64
 import contextlib
-import hashlib
 import itertools
 import json
 import re
@@ -1376,31 +1374,3 @@ def assign(changes: Any) -> dict[str, str | None]:
     path = _home.home() / SIDES_FILE
     path.write_text(json.dumps(out), encoding='utf-8')
     return out
-
-
-# The policy of the sandbox page, which runs its own bootstrap, blob scripts and WebAssembly alone,
-# connects nowhere and may be framed by the pages it names. Its sandbox directive gives the page an
-# opaque origin wherever it loads, in the renderer's frame or opened on its own as a whole window,
-# so it never holds the storage, caches or service worker of the server's origin.
-SANDBOX_POLICY = (
-    'sandbox allow-scripts; '
-    "default-src 'none'; script-src '{hash}' blob: 'wasm-unsafe-eval'; worker-src blob:; "
-    "connect-src 'none'; img-src blob: data:; frame-ancestors {ancestors}; base-uri 'none'; "
-    "form-action 'none'"
-)
-
-
-def sandbox_page(ancestors: str = "'self'") -> tuple[bytes, str]:
-    """Returns the page of the sandbox of team workers and its policy, which allows its script.
-
-    The page inlines `web/js/presentation/sandbox.js`, and the policy names the digest of that
-    script, so nothing else runs in the sandbox but blob modules it starts itself. Every page
-    above the sandbox must be among `ancestors`, so a viewer in the frame of a notebook passes the
-    notebooks that may frame it.
-    """
-    script = (Path(__file__).parents[1] / 'web/js/presentation/sandbox.js').read_text(
-        encoding='utf-8'
-    )
-    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
-    page = f'<!doctype html><meta charset="utf-8"><title>sandbox</title><script>{script}</script>'
-    return page.encode(), SANDBOX_POLICY.format(hash=f'sha256-{digest}', ancestors=ancestors)

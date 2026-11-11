@@ -207,7 +207,7 @@ class Browser:
             '--recordings',
             self.args.recordings,
         ]
-        log = open(self.work / 'server.log', 'w')
+        log = open(self.work / 'server.log', 'w', encoding='utf-8')
         self.processes.append(subprocess.Popen(server, stdout=log, stderr=subprocess.STDOUT))
         wait_json(self.base + 'api/scenarios')
         for gpu in (not self.args.software, False):
@@ -445,6 +445,8 @@ def peak(path, filters):
         ],
         capture_output=True,
         text=True,
+        encoding='utf-8',
+        errors='replace',
         check=True,
     ).stderr
     return float(re.search(r'max_volume: (-?[\d.]+) dB', out).group(1))

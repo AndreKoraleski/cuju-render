@@ -430,7 +430,7 @@ def shipped_models() -> list[dict[str, Any]]:
     models = []
     for path in sorted(folder.glob('*.json')):
         with contextlib.suppress(OSError, ValueError):
-            description = json.loads(path.read_text())
+            description = json.loads(path.read_text(encoding='utf-8'))
             if path.with_suffix('.glb').is_file():
                 description['url'] = f'assets/models/{path.stem}.glb'
                 models.append(description)
@@ -1835,8 +1835,9 @@ def load_agent(identifier: str) -> Any:
     module.__file__ = str(main)
     with _from_folder(folder):
         before = set(sys.modules)
-        # Kaggle: `get_last_callable` runs the file and takes the last callable it defined.
-        exec(compile(main.read_text(), str(main), 'exec'), module.__dict__)
+        # Kaggle: `get_last_callable` runs the file and takes the last callable it defined. The
+        # bytes go to `compile`, so the file's own encoding line or UTF-8 decides how it reads.
+        exec(compile(main.read_bytes(), str(main), 'exec'), module.__dict__)
         resolved = folder.resolve()
         for name in set(sys.modules) - before:
             origin = getattr(sys.modules[name], '__file__', None)

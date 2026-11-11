@@ -886,7 +886,7 @@ class _Chrome:
                     'Chrome in some containers needs --no-sandbox.'
                 )
             with contextlib.suppress(OSError, ValueError, IndexError):
-                port = int(marker.read_text().split()[0])
+                port = int(marker.read_text(encoding='utf-8').split()[0])
                 break
             time.sleep(0.1)
         if port is None:

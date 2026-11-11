@@ -27,11 +27,11 @@ def _server(home, process=None):
 def test_a_server_names_the_call_that_started_it(render_home, monkeypatch):
     monkeypatch.setenv(_launch.STARTER_VARIABLE, 'abc')
     path = _launch.announce(8999, 'k')
-    assert json.loads(path.read_text())['starter'] == 'abc'
+    assert json.loads(path.read_text(encoding='utf-8'))['starter'] == 'abc'
     assert _launch._starter() == 'abc'
     monkeypatch.delenv(_launch.STARTER_VARIABLE)
     _launch.announce(8999, 'k')
-    assert 'starter' not in json.loads(path.read_text())
+    assert 'starter' not in json.loads(path.read_text(encoding='utf-8'))
     assert _launch._starter() is None
 
 
@@ -42,7 +42,7 @@ def test_the_route_is_the_first_that_the_computer_has():
     assert _window.choose('auto', False, None) == 'browser'
     assert _window.choose('chromium', True, edge) == 'chromium'
     assert _window.choose('browser', True, edge) == 'browser'
-    with pytest.raises(Error, match=r"cuju-render\[app\]"):
+    with pytest.raises(Error, match=r'cuju-render\[app\]'):
         _window.choose('webview', False, edge)
     with pytest.raises(Error, match='--browser'):
         _window.choose('chromium', True, None)
@@ -174,7 +174,7 @@ def test_the_default_browser_comes_last_with_a_note(render_home, monkeypatch, ca
     monkeypatch.setattr(_launch, 'open_browser', lambda url: opened.append(url) or True)
     assert _window.run(None) == 0
     assert opened == [URL]
-    assert "cuju-render[app]" in capsys.readouterr().err
+    assert 'cuju-render[app]' in capsys.readouterr().err
 
 
 def test_a_launcher_runs_the_app_with_this_python(tmp_path):
@@ -226,18 +226,18 @@ def test_a_launcher_that_no_install_made_stays(render_home, tmp_path):
     folders = _folders(tmp_path)
     foreign = folders['applications'] / 'cuju.desktop'
     foreign.parent.mkdir(parents=True)
-    foreign.write_text('mine')
+    foreign.write_text('mine', encoding='utf-8')
     with pytest.raises(Error, match='in the way'):
         _launchers.install(render_home, 'linux', folders, ['python'])
-    assert foreign.read_text() == 'mine'
+    assert foreign.read_text(encoding='utf-8') == 'mine'
     # A record that names other files removes none of them.
     other = tmp_path / 'notes.txt'
-    other.write_text('keep')
+    other.write_text('keep', encoding='utf-8')
     record = render_home / 'app' / 'launchers.json'
     record.parent.mkdir(parents=True, exist_ok=True)
-    record.write_text(json.dumps({'created': [str(other), str(foreign)]}))
+    record.write_text(json.dumps({'created': [str(other), str(foreign)]}), encoding='utf-8')
     _launchers.uninstall(render_home)
-    assert other.read_text() == 'keep'
+    assert other.read_text(encoding='utf-8') == 'keep'
 
 
 def test_macos_gets_an_app_in_applications(render_home, tmp_path):
@@ -249,7 +249,7 @@ def test_macos_gets_an_app_in_applications(render_home, tmp_path):
         info = plistlib.load(stream)
     assert info['CFBundleIdentifier'] == _launchers.BUNDLE_ID
     assert info['CFBundleExecutable'] == 'cuju' and info['CFBundleIconFile'] == 'cuju'
-    script = (bundle / 'Contents' / 'MacOS' / 'cuju').read_text()
+    script = (bundle / 'Contents' / 'MacOS' / 'cuju').read_text(encoding='utf-8')
     assert script == '#!/bin/sh\nexec /usr/local/bin/python3 -m cuju.render app\n'
     icns = (bundle / 'Contents' / 'Resources' / 'cuju.icns').read_bytes()
     assert icns[:4] == b'icns' and struct.unpack('>I', icns[4:8])[0] == len(icns)
@@ -293,6 +293,7 @@ def test_windows_writes_a_real_shortcut(tmp_path):
     command = [sys.executable, '-m', 'cuju.render', '--home', str(tmp_path / 'a home'), 'app']
     _launchers.write_shortcut(link, command, icon, tmp_path)
     script = (
+        '[Console]::OutputEncoding = [Text.Encoding]::UTF8; '
         '$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:CUJU_LINK); '
         'Write-Output $s.TargetPath; Write-Output $s.Arguments; Write-Output $s.IconLocation'
     )
@@ -301,6 +302,8 @@ def test_windows_writes_a_real_shortcut(tmp_path):
         env={**os.environ, 'CUJU_LINK': str(link)},
         capture_output=True,
         text=True,
+        encoding='utf-8',
+        errors='replace',
         check=True,
     ).stdout.splitlines()
     assert Path(out[0]) == Path(sys.executable)

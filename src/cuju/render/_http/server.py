@@ -49,6 +49,7 @@ from .._text import messages as _messages
 from .._text.messages import MessageError
 from .._tournaments import tournament_runner as _tournament_runner
 from .._watch import grid as _grid
+from . import headers as _headers
 from . import launch as _launch
 from . import pwa as _pwa
 
@@ -362,7 +363,7 @@ class _Requests:
                 encoding='utf-8',
                 errors='replace',
                 cwd=_home.process_folder(),
-                env=os.environ.copy(),
+                env=_home.process_environment(),
             )
             self._processes[entry['id']] = process
         stderr: collections.deque[str] = collections.deque(maxlen=20)
@@ -581,7 +582,7 @@ class _Games:
             encoding='utf-8',
             errors='replace',
             cwd=_home.process_folder(),
-            env=os.environ.copy(),
+            env=_home.process_environment(),
         )
 
     def _take(self, arguments: list[str]) -> subprocess.Popen | None:
@@ -880,7 +881,7 @@ def _sources() -> list[dict[str, Any]]:
     sources = []
     for path in _home.folder('live').glob('*.json'):
         try:
-            source = json.loads(path.read_text())
+            source = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             continue
         # An announcement without a whole number for its process, or with a field that the server
@@ -967,28 +968,21 @@ def make_handler(
         # that holds small writes back, which on Windows costs a fifth of a second a request.
         disable_nagle_algorithm = True
 
+        # How the response being written may be framed, by the rules of `headers`.
+        _framing = _headers.DENY
+
         def end_headers(self) -> None:
             """Adds to every response the headers that keep other sites from framing the page.
 
             A page asked for with the key of the server, which `show` hands to a notebook, may sit
-            in the frame of a notebook on this machine, in VS Code or in Google Colab. The sandbox
-            of team presentation workers sends its own policy, which says who may frame it. Every
-            response also keeps its window apart from a window of another site that opened it, so
-            such a window can neither reach the page nor post to the sandbox opened on its own.
+            in the frame of a notebook on this machine, in VS Code or in Google Colab. The page of
+            a clean feed sits in the frame of /feed, and the page that draws a video export in the
+            page that encodes it, both pages of this server. The sandbox of team presentation
+            workers sends its own policy, which says who may frame it. The mock servers of `ci`
+            send the same headers, from the same module.
             """
-            if getattr(self, '_framed', False):
-                ancestors = _launch.FRAME_ANCESTORS
-                self.send_header('Content-Security-Policy', f'frame-ancestors {ancestors}')
-            elif getattr(self, '_feed_frame', False):
-                # The page of a clean feed sits in the frame of /feed, and the page that draws a
-                # video export in the page that encodes it, both pages of this server.
-                self.send_header('X-Frame-Options', 'SAMEORIGIN')
-                self.send_header('Content-Security-Policy', "frame-ancestors 'self'")
-            elif not getattr(self, 'framable', False):
-                self.send_header('X-Frame-Options', 'DENY')
-                self.send_header('Content-Security-Policy', "frame-ancestors 'none'")
-            self.send_header('X-Content-Type-Options', 'nosniff')
-            self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
+            for name, value in _headers.security(self._framing):
+                self.send_header(name, value)
             super().end_headers()
 
         def _allowed(self) -> bool:
@@ -1531,13 +1525,7 @@ def make_handler(
             if page or relative == Path('feed.html'):
                 data = _languages.inline(data)
             key = getattr(self.server, 'frame_key', None)
-            given = self._route()[1].get('embed', '').encode()
-            self._framed = page and bool(key) and secrets.compare_digest(given, key.encode())
-            # The clean feed and the video export of the browser each frame the page on its own
-            # origin alone.
-            query = self._route()[1]
-            framed_here = 'feed' in query or ('capture' in query and 'export' in query)
-            self._feed_frame = page and not self._framed and framed_here
+            self._framing = _headers.framing(relative.as_posix(), self._route()[1], key)
             self.send_response(200)
             self.send_header('Content-Type', kind or 'application/octet-stream')
             self.send_header('Content-Length', str(len(data)))
@@ -1545,23 +1533,23 @@ def make_handler(
             if relative == Path('sw.js'):
                 self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
-            self._framed = self._feed_frame = False
+            self._framing = _headers.DENY
             self.wfile.write(data)
             reached = getattr(self.server, 'on_page', None)
             if page and reached is not None:
                 reached()
 
         def _sandbox(self) -> None:
-            data, policy = _presentation.sandbox_page(_launch.FRAME_ANCESTORS)
-            self.framable = True
+            data, policy = _headers.sandbox_page(_WEB)
+            self._framing = _headers.OWN
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(data)))
             self.send_header('Content-Security-Policy', policy)
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
+            self._framing = _headers.DENY
             self.wfile.write(data)
-            self.framable = False
 
         def _package_file(self, identifier: str, name: str) -> None:
             path = _presentation.file_path(identifier, name)

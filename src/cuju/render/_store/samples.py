@@ -44,7 +44,7 @@ _TITLES = {
 def _added_teams() -> dict[str, str]:
     """Returns the teams that the samples added, by sample name."""
     try:
-        stored = json.loads((_home.home() / _TEAMS_FILE).read_text())
+        stored = json.loads((_home.home() / _TEAMS_FILE).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
     if not isinstance(stored, dict):
@@ -56,7 +56,7 @@ def _keep_teams(added: dict[str, str]) -> None:
     path = _home.home() / _TEAMS_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.part')
-    temporary.write_text(json.dumps(added))
+    temporary.write_text(json.dumps(added), encoding='utf-8')
     temporary.replace(path)
 
 

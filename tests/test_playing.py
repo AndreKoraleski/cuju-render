@@ -324,7 +324,10 @@ def test_requested_match_records_resolved_seed(render_home, monkeypatch):
     assert provenance['action_set'] == 'default'
     assert provenance['ability'] == [0.3, 0.7]
     assert provenance['cuju_version'] == cuju.__version__
-    assert json.loads(path.with_suffix('.json').read_text())['provenance'] == provenance
+    assert (
+        json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))['provenance']
+        == provenance
+    )
     # A recording copied into the folder without its summary keeps its provenance in the list.
     path.with_suffix('.json').unlink()
     assert _library.matches()[0]['provenance'] == provenance
@@ -801,11 +804,11 @@ def test_achievements_of_teams_stay_on_disk(render_home, caplog):
     public = _achievements.public()
     assert [entry['id'] for entry in public['catalog']] == list(_achievements.IDENTIFIERS)
     assert set(public['teams']) == {'t-left'}
-    document = json.loads((folder / 't-left.json').read_text())
+    document = json.loads((folder / 't-left.json').read_text(encoding='utf-8'))
     document['earned']['rout'] = {'first': 'today', 'count': 1}
     document['earned']['flying'] = {'first': 1, 'count': 1}
-    (folder / 't-left.json').write_text(json.dumps(document))
-    (folder / 't-broken.json').write_text('[')
+    (folder / 't-left.json').write_text(json.dumps(document), encoding='utf-8')
+    (folder / 't-broken.json').write_text('[', encoding='utf-8')
     with caplog.at_level(logging.WARNING, logger='cuju'):
         assert set(_achievements.earned('t-left')) == set(kept)
         assert _achievements.earned('t-broken') == {}
@@ -1036,9 +1039,9 @@ def test_tournament_failures_carry_message_ids(render_home):
         assert view['error_id'] == 'server.tournament.match_failed_one_more'
         assert _messages.text(view['error_id'], **view['error_values']) == view['error']
         # A file of an earlier version, without the ids of its failures, loads all the same.
-        stored = json.loads((runner.folder() / f'{entry["id"]}.json').read_text())
+        stored = json.loads((runner.folder() / f'{entry["id"]}.json').read_text(encoding='utf-8'))
         del stored['failure_ids']
-        (runner.folder() / f'{entry["id"]}.json').write_text(json.dumps(stored))
+        (runner.folder() / f'{entry["id"]}.json').write_text(json.dumps(stored), encoding='utf-8')
         cups.close()
         cups = runner.Tournaments(player=player, start=False)
         failed = {match['key']: match for match in cups.get(entry['id'])['matches']}

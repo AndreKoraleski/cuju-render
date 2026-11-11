@@ -1316,7 +1316,7 @@ class _Jobs:
                 encoding='utf-8',
                 errors='replace',
                 cwd=_home.process_folder(),
-                env=os.environ.copy(),
+                env=_home.process_environment(),
             )
             self._processes[job['id']] = process
         stderr: collections.deque[str] = collections.deque(maxlen=20)

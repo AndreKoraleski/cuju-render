@@ -646,7 +646,7 @@ class Tournaments:
                 continue
             except OSError:
                 return False
-            with os.fdopen(descriptor, 'w') as stream:
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
                 stream.write(str(os.getpid()))
             self._owned.add(identifier)
             # A game lives no longer than the process that started it, so the games of people
@@ -1290,7 +1290,7 @@ class Tournaments:
             encoding='utf-8',
             errors='replace',
             cwd=_home.process_folder(),
-            env=os.environ.copy(),
+            env=_home.process_environment(),
         )
         key = (provenance['id'], match['key'])
         self._progress(key, 0.0, process)

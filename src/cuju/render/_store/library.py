@@ -67,7 +67,7 @@ def _summary(path: Path) -> dict[str, Any]:
     recording and its summary have stood unchanged for a minute, so no save is still writing them.
     """
     try:
-        entry = json.loads(path.with_suffix('.json').read_text())
+        entry = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
         if not isinstance(entry, dict):
             raise ValueError('expected a summary object')
     except (OSError, ValueError) as error:
@@ -194,7 +194,7 @@ def _store(path: Path, summary: dict[str, Any]) -> None:
     """Writes the summary of the recording at `path` through a temporary file."""
     target = path.with_suffix('.json')
     temporary = target.with_name(target.name + '.part')
-    temporary.write_text(json.dumps(summary))
+    temporary.write_text(json.dumps(summary), encoding='utf-8')
     temporary.replace(target)
 
 
@@ -242,7 +242,7 @@ def reserve() -> Path:
         if path.exists():
             continue
         try:
-            with path.with_suffix('.json').open('x'):
+            with path.with_suffix('.json').open('x', encoding='utf-8'):
                 pass
         except FileExistsError:
             continue
@@ -288,7 +288,7 @@ def samples() -> list[str]:
 def _seeded() -> set[str]:
     """Returns the names of the samples that the library has received."""
     try:
-        return set(json.loads((_home.home() / _SEEDED).read_text())['seeded'])
+        return set(json.loads((_home.home() / _SEEDED).read_text(encoding='utf-8'))['seeded'])
     except (OSError, ValueError, KeyError, TypeError):
         return set()
 
@@ -348,7 +348,7 @@ def add_samples(names: list[str] | None = None, again: bool = True) -> list[Path
         added += [path_of(name) for name in wanted if trash(name, restore=True)]
     marker = _home.home() / _SEEDED
     temporary = marker.with_name(marker.name + '.part')
-    temporary.write_text(json.dumps({'seeded': sorted(seeded | set(wanted))}))
+    temporary.write_text(json.dumps({'seeded': sorted(seeded | set(wanted))}), encoding='utf-8')
     temporary.replace(marker)
     return added
 

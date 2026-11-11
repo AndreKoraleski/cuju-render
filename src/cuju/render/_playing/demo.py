@@ -147,7 +147,9 @@ def _child(arguments: list[str]) -> subprocess.Popen:
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
-        env=dict(os.environ),
+        encoding='utf-8',
+        errors='replace',
+        env=_home.process_environment(),
     )
 
 

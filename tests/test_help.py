@@ -21,7 +21,9 @@ def test_doctor_report_keeps_private_paths_out(tmp_path, monkeypatch):
     monkeypatch.setenv(_home.HOME_VARIABLE, str(home))
     (home / 'matches').mkdir(parents=True)
     (home / 'matches' / 'a.bin').write_bytes(b'12345')
-    (home / _launch.SERVER_FILE).write_text(json.dumps({'port': 1, 'pid': 0, 'key': 'secret-key'}))
+    (home / _launch.SERVER_FILE).write_text(
+        json.dumps({'port': 1, 'pid': 0, 'key': 'secret-key'}), encoding='utf-8'
+    )
     _doctor.install_capture()
     _doctor.install_capture()
     capture = [h for h in logging.getLogger('cuju').handlers if isinstance(h, _doctor._Capture)]
@@ -51,7 +53,7 @@ def test_doctor_report_keeps_private_paths_out(tmp_path, monkeypatch):
     text = _doctor.text(report)
     assert 'FAIL  server file' in text and str(user) not in text
     # A home folder that is a file fails its check and is named as such.
-    (tmp_path / 'file').write_text('')
+    (tmp_path / 'file').write_text('', encoding='utf-8')
     monkeypatch.setenv(_home.HOME_VARIABLE, str(tmp_path / 'file'))
     broken = _doctor.server_report()
     assert broken['home']['problems'] == ['the home folder is a file']

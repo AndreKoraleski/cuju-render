@@ -610,7 +610,13 @@ def test_child_processes_keep_the_home_off_their_path(monkeypatch, render_home):
 
     def namespaces(command, folder):
         found = subprocess.run(
-            [*command, '-c', probe], cwd=folder, capture_output=True, text=True, timeout=60
+            [*command, '-c', probe],
+            cwd=folder,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=60,
         )
         return found.stdout.split().count('True')
 
@@ -707,7 +713,7 @@ def test_request_history_skips_invalid_files(monkeypatch, render_home, caplog):
     monkeypatch.setattr(_server._Requests, '_run', lambda self: None)
     first = _server._Requests()
     kept = first.add('builtin', 'builtin', '5_vs_5', 3)
-    stored = json.loads((first._folder / f'{kept["id"]}.json').read_text())
+    stored = json.loads((first._folder / f'{kept["id"]}.json').read_text(encoding='utf-8'))
     folder = first._folder
     broken = {
         'r-text-created': {**stored, 'id': 'r-text-created', 'created': 'yesterday'},
@@ -721,10 +727,10 @@ def test_request_history_skips_invalid_files(monkeypatch, render_home, caplog):
     }
     broken['r-missing']['id'] = 'r-missing'
     for name, value in broken.items():
-        (folder / f'{name}.json').write_text(json.dumps(value))
-    (folder / 'r-broken.json').write_text('{')
+        (folder / f'{name}.json').write_text(json.dumps(value), encoding='utf-8')
+    (folder / 'r-broken.json').write_text('{', encoding='utf-8')
     leftover = folder / f'{kept["id"]}.json.part'
-    leftover.write_text('{"half": ')
+    leftover.write_text('{"half": ', encoding='utf-8')
     with caplog.at_level(logging.WARNING, logger='cuju'):
         recovered = _server._Requests()
     assert [entry['id'] for entry in recovered.entries()] == [kept['id']]
@@ -740,7 +746,7 @@ def test_request_seeds_beyond_javascript_stay_exact(monkeypatch, render_home):
     large = requests.add('builtin', 'builtin', '5_vs_5', 2**64 - 1)
     assert large['seed'] == str(2**64 - 1)
     assert requests.entries()[0]['seed'] == str(2**64 - 1)
-    stored = json.loads((requests._folder / f'{large["id"]}.json').read_text())
+    stored = json.loads((requests._folder / f'{large["id"]}.json').read_text(encoding='utf-8'))
     assert stored['seed'] == 2**64 - 1
     assert _server._Requests().entries()[0]['seed'] == str(2**64 - 1)
     small = requests.add('builtin', 'builtin', '5_vs_5', 2**53 - 1)
@@ -858,12 +864,14 @@ def test_api_methods_and_request_boundaries(render_home):
 def test_responses_refuse_framing_and_bad_announcements_are_skipped(render_home):
     """Every response forbids framing and sniffing, and a bad live announcement spares the list."""
     live = _home.folder('live')
-    (live / 'missing.json').write_text('{"id": "missing"}')
-    (live / 'text.json').write_text('{"id": "text", "pid": "many"}')
-    (live / 'null.json').write_text('{"id": "null", "pid": null}')
-    (live / 'list.json').write_text('[1, 2]')
+    (live / 'missing.json').write_text('{"id": "missing"}', encoding='utf-8')
+    (live / 'text.json').write_text('{"id": "text", "pid": "many"}', encoding='utf-8')
+    (live / 'null.json').write_text('{"id": "null", "pid": null}', encoding='utf-8')
+    (live / 'list.json').write_text('[1, 2]', encoding='utf-8')
     running = {'id': 'running', 'title': 'a', 'scenario': 'b', 'environment': 0, 'port': 8781}
-    (live / 'running.json').write_text(json.dumps({**running, 'pid': os.getpid()}))
+    (live / 'running.json').write_text(
+        json.dumps({**running, 'pid': os.getpid()}), encoding='utf-8'
+    )
     # An announcement of a running process with any field the server cannot read is skipped alone.
     for name, change in [
         ('untitled', {'title': None}),
@@ -877,10 +885,10 @@ def test_responses_refuse_framing_and_bad_announcements_are_skipped(render_home)
         ('outside', {'id': '../../x'}),
     ]:
         bad = {**running, 'id': name, 'pid': os.getpid(), **change}
-        (live / f'{name}.json').write_text(json.dumps(bad))
+        (live / f'{name}.json').write_text(json.dumps(bad), encoding='utf-8')
     keyless = {**running, 'id': 'keyless', 'pid': os.getpid()}
     del keyless['scenario']
-    (live / 'keyless.json').write_text(json.dumps(keyless))
+    (live / 'keyless.json').write_text(json.dumps(keyless), encoding='utf-8')
     assert [source['id'] for source in _server._sources()] == ['running']
     # The list leaves the port out.
     del running['port']
@@ -943,7 +951,7 @@ def test_show_starts_a_server_that_ends_with_its_process(render_home):
         server = view.server
         # A Python of a virtual environment on Windows runs the server beneath the process that
         # show made, so the server file names the call that started it.
-        entry = json.loads((render_home / _launch.SERVER_FILE).read_text())
+        entry = json.loads((render_home / _launch.SERVER_FILE).read_text(encoding='utf-8'))
         assert server.process is not None and entry['pid'] == server.pid and entry['starter']
         assert _launch.running().pid == server.pid
         assert cuju.render.show('sample-5v5', display='none').server.pid == server.pid
@@ -1097,7 +1105,7 @@ def test_render_command_line(render_home, tmp_path, monkeypatch, capsys):
     assert command.main(['open', 'missing.cjr']) == 1
     assert 'no file' in capsys.readouterr().err
     blocker = tmp_path / 'blocker'
-    blocker.write_text('')
+    blocker.write_text('', encoding='utf-8')
     assert command.main(['--home', str(blocker / 'render'), 'team', 'list']) == 1
     message = capsys.readouterr().err
     assert 'is a file' in message and '--home' in message
@@ -1166,8 +1174,8 @@ def test_page_sounds_of_the_play_stop_on_a_seek():
     tests/web/voices.mjs runs the voices themselves.
     """
     scripts = _server._WEB / 'js'
-    audio = (scripts / 'broadcast/audio.js').read_text()
-    main = (scripts / 'main.js').read_text()
+    audio = (scripts / 'broadcast/audio.js').read_text(encoding='utf-8')
+    main = (scripts / 'main.js').read_text(encoding='utf-8')
     assert "import { Voices } from './voices.js';" in audio
     events = re.search(r'const EVENT_LENGTH = \{([^}]*)\}', audio).group(1)
     for name in ('whistle', 'goal', 'ooh', 'applause', 'fanfare', 'teamSound'):
@@ -1192,7 +1200,7 @@ def test_page_modules_resolve_and_are_served(render_home):
     } <= found
     for path in scripts.rglob('*.js'):
         pattern = r"""(?:from|import\()\s*'(\.\.?/[\w./-]+\.js)'"""
-        for name in re.findall(pattern, path.read_text()):
+        for name in re.findall(pattern, path.read_text(encoding='utf-8')):
             assert (path.parent / name).resolve().is_file(), f'{path} imports {name}'
     server = _server.http.server.ThreadingHTTPServer(
         ('127.0.0.1', 0), _server.make_handler(_server._Requests())
@@ -1250,7 +1258,7 @@ def test_demo_streams_on_a_running_server(render_home, capsys):
 
 def test_page_serves_the_palette_and_its_stylesheet(render_home):
     """The top bar holds the palette's button, and the server sends the stylesheet it needs."""
-    page = (_server._WEB / 'index.html').read_text()
+    page = (_server._WEB / 'index.html').read_text(encoding='utf-8')
     assert 'id="open-palette"' in page and 'href="easy.css"' in page
     for topic in ('help-keyboard', 'help-start', 'help-teams', 'help-play', 'help-cameras'):
         assert f'id="{topic}"' in page
@@ -1290,7 +1298,7 @@ def test_grid_through_the_server(render_home):
     threading.Thread(target=old.serve_forever, daemon=True).start()
     announcement = {'id': 'old', 'title': 'old', 'scenario': 'old', 'environment': 0}
     announcement.update(port=old.server_address[1], pid=os.getpid())
-    (render_home / 'live' / 'old.json').write_text(json.dumps(announcement))
+    (render_home / 'live' / 'old.json').write_text(json.dumps(announcement), encoding='utf-8')
 
     def get(port, path, headers=None, body=None):
         connection = _server.http.client.HTTPConnection('127.0.0.1', port, timeout=10)
@@ -1412,6 +1420,73 @@ def test_presentation_routes_and_sandbox_policy(render_home):
         server.server_close()
 
 
+def _mock_server():
+    """Returns the mock server of `ci`, loaded from its file as the page checks start it."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / 'ci' / 'mock_server.py'
+    spec = importlib.util.spec_from_file_location('cuju_test_mock_server', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_mock_server_sends_the_headers_of_the_server(render_home):
+    """The page checks run against the mock, so its answers say who may frame them as the server's.
+
+    A page that the server forbids to frame, and that a page of its own frames anyway, then fails
+    its check rather than only the real server.
+    """
+    from support.package import package_zip
+
+    mock = _mock_server()
+    real_team = _package_team()['id']
+    mock_team = mock.add('Test package', 'team.zip', package_zip())['id']
+    real = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    fake = mock.ReusedThreadsServer(('127.0.0.1', 0), mock.make_handler(mock.Requests()))
+    for running in (real, fake):
+        threading.Thread(target=running.serve_forever, daemon=True).start()
+
+    def answer(server, path):
+        address = f'http://127.0.0.1:{server.server_address[1]}'
+        with urllib.request.urlopen(address + path, timeout=10) as response:
+            response.read()
+            return sorted(
+                (name, value)
+                for name, value in response.headers.items()
+                if name not in ('Date', 'Server', 'Content-Length')
+            )
+
+    try:
+        for path in [
+            '/',
+            '/index.html',
+            '/?feed=1',
+            '/feed',
+            '/?capture=1&export=1&safe=0',
+            '/?capture=1',
+            '/export.html',
+            '/js/main.js',
+            '/js/export/video-browser.js',
+            '/style.css',
+            '/sandbox/presentation',
+            '/api/teams/{team}/presentation/worker.js',
+            '/api/teams/{team}/presentation/audio/hum.js',
+            '/api/teams/{team}/presentation/models/halo.glb',
+            '/api/scenarios',
+        ]:
+            served = answer(real, path.format(team=real_team))
+            assert answer(fake, path.format(team=mock_team)) == served, path
+            assert ('Cross-Origin-Opener-Policy', 'same-origin') in served, path
+    finally:
+        for running in (real, fake):
+            running.shutdown()
+            running.server_close()
+
+
 def test_engine_outputs_stay_identical_while_a_package_plays(render_home):
     """A batch played by a package team and watched while its package is served stays exact."""
     team = _package_team()
@@ -1470,8 +1545,8 @@ def test_engine_outputs_stay_identical_while_a_package_plays(render_home):
 def test_page_preview_panel_speaks_the_page_language():
     """Every level, status, rung, budget and event of the preview panel has a message."""
     scripts = _server._WEB / 'js' / 'presentation'
-    preview = (scripts / 'preview.js').read_text()
-    budget = (scripts / 'budget.js').read_text()
+    preview = (scripts / 'preview.js').read_text(encoding='utf-8')
+    budget = (scripts / 'budget.js').read_text(encoding='utf-8')
     assert 'formatNumber' in preview and '.toFixed(' not in preview
     ladder = re.search(r'export const LADDER = \[([^\]]*)\]', budget).group(1)
     kinds = re.search(r'const KINDS = \[([^\]]*)\]', preview).group(1)
@@ -1665,24 +1740,26 @@ def test_installable_page_files_build_and_routes(render_home, tmp_path, monkeypa
     from cuju.render._http import pwa as _pwa
 
     web = _server._WEB
-    manifest = json.loads((web / 'manifest.webmanifest').read_text())
+    manifest = json.loads((web / 'manifest.webmanifest').read_text(encoding='utf-8'))
     assert manifest['display'] == 'standalone' and manifest['start_url'] == './#page=home'
     for icon in manifest['icons']:
         data = (web / icon['src']).read_bytes()
         assert data[:8] == b'\x89PNG\r\n\x1a\n'
         assert '{}x{}'.format(*struct.unpack('>II', data[16:24])) == icon['sizes']
-    assert '<link rel="manifest" href="manifest.webmanifest">' in (web / 'index.html').read_text()
+    assert '<link rel="manifest" href="manifest.webmanifest">' in (web / 'index.html').read_text(
+        encoding='utf-8'
+    )
     script = Path(__file__).resolve().parents[1] / 'ci' / 'make_app_icons.py'
     assert subprocess.run([sys.executable, str(script), '--check'], timeout=300).returncode == 0
     # The build follows every file of the page.
     copy = tmp_path / 'web'
     copy.mkdir()
-    (copy / 'index.html').write_text('one')
+    (copy / 'index.html').write_text('one', encoding='utf-8')
     monkeypatch.setattr(_pwa, '_WEB', copy)
     monkeypatch.setitem(_pwa._HELD, 'at', -10.0)
     first = _pwa.build()
     assert _pwa.build() == first
-    (copy / 'index.html').write_text('two!')
+    (copy / 'index.html').write_text('two!', encoding='utf-8')
     monkeypatch.setitem(_pwa._HELD, 'at', -10.0)
     assert _pwa.build() != first
     monkeypatch.setattr(_pwa, '_WEB', web)
@@ -1710,9 +1787,13 @@ def test_a_stale_server_file_goes_once_its_process_ended(render_home):
         [sys.executable, '-c', 'import os; print(os.getpid())'],
         capture_output=True,
         text=True,
+        encoding='utf-8',
+        errors='replace',
         check=True,
     )
-    path.write_text(json.dumps({'port': 8999, 'pid': int(dead.stdout), 'key': 'k'}))
+    path.write_text(
+        json.dumps({'port': 8999, 'pid': int(dead.stdout), 'key': 'k'}), encoding='utf-8'
+    )
     assert _launch.running() is None
     assert not path.exists()
 
@@ -1779,9 +1860,11 @@ def test_interrupted_requests_carry_message_ids(render_home):
         'finished': None,
     }
     # A request of an earlier version lacks the id fields and loads all the same.
-    (folder / 'r-old.json').write_text(json.dumps({**base, 'id': 'r-old', 'state': 'queued'}))
+    (folder / 'r-old.json').write_text(
+        json.dumps({**base, 'id': 'r-old', 'state': 'queued'}), encoding='utf-8'
+    )
     done = {**base, 'id': 'r-done', 'state': 'failed', 'error': 'cancelled', 'created': 2.0}
-    (folder / 'r-done.json').write_text(json.dumps(done))
+    (folder / 'r-done.json').write_text(json.dumps(done), encoding='utf-8')
     entries = {entry['id']: entry for entry in _server._Requests().entries()}
     assert entries['r-old']['error'] == 'interrupted by a server restart'
     assert (entries['r-old']['error_id'], entries['r-old']['error_values']) == (
@@ -1790,7 +1873,7 @@ def test_interrupted_requests_carry_message_ids(render_home):
     )
     assert entries['r-done']['error'] == 'cancelled'
     assert (entries['r-done']['error_id'], entries['r-done']['error_values']) == (None, None)
-    stored = json.loads((folder / 'r-old.json').read_text())
+    stored = json.loads((folder / 'r-old.json').read_text(encoding='utf-8'))
     assert stored['error_id'] == 'server.requests.interrupted'
     assert _server._stored_request(folder / 'r-old.json')['error_values'] == {}
 
@@ -1992,7 +2075,9 @@ def test_language_routes(render_home):
         assert (status, body['error_id']) == (400, 'server.language.shipped')
         assert call('/api/languages', b'{', 'POST')[1]['error_id'] == 'server.language.json'
         # A file dropped into the folder by hand that is malformed lists as refused.
-        (_home.home() / 'languages' / 'zz.json').write_text('{"@language": {"code": "zz"}}')
+        (_home.home() / 'languages' / 'zz.json').write_text(
+            '{"@language": {"code": "zz"}}', encoding='utf-8'
+        )
         listed = {e['code']: e for e in call('/api/languages')[1]['languages']}
         assert listed['zz']['usable'] is False and listed['zz']['problems']
         assert call('/api/languages/pt', method='DELETE')[1]['error_id'] == 'server.language.keep'

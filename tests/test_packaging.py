@@ -76,6 +76,12 @@ def test_commands_that_step_no_batch_start_without_pytorch():
     # The check that cuju's own test_import made of the renderer's commands before the split.
     code = "import sys, cuju, cuju.render.__main__, cuju.state; print('torch' in sys.modules)"
     result = subprocess.run(
-        [sys.executable, '-c', code], capture_output=True, text=True, check=True, timeout=120
+        [sys.executable, '-c', code],
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        check=True,
+        timeout=120,
     )
     assert result.stdout.split() == ['False']

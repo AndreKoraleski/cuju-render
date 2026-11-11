@@ -346,6 +346,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Text files read and write in UTF-8 on every system. On Windows Python used the code page of
+    the system, so a file of the home written on another system read garbled, and a
+    submission's `main.py` with text outside that code page read garbled or failed to load. The processes that
+    the server starts, for matches, tournaments, challenges and video exports, also talk to it in
+    UTF-8, so a name outside the code page reaches them whole.
 - Install the app on Help appears in Chrome and Edge. The browser's offer to install came right
     after the page loaded, before the part of Help that listens for it, and was lost, so Help only
     named the browser menu. The first script of the page now keeps the offer for the page.

@@ -192,13 +192,13 @@ def build(path: Path) -> dict[str, Any]:
 def _write(folder: Path, entry: dict[str, Any]) -> None:
     target = folder / f'{entry["id"]}.json'
     temporary = target.with_name(target.name + '.part')
-    temporary.write_text(json.dumps(entry, separators=(',', ':')))
+    temporary.write_text(json.dumps(entry, separators=(',', ':')), encoding='utf-8')
     temporary.replace(target)
 
 
 def _read(folder: Path, identifier: str) -> dict[str, Any] | None:
     try:
-        entry = json.loads((folder / f'{identifier}.json').read_text())
+        entry = json.loads((folder / f'{identifier}.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return None
     return entry if isinstance(entry, dict) else None

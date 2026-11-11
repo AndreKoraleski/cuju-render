@@ -136,7 +136,7 @@ def test_live_environment_switch_survives_a_failed_announcement(render_home, mon
         assert source in batch.observers
         assert source.environment == 1 and len(source._history) == 2
         assert not list((render_home / 'live').glob('*.part'))
-        assert json.loads(source._announcement.read_text())['environment'] == 0
+        assert json.loads(source._announcement.read_text(encoding='utf-8'))['environment'] == 0
         batch.step(actions)
         assert len(source._history) == 3
     finally:
@@ -202,6 +202,8 @@ def test_demo_starts_its_server_and_ends_cleanly_on_ctrl_c(render_home):
         [sys.executable, '-m', 'cuju.render', 'demo', '--port', '0', '--no-open'],
         stdout=subprocess.PIPE,
         text=True,
+        encoding='utf-8',
+        errors='replace',
     )
     try:
         address = None
@@ -397,6 +399,8 @@ def test_demo_ends_within_about_a_second_of_ctrl_c(render_home):
         [sys.executable, '-m', 'cuju.render', 'demo', '--port', '0', '--no-open'],
         stdout=subprocess.PIPE,
         text=True,
+        encoding='utf-8',
+        errors='replace',
         start_new_session=True,
     )
     try:

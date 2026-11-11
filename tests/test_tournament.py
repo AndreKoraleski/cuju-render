@@ -791,10 +791,10 @@ def test_runner_plays_a_tournament_and_resumes_after_a_restart(render_home):
     first.tick()
     assert _wait(lambda: first.get(identifier)['played'] == 1)
     first.close()
-    stored = json.loads((runner.folder() / f'{identifier}.json').read_text())
+    stored = json.loads((runner.folder() / f'{identifier}.json').read_text(encoding='utf-8'))
     assert len(stored['results']) == 1
     # A half written file is left from a stop, and the next start removes it.
-    (runner.folder() / f'{identifier}.json.part').write_text('{')
+    (runner.folder() / f'{identifier}.json.part').write_text('{', encoding='utf-8')
     calls.clear()
     second = runner.Tournaments(player=_fake_player(calls), start=False, interval=0.01)
     assert not (runner.folder() / f'{identifier}.json.part').exists()
@@ -887,9 +887,9 @@ def test_tournament_identifiers_differ_from_team_identifiers(render_home):
     assert entry['id'].startswith('cup-')
     cups.close()
     # A tournament saved before, with the prefix that teams also use, still loads and plays.
-    stored = json.loads((runner.folder() / f'{entry["id"]}.json').read_text())
+    stored = json.loads((runner.folder() / f'{entry["id"]}.json').read_text(encoding='utf-8'))
     stored['id'] = 't-20261101-120000-ab12'
-    (runner.folder() / f'{stored["id"]}.json').write_text(json.dumps(stored))
+    (runner.folder() / f'{stored["id"]}.json').write_text(json.dumps(stored), encoding='utf-8')
     again = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
     assert stored['id'] in [item['id'] for item in again.entries()]
     assert again.run(stored['id'], report=lambda line: None) == 'done'
@@ -932,8 +932,8 @@ def test_tables_name_no_tiebreak_before_any_match():
 
 def test_runner_skips_invalid_files_and_keeps_others(render_home):
     folder = runner.folder()
-    (folder / 't-bad.json').write_text('[]')
-    (folder / 't-worse.json').write_text('{"id": "t-worse", "state": "running"}')
+    (folder / 't-bad.json').write_text('[]', encoding='utf-8')
+    (folder / 't-worse.json').write_text('{"id": "t-worse", "state": "running"}', encoding='utf-8')
     cups = runner.Tournaments(player=_fake_player(), start=False)
     good = cups.create(_builtin_config(2))
     cups.close()
@@ -949,14 +949,14 @@ def test_a_tournament_file_dropped_into_the_folder_waits_stopped(render_home):
     own = cups.create(_builtin_config(4))
     cups.close()
     folder = runner.folder()
-    stored = json.loads((folder / f'{own["id"]}.json').read_text())
+    stored = json.loads((folder / f'{own["id"]}.json').read_text(encoding='utf-8'))
     assert isinstance(stored.pop('seal'), str)
     dropped = {**stored, 'id': 'cup-20261111-000000-beef'}
     dropped['config'] = {**stored['config'], 'concurrency': 1000}
-    (folder / f'{dropped["id"]}.json').write_text(json.dumps(dropped))
+    (folder / f'{dropped["id"]}.json').write_text(json.dumps(dropped), encoding='utf-8')
     # A file of this install that someone edited by hand counts as dropped as well.
     edited = {**stored, 'id': 'cup-20261111-000000-cafe', 'seal': '0' * 64}
-    (folder / f'{edited["id"]}.json').write_text(json.dumps(edited))
+    (folder / f'{edited["id"]}.json').write_text(json.dumps(edited), encoding='utf-8')
     again = runner.Tournaments(player=_fake_player(calls), start=False, interval=0.01)
     states = {entry['id']: entry for entry in again.entries()}
     assert states[own['id']]['state'] == 'running'
@@ -1006,14 +1006,14 @@ def test_a_second_process_cannot_run_a_claimed_tournament(render_home):
     entry = cups.create(_builtin_config(4))
     lock = runner.folder() / f'{entry["id"]}.lock'
     # The parent of the test process stays alive while the test runs.
-    lock.write_text(str(os.getppid()))
+    lock.write_text(str(os.getppid()), encoding='utf-8')
     cups.tick()
     assert cups.get(entry['id'])['played'] == 0
     assert cups.get(entry['id'])['owner'] == os.getppid()
     # A cancel from here leaves a marker for the process that runs it.
     assert cups.cancel(entry['id'])
     assert (runner.folder() / f'{entry["id"]}.cancel').exists()
-    lock.write_text('999999999')
+    lock.write_text('999999999', encoding='utf-8')
     cups.tick()
     assert cups.get(entry['id'])['state'] == 'cancelled'
     cups.close()
@@ -1025,7 +1025,7 @@ def test_awards_and_resumes_reach_the_process_that_runs_the_tournament(render_ho
     assert cups.run(identifier, report=lambda line: None) == 'stopped'
     cups.close()
     # Another live process holds the tournament, which a second instance stands in for here.
-    (runner.folder() / f'{identifier}.lock').write_text(str(os.getppid()))
+    (runner.folder() / f'{identifier}.lock').write_text(str(os.getppid()), encoding='utf-8')
     owner = runner.Tournaments(player=_fake_player(), start=False)
     owner._owned.add(identifier)
     asker = runner.Tournaments(start=False)
@@ -1256,7 +1256,7 @@ def test_command_line_makes_lists_shows_and_cancels(render_home, capsys, monkeyp
     assert main(['tournament', 'show', identifier]) == 0
     shown = capsys.readouterr().out
     assert 'Semi-finals' in shown and 'Ana' in shown
-    stored = json.loads((runner.folder() / f'{identifier}.json').read_text())
+    stored = json.loads((runner.folder() / f'{identifier}.json').read_text(encoding='utf-8'))
     assert [e['kind'] for e in stored['config']['entrants']] == [
         'builtin',
         'builtin',
@@ -1751,7 +1751,7 @@ def test_files_keep_labels_and_files_of_before_show_their_text(render_home):
     assert (entry['name'], entry['name_id']) == ('Tournament', 'server.tournament.label.tournament')
     cups.close()
     path = runner.folder() / f'{entry["id"]}.json'
-    stored = json.loads(path.read_text())
+    stored = json.loads(path.read_text(encoding='utf-8'))
     first, second = stored['config']['entrants']
     assert first['name_id'] == 'server.tournament.label.builtin_ability'
     assert first['name_values'] == {'ability': '0.30'}
@@ -1761,7 +1761,7 @@ def test_files_keep_labels_and_files_of_before_show_their_text(render_home):
     for holder in (stored['config'], first, stored['config']['stages'][0]):
         holder.pop('name_id')
         holder.pop('name_values')
-    path.write_text(json.dumps(stored))
+    path.write_text(json.dumps(stored), encoding='utf-8')
     again = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
     summary = again.get(entry['id'])
     again.close()
@@ -1991,7 +1991,7 @@ def test_files_of_before_load_and_resume_as_before(render_home):
     cups.close()
     folder = runner.folder()
     path = folder / f'{entry["id"]}.json'
-    stored = json.loads(path.read_text())
+    stored = json.loads(path.read_text(encoding='utf-8'))
     assert isinstance(stored.pop('seal'), str)
     # The rules of before gave two given names that read as one a number, Bot and Bot 2, which
     # the rules of now refuse, and a file keeps the names that its rules gave.
@@ -2005,7 +2005,7 @@ def test_files_of_before_load_and_resume_as_before(render_home):
     runner._write_record(path, stored)
     # The same file dropped in without a seal loads stopped, as any foreign file does.
     foreign = {**stored, 'id': 'cup-20261020-101010-abcd'}
-    (folder / f'{foreign["id"]}.json').write_text(json.dumps(foreign))
+    (folder / f'{foreign["id"]}.json').write_text(json.dumps(foreign), encoding='utf-8')
     again = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
     assert again.get(entry['id'])['state'] == 'running'
     assert again.get(foreign['id'])['state'] == 'stopped'

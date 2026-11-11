@@ -131,7 +131,7 @@ def test_captions_from_the_command_line_and_the_server(render_home, tmp_path, ca
     _library.add_samples()
     out = tmp_path / 'five.vtt'
     assert main(['captions', 'sample-5v5', '-o', str(out)]) == 0
-    text = out.read_text()
+    text = out.read_text(encoding='utf-8')
     assert text.startswith('WEBVTT\n\n1\n00:00:09.148 --> 00:00:10.648\nShot, number 3 of Lake')
     assert 'Full time, a draw, 1 to 1' in text
     cues = cuju.render.captions(
@@ -141,7 +141,7 @@ def test_captions_from_the_command_line_and_the_server(render_home, tmp_path, ca
     # The cues keep their times to the millisecond, as the file writes them.
     assert all(cue['start'] == round(cue['start'], 3) for cue in cues)
     assert (cues[0]['start'], cues[0]['end']) == (9.148, 10.648)
-    assert (tmp_path / 'file.vtt').read_text() == text
+    assert (tmp_path / 'file.vtt').read_text(encoding='utf-8') == text
     capsys.readouterr()
     assert main(['search', 'goal', 'team:left', '--json']) == 0
     printed = json.loads(capsys.readouterr().out)

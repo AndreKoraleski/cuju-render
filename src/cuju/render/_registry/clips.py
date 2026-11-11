@@ -229,7 +229,7 @@ def listing(team_folder: Path) -> list[dict[str, Any]]:
     clips = []
     for path in _clip_files(folder):
         try:
-            meta = json.loads(_sidecar(path).read_text())
+            meta = json.loads(_sidecar(path).read_text(encoding='utf-8'))
             animations = meta['animations']
             joints = meta['joints']
             if not (isinstance(animations, list) and isinstance(joints, dict)):
@@ -386,7 +386,7 @@ def import_folder(team_folder: Path) -> None:
         total += len(data)
         joints: Any = None
         with contextlib.suppress(OSError, ValueError, KeyError, TypeError, AttributeError):
-            joints = json.loads(_sidecar(path).read_text()).get('joints')
+            joints = json.loads(_sidecar(path).read_text(encoding='utf-8')).get('joints')
         try:
             mapping = _check_joints(joints, found['bones'])
         except ArgumentError:

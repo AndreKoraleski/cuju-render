@@ -16,7 +16,6 @@ from __future__ import annotations
 import collections
 import contextlib
 import json
-import os
 import re
 import subprocess
 import threading
@@ -285,7 +284,7 @@ class VideoJobs:
                 encoding='utf-8',
                 errors='replace',
                 cwd=_home.process_folder(),
-                env=os.environ.copy(),
+                env=_home.process_environment(),
             )
             self._process = process
             self._entries.append(entry)

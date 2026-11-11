@@ -26,6 +26,7 @@ import contextlib
 import functools
 import gzip
 import http.server
+import importlib.util
 import io
 import json
 import mimetypes
@@ -53,6 +54,20 @@ import mock_sample
 import mock_search
 import mock_tournaments
 
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# The rules of the server's security headers, loaded from their file, so every response of the
+# mock says who may frame it as the server's does.
+_headers = _load(
+    'cuju_mock_headers',
+    Path(__file__).resolve().parents[1] / 'src' / 'cuju' / 'render' / '_http' / 'headers.py',
+)
 # The sample matches that cuju ships.
 SAMPLES = Path(__file__).resolve().parents[1] / 'src' / 'cuju' / 'render' / 'samples'
 WEB_ROOT = os.path.realpath(
@@ -400,7 +415,7 @@ def shipped_models():
     models = []
     for path in sorted(folder.glob('*.json')):
         with contextlib.suppress(OSError, ValueError):
-            description = json.loads(path.read_text())
+            description = json.loads(path.read_text(encoding='utf-8'))
             if path.with_suffix('.glb').is_file():
                 description['url'] = f'assets/models/{path.stem}.glb'
                 models.append(description)
@@ -1090,12 +1105,6 @@ PRESENTATION_TYPES = {
     '.glsl': 'text/plain',
     '.wasm': 'application/wasm',
 }
-SANDBOX_POLICY = (
-    'sandbox allow-scripts; '
-    "default-src 'none'; script-src '{hash}' blob: 'wasm-unsafe-eval'; worker-src blob:; "
-    "connect-src 'none'; img-src blob: data:; frame-ancestors 'self'; base-uri 'none'; "
-    "form-action 'none'"
-)
 
 
 def presentation_path(name):
@@ -1175,18 +1184,6 @@ def page_digests(worker):
             digests[name] = hashlib.sha256(data).hexdigest()
     filled = json.dumps(digests, sort_keys=True, separators=(',', ':')).encode()
     return worker.replace(b'const DIGESTS = null;', b'const DIGESTS = ' + filled + b';', 1)
-
-
-def sandbox_page():
-    """Returns the sandbox page of team workers and its policy, as the real server makes them."""
-    import base64
-    import hashlib
-
-    path = Path(WEB_ROOT) / 'js' / 'presentation' / 'sandbox.js'
-    script = path.read_text(encoding='utf-8')
-    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
-    page = f'<!doctype html><meta charset="utf-8"><title>sandbox</title><script>{script}</script>'
-    return page.encode(), SANDBOX_POLICY.format(hash=f'sha256-{digest}')
 
 
 @locked
@@ -2098,9 +2095,12 @@ def make_handler(requests):
         # Each answer goes out at once, as the server sends it.
         disable_nagle_algorithm = True
 
+        # How the response being written may be framed, as the server's rules say.
+        framing = _headers.DENY
+
         def end_headers(self):
-            # Every window of the server stays apart from a window of another site that opened it.
-            self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
+            for name, value in _headers.security(self.framing):
+                self.send_header(name, value)
             super().end_headers()
 
         def _tournaments(self, method):
@@ -2194,8 +2194,12 @@ def make_handler(requests):
             parts, query = self._route()
             try:
                 if parts == ['sandbox', 'presentation']:
-                    page, policy = sandbox_page()
-                    self._bytes(page, 'text/html; charset=utf-8', no_store=True, policy=policy)
+                    page, policy = _headers.sandbox_page(Path(WEB_ROOT))
+                    self.framing = _headers.OWN
+                    try:
+                        self._bytes(page, 'text/html; charset=utf-8', no_store=True, policy=policy)
+                    finally:
+                        self.framing = _headers.DENY
                 elif parts == ['feed']:
                     self._static(['feed.html'])
                 elif parts == ['api', 'feed']:
@@ -2536,7 +2540,12 @@ def make_handler(requests):
             if parts == ['sw.js']:
                 self._bytes(page_digests(data), kind, no_store=True)
                 return
-            self._bytes(data, kind or 'application/octet-stream')
+            relative = '/'.join(parts) if parts else 'index.html'
+            self.framing = _headers.framing(relative, self._route()[1], None)
+            try:
+                self._bytes(data, kind or 'application/octet-stream')
+            finally:
+                self.framing = _headers.DENY
 
         def _image(self, identifier, slot):
             found = image(identifier, slot)

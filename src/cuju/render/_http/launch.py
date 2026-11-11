@@ -39,6 +39,7 @@ from cuju.errors import ArgumentError, Error
 from .._format import recording as _recording
 from .._store import home as _home
 from .._store import library as _library
+from . import headers as _headers
 
 # The file of the home folder that names the running server.
 SERVER_FILE = 'server.json'
@@ -50,24 +51,8 @@ DEFAULT_PORT = 8780
 # of a virtual environment on Windows runs the server in a process of its own beneath the one that
 # `start` made, so the process number alone does not tell the server that a call started.
 STARTER_VARIABLE = 'CUJU_RENDER_STARTER'
-# The pages that may frame the viewer once they hold the key of its server, the notebooks of
-# Jupyter on this machine or behind a forwarded port, of VS Code and of Google Colab.
-FRAME_ANCESTORS = ' '.join(
-    [
-        "'self'",
-        'http://localhost:*',
-        'http://127.0.0.1:*',
-        'http://[::1]:*',
-        'https://localhost:*',
-        'https://127.0.0.1:*',
-        'https://colab.research.google.com',
-        'https://*.googleusercontent.com',
-        'https://*.colab.dev',
-        'https://*.vscode-cdn.net',
-        'vscode-webview:',
-        'vscode-file:',
-    ]
-)
+# The pages that may frame the viewer once they hold the key of its server, as `headers` names them.
+FRAME_ANCESTORS = _headers.FRAME_ANCESTORS
 # The domains of the port proxy of Google Colab, whose names resolve to Google's servers alone.
 COLAB_DOMAINS = ('.googleusercontent.com', '.colab.dev')
 # The numbers of an address in use, on POSIX and on Windows, where 10013 also marks a port that the
@@ -197,7 +182,7 @@ def announce(port: int, key: str) -> Path:
     starter = os.environ.get(STARTER_VARIABLE)
     if starter:
         entry['starter'] = starter
-    temporary.write_text(json.dumps(entry))
+    temporary.write_text(json.dumps(entry), encoding='utf-8')
     temporary.replace(path)
     return path
 
@@ -205,7 +190,7 @@ def announce(port: int, key: str) -> Path:
 def withdraw(path: Path) -> None:
     """Removes the file of a stopping server, unless a later server has written its own."""
     with contextlib.suppress(OSError, ValueError):
-        if json.loads(path.read_text()).get('pid') == os.getpid():
+        if json.loads(path.read_text(encoding='utf-8')).get('pid') == os.getpid():
             path.unlink()
 
 
@@ -232,7 +217,7 @@ def running() -> Server | None:
 
     path = _home.home() / SERVER_FILE
     try:
-        entry = json.loads(path.read_text())
+        entry = json.loads(path.read_text(encoding='utf-8'))
         port, pid, key = entry['port'], entry['pid'], entry['key']
     except (OSError, ValueError, TypeError, KeyError):
         return None
@@ -335,7 +320,7 @@ def start(port: int | None = None, stay: bool = False, colab: bool = False) -> S
         command += ['--parent', str(os.getpid())]
     if colab:
         command.append('--colab')
-    environment = os.environ.copy()
+    environment = _home.process_environment()
     paths = [_package_path(), *filter(None, environment.get('PYTHONPATH', '').split(os.pathsep))]
     environment['PYTHONPATH'] = os.pathsep.join(dict.fromkeys(paths))
     starter = secrets.token_hex(8)
@@ -372,14 +357,16 @@ def start(port: int | None = None, stay: bool = False, colab: bool = False) -> S
     _stop(process)
     tail = ''
     with contextlib.suppress(OSError):
-        tail = log.read_text(errors='replace').strip().splitlines()[-1]
+        tail = log.read_text(encoding='utf-8', errors='replace').strip().splitlines()[-1]
     raise Error('the renderer server did not start' + (f', {tail}' if tail else f', see {log}'))
 
 
 def _starter() -> str | None:
     """Returns the starter that the server file of the home folder names, or `None`."""
     with contextlib.suppress(OSError, ValueError, AttributeError):
-        starter = json.loads((_home.home() / SERVER_FILE).read_text()).get('starter')
+        starter = json.loads((_home.home() / SERVER_FILE).read_text(encoding='utf-8')).get(
+            'starter'
+        )
         return starter if isinstance(starter, str) else None
     return None
 

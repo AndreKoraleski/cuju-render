@@ -133,7 +133,7 @@ def debugging_port(profile, port):
     path = Path(profile) / 'DevToolsActivePort'
     for _ in range(150):
         with contextlib.suppress(OSError, ValueError, IndexError):
-            return int(path.read_text().splitlines()[0])
+            return int(path.read_text(encoding='utf-8').splitlines()[0])
         time.sleep(0.2)
     raise RuntimeError('Chrome startup failed.')
 
@@ -619,7 +619,7 @@ def tournament_checks(client):
             const page = cuju.tournaments;
             const main = () => page.mainHost;
             const button = (text) => [...main().querySelectorAll('button')]
-                .find((b) => b.textContent.trim() === text);
+                .find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === text);
             const team = await fetch('/api/teams?name=Derby%20FC&filename=main.py&format=11v11', {
                 method: 'POST', body: 'def agent(obs):\\n    return [0]\\n',
             }).then((r) => r.json());

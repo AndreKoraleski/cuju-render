@@ -141,7 +141,7 @@ def test_live_environment_switch_waits_for_step_and_resets_history(render_home):
         assert list(source._serials) == [0]
         # The stream of the last environment ended, without frames of the new one.
         assert viewer.frames.get_nowait() is None and viewer not in source._viewers
-        announcement = json.loads(source._announcement.read_text())
+        announcement = json.loads(source._announcement.read_text(encoding='utf-8'))
         assert announcement['environment'] == 1 and announcement['generation'] == 1
         assert announcement['environment_count'] == 2
         header = _recording._parse_header(io.BytesIO(source._header(True)))

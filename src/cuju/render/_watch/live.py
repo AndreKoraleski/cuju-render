@@ -232,7 +232,8 @@ class LiveSource:
                         'port': self.port,
                         'pid': os.getpid(),
                     }
-                )
+                ),
+                encoding='utf-8',
             )
             temporary.replace(self._announcement)
         except OSError:

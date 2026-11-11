@@ -40,6 +40,15 @@ def python_command() -> list[str]:
     return [sys.executable, '-P'] if sys.version_info >= (3, 11) else [sys.executable]
 
 
+def process_environment() -> dict[str, str]:
+    """Returns the environment of a Python process that the renderer starts.
+
+    The process reads and writes its pipes in UTF-8, the encoding the renderer reads and writes
+    them in, whatever the code page of the system.
+    """
+    return {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
+
+
 def process_folder() -> Path:
     """Returns the working folder of a Python process that the renderer starts, made when missing.
 

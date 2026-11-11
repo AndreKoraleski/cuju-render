@@ -162,12 +162,14 @@ def desktop_entry(command: list[str], icon_path: Path, comments: dict[str, str])
 def write_shortcut(link: Path, command: list[str], icon_path: Path, folder: Path) -> None:
     """Writes a shortcut of Windows through the shell of Windows itself, WScript.Shell.
 
-    The values go to PowerShell as variables of its environment, so no quoting reaches its script.
+    The values go to PowerShell as variables of its environment, so no quoting reaches its script,
+    and PowerShell writes its errors in UTF-8, the encoding they are read in.
     """
     script = (
-        '$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:CUJU_LINK); '
+        '[Console]::OutputEncoding = [Text.Encoding]::UTF8; '
+        '$s =(New-Object -ComObject WScript.Shell).CreateShortcut($env:CUJU_LINK); '
         '$s.TargetPath = $env:CUJU_TARGET; $s.Arguments = $env:CUJU_ARGUMENTS; '
-        '$s.WorkingDirectory = $env:CUJU_FOLDER; $s.IconLocation = $env:CUJU_ICON + \',0\'; '
+        "$s.WorkingDirectory = $env:CUJU_FOLDER; $s.IconLocation = $env:CUJU_ICON + ',0'; "
         '$s.Description = $env:CUJU_COMMENT; $s.Save()'
     )
     root = os.environ.get('SystemRoot', r'C:\Windows')
@@ -187,6 +189,8 @@ def write_shortcut(link: Path, command: list[str], icon_path: Path, folder: Path
         env=environment,
         capture_output=True,
         text=True,
+        encoding='utf-8',
+        errors='replace',
         timeout=60,
         creationflags=0x08000000 if sys.platform == 'win32' else 0,
     )
@@ -202,7 +206,7 @@ def _record_path(home: Path) -> Path:
 def installed_paths(home: Path) -> list[Path]:
     """Returns what an earlier install made, from `launchers.json` of the home folder."""
     try:
-        entry = json.loads(_record_path(home).read_text())
+        entry = json.loads(_record_path(home).read_text(encoding='utf-8'))
         return [Path(path) for path in entry['created'] if isinstance(path, str)]
     except (OSError, ValueError, TypeError, KeyError):
         return []
@@ -287,7 +291,9 @@ def install(
         target.write_text(desktop_entry(command, icon_path, _comments()), encoding='utf-8')
         target.chmod(0o755)
         made.append(target)
-    _record_path(home).write_text(json.dumps({'created': [str(path) for path in made]}, indent=1))
+    _record_path(home).write_text(
+        json.dumps({'created': [str(path) for path in made]}, indent=1), encoding='utf-8'
+    )
     return made
 
 
@@ -314,7 +320,11 @@ def _write_bundle(bundle: Path, command: list[str]) -> list[Path]:
     with (contents / 'Info.plist').open('wb') as stream:
         plistlib.dump(info, stream)
     program = contents / 'MacOS' / NAME
-    program.write_text('#!/bin/sh\nexec ' + ' '.join(map(shlex.quote, command)) + '\n')
+    program.write_text(
+        '#!/bin/sh\nexec ' + ' '.join(map(shlex.quote, command)) + '\n',
+        encoding='utf-8',
+        newline='\n',
+    )
     program.chmod(0o755)
     (contents / 'Resources' / f'{NAME}.icns').write_bytes(icns(_window.icon(512).read_bytes()))
     return [bundle]

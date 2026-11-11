@@ -62,15 +62,17 @@ def test_presentation_developer_mode_reads_a_trusted_folder(render_home, tmp_pat
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
     settings = render_home / _presentation.DEVELOPER_FILE
-    settings.write_text(json.dumps({'presentation': {team['id']: 'relative/folder'}}))
+    settings.write_text(
+        json.dumps({'presentation': {team['id']: 'relative/folder'}}), encoding='utf-8'
+    )
     assert _presentation.served(team['id'])['developer'] is False
-    settings.write_text(json.dumps({'presentation': {team['id']: str(folder)}}))
+    settings.write_text(json.dumps({'presentation': {team['id']: str(folder)}}), encoding='utf-8')
     served = _presentation.served(team['id'])
     assert served['developer'] is True and served['manifest']['name'] == 'Test package'
     manifest = folder / 'presentation' / 'presentation.json'
-    document = json.loads(manifest.read_text())
+    document = json.loads(manifest.read_text(encoding='utf-8'))
     document['name'] = 'Edited'
-    manifest.write_text(json.dumps(document))
+    manifest.write_text(json.dumps(document), encoding='utf-8')
     assert _presentation.served(team['id'])['manifest']['name'] == 'Edited'
     assert _presentation.file_path(team['id'], 'worker.js') == folder / 'presentation/worker.js'
     # Developer mode imports its modules by their address, so every module goes out as JavaScript.
@@ -461,7 +463,9 @@ def test_pack_command_line(tmp_path, capsys):
         'loudness',
     }
     shader = folder / 'cuju-team/presentation/shaders/glow.glsl'
-    shader.write_text('uniform float level;\n' + shader.read_text())
+    shader.write_text(
+        'uniform float level;\n' + shader.read_text(encoding='utf-8'), encoding='utf-8'
+    )
     assert main(['pack', 'check', str(folder), '--json']) == 1
     printed = json.loads(capsys.readouterr().out)
     assert printed['ok'] is False
@@ -590,8 +594,12 @@ def test_presentation_contract_1_1_sections_are_checked(render_home):
 def test_presentation_contract_1_1_refuses_bad_parts(tmp_path, changes, message):
     from cuju.render._packages import presentation as _presentation
 
-    (tmp_path / 'bad.glsl').write_text('vec4 cujuColor(vec4 c, vec2 uv) { while (true) {} }')
-    (tmp_path / 'ok.glsl').write_text('vec4 cujuColor(vec4 c, vec2 uv) { return c; }')
+    (tmp_path / 'bad.glsl').write_text(
+        'vec4 cujuColor(vec4 c, vec2 uv) { while (true) {} }', encoding='utf-8'
+    )
+    (tmp_path / 'ok.glsl').write_text(
+        'vec4 cujuColor(vec4 c, vec2 uv) { return c; }', encoding='utf-8'
+    )
     assets = {
         'shaders/bad.glsl': str(tmp_path / 'bad.glsl'),
         'shaders/ok.glsl': str(tmp_path / 'ok.glsl'),
@@ -696,7 +704,7 @@ def test_pack_check_names_what_it_finds(tmp_path):
         ),
         'shader': (
             lambda p, m: (p / 'shaders/glow.glsl').write_text(
-                'vec3 cujuEmissive(vec3 e, vec2 uv) { return e + ; }\n'
+                'vec3 cujuEmissive(vec3 e, vec2 uv) { return e + ; }\n', encoding='utf-8'
             ),
             'shaders/glow.glsl of mode chunks line 1 holds the operator + with nothing after it',
         ),
@@ -716,7 +724,7 @@ def test_pack_check_names_what_it_finds(tmp_path):
     # The manifest itself is a path the check reads, and a file of another kind says so.
     plain = _template_variant(tmp_path, 'plain', lambda p, m: None)
     assert _pack.check(plain / 'cuju-team/presentation/presentation.json')['ok']
-    (tmp_path / 'notes.txt').write_text('hello')
+    (tmp_path / 'notes.txt').write_text('hello', encoding='utf-8')
     with pytest.raises(cuju.errors.ArgumentError, match=r'presentation.json or a .zip export'):
         _pack.check(tmp_path / 'notes.txt')
     # A sample shorter than one block of 400 ms says why its integrated loudness reads higher.
@@ -733,7 +741,9 @@ def test_pack_check_parses_the_worker_with_node(tmp_path):
     folder = _template_variant(
         tmp_path,
         'worker',
-        lambda p, m: (p / 'worker.js').write_text('export function frame(f) { return { ; }\n'),
+        lambda p, m: (p / 'worker.js').write_text(
+            'export function frame(f) { return { ; }\n', encoding='utf-8'
+        ),
     )
     result = _pack.check(folder)
     if shutil.which('node') is None:
@@ -798,8 +808,10 @@ def test_pack_examples_agree_and_spell_color():
 
     from cuju.render._packages import pack as _pack
 
-    docs = (Path(__file__).resolve().parents[1] / 'docs/presentation.md').read_text()
-    tests = (Path(__file__).resolve().parent / 'support' / 'package.py').read_text()
+    docs = (Path(__file__).resolve().parents[1] / 'docs/presentation.md').read_text(
+        encoding='utf-8'
+    )
+    tests = (Path(__file__).resolve().parent / 'support' / 'package.py').read_text(encoding='utf-8')
     assert 'the test package in\n`tests/support/team` is the full example' in docs
     assert 'full example' in tests and 'small test package' not in tests
     assert 'colour' not in _pack._GLOW and 'color' in _pack._GLOW

@@ -58,7 +58,7 @@ def _ids() -> list[str]:
 def page_progress() -> dict[str, Any]:
     """Returns the lessons that pages reported done, with the time of each report."""
     try:
-        stored = json.loads((_home.home() / _PROGRESS).read_text())
+        stored = json.loads((_home.home() / _PROGRESS).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
     known = set(_ids())
@@ -75,7 +75,7 @@ def _keep(progress: dict[str, Any]) -> None:
     path = _home.home() / _PROGRESS
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.part')
-    temporary.write_text(json.dumps({'page': progress}))
+    temporary.write_text(json.dumps({'page': progress}), encoding='utf-8')
     temporary.replace(path)
 
 
