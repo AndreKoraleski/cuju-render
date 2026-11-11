@@ -1,0 +1,8 @@
+build/
+# The renderer ships three.js from its own build folder.
+!src/cuju/render/web/vendor/three/build/
+dist/
+wheelhouse/
+*.egg-info/
+__pycache__/
+.venv/

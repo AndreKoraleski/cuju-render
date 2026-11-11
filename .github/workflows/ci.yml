@@ -1,0 +1,117 @@
+# Copyright 2026 The cuju Authors
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci
+
+on:
+    push:
+    pull_request:
+    # Every Monday, so that a change of cuju that touches the renderer shows within a week.
+    schedule:
+        - cron: '17 4 * * 1'
+
+# The jobs read the repository and change nothing.
+permissions:
+    contents: read
+
+jobs:
+    # The Python tests against the released cuju and against cuju's main branch.
+    python:
+        name: python ${{ matrix.os }} cuju ${{ matrix.cuju }}
+        runs-on: ${{ matrix.os }}
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: ubuntu-24.04
+                      cuju: release
+                    - os: ubuntu-24.04
+                      cuju: main
+                    - os: windows-2022
+                      cuju: release
+                    - os: macos-15
+                      cuju: release
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: '3.12'
+            - name: Install PyTorch for the CPU
+              run: |
+                  if [ "$RUNNER_OS" = macOS ]; then pip install torch
+                  else pip install torch --index-url https://download.pytorch.org/whl/cpu; fi
+            - name: Install the released cuju
+              if: matrix.cuju == 'release'
+              run: pip install 'cuju>=0.2.1'
+            - name: Build and install cuju's main branch with the CPU backend
+              if: matrix.cuju == 'main'
+              run: |
+                  CMAKE_ARGS=-DCUJU_CUDA=OFF \
+                      pip install 'cuju @ git+https://github.com/AndreKoraleski/cuju@main'
+            # Against main, the renderer installs without its requirements, so pip keeps main's cuju
+            # whatever its version, and the job fails if anything replaced it.
+            - name: Install the renderer
+              run: |
+                  if [ '${{ matrix.cuju }}' = main ]; then
+                      main=$(cd "$RUNNER_TEMP" && python -I -c 'import cuju; print(cuju.__version__)')
+                      pip install --no-deps . && pip install 'pytest>=8' ruff
+                      now=$(cd "$RUNNER_TEMP" && python -I -c 'import cuju; print(cuju.__version__)')
+                      echo "cuju of main $main, installed $now"
+                      test "$main" = "$now"
+                  else
+                      pip install '.[test]' ruff
+                  fi
+            - name: Lint
+              if: matrix.cuju == 'release' && runner.os == 'Linux'
+              run: |
+                  ruff check src tests ci
+                  ruff format --check src tests ci
+            - name: Tests
+              run: pytest tests
+
+    # The logic of the page, on a pinned Node of the current long term support line.
+    page:
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: '24.11.0'
+            - name: Module syntax of every script of the page
+              run: |
+                  find src/cuju/render/web/js -name '*.js' | sort | while read -r file; do
+                      node --input-type=module --check < "$file" || { echo "$file"; exit 1; }
+                  done
+            - name: Page tests
+              run: |
+                  node --version
+                  for test in tests/web/*.mjs; do
+                      node "$test" || exit 1
+                  done
+
+    # The page in the runner's own headless Chrome against the mock server with sound muted, and
+    # two seconds of video exported from a sample match, which must not be skipped here.
+    browser:
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: '3.12'
+            - name: Install ffmpeg
+              run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+            - name: Install PyTorch for the CPU
+              run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+            - name: Install cuju and the renderer
+              run: pip install 'cuju>=0.2.1' '.[test]'
+            - name: Check the page
+              run: |
+                  google-chrome --version
+                  python ci/page_check.py
+            - name: Export a video
+              run: pytest tests/test_video.py
+              env:
+                  CUJU_VIDEO_REQUIRED: '1'

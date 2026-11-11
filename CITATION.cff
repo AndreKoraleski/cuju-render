@@ -1,0 +1,64 @@
+cff-version: 1.2.0
+message: If you use cuju-render in your research, please cite cuju and Google Research Football.
+title: "cuju-render: the browser renderer of cuju"
+type: software
+authors:
+    - family-names: Koraleski
+      given-names: André
+version: 0.1.0
+date-released: "2026-11-11"
+license:
+    - Apache-2.0
+    - MIT
+    - CC0-1.0
+    - Unlicense
+    - CC-BY-4.0
+url: https://github.com/AndreKoraleski/cuju-render
+repository-code: https://github.com/AndreKoraleski/cuju-render
+abstract: >-
+    cuju-render shows the matches of cuju, a bit-exact, batched reimplementation of Google Research
+    Football, in a browser in three dimensions with sound, saved and live, and leaves every output
+    of the batch as it would be unwatched.
+keywords:
+    - reinforcement learning
+    - google research football
+    - visualization
+references:
+    - type: software
+      title: "cuju: a bit-exact, batched reimplementation of Google Research Football, for CUDA and CPU"
+      authors:
+          - family-names: Koraleski
+            given-names: André
+      url: https://github.com/AndreKoraleski/cuju
+    - type: conference-paper
+      title: "Google Research Football: A Novel Reinforcement Learning Environment"
+      authors:
+          - family-names: Kurach
+            given-names: Karol
+          - family-names: Raichuk
+            given-names: Anton
+          - family-names: Stańczyk
+            given-names: Piotr
+          - family-names: Zając
+            given-names: Michał
+          - family-names: Bachem
+            given-names: Olivier
+          - family-names: Espeholt
+            given-names: Lasse
+          - family-names: Riquelme
+            given-names: Carlos
+          - family-names: Vincent
+            given-names: Damien
+          - family-names: Michalski
+            given-names: Marcin
+          - family-names: Bousquet
+            given-names: Olivier
+          - family-names: Gelly
+            given-names: Sylvain
+      collection-title: Proceedings of the AAAI Conference on Artificial Intelligence
+      volume: 34
+      issue: 4
+      start: 4501
+      end: 4510
+      year: 2020
+      doi: 10.1609/aaai.v34i04.5878

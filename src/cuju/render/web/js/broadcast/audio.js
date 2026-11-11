@@ -38,7 +38,7 @@ export const SOUND_FILES = [
     'gulls', 'city-horn', 'city-siren', 'space-beep', 'space-radio', 'space-hum',
     'neon-sting', 'beach-wave-1', 'beach-wave-2', 'beach-wave-3', 'beach-wave-4',
 ];
-// The recorded waves, of which each breaking wave plays one at random when any is present.
+// The sampled waves, of which each breaking wave plays one at random when any is present.
 const BEACH_WAVES = ['beach-wave-1', 'beach-wave-2', 'beach-wave-3', 'beach-wave-4'];
 // The gain of each arena file at its level from loading, so it plays no louder than the sound
 // it replaces. The shipped files were measured offline at the output of the page against their
@@ -1221,9 +1221,9 @@ export class Sound {
     // One wave, a low roar that brightens as it curls and breaks, then the fizz of foam running
     // back down the sand.
     wave(s) {
-        const recorded = BEACH_WAVES.filter((n) => this.files.has(n));
-        if (recorded.length) {
-            const name = recorded[Math.floor(Math.random() * recorded.length)];
+        const sampled = BEACH_WAVES.filter((n) => this.files.has(n));
+        if (sampled.length) {
+            const name = sampled[Math.floor(Math.random() * sampled.length)];
             if (this.arenaFile(s, name, 0.8, 0.3, { rate: 0.92 + Math.random() * 0.16, pan: Math.random() * 1.2 - 0.6 })) {
                 return;
             }

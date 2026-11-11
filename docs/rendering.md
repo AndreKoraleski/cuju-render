@@ -5,7 +5,8 @@ players, the ball, the pitch and the crowd drawn from the art of Google Research
 and from free characters, and with sound mixed in the browser. It watches two kinds of source. A
 **recording** is a match saved to a file, which the page plays at any speed, forwards and backwards,
 and a **live source** is one environment of a running batch, which the page shows while the batch
-plays. The renderer ships in the package as the module `cuju.render`. Its server needs only Python's
+plays. The renderer is the package cuju-render, which installs beside cuju with
+`pip install 'cuju[render]'` and adds the module `cuju.render`. Its server needs only Python's
 standard library beside cuju's own dependencies, and its page runs in the browser.
 
 The viewer reads states. Watching a match therefore leaves every observation, reward, done flag and
@@ -159,7 +160,7 @@ every joint
 of every player, the position and rotation of the ball, the score, the clock, the game mode, the
 owner of the ball, and the action and touches of every player. `cuju.render.Recorder` captures one
 environment of a batch and saves one recording per episode into the library. The recorder is a
-[step observer](api.md#step-observers) of its batch, so from its creation on it captures every
+[step observer][cuju-api-step-observers] of its batch, so from its creation on it captures every
 reset of its environment and every step by itself, and saves a recording when an episode ends.
 The training loop stays as it was.
 
@@ -309,7 +310,7 @@ A live source streams one environment of a running batch to the page. The enviro
 another environment, the call `cuju.render.watch` gives one batch a source from code, and
 `cuju.render.show` gives one and opens the page on it. Every
 batch that cuju creates while the variable is set calls `cuju.render.on_batch_created`, which
-gives it a source, and either way the source joins the [step observers](api.md#step-observers) of
+gives it a source, and either way the source joins the [step observers][cuju-api-step-observers] of
 its batch.
 
 ```python
@@ -1926,7 +1927,7 @@ source in OBS sets the pace of the display, and a feed at the same rate draws ev
 ### Addresses for scripts and agents
 
 `cuju render feed` prints the address of a feed for the server of the renderer's folder, which
-suits a script that sets up OBS or an agent that hands the address on. Without a source it lists
+suits a script that sets up OBS or an agent that hands the address on. Run with no source, it lists
 every source that a feed may follow, the five kinds and each live source and tournament of the
 running server, with the address of each. A live source shows as `live:TITLE`, which follows it
 through its restarts, and a source without a title by its identifier. A recording that the library
@@ -3887,9 +3888,9 @@ the option `--home`.
 
 A command run with `--json` prints its error as JSON on standard output alone when it fails, an
 object of `error`, the English text, and `error_id` and `error_values`, the message and its values
-when the error carries one and `null` otherwise, so a script reads one answer whatever happens.
-A failure exits with status 1, and arguments that do not fit exit with status 2. Without `--json`
-the error goes to standard error as one line.
+when the error carries one and `null` otherwise, so a script reads one answer whatever happens. A
+failure exits with status 1, and arguments that do not fit exit with status 2. When the command
+prints text, the error goes to standard error as one line.
 
 In Python, the errors of the renderer read as the public classes they belong to, such as
 `cuju.errors.ArgumentError` and `cuju.render.PolicyError`, and `dir(cuju.render)` lists the names
@@ -3933,6 +3934,12 @@ then open through the tunnel.
 ## See also
 
 - [Team presentation packages](presentation.md), the contract of a team's own presentation
-- [States](states.md), the state format that the renderer reads, and the module `cuju.state`
-- [Recipes](recipes.md), the Kaggle competition and the training loops that a recorder joins
-- [API reference](api.md), the reference of `cuju.render` and `cuju.state`
+- [States][cuju-states], the state format that the renderer reads, and the module `cuju.state`
+- [Recipes][cuju-recipes], the Kaggle competition and the training loops that a recorder joins
+- [Python reference](reference.md), the reference of `cuju.render`
+- [cuju's API reference][cuju-api], the batch, its step observers and `cuju.state`
+
+[cuju-api-step-observers]: https://github.com/AndreKoraleski/cuju/blob/main/docs/api.md#step-observers
+[cuju-states]: https://github.com/AndreKoraleski/cuju/blob/main/docs/states.md
+[cuju-recipes]: https://github.com/AndreKoraleski/cuju/blob/main/docs/recipes.md
+[cuju-api]: https://github.com/AndreKoraleski/cuju/blob/main/docs/api.md

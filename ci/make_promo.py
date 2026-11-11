@@ -8,9 +8,11 @@ It serves the web folder with mock_server.py and a folder of real recordings, op
 page in headless Chrome with the capture parameter, which steps the page by one frame at a time,
 captures each scene of the storyboard losslessly frame by frame at 60 frames per second, composes
 the grid of matches from tile clips, joins the scenes with cuts and dissolves on the beats of the
-music into a near lossless master in the work folder, and encodes docs/assets/cuju-montage.mp4,
-the poster, the teaser and the smaller copy that the Home page shows from that master, with the
-music. The option --tempo prints the beat that the storyboard's lengths follow.
+music into a near lossless master in the work folder, and encodes cuju-montage.mp4, its poster
+and the teaser into the folder of --docs, by default docs in the work folder, which cuju's README
+shows from its own docs/assets, and the smaller copy and the poster that the Home page shows into
+the page's assets, all from that master, with the music. The option --tempo prints the beat that
+the storyboard's lengths follow.
 
 Run it as python ci/make_promo.py --recordings DIR --music FILE, where DIR holds full matches
 of 11_vs_11_easy_stochastic_l0_r0 saved by cuju.render.Recorder and FILE is the song. The option
@@ -601,7 +603,7 @@ def grid(scene, work):
         reader.wait()
 
 
-def assemble(board, work, music):
+def assemble(board, work, music, docs):
     scenes = [s for s in board['scenes'] if not s.get('tile')]
     for s in scenes:
         if s.get('kind') == 'grid':
@@ -673,7 +675,8 @@ def assemble(board, work, music):
     )
     gain = board['music_peak'] - peak(work / 'music-raw.wav', 'anull')
     ffmpeg('-i', str(work / 'music-raw.wav'), '-af', f'volume={gain:.2f}dB', str(audio))
-    out = ROOT / 'docs' / 'assets' / 'cuju-montage.mp4'
+    docs.mkdir(parents=True, exist_ok=True)
+    out = docs / 'cuju-montage.mp4'
     web = ROOT / 'src' / 'cuju' / 'render' / 'web' / 'assets'
     for target, size, rate, video, sound in (
         (out, '1920:1080', FPS, board['video_kbps'], 192),
@@ -752,9 +755,9 @@ def assemble(board, work, music):
         '1',
         '-q:v',
         '2',
-        str(ROOT / 'docs' / 'assets' / 'cuju-montage-poster.jpg'),
+        str(docs / 'cuju-montage-poster.jpg'),
     )
-    shutil.copyfile(ROOT / 'docs' / 'assets' / 'cuju-montage-poster.jpg', web / 'promo-poster.jpg')
+    shutil.copyfile(docs / 'cuju-montage-poster.jpg', web / 'promo-poster.jpg')
     teaser = board['teaser']
     parts = []
     for index, (name, offset, seconds) in enumerate(teaser['shots']):
@@ -783,10 +786,10 @@ def assemble(board, work, music):
         '-loop',
         '0',
         '-an',
-        str(ROOT / 'docs' / 'assets' / 'cuju-teaser.webp'),
+        str(docs / 'cuju-teaser.webp'),
     )
-    for path in (out, web / 'promo.mp4', ROOT / 'docs' / 'assets' / 'cuju-teaser.webp'):
-        print(f'{path.relative_to(ROOT)}, {path.stat().st_size / 1e6:.2f} MB', flush=True)
+    for path in (out, web / 'promo.mp4', docs / 'cuju-teaser.webp'):
+        print(f'{path}, {path.stat().st_size / 1e6:.2f} MB', flush=True)
 
 
 def main():
@@ -794,6 +797,7 @@ def main():
     parser.add_argument('--recordings', help='a folder of full matches as .cjr files')
     parser.add_argument('--music', help='the song, looped and faded to the length of the video')
     parser.add_argument('--work', default=str(Path(tempfile.gettempdir()) / 'cuju-promo'))
+    parser.add_argument('--docs', help='the folder of the montage, its poster and the teaser')
     parser.add_argument('--port', type=int, default=8790, help='the server, Chrome takes the next')
     parser.add_argument('--only', help='names of scenes to capture again, joined by commas')
     parser.add_argument('--assemble', action='store_true', help='build from captured scenes')
@@ -830,7 +834,7 @@ def main():
         finally:
             browser.stop()
     if args.music and (args.assemble or not args.only):
-        assemble(board, work, args.music)
+        assemble(board, work, args.music, Path(args.docs) if args.docs else work / 'docs')
 
 
 if __name__ == '__main__':

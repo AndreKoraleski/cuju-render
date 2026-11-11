@@ -1,0 +1,90 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cuju-render"
+# The version is `__version__` in `src/cuju/render/_version.py`.
+dynamic = ["version"]
+description = "The browser renderer of cuju, saved and live matches of Google Research Football in 3D with sound"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0 AND MIT AND CC0-1.0 AND Unlicense AND CC-BY-4.0"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+authors = [{ name = "André Koraleski" }]
+keywords = [
+    "gfootball",
+    "google-research-football",
+    "football",
+    "reinforcement-learning",
+    "visualization",
+    "three.js",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: JavaScript",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Games/Entertainment :: Simulation",
+]
+# cuju before 0.2.1 ships its own `cuju/render`, and the range keeps pip from mixing the two. It
+# also makes pip install cuju before the renderer, whose files then land in cuju's folder.
+dependencies = ["cuju>=0.2.1,<0.3"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/AndreKoraleski/cuju-render"
+Documentation = "https://github.com/AndreKoraleski/cuju-render/blob/main/docs/rendering.md"
+Issues = "https://github.com/AndreKoraleski/cuju-render/issues"
+Changelog = "https://github.com/AndreKoraleski/cuju-render/blob/main/CHANGELOG.md"
+cuju = "https://github.com/AndreKoraleski/cuju"
+
+[tool.hatch.version]
+path = "src/cuju/render/_version.py"
+
+# The wheel holds `cuju/render/` alone and never `cuju/__init__.py`, which is cuju's.
+[tool.hatch.build.targets.wheel]
+packages = ["src/cuju"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/ci",
+    "/docs",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/CITATION.cff",
+    "/LICENSE",
+    "/NOTICE",
+    "/LICENSES",
+]
+
+[tool.ruff]
+line-length = 100
+# `cuju` and the shared fixtures of `tests` import as first-party code.
+src = ["src", "tests"]
+indent-width = 4
+target-version = "py310"
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "N", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cuju", "conftest", "support"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

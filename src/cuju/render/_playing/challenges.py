@@ -18,7 +18,7 @@ keeps no recordings scores the same frames and then leaves the library as it was
 ends before its episode does counts its goals against and no goals for, so quitting never helps.
 A full run reaches the leaderboard of its challenge, a JSON file in the folder `challenges` of the
 renderer's home that keeps the best run of each competitor, and a run of fewer attempts is
-practice, scored and recorded but kept off the leaderboard.
+practice, scored and kept as recordings but off the leaderboard.
 
 The server hands its routes under `/api/challenges` to `get`, `post` and `delete`, and plays the
 headless runs that the page asks for in a child process each,

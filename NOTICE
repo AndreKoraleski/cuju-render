@@ -1,0 +1,34 @@
+cuju-render
+Copyright 2026 The cuju Authors (the contributors in the git history).
+Files without a license header are licensed under the Apache License 2.0, except the copies of
+cuju's logo and montage, src/cuju/render/web/assets/cuju-logo.png, cuju-logo-384.png, promo.mp4
+and promo-poster.jpg, and the icons of the installable page drawn from that logo by
+ci/make_app_icons.py, web/assets/icons/cuju-192.png, cuju-512.png and cuju-maskable-512.png,
+which are licensed under Creative Commons Attribution 4.0 International (CC BY 4.0). That license grants no right to use the name or the logo of cuju to suggest
+endorsement. The music of the montage is "Upbeat loop" by mistermender,
+https://freesound.org/s/512340/, CC0 1.0, looped to the length of the montage with a fade at the
+end.
+
+cuju-render is the renderer of cuju, which reimplements Google Research Football
+(https://github.com/google-research/football), Copyright 2019 Google LLC, Apache License 2.0.
+cuju is not affiliated with or endorsed by Google.
+
+The renderer in src/cuju/render ships three.js (MIT, Copyright 2010-2026 three.js authors) and
+Fabric.js (MIT, Copyright 2008-2015 Printio, Juriy Zaytsev and Maxim Chernyak), each with its
+license beside it in web/vendor. Every asset that web/assets/manifest.json lists, the player, ball,
+goal, kits, pitch, grass, crowd and advertising boards among them, is converted from the media of
+Gameplay Football as Google Research Football ships it, dedicated to the public domain. The
+player models in web/assets/models come from KayKit Character Packs Skeletons 1.1 and Adventurers
+2.0, and the clips in web/assets/animations and the mannequin from KayKit Character Animations 1.1,
+all by Kay Lousberg (www.kaylousberg.com), under Creative Commons Zero 1.0. The sounds in
+web/assets/sounds are cut from Kenney's Sci-Fi Sounds 1.0 and Digital Audio (www.kenney.nl), from
+recordings on Freesound, Wikimedia Commons, OpenGameArt and BigSoundBank dedicated under Creative
+Commons Zero 1.0, and from works in the public domain by NASA, the National Park Service and
+contributors to Wikimedia Commons. sounds.json beside them names the author, the source and the
+license of each file.
+
+The six training scenarios in the renderer are adapted from GRF_MARL by Light-MALib,
+https://github.com/jidiai/GRF_MARL, under the Apache License Version 2.0. They are modified from
+Google Research Football, Copyright 2019 Google LLC, also under the Apache License Version 2.0.
+
+License texts: LICENSE and LICENSES/.

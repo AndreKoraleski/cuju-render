@@ -1,0 +1,180 @@
+# Copyright 2026 The cuju Authors
+# SPDX-License-Identifier: Apache-2.0
+
+name: release
+
+# A tag or a dispatch builds and checks the sdist and the wheel. Only a dispatch with `publish`
+# set, run on a tag `v<version>` that names the version of `_version.py`, publishes them, through
+# PyPI's trusted publishing and the `pypi` environment's approval.
+on:
+    push:
+        tags: ['v*']
+    workflow_dispatch:
+        inputs:
+            publish:
+                description: Publish the sdist and the wheel to PyPI
+                type: boolean
+                default: false
+
+# The jobs read the repository, and publishing alone also asks for the token of trusted publishing.
+permissions:
+    contents: read
+
+jobs:
+    # The sdist and the wheel, built twice from the tagged commit, each file dated by it
+    # (SOURCE_DATE_EPOCH), and compared byte for byte.
+    build:
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: '3.12'
+            - name: Date every file of the build by the commit
+              run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+            - name: Build twice and compare the bytes
+              run: |
+                  pip install build
+                  python -m build --outdir dist
+                  python -m build --outdir "$RUNNER_TEMP/again"
+                  python ci/compare_builds.py dist "$RUNNER_TEMP/again"
+            - name: Check the licenses and the files of the wheel
+              run: |
+                  python ci/check_wheel.py dist/*.whl
+                  ls -l dist
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: dist
+                  path: dist/*
+
+    # The wheel installs with pip into a new environment beside the released cuju, and the tests
+    # run from outside the source tree.
+    test:
+        name: test ${{ matrix.os }}
+        needs: build
+        runs-on: ${{ matrix.os }}
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-24.04, windows-2025, macos-15]
+        defaults:
+            run:
+                shell: bash
+        env:
+            PIP_DISABLE_PIP_VERSION_CHECK: '1'
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: '3.12'
+            - uses: actions/download-artifact@v8
+              with:
+                  name: dist
+                  path: dist
+            - name: Make a new environment
+              run: |
+                  python -m venv "$RUNNER_TEMP/venv"
+                  if [ "$RUNNER_OS" = Windows ]; then
+                      echo "VENV_PYTHON=$RUNNER_TEMP/venv/Scripts/python.exe" >> "$GITHUB_ENV"
+                  else
+                      echo "VENV_PYTHON=$RUNNER_TEMP/venv/bin/python" >> "$GITHUB_ENV"
+                  fi
+            - name: Install PyTorch for the CPU
+              run: |
+                  if [ "$RUNNER_OS" = macOS ]; then "$VENV_PYTHON" -m pip install torch
+                  else "$VENV_PYTHON" -m pip install torch --index-url https://download.pytorch.org/whl/cpu; fi
+            - name: Install the wheel, which brings cuju
+              run: |
+                  wheel=$(ls dist/cuju_render-*.whl)
+                  "$VENV_PYTHON" -m pip install "$wheel[test]"
+                  "$VENV_PYTHON" -m pip check
+                  "$VENV_PYTHON" -m pip list
+            - name: The command
+              working-directory: ${{ runner.temp }}
+              run: '"$VENV_PYTHON" -I -m cuju render --help'
+            - name: The tests
+              working-directory: ${{ runner.temp }}
+              run: '"$VENV_PYTHON" -m pytest -ra -p no:cacheprovider "$GITHUB_WORKSPACE/tests"'
+
+    # An upgrade from cuju 0.2.0, whose wheel holds a renderer of its own: pip must install the new
+    # cuju before the renderer, so that the old files go and the new ones stay.
+    upgrade:
+        needs: build
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: '3.12'
+            - uses: actions/download-artifact@v8
+              with:
+                  name: dist
+                  path: dist
+            - name: Upgrade from cuju 0.2.0
+              run: |
+                  python -m venv "$RUNNER_TEMP/venv"
+                  py="$RUNNER_TEMP/venv/bin/python"
+                  "$py" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+                  "$py" -m pip install cuju==0.2.0
+                  "$py" -m pip install dist/cuju_render-*.whl
+                  "$py" -m pip check
+                  cd "$RUNNER_TEMP"
+                  "$py" -I -c "import cuju, cuju.render, cuju.render._http.server as s; \
+                      assert (s._WEB / 'index.html').is_file(); print(cuju.__version__)"
+
+    # An SPDX document of the wheel and of the sdist, kept as workflow artifacts.
+    sbom:
+        needs: build
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/download-artifact@v8
+              with:
+                  name: dist
+                  path: dist
+            - uses: anchore/sbom-action/download-syft@v0
+              id: syft
+            - name: Write the SBOM of the wheel and the sdist
+              run: |
+                  mkdir -p sbom unpacked
+                  for file in dist/*.whl dist/*.tar.gz; do
+                      name=$(basename "$file" .whl)
+                      name=${name%.tar.gz}
+                      version=$(echo "$name" | cut -d- -f2)
+                      mkdir -p "unpacked/$name"
+                      case $file in
+                          *.whl) unzip -q "$file" -d "unpacked/$name" ;;
+                          *) tar -xzf "$file" -C "unpacked/$name" ;;
+                      esac
+                      "${{ steps.syft.outputs.cmd }}" scan "dir:unpacked/$name" \
+                          --source-name cuju-render --source-version "$version" \
+                          -o "spdx-json=sbom/$name.spdx.json"
+                  done
+                  ls -l sbom
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: sbom
+                  path: sbom/*.spdx.json
+
+    publish:
+        needs: [build, test, upgrade, sbom]
+        if: >-
+            github.event_name == 'workflow_dispatch' && inputs.publish
+            && startsWith(github.ref, 'refs/tags/v')
+        runs-on: ubuntu-24.04
+        # The environment requires a maintainer's approval before anything is published.
+        environment: pypi
+        permissions:
+            contents: read
+            id-token: write
+        steps:
+            - uses: actions/checkout@v7
+            - name: Check that the tag names the version of the package
+              run: |
+                  version=$(sed -n "s/^__version__ = '\(.*\)'$/\1/p" src/cuju/render/_version.py)
+                  echo "tag $GITHUB_REF_NAME, version $version"
+                  test -n "$version" && test "$GITHUB_REF_NAME" = "v$version"
+            - uses: actions/download-artifact@v8
+              with:
+                  name: dist
+                  path: dist
+            - uses: pypa/gh-action-pypi-publish@release/v1

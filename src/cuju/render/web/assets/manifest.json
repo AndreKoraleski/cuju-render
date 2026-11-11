@@ -301,7 +301,7 @@
         "objects/balls/generic.ase",
         "objects/balls/ball.bmp"
       ],
-      "origin": "the ball centre, place it at the recorded ball position and rotation",
+      "origin": "the ball centre, place it at the saved ball position and rotation",
       "radius_m": 0.11,
       "embedded_textures": [
         "ball.bmp as WebP"

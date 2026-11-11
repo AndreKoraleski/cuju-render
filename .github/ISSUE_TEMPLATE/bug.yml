@@ -1,0 +1,26 @@
+# Copyright 2026 The cuju Authors
+# SPDX-License-Identifier: Apache-2.0
+
+name: Bug
+description: Something in the renderer doesn't work as the documentation says.
+labels: [bug]
+body:
+    - type: input
+      id: versions
+      attributes:
+          label: cuju-render and cuju versions, and the browser
+      validations:
+          required: true
+    - type: textarea
+      id: reproduce
+      attributes:
+          label: How to reproduce it
+          description: The shortest code, command or steps on the page that show the problem.
+      validations:
+          required: true
+    - type: textarea
+      id: expected
+      attributes:
+          label: What you expected, and what happened
+      validations:
+          required: true

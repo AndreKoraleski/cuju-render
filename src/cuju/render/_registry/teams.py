@@ -577,7 +577,9 @@ def scenario_path(scenario: str) -> Path:
     local = Path(__file__).parents[1] / 'scenarios' / f'{scenario}.py'
     if local.is_file():
         return local
-    return Path(__file__).parents[2] / 'data' / 'scenarios' / f'{scenario}.py'
+    import cuju
+
+    return Path(cuju.__file__).parent / 'data' / 'scenarios' / f'{scenario}.py'
 
 
 def renderer_scenarios() -> list[str]:

@@ -67,20 +67,20 @@ const STANDARD = {
 };
 // A hat axis gives the eight directions of a D-pad as values from -1 to 1 in steps of two
 // sevenths, up first and then clockwise. A direction counts as held at its own value and at the
-// two diagonals beside it. A value off that ring counts only when it matches the recorded one.
+// two diagonals beside it. A value off that ring counts only when it matches the stored one.
 const HAT_STEP = 2 / 7;
 function hatIndex(value) {
     const k = Math.round((value + 1) / HAT_STEP);
     return k >= 0 && k <= 7 && Math.abs(value - (-1 + k * HAT_STEP)) < 0.1 ? k : -1;
 }
-function hatOn(value, recorded) {
+function hatOn(value, stored) {
     if (value === undefined || Math.abs(value) > 1.05) {
         return false;
     }
     const k = hatIndex(value);
-    const r = hatIndex(recorded);
+    const r = hatIndex(stored);
     if (k < 0 || r < 0) {
-        return Math.abs(value - recorded) < 0.1;
+        return Math.abs(value - stored) < 0.1;
     }
     const d = Math.abs(k - r) % 8;
     return d === 0 || d === 1 || d === 7;
@@ -1135,7 +1135,7 @@ export class PlayPage {
             if (this.padSetup) {
                 // While the setup shows, no controller plays. The controller being set up works the
                 // style choice, then records its presses. Another controller works the buttons of
-                // the panel while presses are recorded, and before the style is chosen a press on it
+                // the panel while presses are taken, and before the style is chosen a press on it
                 // sets that one up instead, so each person sets up their own.
                 const { now, x, y } = this.padHeld(pad, device.entry.layout);
                 const before = device.buttons;
@@ -1839,7 +1839,7 @@ export class PlayPage {
                 continue;
             }
             // A D-pad that reports as one hat axis rests outside the range of a stick and gives
-            // each direction a value of its own, which is recorded as it is.
+            // each direction a value of its own, which is stored as it is.
             if (Math.abs(rest) > 1.05 || (DIRECTIONS.has(pos) && Math.abs(axes[i]) < 0.9)) {
                 src = { a: i, v: axes[i] };
             } else if (sign * axes[i] > AXIS_ON) {

@@ -374,8 +374,8 @@ socket. A `materialParam` reaches the uniforms of the package's own shaders by t
 
 A channel is `x`, `y` or `z`, a move in meters in the root frame of the figure, which turns with
 the player, `x` to his left, `y` up and `z` forward, or `rotX`, `rotY` and `rotZ`, a turn in
-radians, or `scale`, added to one. Without a `node` a channel moves the whole figure about its
-pivot, the socket `root`.
+radians, or `scale`, added to one. A channel that names no `node` moves the whole figure about
+its pivot, the socket `root`.
 
 A curve is a plain number, or the value of one input read through rising keys and held flat past
 both ends, `{"input": "speed", "keys": [[0, 2.4], [7, 4.4]]}`, or a sum of curves,
@@ -418,8 +418,8 @@ with its `mode`, `uniforms` of its own, numbers, two to four numbers or a seed b
 selector. A light of kind `pool` takes a light of the team's pool, four at high quality, two at
 medium and one at low, which the page makes once when it builds the players, so turning one on
 never recompiles a program. Every further light and every light of kind `local` lights the team's
-own materials alone, through a chunk the page adds to them, up to eight at once. No team light
-casts a shadow. A behaviour of type `lightParam` drives a light by its name.
+own materials alone, through a chunk the page adds to them, up to eight at once. Team lights
+cast no shadows. A behaviour of type `lightParam` drives a light by its name.
 
 ### Post and overlays
 
@@ -648,8 +648,8 @@ Camera, time and environment suggestions count only for the team's own events.
   `canvases` for each slot of `overlays`. The worker draws in it with the 2D context and answers
   `{"slot", "op": "draw"}`, and the page shows what it drew in the slot. The badge sits under the
   score on the team's side, the lower third shows on the team's goal, the sting on its goal or
-  win, the card on its reveals and the lineup slot in the lineups. No slot covers the score, the
-  clock or the banners.
+  win, the card on its reveals and the lineup slot in the lineups. Every slot stays clear of the
+  score, the clock and the banners.
 
 Reduced motion refuses camera and time suggestions, and two settings in the page's storage,
 `cuju.teamCamera` and `cuju.teamTime` set to false, refuse them for good.
@@ -903,12 +903,13 @@ A reply later than 50 milliseconds is used and counted late. A worker that throw
 than 512 KB, refuses its sandbox or stays silent for five seconds of drawing and three drawings is
 ended. So is a worker whose reply holds anything but plain data, objects, arrays, typed arrays,
 strings, numbers and booleans, more than eight overlays, or a bitmap anywhere but in an overlay at
-the size of its slot. Each drawing adds at most a tenth of a second to the silence, so a page that draws slowly, or
-stalls while it loads models and compiles programs, waits for the reply its own slowness held back,
-and a worker has ten seconds of drawing for its first answer. The page then fades what it drove, its
-behaviours, tracks and bounds, back to the manifest's own look over half a second, starts a new
-epoch and starts the worker once more. A second failure leaves the team with its manifest alone, its
-level reads `manifest` in `cuju.presentation.status()`, and the page names the failure in a notice.
+the size of its slot. Each drawing adds at most a tenth of a second to the silence, so a page that
+draws slowly, or stalls while it loads models and compiles programs, waits for the reply its own
+slowness held back, and a worker has ten seconds of drawing for its first answer. The page then
+fades what it drove, its behaviours, tracks and bounds, back to the manifest's own look over half a
+second, starts a new epoch and starts the worker once more. A second failure leaves the team with
+its manifest alone, its level reads `manifest` in `cuju.presentation.status()`, and the page names
+the failure in a notice.
 
 ## Budgets
 

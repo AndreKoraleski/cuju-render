@@ -1159,7 +1159,7 @@ def build(media, databases, out):
         'ball.glb',
         'ball',
         ['objects/balls/generic.ase', 'objects/balls/ball.bmp'],
-        origin='the ball centre, place it at the recorded ball position and rotation',
+        origin='the ball centre, place it at the saved ball position and rotation',
         radius_m=round(ball_radius, 4),
         embedded_textures=['ball.bmp as WebP'],
     )
