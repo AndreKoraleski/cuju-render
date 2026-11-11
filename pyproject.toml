@@ -9,7 +9,7 @@ dynamic = ["version"]
 description = "The browser renderer of cuju, saved and live matches of Google Research Football in 3D with sound"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "Apache-2.0 AND MIT AND CC0-1.0 AND Unlicense AND CC-BY-4.0"
+license = "Apache-2.0 AND MIT AND ISC AND CC0-1.0 AND Unlicense AND CC-BY-4.0"
 license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 authors = [{ name = "André Koraleski" }]
 keywords = [
@@ -41,6 +41,8 @@ dependencies = ["cuju>=0.2.1,<0.3"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
+# The system web view of `cuju render app`, pywebview, BSD-3-Clause.
+app = ["pywebview>=5"]
 
 [project.urls]
 Homepage = "https://github.com/AndreKoraleski/cuju-render"

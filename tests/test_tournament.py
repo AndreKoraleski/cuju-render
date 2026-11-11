@@ -551,8 +551,13 @@ def test_stages_take_their_own_scenarios_within_what_entrants_play():
         ({'stages': [{'format': 'league', 'length': 10}]}, 'length of stage 1'),
         ({'concurrency': 9}, 'matches at once'),
         (
-            {'entrants': [{'kind': 'team', 'team': 'reds'}, {'kind': 'team', 'team': 'reds'}]},
-            'entered twice',
+            {
+                'entrants': [
+                    {'kind': 'team', 'team': 'reds', 'name': 'Rex'},
+                    {'kind': 'team', 'team': 'reds', 'name': ' rex '},
+                ]
+            },
+            'a name of its own for entrant 2, found rex, the name of entrant 1',
         ),
         ({'entrants': [{'kind': 'person'}, {'kind': 'builtin'}]}, 'name for each person'),
         ({'stages': [{'format': 'double_elimination', 'bracket': 'play_in'}]}, 'fills with byes'),
@@ -614,10 +619,115 @@ def test_a_tie_without_a_played_match_has_no_score():
 def test_entrant_names_repeat_with_a_number():
     config = _config([{'format': 'league'}], 2)
     assert [e['name'] for e in config['entrants']] == ['Built-in AI 0.00', 'Built-in AI 0.50']
+    entrants = rules.check_entrants([{'kind': 'builtin'}, {'kind': 'builtin'}], _TEAMS)
+    assert [e['name'] for e in entrants] == ['Built-in AI', 'Built-in AI 2']
+
+
+def test_a_team_enters_more_than_once_under_names_of_its_own():
     entrants = rules.check_entrants(
-        [{'kind': 'builtin', 'name': 'Bot'}, {'kind': 'builtin', 'name': 'Bot'}], _TEAMS
+        [
+            {'kind': 'team', 'team': 'reds'},
+            {'kind': 'team', 'team': 'reds'},
+            {'kind': 'team', 'team': 'reds', 'name': 'Reds B'},
+            {'kind': 'team', 'team': 'blues'},
+        ],
+        _TEAMS,
+        {'reds': 1620.0},
     )
-    assert [e['name'] for e in entrants] == ['Bot', 'Bot 2']
+    assert [e['name'] for e in entrants] == ['Reds', 'Reds 2', 'Reds B', 'Blues']
+    # Every entrant of the team plays the team and shares its rating.
+    assert [e['team'] for e in entrants[:3]] == ['reds'] * 3
+    assert [e['key'] for e in entrants[:3]] == ['reds'] * 3
+    assert [e['rating'] for e in entrants] == [1620.0, 1620.0, 1620.0, rules.BASE_RATING]
+    # A made name steps around a given one, wherever the given one stands.
+    entrants = rules.check_entrants(
+        [
+            {'kind': 'team', 'team': 'reds'},
+            {'kind': 'team', 'team': 'reds'},
+            {'kind': 'person', 'name': 'REDS 2'},
+        ],
+        _TEAMS,
+    )
+    assert [e['name'] for e in entrants] == ['Reds', 'Reds 3', 'REDS 2']
+    # The free name that the page proposes is the name that the rules would make.
+    taken = {rules.name_key(name) for name in ('Reds', 'REDS 2')}
+    assert rules.free_name('Reds', taken) == 'Reds 3'
+
+
+def test_given_names_that_read_as_one_are_refused_in_both_languages():
+    from cuju.render._http import server as _server
+    from cuju.render._text import messages as _messages
+
+    with pytest.raises(rules.TournamentError) as caught:
+        rules.check_entrants(
+            [
+                {'kind': 'team', 'team': 'reds', 'name': 'Rex  FC'},
+                {'kind': 'builtin'},
+                {'kind': 'person', 'name': '  rex fc '},
+            ],
+            _TEAMS,
+        )
+    error = caught.value
+    assert str(error) == (
+        'expected a name of its own for entrant 3, found rex fc, the name of entrant 1'
+    )
+    fields = _messages.error_fields(error)
+    assert fields['error_id'] == 'server.tournament.name_taken'
+    assert {key: str(value) for key, value in fields['error_values'].items()} == {
+        'entrant': '3',
+        'name': 'rex fc',
+        'other': '1',
+    }
+    for code in ('en', 'pt'):
+        path = _server._WEB / 'languages' / f'{code}.json'
+        text = json.loads(path.read_text(encoding='utf-8'))['server.tournament.name_taken']
+        assert _messages.placeholders(text) == {'entrant', 'name', 'other'}
+    assert 'server.tournament.twice' not in _messages.MESSAGES
+
+
+def test_entrant_names_agree_with_the_page():
+    """The page's nameKey and freeName hold the same cases, in tests/web/tournament.mjs."""
+    from pathlib import Path
+
+    path = Path(__file__).parent / 'support' / 'entrant_names.json'
+    cases = json.loads(path.read_text(encoding='utf-8'))
+    for name, key in cases['keys']:
+        assert rules.name_key(name) == key
+    for base, taken, longest, name in cases['free']:
+        assert rules.free_name(base, {rules.name_key(t) for t in taken}, longest) == name
+    source = Path(rules.__file__).parents[1] / 'web' / 'js' / 'play/tournament-layout.js'
+    assert 'export const NAME_LONGEST = 40;' in source.read_text(encoding='utf-8')
+    with pytest.raises(rules.TournamentError, match='1 to 40 characters'):
+        rules.check_entrants([{'kind': 'person', 'name': 'x' * 41}, {'kind': 'builtin'}], _TEAMS)
+
+
+def test_two_entrants_of_one_team_meet_and_leave_its_rating():
+    config = rules.check(
+        {
+            'seed': 3,
+            'seeding': 'manual',
+            'entrants': [
+                {'kind': 'team', 'team': 'reds'},
+                {'kind': 'team', 'team': 'reds'},
+                {'kind': 'team', 'team': 'blues'},
+            ],
+            'stages': [{'format': 'league', 'scenario': '11_vs_11_kaggle'}],
+        },
+        _TEAMS,
+        _fits,
+    )
+    view, _ = _play_out(config, score=lambda match: [2, 1])
+    derby = [m for m in view['matches'] if {m['home'], m['away']} == {0, 1}]
+    assert len(derby) == 1
+    rows = {row['entrant']: row for row in view['stages'][0]['tables'][0]['rows']}
+    # The table keeps the two entrants of one team apart, each with its own record.
+    assert len(rows) == 3 and sum(row['played'] for row in rows.values()) == 6
+    assert sorted(view['ranking']) == [0, 1, 2]
+    table = {}
+    rules.update_ratings(table, config['entrants'][0], config['entrants'][1], [2, 1])
+    assert table == {}
+    rules.update_ratings(table, config['entrants'][0], config['entrants'][2], [2, 1])
+    assert table['reds']['rating'] > rules.BASE_RATING > table['blues']['rating']
 
 
 def test_bracket_order_and_round_robin():
@@ -1601,6 +1711,35 @@ def test_a_failure_names_the_team_as_its_entrant(monkeypatch):
     ids['error_values']['player'] = 'Reds'
     assert runner.Tournaments._entrant_failure(record, match, 'x', ids) == ('x', ids)
     assert runner.Tournaments._entrant_failure(record, match, 'y', {}) == ('y', {})
+    # Two entrants of one team leave a failure that names the team as it is, since either side
+    # may have failed. A match of agents names its entrant itself, from the tournament's names.
+    record['config']['entrants'][1] = {'kind': 'team', 'team': 'crashers', 'name': 'Crash B'}
+    ids['error_values']['player'] = 'Crashers'
+    assert runner.Tournaments._entrant_failure(record, match, 'z', ids) == ('z', ids)
+
+
+def test_a_team_entered_twice_names_the_entrant_that_failed(render_home, tmp_path):
+    from cuju.render._registry import teams as _teams
+
+    folder = tmp_path / 'crash'
+    folder.mkdir()
+    (folder / 'main.py').write_text(
+        'def agent(obs):\n    raise RuntimeError("crash on purpose")\n', encoding='utf-8'
+    )
+    team = _teams.add_folder(folder, 'Crasher', '5v5')
+    cups = runner.Tournaments(start=False, interval=0.1)
+    config = _builtin_config(2, seeding='manual')
+    config['entrants'] = [
+        {'kind': 'team', 'team': team['id'], 'name': 'Red crash'},
+        {'kind': 'team', 'team': team['id'], 'name': 'Blue crash'},
+    ]
+    config['stages'] = [{'format': 'knockout', 'scenario': '5_vs_5', 'length': 50}]
+    entry = cups.create(config)
+    assert cups.run(entry['id'], report=lambda line: None) == 'stopped'
+    error = cups.get(entry['id'])['error']
+    cups.close()
+    # The left side plays first, so its entrant is the one whose policy failed.
+    assert error.startswith('Final failed, the policy of Red crash failed, RuntimeError: crash')
 
 
 def test_files_keep_labels_and_files_of_before_show_their_text(render_home):
@@ -1728,3 +1867,153 @@ def test_stage_names_of_the_page_agree_with_the_rules():
     for preset in rules.PRESETS.values():
         for stage in preset['stages']:
             assert stage['name'] in rules.STAGE_NAMES
+
+
+# A team entered more than once.
+
+_IDLE = 'def agent(obs):\n    return [0]\n'
+
+
+def _rex(tmp_path):
+    from cuju.render._registry import teams as _teams
+
+    folder = tmp_path / 'rex'
+    folder.mkdir()
+    (folder / 'main.py').write_text(_IDLE, encoding='utf-8')
+    return _teams.add_folder(folder, 'Rex', '5v5')
+
+
+def test_a_team_entered_twice_plays_a_whole_tournament(render_home, tmp_path):
+    from cuju.render._tournaments.tournament_cli import describe
+
+    team = _rex(tmp_path)
+    seen = []
+
+    def player(match, teams, provenance, progress):
+        seen.append((teams, provenance['names']))
+        seed = match['seed']
+        return {'score': [seed % 3, seed // 3 % 3], 'cards': [[0, 0], [0, 0]], 'match': None}
+
+    cups = runner.Tournaments(player=player, start=False, interval=0.01)
+    config = {
+        'name': 'Derby cup',
+        'seed': 5,
+        'seeding': 'manual',
+        'entrants': [
+            {'kind': 'team', 'team': team['id']},
+            {'kind': 'team', 'team': team['id']},
+            {'kind': 'team', 'team': team['id'], 'name': 'Rex reserves'},
+            {'kind': 'builtin', 'ability': 0.5},
+        ],
+        'stages': [
+            {'format': 'league', 'scenario': '5_vs_5', 'length': 50},
+            {'format': 'knockout', 'scenario': '5_vs_5', 'length': 50, 'settle': ['lots']},
+        ],
+    }
+    entry = cups.create(config)
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    done = cups.get(entry['id'])
+    cups.close()
+    names = [e['name'] for e in done['config']['entrants']]
+    assert names == ['Rex', 'Rex 2', 'Rex reserves', 'Built-in AI 0.50']
+    assert done['state'] == 'done' and done['champion'] in names
+    assert sorted(done['ranking']) == [0, 1, 2, 3]
+    # The entrants of one team meet as two sides of one match, each under its own name.
+    derbies = [sides for teams, sides in seen if teams == [team['id'], team['id']]]
+    assert len(derbies) >= 3
+    assert all(len(set(sides)) == 2 for sides in derbies)
+    rows = done['stages_view'][0]['tables'][0]['rows']
+    assert sorted(row['entrant'] for row in rows) == [0, 1, 2, 3]
+    assert all(row['played'] == 3 for row in rows)
+    shown = '\n'.join(describe(done))
+    assert 'Rex against Rex 2' in shown or 'Rex 2 against Rex' in shown
+    # The ratings keep the team once, and its matches against itself leave its rating.
+    assert set(runner.ratings()) == {team['id'], 'builtin:0.50'}
+
+
+def test_a_match_of_a_team_against_itself_records_two_sides_apart(render_home, tmp_path):
+    team = _rex(tmp_path)
+    cups = runner.Tournaments(start=False, interval=0.1)
+    config = _builtin_config(2, seeding='manual')
+    config['entrants'] = [
+        {'kind': 'team', 'team': team['id']},
+        {'kind': 'team', 'team': team['id']},
+    ]
+    config['stages'] = [
+        {'format': 'knockout', 'scenario': '5_vs_5', 'length': 50, 'settle': ['lots']}
+    ]
+    entry = cups.create(config)
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    done = cups.get(entry['id'])
+    cups.close()
+    played = [m for m in done['matches'] if m['result']['match']]
+    assert played
+    header = _recording.read_header(_library.path_of(played[0]['result']['match']))
+    names = [done['config']['entrants'][played[0][side]]['name'] for side in ('home', 'away')]
+    assert sorted(names) == ['Rex', 'Rex 2']
+    assert [side['name'] for side in header['teams']] == names
+    assert [side['id'] for side in header['teams']] == [team['id'], team['id']]
+    assert header['title'].endswith(f'{names[0]} against {names[1]}')
+    # The right side wears the away kit, so the two sides of one team look apart.
+    home, away = (side['style']['kit'] for side in header['teams'])
+    assert header['teams'][1].get('away') and away['primary'] != home['primary']
+    assert header['provenance']['tournament']['names'] == names
+
+
+def test_the_command_line_enters_a_team_twice_and_names_it(render_home, tmp_path, capsys):
+    from cuju.render.__main__ import main
+
+    team = _rex(tmp_path)
+    rex = ['--team', team['id']]
+    shape = ['--preset', 'round_robin', '--scenario', '5_vs_5', '--seed', '3']
+    assert main(['tournament', 'check', *shape, *rex, *rex, *rex, '--as', 'Rex B', '--json']) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert [e['name'] for e in preview['config']['entrants']] == ['Rex', 'Rex 2', 'Rex B']
+    assert main(['tournament', 'check', *shape, *rex, *rex]) == 0
+    checked = capsys.readouterr().out
+    assert 'Rex against Rex 2' in checked or 'Rex 2 against Rex' in checked
+    for arguments, message in (
+        (['--as', 'Rex', *rex, *rex], 'expected --as after the --team'),
+        (
+            [*rex, '--as', 'Rex', *rex, '--as', ' REX '],
+            'expected a name of its own for entrant 2, found REX, the name of entrant 1',
+        ),
+    ):
+        assert main(['tournament', 'new', *shape, *arguments]) == 1
+        error = capsys.readouterr().err
+        assert error.startswith(f'cuju render: {message}') and error.count('\n') == 1, error
+
+
+def test_files_of_before_load_and_resume_as_before(render_home):
+    """Files written before a team could enter twice load, sealed or not, and play to the end."""
+    cups = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    entry = cups.create(_builtin_config(4))
+    cups.close()
+    folder = runner.folder()
+    path = folder / f'{entry["id"]}.json'
+    stored = json.loads(path.read_text())
+    assert isinstance(stored.pop('seal'), str)
+    # The rules of before gave two given names that read as one a number, Bot and Bot 2, which
+    # the rules of now refuse, and a file keeps the names that its rules gave.
+    first, second = stored['config']['entrants'][:2]
+    for holder, name in ((first, 'Bot'), (second, 'Bot 2')):
+        holder.pop('name_id', None)
+        holder.pop('name_values', None)
+        holder['name'] = name
+    with pytest.raises(rules.TournamentError, match='a name of its own'):
+        rules.check_entrants([{'kind': 'builtin', 'name': n} for n in ('Bot', 'bot')], _TEAMS)
+    runner._write_record(path, stored)
+    # The same file dropped in without a seal loads stopped, as any foreign file does.
+    foreign = {**stored, 'id': 'cup-20261020-101010-abcd'}
+    (folder / f'{foreign["id"]}.json').write_text(json.dumps(foreign))
+    again = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    assert again.get(entry['id'])['state'] == 'running'
+    assert again.get(foreign['id'])['state'] == 'stopped'
+    assert again.run(entry['id'], report=lambda line: None) == 'done'
+    assert again.resume(foreign['id'])['state'] == 'running'
+    assert again.run(foreign['id'], report=lambda line: None) == 'done'
+    for identifier in (entry['id'], foreign['id']):
+        done = again.get(identifier)
+        assert [e['name'] for e in done['config']['entrants']][:2] == ['Bot', 'Bot 2']
+        assert done['champion']
+    again.close()

@@ -8,6 +8,7 @@ import {
     Canvas, Circle, FabricImage, IText, Line, PencilBrush, Rect, Triangle,
 } from '../../vendor/fabric/fabric.min.mjs';
 import { h } from './library.js';
+import { icon, symbolOnly } from '../core/icons.js';
 import { t, tOr } from '../core/i18n.js';
 
 const HISTORY_LIMIT = 60;
@@ -242,12 +243,14 @@ export class Painter {
 
     render() {
         const o = this.options;
-        const tool = (id, label, title) => h('button', {
-            type: 'button', class: `tool${this.mode === id ? ' active' : ''}`, 'data-tool': id, title,
+        // Every tool shows its symbol alone, with its name and what it does as the tooltip.
+        const named = (label, title) => symbolOnly(label, t('symbol.tip', { name: label, text: title }));
+        const tool = (id, symbol, label, title) => h('button', {
+            type: 'button', class: `tool${this.mode === id ? ' active' : ''}`, 'data-tool': id, ...named(label, title),
             'aria-pressed': this.mode === id ? 'true' : 'false',
             onclick: () => this.setMode(id),
-        }, label);
-        const action = (label, title, fn) => h('button', { type: 'button', class: 'tool', title, onclick: fn }, label);
+        }, icon(symbol));
+        const action = (symbol, label, title, fn) => h('button', { type: 'button', class: 'tool', ...named(label, title), onclick: fn }, icon(symbol));
         const color = h('input', { type: 'color', value: this.color, title: t('painter.color') });
         // Dragging in the color picker recolors live, the history takes one step when it closes.
         color.addEventListener('input', () => {
@@ -282,35 +285,35 @@ export class Painter {
         const guide = o.guide ? `background-image:url(${o.guide});` : '';
         this.dialog.replaceChildren(h('div', { class: 'painter-box' },
             h('header', { class: 'editor-head' }, h('h2', {}, o.title),
-                h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('painter.close'), onclick: () => this.requestClose() }, '✕')),
+                h('button', { type: 'button', class: 'icon-btn', ...symbolOnly(t('painter.close')), onclick: () => this.requestClose() }, icon('close'))),
             h('div', { class: 'toolbar' },
                 h('div', { class: 'tool-group' },
-                    tool('select', t('painter.tool.select'), t('painter.tool.select.title')),
-                    tool('brush', t('painter.tool.brush'), t('painter.tool.brush.title')),
-                    tool('eraser', t('painter.tool.eraser'), t('painter.tool.eraser.title'))),
+                    tool('select', 'cursor', t('painter.tool.select'), t('painter.tool.select.title')),
+                    tool('brush', 'brush', t('painter.tool.brush'), t('painter.tool.brush.title')),
+                    tool('eraser', 'eraser', t('painter.tool.eraser'), t('painter.tool.eraser.title'))),
                 h('div', { class: 'tool-group' },
-                    action(t('painter.shape.rect'), t('painter.shape.rect.title'), () => this.addShape('rect')),
-                    action(t('painter.shape.circle'), t('painter.shape.circle.title'), () => this.addShape('circle')),
-                    action(t('painter.shape.triangle'), t('painter.shape.triangle.title'), () => this.addShape('triangle')),
-                    action(t('painter.shape.line'), t('painter.shape.line.title'), () => this.addShape('line')),
-                    action(t('painter.text'), t('painter.text.title'), () => this.addText()),
-                    action(t('painter.picture'), t('painter.picture.title'), () => file.click()), file),
+                    action('square', t('painter.shape.rect'), t('painter.shape.rect.title'), () => this.addShape('rect')),
+                    action('circle', t('painter.shape.circle'), t('painter.shape.circle.title'), () => this.addShape('circle')),
+                    action('triangle', t('painter.shape.triangle'), t('painter.shape.triangle.title'), () => this.addShape('triangle')),
+                    action('line', t('painter.shape.line'), t('painter.shape.line.title'), () => this.addShape('line')),
+                    action('text', t('painter.text'), t('painter.text.title'), () => this.addText()),
+                    action('image', t('painter.picture'), t('painter.picture.title'), () => file.click()), file),
                 h('div', { class: 'tool-group' }, h('label', { class: 'tool-field' }, t('painter.color'), color), h('label', { class: 'tool-field' }, t('painter.size'), size)),
                 h('div', { class: 'tool-group' },
-                    action(t('painter.forward'), t('painter.forward.title'), () => this.layer(1)),
-                    action(t('painter.backward'), t('painter.backward.title'), () => this.layer(-1)),
-                    action(t('painter.delete'), t('painter.delete.title'), () => this.removeSelection()),
-                    action(t('painter.undo'), t('painter.undo.title'), () => this.undo()),
-                    action(t('painter.redo'), t('painter.redo.title'), () => this.redo()),
-                    action(t('painter.clear'), t('painter.clear.title'), () => this.clear()))),
+                    action('bring-forward', t('painter.forward'), t('painter.forward.title'), () => this.layer(1)),
+                    action('send-backward', t('painter.backward'), t('painter.backward.title'), () => this.layer(-1)),
+                    action('trash', t('painter.delete'), t('painter.delete.title'), () => this.removeSelection()),
+                    action('undo', t('painter.undo'), t('painter.undo.title'), () => this.undo()),
+                    action('redo', t('painter.redo'), t('painter.redo.title'), () => this.redo()),
+                    action('clear', t('painter.clear'), t('painter.clear.title'), () => this.clear()))),
             h('div', { class: 'painter-stage' }, h('div', { class: 'painter-canvas', style: guide }, h('canvas'))),
             o.note ? h('p', { class: 'muted small painter-note' }, o.note) : null,
             h('p', { class: 'muted small painter-note' }, t('painter.keys')),
             h('p', { class: 'painter-status muted small', role: 'status', hidden: true }),
             h('div', { class: 'editor-actions' },
                 h('span', { class: 'spacer' }),
-                h('button', { type: 'button', class: 'btn', onclick: () => this.requestClose() }, t('painter.cancel')),
-                h('button', { type: 'button', class: 'btn primary', onclick: () => this.save() }, t('painter.save')))));
+                h('button', { type: 'button', class: 'btn', ...symbolOnly(t('painter.cancel')), onclick: () => this.requestClose() }, icon('close')),
+                h('button', { type: 'button', class: 'btn primary', ...symbolOnly(t('painter.save')), onclick: () => this.save() }, icon('save')))));
         this.dialog.onkeydown = (e) => {
             const typing = e.target && (e.target.tagName === 'INPUT' || e.target.isContentEditable || e.target.tagName === 'TEXTAREA');
             if (e.key === 'Escape') {

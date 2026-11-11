@@ -176,7 +176,7 @@ export function progressText(entry) {
         return t('video.progress.cancelled');
     }
     if (!entry.frame) {
-        return t('video.progress.starting');
+        return t(entry.browser ? 'video.browser.starting' : 'video.progress.starting');
     }
     if (entry.progress >= 1) {
         return t('video.progress.finishing');

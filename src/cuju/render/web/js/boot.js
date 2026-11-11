@@ -28,3 +28,23 @@
         setTimeout(() => location.reload(), 1000);
     }, true);
 }());
+
+// Chrome and Edge offer to install the page once a page load, often before the modules load, so
+// this script keeps the offer for the modules, which read it in window.cujuInstall and hear of each
+// change through the event cuju-install. The page shows an offer of its own in place of the
+// browser's small bar.
+(function () {
+    const held = window.cujuInstall || { prompt: null, installed: false };
+    window.cujuInstall = held;
+    const changed = () => window.dispatchEvent(new Event('cuju-install'));
+    window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        held.prompt = event;
+        changed();
+    });
+    window.addEventListener('appinstalled', () => {
+        held.prompt = null;
+        held.installed = true;
+        changed();
+    });
+}());

@@ -13,11 +13,14 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
-// load from a copy of the whole folder beside a package file that names them modules.
-const folder = mkdtempSync(join(tmpdir(), 'cuju-challenges-'));
+// load from a copy of the whole folder beside a package file that names them modules. The icons
+// that core/icons.js reads come along in vendor/lucide, beside the folder as in the page.
+const root = mkdtempSync(join(tmpdir(), 'cuju-challenges-'));
+const folder = join(root, 'js');
 cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js', import.meta.url)), folder, { recursive: true });
-writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
-process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
+cpSync(fileURLToPath(new URL('../../src/cuju/render/web/vendor/lucide', import.meta.url)), join(root, 'vendor', 'lucide'), { recursive: true });
+writeFileSync(join(root, 'package.json'), '{"type": "module"}\n');
+process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 const languages = new URL('../../src/cuju/render/web/languages/', import.meta.url);
 const read = (code) => JSON.parse(readFileSync(new URL(`${code}.json`, languages), 'utf8'));
 const shipped = { en: read('en'), pt: read('pt') };

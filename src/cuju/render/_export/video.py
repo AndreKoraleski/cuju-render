@@ -3,12 +3,15 @@
 
 """Exports a recording as a video file, drawn by the renderer's own page frame by frame.
 
-The export serves the page and the recording from a loopback server of its own, opens the page in
-a locally installed Chrome or Chromium without a window, steps the page's clocks by one frame at a
-time through the capture hook of `web/js/capture.js`, takes a picture of each frame over Chrome's
-debugging protocol and passes the pictures straight to ffmpeg, which encodes them into an MP4 file.
-No frame touches the disk. Both programs are optional and found on the path or given by option,
-and the export uses only Python's standard library beside them.
+The export serves the page and the recording from a loopback server of its own and opens
+`web/export.html` in a locally installed Chrome, Edge or Chromium without a window. That page runs
+the browser's own export of `web/js/export/video-browser.js`, which steps the page's clocks by one
+frame at a time through the capture hook of `web/js/capture.js` and encodes each frame with the
+browser's video encoder into MP4 with H.264 or WebM with VP9 or VP8. The file comes back over the
+debugging protocol in pieces, so the export needs the browser alone. Where the browser encodes no
+H.264 and an MP4 is asked for, an installed ffmpeg encodes it instead from a picture of each frame,
+as the export did before the browser could encode. The browser is found on the path or given by
+option, and the export uses only Python's standard library beside it.
 
 `cuju render video` runs an export from the command line, and the server of the page runs the same
 export in a child process through `python -m cuju.render._export.video`, which then reports its
@@ -63,6 +66,11 @@ DEFAULT_MAX_SECONDS = 600.0
 LIMIT_SECONDS = 3600.0
 DEFAULT_MAX_MEGABYTES = 2048
 LIMIT_MEGABYTES = 16384
+# The containers of a video, and auto for the best that the browser encodes, MP4 before WebM.
+FORMATS = ('auto', 'mp4', 'webm')
+SUFFIXES = {'mp4': '.mp4', 'webm': '.webm'}
+# The finished file comes back from the browser in pieces of this many bytes.
+_PIECE = 4 << 20
 # A goal's range starts this long before the goal and ends this long after it.
 GOAL_BEFORE, GOAL_AFTER = 8.0, 4.0
 # The page plays this long before the first frame, so the camera and graphics have settled.
@@ -129,9 +137,13 @@ class Options:
     ffmpeg: str | None = None
     software: bool = False
     sandbox: bool = True
+    # The container, mp4, webm or auto, or None for the one that the output's suffix names.
+    format: str | None = None
 
     def check(self) -> Options:
         """Returns the options after checking each, or raises `ArgumentError`."""
+        if self.format is not None and self.format not in FORMATS:
+            raise ArgumentError(f'expected a format of {", ".join(FORMATS)}, found {self.format!r}')
         if self.camera not in CAMERAS:
             raise ArgumentError(f'expected a camera of {", ".join(CAMERAS)}, found {self.camera!r}')
         check_size(self.width, self.height)
@@ -408,13 +420,88 @@ def tools(options: Options, server: bool = False) -> tuple[str | None, str | Non
     missing = []
     chrome = find_chrome(options.chrome)
     if chrome is None:
-        hint = _INSTALL_CHROME.format(named=named('--chrome', 'CUJU_CHROME'))
-        missing.append(f'Video export needs Chrome or Chromium, found neither. {hint}')
+        missing.append(chrome_missing(server))
     ffmpeg = find_ffmpeg(options.ffmpeg)
     if ffmpeg is None:
         hint = _INSTALL_FFMPEG.format(named=named('--ffmpeg', 'CUJU_FFMPEG'))
         missing.append(f'Video export needs ffmpeg, found none. {hint}')
     return chrome, ffmpeg, missing
+
+
+def chrome_missing(server: bool = False) -> str:
+    """Returns the message of a missing Chrome, for the command or for the page's server."""
+    if server:
+        named = '$CUJU_CHROME in the environment of cuju render serve'
+    else:
+        named = '--chrome or $CUJU_CHROME'
+    hint = _INSTALL_CHROME.format(named=named)
+    return f'Video export needs Chrome or Chromium, found neither. {hint}'
+
+
+def requested_format(output: Path, options: Options) -> str | None:
+    """Returns the container that an export must write, or `None` for the browser's best.
+
+    The format `auto` leaves the choice to the browser, and the output then takes the suffix of the
+    container chosen. A format of mp4 or webm, or without a format the suffix of the output, asks
+    for that container alone.
+
+    Raises:
+        ArgumentError: If the output ends in neither .mp4 nor .webm, or in the other one's suffix.
+    """
+    suffix = output.suffix.lower()
+    if suffix not in SUFFIXES.values():
+        raise ArgumentError(f'expected an output file ending in .mp4 or .webm, found {output.name}')
+    if options.format == 'auto':
+        return None
+    if options.format in SUFFIXES:
+        if SUFFIXES[options.format] != suffix:
+            raise ArgumentError(
+                f'expected an output file ending in {SUFFIXES[options.format]} for the format '
+                f'{options.format}, found {output.name}'
+            )
+        return options.format
+    return 'mp4' if suffix == '.mp4' else 'webm'
+
+
+def choose_encoding(
+    wanted: str | None, support: dict[str, Any], ffmpeg: str | None, browser: str = 'the browser'
+) -> tuple[str, str]:
+    """Returns how an export encodes, `browser` or `ffmpeg`, and the container it writes.
+
+    The browser encodes whatever it can, MP4 first. ffmpeg encodes an MP4 only where the browser
+    encodes no H.264, or cannot read back the page's graphics, and only when it is installed.
+
+    Args:
+        wanted: The container asked for, or `None` for the best one.
+        support: What the browser encodes, the codec of `mp4` and of `webm` or `None` for each, and
+            `pictures`, whether it reads back the page's graphics.
+        ffmpeg: The path of ffmpeg, or `None`.
+        browser: The browser's name for the messages.
+
+    Raises:
+        VideoError: If neither the browser nor ffmpeg writes the container asked for.
+    """
+    usable = bool(support.get('pictures'))
+    mp4 = usable and bool(support.get('mp4'))
+    webm = usable and bool(support.get('webm'))
+    if wanted in (None, 'mp4'):
+        if mp4:
+            return 'browser', 'mp4'
+        if ffmpeg:
+            return 'ffmpeg', 'mp4'
+    if wanted in (None, 'webm') and webm:
+        return 'browser', 'webm'
+    if wanted == 'mp4':
+        alternative = ' or ask for WebM with --format webm,' if webm else ''
+        raise VideoError(
+            f'expected a browser that encodes H.264 for an MP4, found none in {browser}, so use '
+            f'Google Chrome or Edge,{alternative} or install ffmpeg, which then encodes the MP4'
+        )
+    raise VideoError(
+        f'expected a browser that encodes {"VP9 or VP8 for a WebM" if wanted else "video"}, found '
+        f'none in {browser}, so update it or use Google Chrome or Edge'
+        + ('' if wanted else ', or install ffmpeg, which then encodes an MP4')
+    )
 
 
 def view(width: int, height: int, graphics: float = 1.0) -> tuple[int, int, float]:
@@ -848,6 +935,255 @@ def _wait_ready(client: _CDP, identifier: str, timeout: float = 120) -> None:
     )
 
 
+def _wait_host(client: _CDP, options: Options, timeout: float = 120) -> dict[str, Any]:
+    """Waits until the page of the export has loaded and returns what the browser encodes."""
+    expression = (
+        'window.cujuVideoExport ? cujuVideoExport.support('
+        f'{options.width}, {options.height}, {options.fps}, {json.dumps(options.quality)}) : null'
+    )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        support = client.evaluate(expression)
+        if support:
+            return support
+        time.sleep(0.2)
+    errors = '; '.join(client.errors[:3])
+    raise VideoError(
+        f'the page of the export did not load within {timeout:.0f} s'
+        + (f', {errors}' if errors else '')
+    )
+
+
+def _browser_error(state: dict[str, Any], options: Options) -> str:
+    """Returns the message of an export that failed in the browser, from the state it left."""
+    found = state.get('id')
+    values = state.get('values') or {}
+    if found == 'video.browser.error.size':
+        return (
+            f'the video reached its maximum size of {options.max_megabytes} MB, '
+            'so choose a shorter range or raise the maximum size'
+        )
+    if found == 'video.browser.error.page':
+        return f'the page cannot draw in this Chrome, {values.get("error")}'
+    if found == 'video.browser.error.timeout':
+        return f'the page did not open the recording within {values.get("seconds")} s'
+    if found == 'video.browser.error.encoder':
+        return f"the browser's video encoder stopped, {values.get('error')}"
+    if found == 'video.browser.error.codec':
+        return 'expected a browser that encodes the format asked for, found none at this size'
+    return f'the page failed, {state.get("message")}'
+
+
+def _draw_in_browser(
+    client: _CDP,
+    page_id: str,
+    title: str,
+    options: Options,
+    container: str,
+    span: tuple[float, float],
+    limit: int,
+    partial: Path,
+    summary: dict[str, Any],
+    report: Report,
+    cancelled: threading.Event,
+) -> tuple[int, bool, str]:
+    """Runs the browser's own export and writes the file it makes to `partial`.
+
+    Returns:
+        The frames written, whether the video reached its maximum length and the codec.
+    """
+    start, end = span
+    body: dict[str, Any] = {
+        'start': start,
+        'end': end,
+        'camera': options.camera,
+        'width': options.width,
+        'height': options.height,
+        'fps': options.fps,
+        'quality': options.quality,
+        'score': options.score,
+        'annotations': options.annotations,
+        'scale': options.graphics,
+        'safe': options.safe,
+        'broadcast': options.broadcast,
+    }
+    if options.arena is not None:
+        body['arena'] = options.arena
+    if options.hour is not None:
+        body['time'] = options.hour
+    request = {
+        'match': page_id,
+        'title': title,
+        'body': body,
+        'container': container,
+        'maxFrames': limit,
+        'maxBytes': options.max_megabytes * 1024 * 1024,
+    }
+    client.evaluate(f'cujuVideoExport.start({json.dumps(request)})')
+    report({'stage': 'drawing', 'frame': 0, 'progress': 0.0, **summary})
+    reported = time.monotonic()
+    asked = False
+    while True:
+        if cancelled.is_set() and not asked:
+            client.evaluate('cujuVideoExport.cancel()')
+            asked = True
+        state = client.evaluate('cujuVideoExport.state()') or {}
+        stage = state.get('state')
+        if stage == 'cancelled':
+            raise CancelledError('the export was cancelled')
+        if stage == 'failed':
+            raise VideoError(_browser_error(state, options))
+        if stage == 'done':
+            break
+        now = time.monotonic()
+        if stage == 'running' and state.get('frame') and now - reported >= 0.5:
+            reported = now
+            progress = min(1.0, max(0.0, float(state.get('progress') or 0)))
+            report(
+                {'stage': 'drawing', 'frame': int(state['frame']), 'progress': progress, **summary}
+            )
+        time.sleep(0.1 if asked else 0.25)
+    written = int(state.get('frames') or 0)
+    report({'stage': 'drawing', 'frame': written, 'progress': 1.0, **summary})
+    limited = bool(state.get('limited'))
+    if limited:
+        report({'stage': 'limited', 'frame': written, **summary})
+    report({'stage': 'encoding', 'frame': written, **summary})
+    size = int(state.get('bytes') or 0)
+    with partial.open('wb') as stream:
+        for offset in range(0, size, _PIECE):
+            if cancelled.is_set():
+                raise CancelledError('the export was cancelled')
+            piece = base64.b64decode(client.evaluate(f'cujuVideoExport.read({offset}, {_PIECE})'))
+            if not piece:
+                raise VideoError('the browser lost the finished video before it was saved')
+            stream.write(piece)
+    client.evaluate('cujuVideoExport.clear()')
+    if partial.stat().st_size != size:
+        raise VideoError(
+            f'expected {size} bytes of video from the browser, found {partial.stat().st_size}'
+        )
+    return written, limited, str(state.get('codec') or '')
+
+
+def _draw_with_ffmpeg(
+    client: _CDP,
+    address: str,
+    page_id: str,
+    options: Options,
+    ffmpeg: str,
+    span: tuple[float, float],
+    limit: int,
+    partial: Path,
+    summary: dict[str, Any],
+    report: Report,
+    cancelled: threading.Event,
+) -> tuple[int, bool]:
+    """Draws the export on the Watch page, takes a picture of each frame and encodes them with
+    ffmpeg into `partial`, for an MP4 where the browser encodes no H.264.
+
+    Returns:
+        The frames written and whether the video reached its maximum length.
+    """
+    start, end = span
+    frames = summary['frames']
+    warm = min(start, WARMUP)
+    warm_frames = round(warm * options.fps)
+    warm_from = start - warm_frames / options.fps
+    step = 1000 / options.fps
+    client.call('Page.addScriptToEvaluateOnNewDocument', {'source': preload_script(options)})
+    css_width, css_height, scale = view(options.width, options.height, options.graphics)
+    client.call(
+        'Emulation.setDeviceMetricsOverride',
+        {'width': css_width, 'height': css_height, 'deviceScaleFactor': scale, 'mobile': False},
+    )
+    safe = urllib.parse.quote(str(options.safe))
+    target = f'{address}?capture=1&safe={safe}#match={urllib.parse.quote(page_id)}'
+    client.call('Page.navigate', {'url': target})
+    _wait_ready(client, page_id)
+    client.evaluate(
+        _HOLD
+        % {
+            'broadcast': json.dumps(options.broadcast),
+            'camera': json.dumps(options.camera),
+            'at': json.dumps(warm_from),
+            'score': json.dumps(options.score),
+        }
+    )
+    # The page settles in real time, players rebuilt in their kits and the camera in place.
+    time.sleep(1.0)
+    if cancelled.is_set():
+        raise CancelledError('the export was cancelled')
+    client.evaluate(_PLAY % {'at': json.dumps(warm_from)})
+    for _ in range(warm_frames):
+        client.evaluate(_STEP % step)
+    encoder = _spawn(
+        ffmpeg_command(ffmpeg, partial, options),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        stderr: list[bytes] = []
+        threading.Thread(target=lambda: stderr.extend(encoder.stderr), daemon=True).start()
+        report({'stage': 'drawing', 'frame': 0, 'progress': 0.0, **summary})
+        reported = time.monotonic()
+        total = frames if not options.broadcast else limit
+        index = 0
+        while index < total:
+            if cancelled.is_set():
+                raise CancelledError('the export was cancelled')
+            position = client.evaluate(_STEP % (0 if index == 0 else step))
+            if options.broadcast and index >= 1 and position >= end:
+                break
+            picture = client.call(
+                'Page.captureScreenshot', {'format': 'png', 'optimizeForSpeed': True}
+            )
+            try:
+                encoder.stdin.write(base64.b64decode(picture['data']))
+            except (BrokenPipeError, OSError) as error:
+                encoder.wait(30)
+                limit_bytes = options.max_megabytes * 1024 * 1024
+                if partial.exists() and partial.stat().st_size >= 0.9 * limit_bytes:
+                    raise VideoError(
+                        f'the video reached its maximum size of {options.max_megabytes} MB, '
+                        'so choose a shorter range or raise the maximum size'
+                    ) from error
+                tail = b''.join(stderr).decode(errors='replace').strip()[-400:]
+                raise VideoError(f'ffmpeg stopped while encoding, {tail}') from error
+            index += 1
+            now = time.monotonic()
+            if now - reported >= 0.5 or index == total:
+                reported = now
+                if options.broadcast:
+                    progress = (position - start) / max(1e-9, end - start)
+                else:
+                    progress = index / total
+                report(
+                    {
+                        'stage': 'drawing',
+                        'frame': index,
+                        'progress': min(1.0, max(0.0, progress)),
+                        **summary,
+                    }
+                )
+        limited = options.broadcast and index >= total
+        if limited:
+            report({'stage': 'limited', 'frame': index, **summary})
+        report({'stage': 'encoding', 'frame': index, **summary})
+        encoder.stdin.close()
+        code = encoder.wait()
+        if code != 0:
+            tail = b''.join(stderr).decode(errors='replace').strip()[-400:]
+            raise VideoError(f'ffmpeg failed with exit code {code}, {tail}')
+        return index, limited
+    finally:
+        if encoder.poll() is None:
+            with contextlib.suppress(OSError):
+                encoder.stdin.close()
+            _stop(encoder, 5)
+
+
 def export(
     path: Path,
     output: Path,
@@ -855,31 +1191,36 @@ def export(
     identifier: str | None = None,
     report: Report | None = None,
     cancelled: threading.Event | None = None,
+    overwrite: bool = True,
 ) -> dict[str, Any]:
-    """Exports a range of a recording as an MP4 file and returns what was written.
+    """Exports a range of a recording as a video file and returns what was written.
 
-    The video goes to a temporary file beside `output`, which takes its name once complete, so an
-    export that fails or is cancelled leaves no partial file behind.
+    The browser encodes the video, MP4 with H.264 where it can and WebM otherwise, as `Options`
+    asks through its format or the output's suffix, and an installed ffmpeg encodes an MP4 that
+    the browser cannot. With the format auto the output takes the suffix of the container that the
+    export writes. The video goes to a temporary file beside the output, which takes its name once
+    complete, so an export that fails or is cancelled leaves no partial file behind.
 
     Args:
         path: The recording file.
-        output: The MP4 file to write.
+        output: The MP4 or WebM file to write.
         options: The checked options.
         identifier: The recording's identifier in the library, or `None` for a file outside it.
         report: Called with each report of progress, a dictionary with `stage` and, while
             drawing, `frame`, `frames` and `progress` from 0 to 1.
         cancelled: An event that cancels the export once set, beside Ctrl+C.
+        overwrite: Whether the export may replace a file of the output's name.
 
     Raises:
-        ArgumentError: If an option or the range is invalid.
-        VideoError: If Chrome or ffmpeg is missing or stops, or the export is cancelled.
+        ArgumentError: If an option or the range is invalid, or the output exists.
+        VideoError: If the browser is missing, encodes nothing that is asked for, or stops, or
+            the export is cancelled.
     """
     options.check()
     report = report or (lambda _: None)
     cancelled = cancelled or threading.Event()
     output = Path(output)
-    if output.suffix.lower() != '.mp4':
-        raise ArgumentError(f'expected an output file ending in .mp4, found {output.name}')
+    wanted = requested_format(output, options)
     # The range is checked before the programs are looked for, so a mistake in it shows at once.
     facts = recording_facts(Path(path))
     start, end = resolve_range(options, facts)
@@ -891,13 +1232,11 @@ def export(
             f'{start:.1f} to {end:.1f} runs {end - start:.1f} seconds, so choose a shorter range '
             'or raise the maximum length'
         )
-    chrome, ffmpeg, missing = tools(options)
-    if missing:
-        raise VideoError(' '.join(missing))
-    warm = min(start, WARMUP)
-    warm_frames = round(warm * options.fps)
-    warm_from = start - warm_frames / options.fps
-    step = 1000 / options.fps
+    chrome = find_chrome(options.chrome)
+    if chrome is None:
+        raise VideoError(chrome_missing())
+    # ffmpeg is optional and serves only an MP4 that the browser cannot encode.
+    ffmpeg = find_ffmpeg(options.ffmpeg) if wanted != 'webm' else None
     summary = {
         'title': facts.title,
         'start': start,
@@ -909,28 +1248,20 @@ def export(
     }
     report({'stage': 'starting', **summary})
     output.parent.mkdir(parents=True, exist_ok=True)
-    partial = output.with_name(f'.{output.stem}.part.mp4')
     page_id = identifier or _FILE_IDENTIFIER
-    browser = _Chrome(chrome, options)  # type: ignore[arg-type]
-    encoder: subprocess.Popen | None = None
-    written = 0
+    browser = _Chrome(chrome, options)
+    partial: Path | None = None
+    final = output
+    written, limited, codec, way, container = 0, False, '', 'browser', wanted or 'mp4'
     try:
         with _page_server(Path(path), page_id) as address:
             client = browser.start()
             client.call('Runtime.enable')
             client.call('Page.enable')
-            client.call(
-                'Page.addScriptToEvaluateOnNewDocument', {'source': preload_script(options)}
-            )
-            css_width, css_height, scale = view(options.width, options.height, options.graphics)
+            css_width, css_height, _ = view(options.width, options.height, options.graphics)
             client.call(
                 'Emulation.setDeviceMetricsOverride',
-                {
-                    'width': css_width,
-                    'height': css_height,
-                    'deviceScaleFactor': scale,
-                    'mobile': False,
-                },
+                {'width': css_width, 'height': css_height, 'deviceScaleFactor': 1, 'mobile': False},
             )
             client.call(
                 'Emulation.setEmulatedMedia',
@@ -941,103 +1272,45 @@ def export(
                     ]
                 },
             )
-            safe = urllib.parse.quote(str(options.safe))
-            target = f'{address}?capture=1&safe={safe}#match={urllib.parse.quote(page_id)}'
-            client.call('Page.navigate', {'url': target})
-            _wait_ready(client, page_id)
-            client.evaluate(
-                _HOLD
-                % {
-                    'broadcast': json.dumps(options.broadcast),
-                    'camera': json.dumps(options.camera),
-                    'at': json.dumps(warm_from),
-                    'score': json.dumps(options.score),
-                }
-            )
-            # The page settles in real time, players rebuilt in their kits and the camera in place.
-            time.sleep(1.0)
+            client.call('Page.navigate', {'url': f'{address}export.html'})
+            support = _wait_host(client, options)
+            way, container = choose_encoding(wanted, support, ffmpeg, Path(chrome).name)
+            final = output.with_suffix(SUFFIXES[container])
+            if not overwrite and final.exists():
+                raise ArgumentError(f'expected a new output file, {final} exists, add --overwrite')
+            partial = final.with_name(f'.{final.stem}.part{final.suffix}')
+            summary['format'] = container
             if cancelled.is_set():
                 raise CancelledError('the export was cancelled')
-            client.evaluate(_PLAY % {'at': json.dumps(warm_from)})
-            for _ in range(warm_frames):
-                client.evaluate(_STEP % step)
-            encoder = _spawn(
-                ffmpeg_command(ffmpeg, partial, options),  # type: ignore[arg-type]
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-            stderr: list[bytes] = []
-            threading.Thread(target=lambda: stderr.extend(encoder.stderr), daemon=True).start()
-            report({'stage': 'drawing', 'frame': 0, 'progress': 0.0, **summary})
-            reported = time.monotonic()
-            position = warm_from + warm_frames / options.fps
-            total = frames if not options.broadcast else limit
-            index = 0
-            while index < total:
-                if cancelled.is_set():
-                    raise CancelledError('the export was cancelled')
-                position = client.evaluate(_STEP % (0 if index == 0 else step))
-                if options.broadcast and index >= 1 and position >= end:
-                    break
-                picture = client.call(
-                    'Page.captureScreenshot', {'format': 'png', 'optimizeForSpeed': True}
-                )
-                try:
-                    encoder.stdin.write(base64.b64decode(picture['data']))
-                except (BrokenPipeError, OSError) as error:
-                    encoder.wait(30)
-                    limit_bytes = options.max_megabytes * 1024 * 1024
-                    if partial.exists() and partial.stat().st_size >= 0.9 * limit_bytes:
-                        raise VideoError(
-                            f'the video reached its maximum size of {options.max_megabytes} MB, '
-                            'so choose a shorter range or raise the maximum size'
-                        ) from error
-                    tail = b''.join(stderr).decode(errors='replace').strip()[-400:]
-                    raise VideoError(f'ffmpeg stopped while encoding, {tail}') from error
-                index += 1
-                now = time.monotonic()
-                if now - reported >= 0.5 or index == total:
-                    reported = now
-                    if options.broadcast:
-                        progress = (position - start) / max(1e-9, end - start)
-                    else:
-                        progress = index / total
-                    report(
-                        {
-                            'stage': 'drawing',
-                            'frame': index,
-                            'progress': min(1.0, max(0.0, progress)),
-                            **summary,
-                        }
-                    )
-            if options.broadcast and index >= total:
-                report({'stage': 'limited', 'frame': index, **summary})
-            report({'stage': 'encoding', 'frame': index, **summary})
-            encoder.stdin.close()
-            code = encoder.wait()
-            if code != 0:
-                tail = b''.join(stderr).decode(errors='replace').strip()[-400:]
-                raise VideoError(f'ffmpeg failed with exit code {code}, {tail}')
-            written = index
+            if way == 'browser':
+                written, limited, codec = _draw_in_browser(
+                    client, page_id, facts.title, options, container, (start, end), limit,
+                    partial, summary, report, cancelled,
+                )  # fmt: skip
+            else:
+                written, limited = _draw_with_ffmpeg(
+                    client, address, page_id, options, ffmpeg, (start, end), limit, partial,
+                    summary, report, cancelled,
+                )  # fmt: skip
+                codec = 'h264'
             errors = client.errors[:3]
-        os.replace(partial, output)
+        os.replace(partial, final)
     except KeyboardInterrupt as error:
         raise CancelledError('the export was cancelled') from error
     finally:
-        if encoder is not None and encoder.poll() is None:
-            with contextlib.suppress(OSError):
-                encoder.stdin.close()
-            _stop(encoder, 5)
         browser.stop()
-        if partial.exists():
+        if partial is not None and partial.exists():
             _remove(partial)
     result = {
         **summary,
         'frames': written,
         'seconds': written / options.fps,
-        'bytes': output.stat().st_size,
-        'path': str(output),
+        'bytes': final.stat().st_size,
+        'path': str(final),
+        'format': container,
+        'codec': codec,
+        'encoder': way,
+        'limited': limited,
         'page_errors': errors,
     }
     report({'stage': 'done', **result})
@@ -1067,7 +1340,15 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Adds the arguments of an export to a parser."""
     parser.add_argument('source', help='a .cjr recording file or the identifier of a recording')
     parser.add_argument(
-        '-o', '--output', help='the MP4 file to write, by default the name of the source'
+        '-o',
+        '--output',
+        help='the MP4 or WebM file to write, by default the name of the source',
+    )
+    parser.add_argument(
+        '--format',
+        choices=FORMATS,
+        help='the container, mp4 with H.264 or webm with VP9 or VP8, by default the suffix of '
+        '--output, or auto, mp4 where the browser encodes H.264 and webm otherwise',
     )
     parser.add_argument(
         '--overwrite', action='store_true', help='replace the output file when it exists'
@@ -1143,8 +1424,13 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_MAX_MEGABYTES,
         help=f'the largest file in MB, {DEFAULT_MAX_MEGABYTES} by default',
     )
-    parser.add_argument('--chrome', help='the Chrome or Chromium program, found on the path')
-    parser.add_argument('--ffmpeg', help='the ffmpeg program, found on the path')
+    parser.add_argument(
+        '--chrome', help='the Chrome, Edge or Chromium program that draws and encodes the video'
+    )
+    parser.add_argument(
+        '--ffmpeg',
+        help='the ffmpeg program, optional, which encodes an MP4 where the browser has no H.264',
+    )
     parser.add_argument(
         '--software', action='store_true', help='draw without the graphics card, slower'
     )
@@ -1216,6 +1502,7 @@ def options_from(namespace: argparse.Namespace) -> Options:
         ffmpeg=namespace.ffmpeg,
         software=namespace.software,
         sandbox=namespace.sandbox,
+        format=getattr(namespace, 'format', None),
     ).check()
 
 
@@ -1267,18 +1554,26 @@ def run(namespace: argparse.Namespace) -> int:
     """Runs the export of a parsed command line, printing progress, and returns the exit status."""
     options = options_from(namespace)
     path, identifier = resolve_source(namespace.source)
-    output = Path(namespace.output or f'{path.stem}.mp4')
-    if output.exists() and not namespace.overwrite:
-        raise ArgumentError(f'expected a new output file, {output} exists, add --overwrite')
+    if namespace.output:
+        output = Path(namespace.output)
+        if output.exists() and not namespace.overwrite:
+            raise ArgumentError(f'expected a new output file, {output} exists, add --overwrite')
+    else:
+        # Without a file the video takes the name of the source and the suffix of its container.
+        output = Path(f'{path.stem}{SUFFIXES.get(options.format or "", ".mp4")}')
+        if options.format is None:
+            options.format = 'auto'
     try:
-        result = export(path, output, options, identifier, _console(sys.stderr))
+        result = export(
+            path, output, options, identifier, _console(sys.stderr), overwrite=namespace.overwrite
+        )
     except (CancelledError, KeyboardInterrupt):
         print('\ncuju render: the export was cancelled, nothing was written', file=sys.stderr)
         return 130
     for error in result['page_errors']:
         print(f'cuju render: the page reported {error}', file=sys.stderr)
     print(
-        f'saved {output}, {result["frames"]} frames, {result["seconds"]:.1f} s, '
+        f'saved {result["path"]}, {result["frames"]} frames, {result["seconds"]:.1f} s, '
         f'{file_size(result["bytes"])}'
     )
     return 0

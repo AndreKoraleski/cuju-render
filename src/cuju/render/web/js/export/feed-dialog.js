@@ -8,6 +8,7 @@
 // the feed in a new tab. The server's live sources and tournaments join the sources it follows.
 
 import { h } from '../teams/library.js';
+import { icon, symbolOnly } from '../core/icons.js';
 import { feedAddress, namedSources } from './feed-params.js';
 import { serverText, t } from '../core/i18n.js';
 import { sizeFields } from './size-fields.js';
@@ -113,7 +114,7 @@ export class FeedDialog {
         d.replaceChildren(
             h('div', { class: 've-head' },
                 h('h2', { id: 'feed-address-title' }, t('feed.dialog.title')),
-                h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('feed.dialog.close'), title: t('feed.dialog.close.title'), onclick: () => this.close() }, '×')),
+                h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('feed.dialog.close'), title: t('feed.dialog.close.title'), onclick: () => this.close() }, icon('close'))),
             h('p', { class: 'muted small' }, t('feed.dialog.intro')),
             h('div', { class: 've-grid' },
                 field(t('feed.dialog.follows'), this.source),
@@ -128,9 +129,9 @@ export class FeedDialog {
             this.output,
             this.note,
             h('div', { class: 've-actions' },
-                h('button', { class: 'btn primary', type: 'button', onclick: () => this.copy() }, t('feed.dialog.copy')),
+                h('button', { class: 'btn primary', type: 'button', onclick: () => this.copy() }, icon('copy'), t('feed.dialog.copy')),
                 this.openLink,
-                h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, t('feed.dialog.close'))));
+                h('button', { class: 'btn', type: 'button', ...symbolOnly(t('feed.dialog.close'), t('feed.dialog.close.title')), onclick: () => this.close() }, icon('close'))));
     }
 
     // The feed's options from the fields, or null with the problem shown.

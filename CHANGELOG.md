@@ -13,6 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cuju render app`, the page in a window of its own in any browser. It opens the system's web
+    view through pywebview, the new extra `cuju-render[app]`, else Edge, Chrome, Chromium or Brave
+    in app mode with a profile of its own, else the default browser with a note, and `--route`
+    and `--browser` choose. A server that it starts ends with the window.
+    `cuju render app --install` adds a launcher with the cuju icon, a Start menu and desktop
+    shortcut on Windows, an entry of the applications menu on Linux and `cuju.app` in
+    `~/Applications` on macOS, and `--uninstall` removes exactly what it made.
+- An offer to install the page as an app comes to the person. Once Chrome or Edge is ready to
+    install the page, Home shows a small card from the second visit on, whose Install opens the
+    browser's question and whose Not now keeps it away for good in that browser. The card hides
+    in an installed app. Help names Safari's File, then Add to Dock, in Safari, and
+    `cuju render app --install` in every browser.
+- Export video on the Watch page draws and encodes the video in the browser itself, with
+    WebCodecs, so a person who installed `cuju[render]` alone exports without Chrome or ffmpeg.
+    The browser steps the recording one frame at a time in a frame of its own, so a slow computer
+    still draws every frame, and writes MP4 with H.264, or WebM with VP9 or VP8 where H.264 is
+    missing, with the same sizes, safe areas, frame rates, qualities, cameras and overlays as the
+    server's export, a bar of progress, Cancel export and Download video. A browser without a
+    video encoder uses the server's export when the server has Chrome and ffmpeg, and otherwise
+    hears in two lines what would make export work. The diagnostic report names where Export
+    video makes its videos.
+- `cuju render video` and the server's export need only a Chrome, Edge or Chromium. The headless
+    browser runs the same export of the page and hands the file back in pieces, MP4 with H.264
+    where it encodes H.264 and WebM with VP9 or VP8 otherwise, and `--format` asks for `mp4`,
+    `webm` or `auto`. ffmpeg stays optional and encodes an MP4 only where the browser has no H.264.
+    The page that draws an export may sit in a frame of its own server, as the clean feed's page
+    does.
 - `cuju render team sound ID KIND FILE` gives a team the sound of a moment from the command line,
     checked as the page's upload is, `--remove` takes it away and a bare `team sound ID` lists the
     sounds. The HTTP table of the docs lists the routes of a team's model, images, sounds and
@@ -163,6 +190,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     configuration and seed give the same draw and match seeds, and a tournament resumes after a
     restart. People play their matches on the Play page. Requested matches and games take a match
     length and keep the tournament match in their provenance.
+- A registered team may enter a tournament more than once, each entrant under a name of its own,
+    unique within the tournament without regard to case or spaces. The Entrants step proposes a
+    free name such as Rex 2 for a team added again, marks a name that repeats another and lists
+    them in Review, and `cuju render tournament` takes `--as NAME` after an entrant. A typed name
+    that repeats another is refused in English and Portuguese. Two entrants of one team meet as a
+    match of the team against itself, the right side in its away kit with its goalkeeper apart,
+    share the team's rating, which their own match leaves as it is, and a failing policy is named
+    by the entrant whose side failed. Tournament files of before load and resume as they did.
 - `cuju.render.show`, which opens the viewer on a batch, a recording file, an identifier or a URL
     from a script, a terminal or a notebook. It reuses the server of the renderer's folder, which
     `server.json` names, or starts one in the background that ends with the process unless asked
@@ -235,6 +270,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The controls of the page show symbols, the Lucide icons that the page ships in
+    `web/vendor/lucide` under the ISC License. Toolbars, rows, dialogs, the painter, the tabs of the
+    top bar, the menus of Watch, the choices of the Field page and the states of requests,
+    tournaments and lessons show a symbol, alone where it reads clearly and beside its words where
+    the words are the content. A symbol alone keeps its name from the language files as its
+    accessible name and its tooltip, which shows on hover and on keyboard focus.
 - The renderer is its own package, cuju-render, which `pip install 'cuju[render]'` installs
     into the folder of cuju. `import cuju.render`, `cuju render`, `python -m cuju.render` and
     `CUJU_RENDER` work as they did in cuju 0.2.0, and the renderer uses only the public interface
@@ -305,6 +346,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Install the app on Help appears in Chrome and Edge. The browser's offer to install came right
+    after the page loaded, before the part of Help that listens for it, and was lost, so Help only
+    named the browser menu. The first script of the page now keeps the offer for the page.
+- `cuju.render.show`, `cuju render app` and the other commands that start a server in the
+    background find it from a Python of a virtual environment on Windows. That Python runs the
+    server in a process of its own beneath the one started, so the wait for the server never
+    matched it and gave up after a minute. The server file now names the call that started it.
 - The page starts every time on Windows. The server and the page of a video export queued five
     connections at most, Windows refused the next ones as the page asked for its modules at once,
     and a refused module left the page blank. They queue 128 now, and a page whose module fails

@@ -11,13 +11,15 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
-// load from copies beside a package file that names them modules.
-const folder = mkdtempSync(join(tmpdir(), 'cuju-touch-'));
-for (const name of ['play/touch.js', 'core/input-settings.js', 'core/i18n.js']) {
+// load from copies beside a package file that names them modules. The icons that core/icons.js
+// reads come along in vendor/lucide, beside the folder as in the page.
+const root = mkdtempSync(join(tmpdir(), 'cuju-touch-'));
+const folder = join(root, 'js');
+for (const name of ['play/touch.js', 'core/input-settings.js', 'core/i18n.js', 'core/icons.js', '../vendor/lucide/icons.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
-writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
-process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
+writeFileSync(join(root, 'package.json'), '{"type": "module"}\n');
+process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 const touch = await import(pathToFileURL(join(folder, 'play/touch.js')).href);
 const { BINDINGS } = await import(pathToFileURL(join(folder, 'core/input-settings.js')).href);
 const { TOUCH_BUTTONS, stickNames, swipeFrame, touchChoice, touchShown } = touch;

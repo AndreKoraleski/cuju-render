@@ -22,6 +22,11 @@ pip install 'cuju[render]'
 `pip install cuju-render` does the same and brings cuju along when it is missing. cuju-render 0.1
 runs with cuju 0.2.1 and every later release of cuju 0.2.
 
+The pages run in a recent Chrome, Edge, Firefox or Safari, and the Export video dialog of Watch
+draws and encodes the video in that browser with nothing else installed. The command
+`cuju render video` needs an installed Chrome, Edge or Chromium, which writes MP4 with H.264 or
+WebM, and nothing beside it.
+
 ## Quick start
 
 Three lines of Python show a running batch in the browser, in a new tab from a script and inside
@@ -40,6 +45,11 @@ server on its own.
 cuju render demo
 cuju render serve --open
 ```
+
+`cuju render app` opens the page in a window of its own, and `cuju render app --install` adds it to
+the computer's apps, a shortcut on Windows, an entry of the applications menu on Linux and an app in
+`~/Applications` on macOS. The extra `app`, `pip install 'cuju-render[app]'`, draws that window
+with the system's web view, and without it the window comes from Edge, Chrome, Chromium or Brave.
 
 ## Documentation
 

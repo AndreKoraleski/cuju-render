@@ -1224,6 +1224,7 @@ class Tournaments:
         if not isinstance(values, dict) or not isinstance(values.get('player'), str):
             return error, ids
         entrants = record['config']['entrants']
+        found = []
         for side in (match['home'], match['away']):
             entrant = entrants[side]
             if entrant['kind'] != 'team':
@@ -1232,14 +1233,17 @@ class Tournaments:
                 team = _teams.entry(entrant['team'])
             except (ArgumentError, KeyError, OSError, ValueError):
                 continue
-            if team.get('name') == values['player'] and entrant['name'] != values['player']:
-                named = {**values, 'player': rules.label_of(entrant)}
-                try:
-                    text = _messages.text(ids['error_id'], **named)
-                except KeyError:
-                    return error, ids
-                return text, {**ids, 'error_values': named}
-        return error, ids
+            if team.get('name') == values['player']:
+                found.append(entrant)
+        # Two entrants of one team leave the failure as it reads, since either may have failed.
+        if len(found) != 1 or found[0]['name'] == values['player']:
+            return error, ids
+        named = {**values, 'player': rules.label_of(found[0])}
+        try:
+            text = _messages.text(ids['error_id'], **named)
+        except KeyError:
+            return error, ids
+        return text, {**ids, 'error_values': named}
 
     def _progress(self, key: tuple[str, str], share: float, process: Any = None) -> None:
         with self._lock:

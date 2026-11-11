@@ -13,6 +13,7 @@ import { el as h } from '../core/menu.js';
 import { recordingTitle, summaryTeams } from '../core/names.js';
 import { scenarioName } from '../core/scenarios.js';
 import { t, tn } from '../core/i18n.js';
+import { icon, reicon, relabel, symbolOnly } from '../core/icons.js';
 
 const REFRESH_MS = 8000;
 const LATEST = 5;
@@ -29,26 +30,16 @@ const LINKS = [
 ];
 const NOTICE_URL = 'https://github.com/AndreKoraleski/cuju/blob/main/NOTICE';
 
-// What the viewer does, each with an icon drawn in lines and its messages home.feature.<name>.title
-// and .text, whose placeholder {code} is the code of the part.
+// What the viewer does, each with the symbol of the page that shows it and its messages
+// home.feature.<name>.title and .text, whose placeholder {code} is the code of the part.
 const FEATURES = [
-    ['camera'],
-    ['replay'],
-    ['shirt'],
-    ['live', 'CUJU_RENDER=on'],
-    ['podium'],
-    ['field'],
+    ['camera', 'video'],
+    ['replay', 'replay'],
+    ['shirt', 'shirt'],
+    ['live', 'live', 'CUJU_RENDER=on'],
+    ['podium', 'podium'],
+    ['field', 'field'],
 ];
-
-// The icons, in a box of 24 by 24, as paths stroked in the color of the text.
-const ICONS = {
-    camera: ['M3 7.5h12.5v10H3z', 'M15.5 11l5.5-3.5v10l-5.5-3.5', 'M6 4.5h4'],
-    replay: ['M6.3 6.3A8 8 0 1 1 4 12', 'M6.3 2.3v4h4', 'M10.2 9v6l5-3z'],
-    shirt: ['M8.5 3.5L3 6.5l2 4 2.5-1.2V20.5h9V9.3l2.5 1.2 2-4-5.5-3c-.6 1.6-1.9 2.5-3.5 2.5s-2.9-.9-3.5-2.5z'],
-    live: ['M8.5 8.5a5 5 0 0 0 0 7', 'M15.5 8.5a5 5 0 0 1 0 7', 'M5.6 5.6a9 9 0 0 0 0 12.8', 'M18.4 5.6a9 9 0 0 1 0 12.8', 'M12 10.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z'],
-    podium: ['M3 20.5v-7h6v7', 'M9 20.5v-11h6v11', 'M15 20.5v-5h6v5', 'M2 20.5h20', 'M12 3.5l1 2 2 .3-1.5 1.4.4 2-1.9-1-1.9 1 .4-2L9 5.8l2-.3z'],
-    field: ['M2.5 5.5h19v13h-19z', 'M12 5.5v13', 'M12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z', 'M2.5 9h3v6h-3', 'M21.5 9h-3v6h3'],
-};
 
 // Each key group lists keys, where an array of keys reads as one chord or one row of keys. The
 // group's name is the message home.keys.<group>.title and each row's text home.keys.<group>.<row>.
@@ -99,11 +90,6 @@ function svg(tag, attrs = {}, ...children) {
     return node;
 }
 
-function icon(name) {
-    return svg('svg', { class: 'home-icon', viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' },
-        ...(ICONS[name] || []).map((d) => svg('path', { d })));
-}
-
 // The markings of a football pitch of 105 by 68 meters in tenths of a meter, drawn behind the
 // opening band as a quiet backdrop.
 function pitchArt() {
@@ -141,11 +127,16 @@ function bandHead(id, title, { eyebrow, aside, level = 'h2' } = {}) {
 
 // A command to copy, with a button that puts it on the clipboard.
 function command(text) {
-    const button = h('button', { type: 'button', class: 'btn small ghost home-copy', 'aria-label': t('home.copy.label', { command: text }) }, t('home.copy'));
+    const button = h('button', { type: 'button', class: 'btn small ghost home-copy', ...symbolOnly(t('home.copy.label', { command: text })) }, icon('copy'));
+    // The button names what it did for a moment, its check mark showing the copy.
+    const tell = (label, symbol) => {
+        relabel(button, label);
+        reicon(button, symbol);
+    };
     button.addEventListener('click', async () => {
         try {
             await navigator.clipboard.writeText(text);
-            button.textContent = t('home.copy.done');
+            tell(t('home.copy.done'), 'check');
         } catch {
             // Without the clipboard the text is selected, so a key press copies it.
             const range = document.createRange();
@@ -153,10 +144,10 @@ function command(text) {
             const sel = window.getSelection();
             sel.removeAllRanges();
             sel.addRange(range);
-            button.textContent = t('home.copy.selected');
+            tell(t('home.copy.selected'), 'check');
         }
         setTimeout(() => {
-            button.textContent = t('home.copy');
+            tell(t('home.copy.label', { command: text }), 'copy');
         }, 1600);
     });
     const code = h('code', {}, text);
@@ -258,11 +249,11 @@ export class HomePage {
                 h('p', { class: 'home-tagline' }, t('home.hero.tagline')),
                 h('p', { class: 'home-lede' }, t('home.hero.lede')),
                 h('nav', { class: 'home-actions', 'aria-label': t('home.hero.pages') },
-                    h('button', { type: 'button', class: 'btn primary home-cta', onclick: go('watch') }, t('home.hero.watch')),
-                    h('button', { type: 'button', class: 'btn', onclick: go('play') }, t('home.hero.play')),
-                    h('button', { type: 'button', class: 'btn', onclick: go('matches') }, t('home.hero.matches')),
-                    h('button', { type: 'button', class: 'btn', onclick: go('teams') }, t('home.hero.teams')),
-                    h('button', { type: 'button', class: 'btn', onclick: go('field') }, t('home.hero.field'))),
+                    h('button', { type: 'button', class: 'btn primary home-cta', onclick: go('watch') }, icon('watch'), t('home.hero.watch')),
+                    h('button', { type: 'button', class: 'btn', onclick: go('play') }, icon('gamepad'), t('home.hero.play')),
+                    h('button', { type: 'button', class: 'btn', onclick: go('matches') }, icon('matches'), t('home.hero.matches')),
+                    h('button', { type: 'button', class: 'btn', onclick: go('teams') }, icon('shirt'), t('home.hero.teams')),
+                    h('button', { type: 'button', class: 'btn', onclick: go('field') }, icon('field'), t('home.hero.field'))),
                 this.glance));
     }
 
@@ -281,8 +272,8 @@ export class HomePage {
     }
 
     featuresBand() {
-        const items = FEATURES.map(([name, code]) => h('li', { class: 'home-feature' },
-            icon(name),
+        const items = FEATURES.map(([name, symbol, code]) => h('li', { class: 'home-feature' },
+            icon(symbol, 'home-icon'),
             h('h3', {}, t(`home.feature.${name}.title`)),
             h('p', {}, ...tn(`home.feature.${name}.text`, code ? { code: h('code', {}, code) } : {}))));
         return h('section', { class: 'home-band home-features', 'aria-labelledby': 'home-features-title' },
@@ -424,7 +415,7 @@ export class HomePage {
                 command('cuju render serve --open'),
                 h('div', { class: 'home-row' },
                     h('button', { type: 'button', class: 'btn primary', 'data-focus-key': 'open-file', onclick: () => this.openFile() }, t('home.openFile')),
-                    h('button', { type: 'button', class: 'btn', 'data-focus-key': 'retry', onclick: () => this.refresh() }, t('home.offline.retry')))));
+                    h('button', { type: 'button', class: 'btn', 'data-focus-key': 'retry', ...symbolOnly(t('home.offline.retry')), onclick: () => this.refresh() }, icon('refresh')))));
     }
 
     firstRunBlock() {
@@ -528,8 +519,8 @@ export class HomePage {
                 type: 'button',
                 class: 'btn small',
                 'data-focus-key': `rec:${m.id}`,
-                'aria-label': t('home.recordings.play.label', { title }),
+                ...symbolOnly(t('home.recordings.play.label', { title })),
                 onclick: () => this.app.openMatchInWatch(m.id),
-            }, t('home.recordings.play')));
+            }, icon('play')));
     }
 }

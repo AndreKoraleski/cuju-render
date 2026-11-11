@@ -13,6 +13,7 @@
 import { NEED_OFFERS, TOUR_KEY, TOUR_STEPS, moveTour, needMet, placeCard, resumeStep, stepAnnouncement, tourState } from './tour-core.js';
 import { openPanel } from '../core/comfort.js';
 import { t } from '../core/i18n.js';
+import { icon, reicon, relabel, symbolOnly } from '../core/icons.js';
 
 function h(tag, attributes = {}, ...children) {
     const node = document.createElement(tag);
@@ -62,9 +63,9 @@ export class GuidedTour {
         this.offerText = h('span', {});
         this.offerButton = h('button', { type: 'button', class: 'btn small', onclick: () => this.fillNeed() });
         this.offer = h('div', { class: 'tour-offer', hidden: true }, this.offerText, this.offerButton);
-        this.backButton = h('button', { type: 'button', class: 'btn', onclick: () => this.back() }, t('tour.back'));
-        this.nextButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.next() }, t('tour.next'));
-        this.tryButton = h('button', { type: 'button', class: 'btn', onclick: () => this.focusTarget() }, t('tour.try'));
+        this.backButton = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tour.back')), onclick: () => this.back() }, icon('back'));
+        this.nextButton = h('button', { type: 'button', class: 'btn primary', ...symbolOnly(t('tour.next')), onclick: () => this.next() }, icon('next'));
+        this.tryButton = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tour.try')), onclick: () => this.focusTarget() }, icon('cursor'));
         // The focus on the title reads the title, and the live region reads the count and the
         // text once, so the card names no description that a screen reader would read again.
         this.card = h('div', {
@@ -72,7 +73,7 @@ export class GuidedTour {
         },
         this.count, this.title, this.text, this.offer,
         h('div', { class: 'tour-actions' }, this.backButton, this.nextButton, this.tryButton,
-            h('button', { type: 'button', class: 'link small', onclick: () => this.leave() }, t('tour.leave'))),
+            h('button', { type: 'button', class: 'link small', ...symbolOnly(t('tour.leave')), onclick: () => this.leave() }, icon('close'))),
         h('p', { class: 'muted small tour-keys' }, t('tour.keys')),
         this.live);
         this.ring = h('div', { id: 'tour-ring', class: 'tour-ring', 'aria-hidden': 'true', hidden: true });
@@ -153,7 +154,8 @@ export class GuidedTour {
         this.title.textContent = step.title;
         this.text.textContent = step.text;
         this.backButton.disabled = index === 0;
-        this.nextButton.textContent = index === this.steps.length - 1 ? t('tour.finish') : t('tour.next');
+        relabel(this.nextButton, index === this.steps.length - 1 ? t('tour.finish') : t('tour.next'));
+        reicon(this.nextButton, index === this.steps.length - 1 ? 'check' : 'next');
         this.updateOffer(step);
         this.target = null;
         this.settleUntil = 0;

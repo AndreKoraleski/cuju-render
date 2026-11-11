@@ -14,11 +14,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
-// load from a copy of the whole folder beside a package file that names them modules.
-const folder = mkdtempSync(join(tmpdir(), 'cuju-help-'));
+// load from a copy of the whole folder beside a package file that names them modules. The icons
+// that core/icons.js reads come along in vendor/lucide, beside the folder as in the page.
+const root = mkdtempSync(join(tmpdir(), 'cuju-help-'));
+const folder = join(root, 'js');
 cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js', import.meta.url)), folder, { recursive: true });
-writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
-process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
+cpSync(fileURLToPath(new URL('../../src/cuju/render/web/vendor/lucide', import.meta.url)), join(root, 'vendor', 'lucide'), { recursive: true });
+writeFileSync(join(root, 'package.json'), '{"type": "module"}\n');
+process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 const load = (name) => import(pathToFileURL(join(folder, name)).href);
 const tour = await load('help/tour-core.js');
 const lessons = await load('help/lessons-core.js');

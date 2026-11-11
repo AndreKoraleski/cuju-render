@@ -533,11 +533,7 @@ SPDX-License-Identifier: Apache-2.0
     width: 34px;
     height: 34px;
     margin-bottom: 14px;
-    fill: none;
-    stroke: var(--accent);
-    stroke-width: 1.4;
-    stroke-linejoin: miter;
-    stroke-linecap: square;
+    color: var(--accent);
 }
 
 .home-feature h3,

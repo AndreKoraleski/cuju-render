@@ -202,6 +202,11 @@ class App {
             if (this.page === 'home') {
                 this.home.show();
             }
+            // The offer to install the page as an app, a card of Home and its own module, reached
+            // by scripts as cuju.installOffer.
+            import('./help/install-offer.js').then((offer) => {
+                this.installOffer = new offer.InstallOffer(this).script();
+            }).catch((err) => console.warn('install offer not loaded', err));
         }).catch((err) => console.warn('home page not loaded', err));
         // Photo mode, its own module as well, reached by scripts as cuju.photo.
         this.photo = null;
@@ -2291,6 +2296,10 @@ class App {
             state = t('main.live.state.lost', { state, count: connection.gaps });
         }
         $('live-state').textContent = state;
+        // The symbol beside the state shows it at a glance, the text says it in words.
+        const symbol = connection && connection.failed ? 'alert' : connection && connection.state === 'reconnecting' ? 'running'
+            : ended ? 'stop' : atEdge ? 'live' : 'clock';
+        $('live-state-icon')?.querySelector('use')?.setAttribute('href', `#i-${symbol}`);
         // A source on this server with several environments may show another, and the control
         // stays while a switch it asked for ends this stream.
         const header = this.source.header;

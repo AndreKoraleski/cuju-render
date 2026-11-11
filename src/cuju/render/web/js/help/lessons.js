@@ -13,6 +13,7 @@
 
 import { LESSONS_KEY, checkLesson, doneCount, lessonAnnouncement, lessonAsk, lessonPraise, lessonTitle, markDone, needMet, nextLesson, progressState } from './lessons-core.js';
 import { t } from '../core/i18n.js';
+import { icon, reicon, relabel, symbolOnly } from '../core/icons.js';
 
 // The panel looks this often while a lesson is under way.
 const LOOK_MS = 400;
@@ -60,11 +61,11 @@ export class Lessons {
         this.goButton = h('button', { type: 'button', class: 'btn small', onclick: () => this.goThere() });
         this.offer = h('div', { class: 'lesson-offer' }, this.offerButton, this.goButton);
         this.status = h('p', { class: 'lesson-status', role: 'status', 'aria-live': 'polite' });
-        this.nextButton = h('button', { type: 'button', class: 'btn primary small', onclick: () => this.advance() }, t('lessons.skip'));
+        this.nextButton = h('button', { type: 'button', class: 'btn primary small', ...symbolOnly(t('lessons.skip')), onclick: () => this.advance() }, icon('next'));
         this.panel = h('aside', { id: 'lesson-panel', class: 'lesson-panel', role: 'region', 'aria-labelledby': 'lesson-title', hidden: true },
             this.count, this.title, this.ask, this.offer, this.status,
             h('div', { class: 'lesson-actions' }, this.nextButton,
-                h('button', { type: 'button', class: 'btn small', onclick: () => this.stop(true) }, t('lessons.close'))));
+                h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('lessons.close')), onclick: () => this.stop(true) }, icon('close'))));
         this.panel.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -106,7 +107,7 @@ export class Lessons {
                 }
                 this.save();
                 if (this.active) {
-                    this.nextButton.textContent = this.nextLabel(this.active);
+                    this.showNext(this.active);
                 }
             }
         } catch {
@@ -233,13 +234,21 @@ export class Lessons {
         }
         const done = lesson.id in this.progress.done;
         this.status.textContent = done ? t('lessons.doneBefore') : lessonAnnouncement(lesson, index, this.ids.length);
-        this.nextButton.textContent = this.nextLabel(lesson);
+        this.showNext(lesson);
         this.updateOffer();
         this.title.focus({ preventScroll: true });
         clearInterval(this.timer);
         this.timer = setInterval(() => this.look(), LOOK_MS);
         this.look();
         return this.state();
+    }
+
+    // The button that moves on names the step it takes, with the symbol of an arrow, or a check
+    // mark for the last lesson.
+    showNext(lesson) {
+        const label = this.nextLabel(lesson);
+        relabel(this.nextButton, label);
+        reicon(this.nextButton, label === t('lessons.finish') ? 'check' : 'next');
     }
 
     nextLabel(lesson) {
@@ -353,7 +362,7 @@ export class Lessons {
         this.save();
         this.panel.classList.add('lesson-done');
         this.status.textContent = t('lessons.done', { praise: lessonPraise(lesson) });
-        this.nextButton.textContent = this.nextLabel(lesson);
+        this.showNext(lesson);
         this.report([lesson.id]);
         if (this.onDone) {
             this.onDone(lesson.id);

@@ -12,6 +12,7 @@ import { normalizeStyle } from '../players/kits.js';
 import { kitShirt } from '../pages/matches.js';
 import { addFormSurprise } from './surprise-ui.js';
 import { t, tn } from '../core/i18n.js';
+import { icon, relabel, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 
 const $ = (id) => document.getElementById(id);
@@ -114,7 +115,7 @@ export class TeamsPage {
             }
             this.root.replaceChildren(message('error', err.message,
                 h('p', { class: 'muted' }, t('library.offline')),
-                h('button', { class: 'btn', onclick: () => this.refresh() }, t('library.retry'))));
+                h('button', { class: 'btn', ...symbolOnly(t('library.retry')), onclick: () => this.refresh() }, icon('refresh'))));
             return;
         }
         const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('.teams-list > li');
@@ -131,7 +132,7 @@ export class TeamsPage {
         // With the built-in AI alone, the list points to the way an agent of one's own looks.
         const first = teams.some((team) => team.kind !== 'builtin') ? null : h('div', { class: 'empty-state teams-first' },
             h('p', { class: 'muted' }, t('library.firstNote')),
-            h('button', { type: 'button', class: 'btn', onclick: () => this.app.palette?.helpTopic('help-teams') }, t('library.firstHelp')));
+            h('button', { type: 'button', class: 'btn', ...symbolOnly(t('library.firstHelp')), onclick: () => this.app.palette?.helpTopic('help-teams') }, icon('help')));
         this.root.replaceChildren(
             h('section', { class: 'panel-section' }, h('h1', {}, t('library.heading')), list, first),
             h('section', { class: 'panel-section' }, h('h2', {}, t('library.add.heading')), this.upload),
@@ -210,7 +211,7 @@ export class TeamsPage {
                 }
                 this.refresh();
             },
-        }, t('library.item.delete')));
+        }, icon('trash'), t('library.item.delete')));
         return item;
     }
 
@@ -225,7 +226,7 @@ export class TeamsPage {
         const folderInput = h('input', { type: 'file', webkitdirectory: true, multiple: true, hidden: true });
         const fileInput = h('input', { type: 'file', accept: '.py,.gz,.tgz,.zip', hidden: true });
         const summary = h('div', { class: 'upload-summary muted' }, t('library.add.noFolder'));
-        const send = h('button', { class: 'btn primary', type: 'submit', disabled: true }, t('library.add.upload'));
+        const send = h('button', { class: 'btn primary', type: 'submit', disabled: true, ...symbolOnly(t('library.add.upload')) }, icon('upload'));
         const surprise = addFormSurprise(this.app, name, format);
         let pending = null;
         const choose = (p) => {
@@ -268,8 +269,8 @@ export class TeamsPage {
         const dropZone = h('div', { class: 'dropzone' },
             h('p', {}, t('library.add.drop')),
             h('div', { class: 'row' },
-                h('button', { class: 'btn', type: 'button', onclick: () => folderInput.click() }, t('library.add.chooseFolder')),
-                h('button', { class: 'btn ghost', type: 'button', onclick: () => fileInput.click() }, t('library.add.chooseFile'))),
+                h('button', { class: 'btn', type: 'button', ...symbolOnly(t('library.add.chooseFolder')), onclick: () => folderInput.click() }, icon('folder')),
+                h('button', { class: 'btn ghost', type: 'button', ...symbolOnly(t('library.add.chooseFile')), onclick: () => fileInput.click() }, icon('file'))),
             folderInput, fileInput);
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -305,7 +306,7 @@ export class TeamsPage {
                 return;
             }
             send.disabled = true;
-            send.textContent = t('library.add.uploading');
+            relabel(send, t('library.add.uploading'));
             try {
                 let added;
                 if (pending.kind === 'folder') {
@@ -322,12 +323,12 @@ export class TeamsPage {
                 folderInput.value = '';
                 fileInput.value = '';
                 choose(null);
-                send.textContent = t('library.add.upload');
+                relabel(send, t('library.add.upload'));
                 this.refresh();
             } catch (err) {
                 this.app.hud.toast(err.message, 'error', 7000);
                 send.disabled = false;
-                send.textContent = t('library.add.upload');
+                relabel(send, t('library.add.upload'));
             }
         });
         return form;

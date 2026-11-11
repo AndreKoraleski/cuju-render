@@ -4,7 +4,9 @@
 """The video exports that the page asks the server for, one at a time, each in a child process.
 
 Each export runs `python -m cuju.render._export.video` on a recording of the library and writes into
-the folder `videos` of the renderer, where the page downloads the file. The folder holds the videos
+the folder `videos` of the renderer, where the page downloads the file. The browser that the export
+opens encodes the video itself, MP4 where it encodes H.264 and WebM otherwise, so the server needs a
+Chrome, Edge or Chromium and nothing beside it. The folder holds the videos
 of the running server alone, the latest few, and the server empties it of older files before its
 first export.
 """
@@ -147,9 +149,12 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
 
 
 def availability() -> dict[str, Any]:
-    """Returns whether this machine can export videos, and what is missing when it cannot."""
+    """Returns whether this machine can export videos, and what is missing when it cannot.
+
+    The export needs a browser alone, which encodes the video itself, so ffmpeg is never missing.
+    """
     try:
-        _, _, missing = _video.tools(_video.Options(), server=True)
+        missing = [] if _video.find_chrome() else [_video.chrome_missing(server=True)]
     except _video.VideoError as error:
         missing = [str(error)]
     return {'available': not missing, 'missing': missing}
@@ -266,6 +271,8 @@ class VideoJobs:
                 match,
                 '-o',
                 str(output),
+                '--format',
+                'auto',
             ]
             # The child runs in the renderer's folder, so no module beside the server's working
             # folder shadows cuju, and reads its cancellation from a pipe of its own.
@@ -294,6 +301,22 @@ class VideoJobs:
                 Path(entry['_path']).unlink(missing_ok=True)
             self._entries.remove(entry)
 
+    @staticmethod
+    def _moved(entry: dict[str, Any], reported: Any) -> None:
+        """Follows the file of an export to the suffix of the container that it was written in.
+
+        The child process names the file it wrote, which keeps the folder and the name of the
+        export and may take the suffix of another container, with the lock held.
+        """
+        if not isinstance(reported, str):
+            return
+        planned = Path(entry['_path'])
+        written = Path(reported)
+        if written.parent == planned.parent and written.stem == planned.stem:
+            if written.suffix in _video.SUFFIXES.values():
+                entry['_path'] = str(written)
+                entry['filename'] = str(Path(entry['filename']).with_suffix(written.suffix))
+
     def _watch(self, entry: dict[str, Any], process: subprocess.Popen) -> None:
         """Follows the reports of an export's process until it ends."""
         stderr: collections.deque[str] = collections.deque(maxlen=20)
@@ -320,6 +343,7 @@ class VideoJobs:
                         entry['progress'] = 1.0
                     if isinstance(report.get('bytes'), int):
                         entry['bytes'] = report['bytes']
+                    self._moved(entry, report.get('path'))
             code = process.wait()
         finally:
             timer.cancel()

@@ -5,19 +5,24 @@
 // with `node tests/web/tournament.mjs`.
 
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// Node 18 reads a .js file outside a package of type module as CommonJS, so the page's module
-// loads from a copy beside a package file that names it a module.
+// Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
+// load from a copy beside a package file that names them modules. kits.js imports three for its
+// textures, which a small stub stands in for, since the keepers it picks need no drawing.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-tournament-'));
-for (const name of ['play/tournament-layout.js', 'core/i18n.js']) {
+for (const name of ['play/tournament-layout.js', 'core/i18n.js', 'players/kits.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
+mkdirSync(join(folder, 'node_modules', 'three'), { recursive: true });
+writeFileSync(join(folder, 'node_modules', 'three', 'package.json'), '{"name": "three", "type": "module", "main": "index.js"}\n');
+writeFileSync(join(folder, 'node_modules', 'three', 'index.js'),
+    'export class Color {}\nexport class CanvasTexture {}\nexport const SRGBColorSpace = "srgb";\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const layout = await import(pathToFileURL(join(folder, 'play/tournament-layout.js')).href);
 
@@ -197,4 +202,30 @@ test('Every stage name of the page has a message in each shipped language', asyn
     }
     // The section of the third place match agrees with the name of its round.
     assert.equal(english['tournament.section.third'], english['server.tournament.label.third_place']);
+});
+
+test('Entrant names compare and number as the server\'s rules do', () => {
+    // The same cases hold the server's name_key and free_name, in tests/test_tournament.py.
+    const cases = JSON.parse(readFileSync(new URL('../support/entrant_names.json', import.meta.url), 'utf8'));
+    for (const [name, key] of cases.keys) {
+        assert.equal(layout.nameKey(name), key, JSON.stringify(name));
+    }
+    for (const [base, taken, longest, name] of cases.free) {
+        assert.equal(layout.freeName(base, new Set(taken.map(layout.nameKey)), longest), name, JSON.stringify(base));
+    }
+    assert.equal(layout.NAME_LONGEST, 40);
+});
+
+test('A team that plays itself keeps its keepers apart', async () => {
+    const kits = await import(pathToFileURL(join(folder, 'players/kits.js')).href);
+    const team = { id: 'rex', style: { kit: { primary: [200, 20, 20], secondary: [250, 250, 250] }, goalkeeper: { primary: [20, 200, 20] } } };
+    const styles = [kits.normalizeStyle(team, 0), kits.normalizeStyle(team, 1)];
+    kits.separateKeepers(styles, [team, team]);
+    assert.ok(styles[1].away, 'the right side wears its away kit');
+    assert.notDeepEqual(styles[1].goalkeeper.primary, styles[0].goalkeeper.primary);
+    // Two teams that chose the same keeper keep their own choice.
+    const other = { ...team, id: 'max' };
+    const kept = [kits.normalizeStyle(team, 0), kits.normalizeStyle(other, 1)];
+    kits.separateKeepers(kept, [team, other]);
+    assert.deepEqual(kept[1].goalkeeper.primary, kept[0].goalkeeper.primary);
 });

@@ -7,7 +7,8 @@
 import { api, controlLabel, uiLocale } from '../core/api.js';
 import { formatNumber, serverText, t } from '../core/i18n.js';
 import { css, normalizeStyle } from '../players/kits.js';
-import { Dropdown, el as h, enhanceSelect, icon, menuItem } from '../core/menu.js';
+import { Dropdown, el as h, enhanceSelect, menuItem } from '../core/menu.js';
+import { icon, stateBadge, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
 
@@ -139,7 +140,7 @@ export class MatchesPage {
             this.root.replaceChildren(h('div', { class: 'page-pad' }, h('div', { class: 'notice error' },
                 h('p', {}, this.error.message),
                 h('p', { class: 'muted' }, t('matches.offline.hint')),
-                h('button', { class: 'btn', type: 'button', onclick: () => this.refresh() }, t('matches.offline.retry')))));
+                h('button', { class: 'btn', type: 'button', ...symbolOnly(t('matches.offline.retry')), onclick: () => this.refresh() }, icon('refresh')))));
             return;
         }
         const s = this.state;
@@ -184,7 +185,7 @@ export class MatchesPage {
                 h('label', { class: 'field' }, t('matches.setup.scenario'), this.scenarioSelect),
                 h('label', { class: 'field seed-field' }, t('matches.setup.seed'),
                     h('span', { class: 'row' }, this.seedInput,
-                        h('button', { type: 'button', class: 'btn ghost', title: t('matches.setup.draw.title'), onclick: () => this.drawSeed() }, t('matches.setup.draw'))))),
+                        h('button', { type: 'button', class: 'btn ghost', ...symbolOnly(t('matches.setup.draw'), t('matches.setup.draw.title')), onclick: () => this.drawSeed() }, icon('dice'))))),
             this.scenarioText,
             this.clash,
             h('div', { class: 'play-row' }, this.playButton));
@@ -467,7 +468,7 @@ export class MatchesPage {
         };
         const actions = [];
         if (st === 'queued' || st === 'running') {
-            actions.push(h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.cancel(r) }, t('matches.request.cancel')));
+            actions.push(h('button', { type: 'button', class: 'btn small ghost danger', ...symbolOnly(t('matches.request.cancel')), onclick: () => this.cancel(r) }, icon('close')));
         }
         if (st === 'done' && r.match) {
             actions.push(h('button', { type: 'button', class: 'btn small primary', onclick: () => this.app.openMatchInWatch(r.match) },
@@ -476,14 +477,14 @@ export class MatchesPage {
         if (st !== 'queued' && st !== 'running') {
             // Retry and Repeat queue a new request with the same seed, teams, scenario and ability.
             const again = st === 'done' ? 'repeat' : 'retry';
-            actions.push(h('button', { type: 'button', class: 'btn small', title: t(`matches.request.${again}.title`, { seed: r.seed }),
-                onclick: (event) => this.again(r, event.currentTarget) }, t(`matches.request.${again}`)));
+            actions.push(h('button', { type: 'button', class: 'btn small', ...symbolOnly(t(`matches.request.${again}`), t(`matches.request.${again}.title`, { seed: r.seed })),
+                onclick: (event) => this.again(r, event.currentTarget) }, icon(again === 'repeat' ? 'replay' : 'refresh')));
         }
         const li = h('li', { class: `req-card state-${st}`, 'data-id': r.id },
             h('div', { class: 'req-main' },
                 h('div', { class: 'req-teams' }, side(r.left, 0), h('span', { class: 'req-vs' }, t('matches.versus')), side(r.right, 1)),
                 h('div', { class: 'req-meta' },
-                    h('span', { class: `state-pill ${st}` }, STATE_LABELS[st] || st),
+                    stateBadge(st, STATE_LABELS[st] || st),
                     h('span', {}, scenarioName(r.scenario)),
                     r.seed != null ? h('span', {}, t('matches.request.seed', { seed: r.seed })) : null,
                     Array.isArray(r.ability) && r.ability.some((v) => v !== null)

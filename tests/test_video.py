@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Checks the video export of the renderer, its options, ranges, commands and server endpoints.
 
-The end to end test draws two seconds of a sample match when Chrome and ffmpeg are on this machine
-and is skipped otherwise, unless `CUJU_VIDEO_REQUIRED` is set, which makes it fail instead.
+The end to end test draws two seconds of a sample match in the browser's own encoder, as MP4 and
+as WebM, and once more through ffmpeg where it is installed, when Chrome or Edge and ffprobe are on
+this machine. It is skipped otherwise, unless `CUJU_VIDEO_REQUIRED` is set, which fails it instead.
 """
 
 import argparse
@@ -225,8 +226,10 @@ def test_missing_tools(monkeypatch, tmp_path):
     chrome, ffmpeg, missing = _video.tools(_video.Options())
     assert chrome is None and ffmpeg is None
     assert 'Install Google Chrome or Chromium' in missing[0] and 'Install ffmpeg' in missing[1]
-    with pytest.raises(_video.VideoError, match='Install ffmpeg'):
+    # The export needs the browser alone, so a missing ffmpeg never stops it.
+    with pytest.raises(_video.VideoError, match='Install Google Chrome or Chromium') as stopped:
         _video.export(SAMPLE, tmp_path / 'out.mp4', _video.Options(end=_video.Moment(1.0)))
+    assert 'ffmpeg' not in str(stopped.value)
     with pytest.raises(_video.VideoError, match='expected a program'):
         _video.find_ffmpeg(str(tmp_path / 'no-ffmpeg'))
     program = tmp_path / 'ffmpeg-here'
@@ -237,14 +240,14 @@ def test_missing_tools(monkeypatch, tmp_path):
 
 
 def test_export_checks_the_range_before_the_programs(monkeypatch, tmp_path):
-    """A mistake in the range shows at once, before the export looks for Chrome and ffmpeg."""
+    """A mistake in the range shows at once, before the export looks for the browser."""
     looked = []
 
-    def tools(options):
-        looked.append(options)
-        return None, None, ['Video export needs ffmpeg, found none.']
+    def find_chrome(explicit=None):
+        looked.append(explicit)
+        return None
 
-    monkeypatch.setattr(_video, 'tools', tools)
+    monkeypatch.setattr(_video, 'find_chrome', find_chrome)
     output = tmp_path / 'out.mp4'
     for options, message in (
         (_video.Options(start=_video.Moment(70.0), end=_video.Moment(65.0)), 'holds frames'),
@@ -254,9 +257,47 @@ def test_export_checks_the_range_before_the_programs(monkeypatch, tmp_path):
         with pytest.raises(_video.ArgumentError, match=message):
             _video.export(SAMPLE, output, options)
     assert not looked
-    with pytest.raises(_video.VideoError, match='needs ffmpeg'):
+    with pytest.raises(_video.VideoError, match='needs Chrome or Chromium'):
         _video.export(SAMPLE, output, _video.Options(end=_video.Moment(1.0)))
     assert len(looked) == 1 and not list(tmp_path.iterdir())
+
+
+def test_the_output_and_the_format_name_the_container(tmp_path):
+    options = _video.Options()
+    assert _video.requested_format(Path('a.mp4'), options) == 'mp4'
+    assert _video.requested_format(Path('a.WEBM'), options) == 'webm'
+    assert _video.requested_format(Path('a.mp4'), _video.Options(format='auto')) is None
+    assert _video.requested_format(Path('a.webm'), _video.Options(format='webm')) == 'webm'
+    with pytest.raises(_video.ArgumentError, match=r'ending in \.webm for the format webm'):
+        _video.requested_format(Path('a.mp4'), _video.Options(format='webm'))
+    with pytest.raises(_video.ArgumentError, match=r'ending in \.mp4 or \.webm'):
+        _video.requested_format(Path('a.mkv'), options)
+    with pytest.raises(_video.ArgumentError, match='expected a format'):
+        _video.Options(format='avi').check()
+
+
+def test_the_browser_encodes_and_ffmpeg_only_adds_an_mp4():
+    both = {'mp4': 'avc1.64001F', 'webm': 'vp09.00.31.08', 'pictures': True}
+    webm = {'mp4': None, 'webm': 'vp8', 'pictures': True}
+    none = {'mp4': None, 'webm': None, 'pictures': True}
+    choose = _video.choose_encoding
+    assert choose(None, both, None) == ('browser', 'mp4')
+    assert choose(None, both, 'ffmpeg') == ('browser', 'mp4')
+    assert choose('webm', both, 'ffmpeg') == ('browser', 'webm')
+    # Without H.264 the best is an MP4 of ffmpeg where it is installed, else a WebM.
+    assert choose(None, webm, 'ffmpeg') == ('ffmpeg', 'mp4')
+    assert choose(None, webm, None) == ('browser', 'webm')
+    assert choose('mp4', webm, 'ffmpeg') == ('ffmpeg', 'mp4')
+    with pytest.raises(_video.VideoError, match='--format webm') as refused:
+        choose('mp4', webm, None, 'chromium')
+    assert 'H.264' in str(refused.value) and 'chromium' in str(refused.value)
+    with pytest.raises(_video.VideoError, match='VP9 or VP8'):
+        choose('webm', none, 'ffmpeg')
+    assert choose(None, none, 'ffmpeg') == ('ffmpeg', 'mp4')
+    with pytest.raises(_video.VideoError, match='encodes video'):
+        choose(None, none, None)
+    # A browser that cannot read back the page's graphics leaves the MP4 to ffmpeg.
+    assert choose(None, {**both, 'pictures': False}, 'ffmpeg') == ('ffmpeg', 'mp4')
 
 
 def test_missing_tools_name_what_the_server_takes(render_home, monkeypatch):
@@ -272,12 +313,24 @@ def test_missing_tools_name_what_the_server_takes(render_home, monkeypatch):
     status = _video_jobs.availability()
     served = ' '.join(status['missing'])
     assert not status['available'] and '--' not in served
-    assert '$CUJU_FFMPEG in the environment of cuju render serve' in served
+    # The server needs the browser alone, so ffmpeg is never missing.
+    assert '$CUJU_CHROME in the environment of cuju render serve' in served
+    assert 'ffmpeg' not in served
     # The doctor warns of a missing program, which video export alone needs, and still passes.
     check = next(c for c in _doctor.server_report()['checks'] if c['name'] == 'video export')
     assert check['ok'] and check['warning']
     lines = _doctor.text({'checks': [check]}).splitlines()
     assert any(line.startswith('  warn  video export, Video export needs') for line in lines)
+
+
+def test_the_server_exports_with_a_browser_alone(monkeypatch, tmp_path):
+    program = tmp_path / 'chrome-here'
+    program.write_text('')
+    monkeypatch.setenv('CUJU_CHROME', str(program))
+    monkeypatch.delenv('CUJU_FFMPEG', raising=False)
+    monkeypatch.setattr(_video.shutil, 'which', lambda name: None)
+    assert _video.find_ffmpeg() is None
+    assert _video_jobs.availability() == {'available': True, 'missing': []}
 
 
 def test_file_sizes_read_in_kilobytes_below_a_megabyte():
@@ -299,13 +352,15 @@ def test_cli_options(render_home, monkeypatch, tmp_path, capsys):
 
     calls = []
 
-    def export(path, output, options, identifier=None, report=None, cancelled=None):
-        calls.append((path, output, options, identifier))
+    def export(path, output, options, identifier=None, report=None, cancelled=None, **more):
+        calls.append((path, output, options, identifier, more))
         summary = {'title': 't', 'start': 1.7, 'end': 13.7, 'frames': 300, 'width': 1920}
         report({'stage': 'starting', 'height': 1080, 'fps': 25, **summary})
         report({'stage': 'drawing', 'frame': 0, 'progress': 0.0})
         report({'stage': 'drawing', 'frame': 150, 'progress': 0.5})
-        return {'frames': 300, 'seconds': 12.0, 'bytes': 1000, 'page_errors': []}
+        return {
+            'frames': 300, 'seconds': 12.0, 'bytes': 1000, 'page_errors': [], 'path': str(output),
+        }  # fmt: skip
 
     monkeypatch.setattr(_video, 'export', export)
     output = tmp_path / 'goal.mp4'
@@ -332,8 +387,9 @@ def test_cli_options(render_home, monkeypatch, tmp_path, capsys):
         '--no-sandbox',
     ]
     assert main(arguments) == 0
-    path, written, options, identifier = calls[0]
-    assert (path, written, identifier) == (SAMPLE, output, None)
+    path, written, options, identifier, more = calls[0]
+    assert (path, written, identifier, more) == (SAMPLE, output, None, {'overwrite': False})
+    assert options.format is None
     assert (options.goal, options.width, options.height, options.fps) == (1, 1920, 1080, 25)
     assert (options.score, options.arena, options.hour) == (False, 'beach', 22)
     assert options.camera == 'tactical'
@@ -353,6 +409,14 @@ def test_cli_options(render_home, monkeypatch, tmp_path, capsys):
         with pytest.raises(SystemExit):
             main(['video', str(SAMPLE), *wrong])
     assert main(['video', str(SAMPLE), '--fps', '0', '-o', str(tmp_path / 'a.mp4')]) == 1
+    # Without a file the name follows the source and the format, auto unless one is asked for.
+    monkeypatch.chdir(tmp_path)
+    assert main(['video', str(SAMPLE)]) == 0
+    assert calls[-1][1] == Path('sample-5v5.mp4') and calls[-1][2].format == 'auto'
+    assert main(['video', str(SAMPLE), '--format', 'webm']) == 0
+    assert calls[-1][1] == Path('sample-5v5.webm') and calls[-1][2].format == 'webm'
+    with pytest.raises(SystemExit):
+        main(['video', str(SAMPLE), '--format', 'avi'])
 
 
 def test_cli_cancel(monkeypatch, tmp_path, capsys):
@@ -424,8 +488,13 @@ if '--quality' in sys.argv and sys.argv[sys.argv.index('--quality') + 1] == 'dra
     sys.exit(130)
 for frame in (10, 20):
     print(json.dumps({'stage': 'drawing', 'frame': frame, 'progress': frame / 20}), flush=True)
+done = {'stage': 'done', 'bytes': 5}
+# A browser without H.264 writes WebM, and the export names the file it wrote.
+if '--quality' in sys.argv and sys.argv[sys.argv.index('--quality') + 1] == 'high':
+    output = output[: -len('.mp4')] + '.webm'
+    done['path'] = output
 open(output, 'wb').write(b'video')
-print(json.dumps({'stage': 'done', 'bytes': 5}), flush=True)
+print(json.dumps(done), flush=True)
 """
 
 
@@ -480,6 +549,18 @@ def test_server_exports(render_home, monkeypatch):
         status, headers, body = _request(address, f'/api/videos/{entry["id"]}/file')
         assert (status, body, headers['Content-Type']) == (200, b'video', 'video/mp4')
         assert 'attachment' in headers['Content-Disposition']
+        # The export asks for the browser's best container and follows the file it wrote.
+        _, _, body = _request(
+            address,
+            '/api/matches/sample-5v5/video',
+            {'start': 9, 'end': 12, 'quality': 'high'},
+            'POST',
+        )
+        webm = _wait(address, json.loads(body)['id'], 'done')
+        assert webm['filename'] == 'Sample match, 5 vs 5 0m09-0m12.webm'
+        status, headers, body = _request(address, f'/api/videos/{webm["id"]}/file')
+        assert (status, body, headers['Content-Type']) == (200, b'video', 'video/webm')
+        assert (_home.folder('videos') / f'{webm["id"]}.webm').is_file()
         # A running export is cancelled through its process, which then ends.
         _, _, body = _request(
             address,
@@ -532,28 +613,7 @@ def _ffprobe():
     return shutil.which(os.environ.get('CUJU_FFPROBE') or 'ffprobe')
 
 
-def test_export_end_to_end(tmp_path):
-    """Draws two seconds of the 5 v 5 sample and checks the frames and length of the file."""
-    try:
-        missing = _video.tools(_video.Options())[2]
-    except _video.VideoError as error:
-        missing = [str(error)]
-    if not missing and _ffprobe() is None:
-        missing = ['ffprobe is missing']
-    if missing:
-        if os.environ.get('CUJU_VIDEO_REQUIRED'):
-            pytest.fail(' '.join(missing))
-        pytest.skip(' '.join(missing))
-    output = tmp_path / 'two seconds.mp4'
-    reports = []
-    options = _video.Options(
-        start=_video.Moment(8.0), end=_video.Moment(10.0), width=640, height=360, fps=15,
-        quality='draft', sandbox=False,
-    ).check()  # fmt: skip
-    result = _video.export(SAMPLE, output, options, report=reports.append)
-    assert result['frames'] == 30 and output.stat().st_size == result['bytes']
-    assert reports[0]['stage'] == 'starting' and reports[-1]['stage'] == 'done'
-    assert not list(tmp_path.glob('.*part*'))
+def _probe(output):
     probe = subprocess.run(
         [
             _ffprobe(),
@@ -574,9 +634,63 @@ def test_export_end_to_end(tmp_path):
         text=True,
         check=True,
     )
-    found = json.loads(probe.stdout)
+    assert 'audio' not in probe.stdout
+    return json.loads(probe.stdout)
+
+
+def test_export_end_to_end(tmp_path, monkeypatch):
+    """Draws two seconds of the 5 v 5 sample and checks the frames and length of each file."""
+    try:
+        missing = [] if _video.find_chrome() else ['Chrome, Edge or Chromium is missing']
+    except _video.VideoError as error:
+        missing = [str(error)]
+    if not missing and _ffprobe() is None:
+        missing = ['ffprobe is missing']
+    if missing:
+        if os.environ.get('CUJU_VIDEO_REQUIRED'):
+            pytest.fail(' '.join(missing))
+        pytest.skip(' '.join(missing))
+    options = _video.Options(
+        start=_video.Moment(8.0), end=_video.Moment(10.0), width=640, height=360, fps=15,
+        quality='draft', sandbox=False, format='auto',
+    ).check()  # fmt: skip
+    host = _video._wait_host
+    seen = {}
+
+    def wait_host(client, options):
+        seen.update(host(client, options))
+        return seen
+
+    monkeypatch.setattr(_video, '_wait_host', wait_host)
+    reports = []
+    result = _video.export(SAMPLE, tmp_path / 'two seconds.mp4', options, report=reports.append)
+    output = Path(result['path'])
+    assert result['frames'] == 30 and output.stat().st_size == result['bytes']
+    assert result['encoder'] == 'browser'
+    assert reports[0]['stage'] == 'starting' and reports[-1]['stage'] == 'done'
+    assert output.suffix == ('.mp4' if seen['mp4'] else '.webm') == f'.{result["format"]}'
+    codecs = {'mp4': {'h264'}, 'webm': {'vp9', 'vp8'}}
+    found = _probe(output)
     stream = found['streams'][0]
-    assert (stream['codec_name'], stream['width'], stream['height']) == ('h264', 640, 360)
+    assert stream['codec_name'] in codecs[result['format']]
+    assert (stream['width'], stream['height']) == (640, 360)
     assert (int(stream['nb_read_frames']), stream['r_frame_rate']) == (30, '15/1')
     assert float(found['format']['duration']) == pytest.approx(2.0, abs=0.05)
-    assert 'audio' not in probe.stdout
+    # WebM, which every Chrome encodes.
+    options.format = 'webm'
+    webm = _video.export(SAMPLE, tmp_path / 'two seconds.webm', options)
+    found = _probe(Path(webm['path']))
+    assert found['streams'][0]['codec_name'] in codecs['webm']
+    assert int(found['streams'][0]['nb_read_frames']) == 30
+    # A browser without H.264 leaves an MP4 to ffmpeg, where it is installed.
+    if _video.find_ffmpeg():
+        monkeypatch.setattr(
+            _video, '_wait_host', lambda client, options: {**host(client, options), 'mp4': None}
+        )
+        options.format = 'mp4'
+        drawn = _video.export(SAMPLE, tmp_path / 'ffmpeg.mp4', options)
+        assert drawn['encoder'] == 'ffmpeg'
+        found = _probe(Path(drawn['path']))
+        assert found['streams'][0]['codec_name'] == 'h264'
+        assert int(found['streams'][0]['nb_read_frames']) == 30
+    assert not list(tmp_path.glob('.*part*'))

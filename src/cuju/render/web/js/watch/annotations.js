@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { t } from '../core/i18n.js';
 import { h } from '../teams/library.js';
 import { Dropdown } from '../core/menu.js';
+import { icon, symbolOnly } from '../core/icons.js';
 import { labelHeight, labelTop, noteLines, seriesPath } from '../recording/annotation-data.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -46,7 +47,7 @@ export class AnnotationOverlay {
         this.placed = 0;
         const stored = load();
         this.options = Object.fromEntries(['players', 'actions', 'text'].map((key) => [key, stored[key] !== false]));
-        this.button = h('button', { type: 'button', class: 'text-btn', id: 'annotations-button', title: t('annotations.button.title'), hidden: true }, t('annotations.button'));
+        this.button = h('button', { type: 'button', class: 'icon-btn', id: 'annotations-button', ...symbolOnly(t('annotations.button'), t('annotations.button.title')), hidden: true }, icon('layers'));
         this.list = h('div', { class: 'annotation-series', role: 'group', 'aria-labelledby': 'annotation-series-title' });
         const check = (key, text) => {
             const input = h('input', { type: 'checkbox', id: `annotation-${key}` });

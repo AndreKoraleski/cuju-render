@@ -10,6 +10,7 @@ import { api, formatBytes, formatDate } from '../core/api.js';
 import { plainText, serverText, t, tn } from '../core/i18n.js';
 import { h, listKeys } from '../teams/library.js';
 import { Dropdown, enhanceSelect, menuHeading, menuItem } from '../core/menu.js';
+import { icon, labelText, relabel, symbolOnly } from '../core/icons.js';
 import { recordingTitle, summaryTeams } from '../core/names.js';
 import { groupRows, groupTotals, navigationRows } from './recording-groups.js';
 import { scenarioName } from '../core/scenarios.js';
@@ -338,19 +339,22 @@ export class RecordingsPage {
                 this.sortDir = Number(dir);
                 this.renderTable();
             }, 'right'));
-        this.moveBtn = h('button', { type: 'button', class: 'btn', disabled: true }, t('recordings.action.move'), h('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
+        this.moveBtn = h('button', { type: 'button', class: 'btn', disabled: true, ...symbolOnly(t('recordings.action.move')) }, icon('folder-move'), h('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
         const movePanel = h('div', { role: 'menu', class: 'move-menu', 'aria-label': t('recordings.move.menu') });
         this.moveDropdown = new Dropdown(this.moveBtn, movePanel, { onOpen: () => this.fillMove(movePanel) });
         const actions = h('div', { class: 'toolbar actions' },
             this.countLabel = h('span', { class: 'muted small selection-count' }),
             h('span', { class: 'spacer' }),
-            h('button', { class: 'btn', type: 'button', disabled: true, 'data-act': 'open', onclick: () => this.openSelected() }, t('recordings.action.open')),
-            h('button', { class: 'btn', type: 'button', disabled: true, 'data-act': 'rename', onclick: () => this.renameSelected() }, t('recordings.action.rename')),
-            h('button', { class: 'btn', type: 'button', disabled: true, 'data-act': 'details', 'aria-expanded': 'false', onclick: () => this.toggleDetails() }, t('recordings.action.details')),
+            h('button', { class: 'btn', type: 'button', disabled: true, 'data-act': 'open', ...symbolOnly(t('recordings.action.open')), onclick: () => this.openSelected() }, icon('play')),
+            h('button', { class: 'btn', type: 'button', disabled: true, 'data-act': 'rename', ...symbolOnly(t('recordings.action.rename')), onclick: () => this.renameSelected() }, icon('edit')),
+            h('button', { class: 'btn', type: 'button', disabled: true, 'data-act': 'details', 'aria-expanded': 'false', ...symbolOnly(t('recordings.action.details')), onclick: () => this.toggleDetails() }, icon('info')),
             h('span', { class: 'dd-wrap' }, this.moveBtn, movePanel),
-            h('button', { class: 'btn', type: 'button', disabled: true, hidden: !this.trash, 'data-act': 'restore', onclick: () => this.restoreSelected() }, t('recordings.action.restore')),
-            h('button', { class: 'btn danger', type: 'button', disabled: true, 'data-act': 'delete', onclick: () => this.deleteSelected() }, t(this.trash ? 'recordings.action.purge' : 'recordings.action.trash')),
-            h('button', { class: 'btn ghost', type: 'button', title: t(this.trash ? 'recordings.action.refresh.trash' : 'recordings.action.refresh.library'), onclick: () => this.refresh() }, t('recordings.action.refresh')));
+            h('button', { class: 'btn', type: 'button', disabled: true, hidden: !this.trash, 'data-act': 'restore', ...symbolOnly(t('recordings.action.restore')), onclick: () => this.restoreSelected() }, icon('reset')),
+            // Moving to the Trash shows its symbol alone, deleting for good keeps its words beside it.
+            this.trash
+                ? h('button', { class: 'btn danger', type: 'button', disabled: true, 'data-act': 'delete', onclick: () => this.deleteSelected() }, icon('trash'), labelText(t('recordings.action.purge')))
+                : h('button', { class: 'btn danger', type: 'button', disabled: true, 'data-act': 'delete', ...symbolOnly(t('recordings.action.trash')), onclick: () => this.deleteSelected() }, icon('trash')),
+            h('button', { class: 'btn ghost', type: 'button', ...symbolOnly(t('recordings.action.refresh'), t(this.trash ? 'recordings.action.refresh.trash' : 'recordings.action.refresh.library')), onclick: () => this.refresh() }, icon('refresh')));
         this.detailsHost = h('div', { class: 'details-host' });
         // The search of moments across every recording, a panel above the table.
         this.momentsHost = h('div', { class: 'moments-host' });
@@ -361,7 +365,7 @@ export class RecordingsPage {
         this.root.replaceChildren(h('div', { class: 'explorer' },
             h('aside', { class: 'folders', 'aria-label': t('recordings.folders') },
                 h('div', { class: 'pane-head' }, h('span', { class: 'label' }, t('recordings.folders')),
-                    h('button', { class: 'btn small', type: 'button', onclick: () => this.newFolder() }, t('recordings.folder.new'))),
+                    h('button', { class: 'btn small', type: 'button', ...symbolOnly(t('recordings.folder.new')), onclick: () => this.newFolder() }, icon('folder-plus'))),
                 this.treeHost),
             h('div', { class: 'files' }, h('div', { class: 'toolbar' }, search, filters, momentsToggle), this.momentsHost, actions, this.detailsHost, this.tableHost)));
         this.renderTable();
@@ -391,7 +395,7 @@ export class RecordingsPage {
         const extra = Object.keys(provenance).filter((key) => !PROVENANCE.some(([k]) => k === key));
         const rows = [...known, ...extra.map((key) => [key, key.replaceAll('_', ' ')])].flatMap(([key, label]) => [
             h('dt', {}, label), h('dd', {}, provenanceValue(key, provenance[key], provenance))]);
-        const save = h('button', { class: 'btn primary', type: 'submit' }, t('recordings.details.save'));
+        const save = h('button', { class: 'btn primary', type: 'submit', ...symbolOnly(t('recordings.details.save')) }, icon('save'));
         const close = () => {
             this.editing = null;
             this.renderDetails();
@@ -410,7 +414,7 @@ export class RecordingsPage {
                 rows.length ? h('dl', {}, rows) : h('p', { class: 'muted small' }, t('recordings.details.noProvenance')),
                 h('p', { class: 'muted small' }, t('recordings.details.provenanceNote'))),
             h('div', { class: 'toolbar' }, save,
-                h('button', { class: 'btn', type: 'button', onclick: close }, t('recordings.details.close'))));
+                h('button', { class: 'btn', type: 'button', ...symbolOnly(t('recordings.details.close')), onclick: close }, icon('close'))));
         form.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -507,8 +511,8 @@ export class RecordingsPage {
                 },
             }, h('span', { class: 'folder-icon', 'aria-hidden': 'true' }), h('span', { class: 'folder-name' }, name), h('span', { class: 'count' }, String(count)),
             path ? h('span', { class: 'folder-actions' },
-                h('button', { type: 'button', class: 'link', title: t('recordings.folder.rename.title'), onclick: (e) => { e.stopPropagation(); this.renameFolder(path); } }, t('recordings.folder.rename')),
-                h('button', { type: 'button', class: 'link danger', title: t('recordings.folder.delete.title'), onclick: (e) => { e.stopPropagation(); this.deleteFolder(path); } }, t('recordings.folder.delete'))) : null);
+                h('button', { type: 'button', class: 'link', ...symbolOnly(t('recordings.folder.rename.title')), onclick: (e) => { e.stopPropagation(); this.renameFolder(path); } }, icon('edit')),
+                h('button', { type: 'button', class: 'link danger', ...symbolOnly(t('recordings.folder.delete.title')), onclick: (e) => { e.stopPropagation(); this.deleteFolder(path); } }, icon('trash'))) : null);
             row.addEventListener('dragover', (e) => {
                 if (e.dataTransfer.types.includes('application/x-cuju-matches')) {
                     e.preventDefault();
@@ -546,7 +550,7 @@ export class RecordingsPage {
         if (this.error) {
             this.tableHost.replaceChildren(h('div', { class: 'notice error' }, h('p', {}, this.error.message),
                 h('p', { class: 'muted' }, t('recordings.error.hint')),
-                h('button', { class: 'btn', type: 'button', onclick: () => this.refresh() }, t('recordings.error.retry'))));
+                h('button', { class: 'btn', type: 'button', ...symbolOnly(t('recordings.error.retry')), onclick: () => this.refresh() }, icon('refresh'))));
             this.updateActions();
             return;
         }
@@ -745,7 +749,7 @@ export class RecordingsPage {
         q('restore').disabled = count === 0 || !this.trash;
         q('delete').disabled = count === 0;
         const verb = this.trash ? 'recordings.action.purge' : 'recordings.action.trash';
-        q('delete').textContent = count > 1 ? t(`${verb}.count`, { count }) : t(verb);
+        relabel(q('delete'), count > 1 ? t(`${verb}.count`, { count }) : t(verb));
         this.moveBtn.disabled = count === 0 || this.trash;
         const shown = this.rows ? this.rows.length : 0;
         // The total counts every recording of the view, the library or the Trash, on disk.

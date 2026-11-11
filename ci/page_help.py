@@ -1,6 +1,6 @@
 # Copyright 2026 The cuju Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Checks the Help page's tour, lessons, samples, diagnostic report and installable page.
+"""Checks the Help page's tour, lessons, samples, diagnostic report, installable page and offer.
 
 ci/page_check.py runs help_checks with the other checks of the page. Run alone, this file
 starts the mock server and Chrome itself and runs only these checks.
@@ -426,6 +426,111 @@ def pwa_checks(client, port):
     return count
 
 
+# A synthetic offer of the browser to install the page, which counts the asks in window.asked.
+OFFER = """
+    const offer = (outcome) => {
+        const event = new Event('beforeinstallprompt', { cancelable: true });
+        event.prompt = async () => { window.asked = (window.asked || 0) + 1; };
+        event.userChoice = Promise.resolve({ outcome, platform: 'web' });
+        window.dispatchEvent(event);
+        return event;
+    };
+    const card = () => document.getElementById('install-offer');
+    const seen = () => card() && !card().hidden && card().getClientRects().length > 0;
+"""
+
+
+def _reload(client, port):
+    """Loads the page again and waits for its offer to install."""
+    client.evaluate('window.__before = true')
+    client.call('Page.navigate', {'url': f'http://127.0.0.1:{port}/'})
+    ready = 'cuju.menus && cuju.installOffer && cuju.install && cuju.tour'
+    for _ in range(150):
+        if client.evaluate(f'!window.__before && !!(window.cuju && {ready})'):
+            return
+        time.sleep(0.2)
+    raise RuntimeError('The page did not load again.')
+
+
+def offer_checks(client, port):
+    """Checks the offer to install on Home, its Install, its Not now and that it stays away."""
+    # The checks start the offer from a later visit, with nothing dismissed.
+    client.evaluate("localStorage.setItem('cuju.installOffer', '{\"visits\": 3}')")
+    _reload(client, port)
+    count = _run(
+        client,
+        OFFER
+        + """
+        cuju.tour.leave?.();
+        cuju.showPage('home');
+        const event = offer('accepted');
+        const shown = !!(await wait(seen));
+        const install = card().querySelector('button.primary');
+        install.focus();
+        const help = [...document.querySelectorAll('#help-install button')]
+            .find((b) => b.textContent === 'Install the app');
+        const all = {
+            prevented: event.defaultPrevented,
+            shown,
+            title: document.getElementById('install-offer-title').textContent
+                === 'Install cuju as an app',
+            focus: document.activeElement === install,
+            help: !!help && !help.hidden,
+            command: document.getElementById('help-install-command').textContent
+                .includes('cuju render app --install'),
+            state: cuju.installOffer.state().prompt && cuju.install.state().installable,
+        };
+        install.click();
+        all.asked = !!(await wait(() => window.asked === 1));
+        all.gone = !!(await wait(() => !seen()));
+        all.kept = !JSON.parse(localStorage.getItem('cuju.installOffer')).dismissed;
+        all.spent = !cuju.install.state().installable;
+        return Object.values(all).every(Boolean) || JSON.stringify(all);
+        """,
+        'The offer to install shows on Home and asks the browser',
+    )
+    count += _run(
+        client,
+        OFFER
+        + """
+        offer('dismissed');
+        const shown = !!(await wait(seen));
+        const later = [...card().querySelectorAll('button')]
+            .find((b) => b.textContent === 'Not now');
+        later.focus();
+        later.click();
+        const all = {
+            shown,
+            gone: !!(await wait(() => !seen())),
+            stored: JSON.parse(localStorage.getItem('cuju.installOffer')).dismissed === true,
+            focus: card().hidden && !card().contains(document.activeElement),
+        };
+        offer('accepted');
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        all.away = !seen();
+        all.help = cuju.install.state().installable;
+        return Object.values(all).every(Boolean) || JSON.stringify(all);
+        """,
+        'Not now keeps the offer away',
+    )
+    _reload(client, port)
+    count += _run(
+        client,
+        OFFER
+        + """
+        cuju.showPage('home');
+        offer('accepted');
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const state = cuju.installOffer.state();
+        const all = { away: !seen(), visits: state.visits >= 4, dismissed: state.dismissed,
+            prompt: state.prompt };
+        return Object.values(all).every(Boolean) || JSON.stringify(all);
+        """,
+        'A dismissed offer stays away on the next visit',
+    )
+    return count
+
+
 def help_checks(client, port):
     """Runs every check of the Help page's parts, and returns how many passed."""
     checks = parts_checks(client)
@@ -434,6 +539,7 @@ def help_checks(client, port):
     checks += lesson_checks(client)
     checks += doctor_checks(client)
     checks += pwa_checks(client, port)
+    checks += offer_checks(client, port)
     assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
     assert not client.evaluate('!!document.pointerLockElement')
     return checks
@@ -506,6 +612,10 @@ def main():
                 localStorage.setItem('cuju.muted', 'true');
                 localStorage.setItem('cuju.quality', '"low"');
                 localStorage.setItem('cuju.tips', '{"off": true}');
+                // The offer to install the page stays away unless a check asks for it.
+                if (localStorage.getItem('cuju.installOffer') === null) {
+                    localStorage.setItem('cuju.installOffer', '{"dismissed": true}');
+                }
                 Element.prototype.requestPointerLock = function () {
                     throw new Error('Pointer capture refused by the page check.');
                 };

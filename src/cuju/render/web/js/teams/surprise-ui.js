@@ -8,6 +8,7 @@
 import { api } from '../core/api.js';
 import { t, tOr } from '../core/i18n.js';
 import { h } from './library.js';
+import { icon, symbolOnly } from '../core/icons.js';
 import { kitShirt } from '../pages/matches.js';
 import { KIT_STYLES, badgeFor, surprise } from './surprise.js';
 
@@ -125,7 +126,7 @@ export function surprisePanel(editor) {
         }
     });
     return h('div', { class: 'surprise-panel', role: 'group', 'aria-label': t('surprise-ui.button') },
-        h('button', { type: 'button', class: 'btn surprise-go', title: t('surprise-ui.title'), onclick: go }, t('surprise-ui.button')),
+        h('button', { type: 'button', class: 'btn surprise-go', ...symbolOnly(t('surprise-ui.button'), t('surprise-ui.title')), onclick: go }, icon('dice')),
         h('label', {}, t('surprise-ui.seed'), seed),
         h('label', {}, t('surprise-ui.style'), style),
         note);
@@ -138,7 +139,7 @@ export function addFormSurprise(app, nameInput, formatSelect) {
     let made = null;
     const shirt = h('span', { class: 'surprise-shirt' });
     const note = h('p', { class: 'surprise-note muted small' });
-    const clear = h('button', { type: 'button', class: 'btn small ghost', hidden: true, onclick: () => reset() }, t('surprise-ui.plainKit'));
+    const clear = h('button', { type: 'button', class: 'btn small ghost', hidden: true, ...symbolOnly(t('surprise-ui.plainKit')), onclick: () => reset() }, icon('reset'));
     const reset = () => {
         made = null;
         shirt.replaceChildren();
@@ -155,7 +156,7 @@ export function addFormSurprise(app, nameInput, formatSelect) {
         announceSurprise(result, t('surprise-ui.addedKit'));
     };
     const element = h('div', { class: 'surprise-add' },
-        h('button', { type: 'button', class: 'btn surprise-go', onclick: go }, t('surprise-ui.button')), shirt, note, clear);
+        h('button', { type: 'button', class: 'btn surprise-go', ...symbolOnly(t('surprise-ui.button')), onclick: go }, icon('dice')), shirt, note, clear);
     // Gives the team just added the generated style, its badge taken from the name it got.
     const apply = async (team) => {
         if (!made || !team || !team.id) {

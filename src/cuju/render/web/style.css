@@ -6861,6 +6861,26 @@ dialog.painter .toolbar {
     min-width: 110px;
 }
 
+/* The name of an entrant, with the reason beside it when it repeats another. */
+.cup-entrant-name {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.cup-name-note {
+    color: var(--danger);
+}
+
+.cup-name-note:empty {
+    display: none;
+}
+
+.cup-entrant-name input[aria-invalid="true"] {
+    border-color: var(--danger);
+}
+
 .cup-entrant-actions,
 .cup-actions,
 .cup-watch {
@@ -7363,14 +7383,133 @@ dialog.painter .toolbar {
     padding: 2px 4px;
 }
 
-/* The Annotations button of Watch is as wide as its word. */
-#annotations-button {
-    width: auto;
-    padding: 0 8px;
-}
-
 /* The teams and the scenario of the Recordings table wrap, so Date and Size stay in view. */
 table.grid td.wrap {
     min-width: 6em;
     white-space: normal;
+}
+
+/* Symbols. The page draws its symbols from one sprite, js/core/icons.js, in the color of the text.
+   A control that shows its symbol alone keeps the height of a control with text and grows to a
+   square, and the tabs of the top bar and the menus of Watch show a symbol beside their name. */
+.btn .icon,
+.bar-btn .icon,
+.menu button .icon,
+.dd-item > .icon {
+    flex: none;
+}
+
+.btn[data-symbol] {
+    justify-content: center;
+    min-width: 32px;
+    padding: 5px 7px;
+}
+
+.btn.small[data-symbol] {
+    min-width: 26px;
+    padding: 2px 5px;
+}
+
+.btn[data-symbol] .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.btn.small[data-symbol] .icon {
+    width: 14px;
+    height: 14px;
+}
+
+.link[data-symbol] {
+    display: inline-grid;
+    place-items: center;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 2px;
+    text-decoration: none;
+}
+
+.link[data-symbol] .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.menu button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.menu button .icon,
+.bar-btn .icon,
+.dd-item > .icon {
+    width: 18px;
+    height: 18px;
+}
+
+.dd-item > .icon {
+    color: var(--muted);
+}
+
+.state-pill[data-symbol] {
+    display: inline-grid;
+    place-items: center;
+    padding: 1px 3px;
+    vertical-align: middle;
+}
+
+.state-pill[data-symbol] .icon {
+    width: 14px;
+    height: 14px;
+}
+
+.tool[data-symbol] {
+    display: inline-grid;
+    place-items: center;
+    min-width: 32px;
+    min-height: 30px;
+    padding: 3px 6px;
+    color: var(--text);
+}
+
+.tool .icon {
+    width: 18px;
+    height: 18px;
+}
+
+.tool.active .icon {
+    color: var(--accent-hover);
+}
+
+/* Between a wide screen and the dropdown of a phone, the tabs show their symbols alone and keep
+   their names for screen readers and the tooltip. */
+@media (max-width: 1180px) {
+    .menu .nav-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+    }
+}
+
+/* On a phone the menus of Watch show their symbols alone. */
+@media (max-width: 600px) {
+    #watch-bar .bar-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+    }
+
+    #watch-bar .bar-btn {
+        padding: 0 11px;
+    }
+}
+
+#live-state-icon {
+    width: 16px;
+    height: 16px;
+    vertical-align: middle;
 }

@@ -474,6 +474,10 @@ MESSAGES: dict[str, str] = {
     ),
     'server.tournament.match_failed_one_more': '{label} failed, {error}, and 1 more match failed',
     'server.tournament.match_key': 'expected a match of the tournament still to play, found {key}',
+    'server.tournament.name_taken': (
+        'expected a name of its own for entrant {entrant}, '
+        'found {name}, the name of entrant {other}'
+    ),
     'server.tournament.no_frame': 'the recording {identifier} holds no frame',
     'server.tournament.no_result': 'the match gave no result',
     'server.tournament.note.early': (
@@ -529,7 +533,6 @@ MESSAGES: dict[str, str] = {
     'server.tournament.teammates': 'expected registered teammates, found {mates}',
     'server.tournament.text': 'expected {name} as text, found {value}',
     'server.tournament.text_length': 'expected {name} of 1 to {most} characters, found {value}',
-    'server.tournament.twice': '{team} is entered twice',
     'server.tournament.unknown': 'no such tournament',
     'server.tournament.unknown_identifier': 'expected a tournament, found {identifier}',
     'server.tournament.waiting': 'waiting for cuju render tournament run',

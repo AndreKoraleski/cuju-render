@@ -17,6 +17,7 @@ import { aspectFov, narrowShare, turnBetween } from '../world/framing.js';
 import { bareTeamName, kitSwatch, teamNames } from './hud.js';
 import { HALF_H, HALF_W } from '../world/pitch.js';
 import { Players } from '../players/players.js';
+import { icon, symbolOnly } from '../core/icons.js';
 import { h } from '../teams/library.js';
 import { css } from '../players/kits.js';
 import { formatNumber, t } from '../core/i18n.js';
@@ -2373,7 +2374,7 @@ export function statsScreen(report, names, info, store, advance, extra = {}) {
     const root = h('section', { class: 'match-lab', 'aria-labelledby': 'stats-title' },
         h('header', { class: 'stats-heading' },
             h('div', { class: 'stats-result' }, h('h2', { id: 'stats-title' }, t('show.stats.title')), extra.scoreLine || null),
-            h('button', { type: 'button', class: 'btn primary', onclick: advance }, extra.closeLabel || t('show.stats.continue'))),
+            h('button', { type: 'button', class: 'btn primary', onclick: advance }, icon('next'), extra.closeLabel || t('show.stats.continue'))),
         headline.length ? section('awards', t('show.stats.awards'), h('ol', { class: 'award-list' }, headline)) : null,
         facts ? section('teams', t('show.stats.teams'),
             h('div', { class: 'compare-names', 'aria-hidden': 'true' }, h('span', {}, names[0]), h('span', {}, names[1])),
@@ -2859,7 +2860,7 @@ export class PostMatch {
         return h('button', { type: 'button', class: className, onclick: (e) => {
             e.stopPropagation();
             this.openStats();
-        } }, t('show.stats.title'));
+        } }, icon('stats'), t('show.stats.title'));
     }
 
     // Enter shows the next part, the next goal while the reel plays, or ends the show after
@@ -3005,7 +3006,7 @@ export class Podium {
                 h('div', { class: 'victory-score' }, honour ? honour.subtitle : `${names[0]}  ${last.scoreLeft} – ${last.scoreRight}  ${names[1]}`)),
             h('div', { class: 'victory-cards' }, cards),
             h('div', { class: 'victory-actions' }, app.postMatch.statsButton('btn ghost'),
-                h('button', { class: 'btn', onclick: () => app.postMatch.end() }, t('show.close'))));
+                h('button', { class: 'btn', ...symbolOnly(t('show.close')), onclick: () => app.postMatch.end() }, icon('close'))));
         document.getElementById('watch').appendChild(this.overlay);
     }
 
@@ -3418,7 +3419,7 @@ export class Spotlight {
                     h('div', { class: 'mvp-name' }, h('span', { class: 'mvp-number' }, String(info.number)), info.name),
                     h('div', { class: 'mvp-team' }, info.badge ? `${info.badge}  ` : '', info.teamName),
                     h('div', { class: 'small muted' }, stats),
-                    h('button', { class: 'btn primary', onclick: () => app.postMatch.skip() }, t('show.spotlight.next')))),
+                    h('button', { class: 'btn primary', onclick: () => app.postMatch.skip() }, icon('next'), t('show.spotlight.next')))),
             h('div', { class: 'spot-frame' }, h('div', { class: 'spot-caption' }, clip ? SPOT_CAPTIONS[clip.what] : t('show.award.mvp'))));
         document.getElementById('watch').appendChild(this.overlay);
         document.getElementById('app').classList.add('spot-show');

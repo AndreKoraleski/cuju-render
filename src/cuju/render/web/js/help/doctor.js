@@ -12,6 +12,7 @@
 
 import { lastDecoder } from '../recording/decode.js';
 import { formatList, formatNumber, serverText, t, tOr, tn } from '../core/i18n.js';
+import { icon, symbolOnly } from '../core/icons.js';
 
 function h(tag, attributes = {}, ...children) {
     const node = document.createElement(tag);
@@ -158,7 +159,7 @@ export function reportText(report) {
     section('page', [
         row('version', page.version), row('address', page.origin), row('page', page.page), row('drawing', page.drawing),
         row('reducedMotion', yes(page.reducedMotion)), row('theme', page.theme), row('installed', page.standalone ? t('doctor.installed.app') : t('doctor.no')),
-        row('serviceWorker', page.serviceWorker),
+        row('serviceWorker', page.serviceWorker), row('videoExport', page.videoExport),
     ]);
     const browser = report.browser || {};
     section('browser', [
@@ -253,6 +254,22 @@ function webglFacts() {
     return facts;
 }
 
+// Where Export video makes its videos, in this browser with the container and codec of its best
+// encoder, or through the server when this browser cannot.
+async function videoExportFacts() {
+    try {
+        const { browserSupport } = await import('../export/video-browser.js');
+        const support = await browserSupport();
+        if (support.supported) {
+            const codec = support.codec.startsWith('avc1') ? 'H.264' : support.codec.startsWith('vp09') ? 'VP9' : 'VP8';
+            return t('doctor.video.browser', { container: support.container === 'mp4' ? 'MP4' : 'WebM', codec });
+        }
+        return t(support.reason === 'pictures' ? 'doctor.video.pictures' : 'doctor.video.server');
+    } catch {
+        return t('doctor.video.server');
+    }
+}
+
 async function webgpuFacts() {
     if (!navigator.gpu || typeof navigator.gpu.requestAdapter !== 'function') {
         return { state: t('doctor.webgpu.none') };
@@ -327,9 +344,9 @@ export class DoctorSection {
         this.app = app;
         this.host = host;
         this.report = null;
-        this.makeButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.make() }, t('doctor.make'));
-        this.copyButton = h('button', { type: 'button', class: 'btn', disabled: true, onclick: () => this.copy() }, t('doctor.copy'));
-        this.saveButton = h('button', { type: 'button', class: 'btn', disabled: true, onclick: () => this.save() }, t('doctor.save'));
+        this.makeButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.make() }, icon('file'), t('doctor.make'));
+        this.copyButton = h('button', { type: 'button', class: 'btn', disabled: true, ...symbolOnly(t('doctor.copy')), onclick: () => this.copy() }, icon('copy'));
+        this.saveButton = h('button', { type: 'button', class: 'btn', disabled: true, ...symbolOnly(t('doctor.save')), onclick: () => this.save() }, icon('download'));
         this.status = h('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' });
         this.output = h('textarea', {
             id: 'doctor-text', class: 'doctor-text', readonly: true, rows: '14', spellcheck: 'false', hidden: true,
@@ -376,6 +393,7 @@ export class DoctorSection {
             standalone: !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches),
             serviceWorker: worker ? t('doctor.serviceWorker', { path: `${new URL(worker.scriptURL).pathname}${new URL(worker.scriptURL).search}` }) : t('doctor.none'),
         };
+        report.page.videoExport = await videoExportFacts();
         report.webgl = webglFacts();
         const [gpu, decoder, estimate] = await Promise.all([
             webgpuFacts(),

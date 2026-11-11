@@ -14,6 +14,7 @@ import { ChallengesPanel } from './challenges.js';
 import { serverText, t, tn, tOr } from '../core/i18n.js';
 import { LiveSource } from '../recording/live.js';
 import { el as h } from '../core/menu.js';
+import { icon, symbolOnly } from '../core/icons.js';
 import { PLAYER_FLOATS } from '../recording/format.js';
 import { SLOW_FPS, offersView2d } from '../watch/flat.js';
 import { summaryTeams, teamName } from '../core/names.js';
@@ -419,7 +420,7 @@ export class PlayPage {
         this.recordBox.addEventListener('change', () => {
             this.setup.record = this.recordBox.checked;
         });
-        this.startButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.start() }, t('play.setup.start'));
+        this.startButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.start() }, icon('play'), t('play.setup.start'));
         this.padNote = h('div', { class: 'muted small play-pads' });
         this.padTable = h('div', {}, h('h3', {}, CONTROLLER), controlsTable(PAD_CONTROLS, 'xbox'));
         this.setupView = h('section', { class: 'play-setup', 'aria-labelledby': 'play-title' },
@@ -443,16 +444,16 @@ export class PlayPage {
         this.view.addEventListener('focusout', () => this.releaseKeys());
         this.status = h('div', { class: 'play-status', 'aria-live': 'polite' });
         this.card = h('div', { class: 'play-card', hidden: true });
-        this.resumeButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.pause(false) }, t('play.pause.resume'));
-        this.controlsButton = h('button', { type: 'button', class: 'btn', onclick: () => this.openCard() }, t('play.pause.controls'));
+        this.resumeButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.pause(false) }, icon('play'), t('play.pause.resume'));
+        this.controlsButton = h('button', { type: 'button', class: 'btn', onclick: () => this.openCard() }, icon('keyboard'), t('play.pause.controls'));
         this.menu = h('div', { class: 'play-menu', role: 'dialog', 'aria-label': t('play.pause.title'), hidden: true },
             h('div', { class: 'play-panel' }, h('h2', {}, t('play.pause.title')),
                 this.resumeButton,
                 this.controlsButton,
-                h('button', { type: 'button', class: 'btn', onclick: () => this.openPadSetup() }, t('play.padSetup.open')),
-                h('button', { type: 'button', class: 'btn danger', onclick: () => this.quit() }, t('play.pause.quit')),
-                h('button', { type: 'button', class: 'btn danger', onclick: () => this.goHome(true) }, t('play.pause.quitHome')),
-                h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, t('play.home')),
+                h('button', { type: 'button', class: 'btn', onclick: () => this.openPadSetup() }, icon('gamepad'), t('play.padSetup.open')),
+                h('button', { type: 'button', class: 'btn danger', onclick: () => this.quit() }, icon('exit'), t('play.pause.quit')),
+                h('button', { type: 'button', class: 'btn danger', onclick: () => this.goHome(true) }, icon('exit'), t('play.pause.quitHome')),
+                h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, icon('home'), t('play.home')),
                 this.menuHint = h('p', { class: 'muted small keys pad-hint', hidden: true })));
         this.endPanel = h('div', { class: 'play-panel' });
         this.end = h('div', { class: 'play-menu', role: 'dialog', 'aria-label': t('play.end.fullTime'), hidden: true }, this.endPanel);
@@ -470,8 +471,8 @@ export class PlayPage {
         this.offerPad = null;
         this.offer = h('div', { class: 'pad-offer', role: 'status', hidden: true },
             h('span', {}, t('play.padOffer.text')),
-            h('button', { type: 'button', class: 'btn primary', onclick: () => this.openPadSetup(this.offerPad) }, t('play.padSetup.open')),
-            h('button', { type: 'button', class: 'btn', onclick: () => { this.offer.hidden = true; } }, t('play.padOffer.later')));
+            h('button', { type: 'button', class: 'btn primary', onclick: () => this.openPadSetup(this.offerPad) }, icon('gamepad'), t('play.padSetup.open')),
+            h('button', { type: 'button', class: 'btn', ...symbolOnly(t('play.padOffer.later')), onclick: () => { this.offer.hidden = true; } }, icon('close')));
         this.slowText = h('span', {});
         this.slowOffer = h('div', { class: 'pad-offer play-slow-offer', role: 'status', hidden: true },
             this.slowText,
@@ -844,19 +845,19 @@ export class PlayPage {
         }
         if (entry.match) {
             lines.push(h('p', { class: 'muted' }, t('play.end.saved')),
-                h('button', { type: 'button', class: 'btn primary', onclick: () => this.app.openMatchInWatch(entry.match) }, t('play.end.watch')));
+                h('button', { type: 'button', class: 'btn primary', onclick: () => this.app.openMatchInWatch(entry.match) }, icon('watch'), t('play.end.watch')));
         }
         if (game.context) {
             lines.push(h('p', { class: 'muted' }, game.context.label),
                 h('button', { type: 'button', class: 'btn', onclick: () => {
                     this.showSetup();
                     game.context.back();
-                } }, t('play.end.tournament')));
+                } }, icon('trophy'), t('play.end.tournament')));
         } else {
-            lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.start() }, t('play.end.again')),
-                h('button', { type: 'button', class: 'btn', onclick: () => this.showSetup() }, t('play.end.new')));
+            lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.start() }, icon('replay'), t('play.end.again')),
+                h('button', { type: 'button', class: 'btn', onclick: () => this.showSetup() }, icon('plus'), t('play.end.new')));
         }
-        lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, t('play.home')));
+        lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, icon('home'), t('play.home')));
         this.endPanel.replaceChildren(...this.challenges.endCard(entry, game, lines));
         this.end.hidden = false;
     }
@@ -934,11 +935,11 @@ export class PlayPage {
             this.inputNote,
             h('h3', {}, t('play.tester.title')),
             this.tester,
-            h('div', { class: 'play-row' }, h('button', { type: 'button', class: 'btn', onclick: () => {
+            h('div', { class: 'play-row' }, h('button', { type: 'button', class: 'btn', ...symbolOnly(t('play.input.reset')), onclick: () => {
                 this.input = defaultSettings();
                 this.saveInput();
                 this.inputNote.textContent = t('play.input.resetDone');
-            } }, t('play.input.reset'))));
+            } }, icon('reset'))));
         this.inputPanel.addEventListener('toggle', () => this.updateTester(true));
         this.showInput();
         return this.inputPanel;
@@ -1567,7 +1568,7 @@ export class PlayPage {
     // The report line of a controller and the action that sets it up.
     padTools(pad) {
         return pad ? [h('p', { class: 'muted small pad-report' }, this.padReport(pad)),
-            h('button', { type: 'button', class: 'btn', onclick: () => this.openPadSetup() }, t('play.padSetup.open'))] : [];
+            h('button', { type: 'button', class: 'btn', ...symbolOnly(t('play.padSetup.open')), onclick: () => this.openPadSetup() }, icon('gamepad'))] : [];
     }
 
     updatePadNote() {
@@ -1760,7 +1761,7 @@ export class PlayPage {
     renderSetup() {
         const s = this.padSetup;
         const button = (text, onclick, cls = 'btn') => h('button', { type: 'button', class: cls, onclick }, text);
-        const cancel = button(t('play.padSetup.cancel'), () => this.closePadSetup(false));
+        const cancel = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('play.padSetup.cancel')), onclick: () => this.closePadSetup(false) }, icon('close'));
         if (s.step < 0) {
             const choices = Object.entries(PAD_STYLES).map(([style, info]) => {
                 const b = button(info.name, () => {

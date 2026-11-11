@@ -24,7 +24,7 @@ alone. A module imports a sibling under its old name, as in
 | `_playing/` | requested matches, games, the demo, challenges, achievements and policy errors |
 | `_tournaments/` | tournament rules, their runner and their command |
 | `_export/` | video export, the clean feed and the shared picture sizes |
-| `_http/` | the server, finding or starting it, the page commands and the installable app |
+| `_http/` | the server, finding or starting it, the page commands, the installable app, the app window and its launchers |
 | `_guide/` | Help, the agent tutorial and the diagnostic report |
 
 The layers run from `_text`, `_format` and `_store` at the bottom to `_http` and the root at the
@@ -32,8 +32,9 @@ top. A module imports lower layers at the top of the file and higher ones only i
 `_moments/events.py` and `_moments/captions.py` keep no relative imports at the top, and
 `_tournaments/tournament.py` and `_text/messages.py` import only each other and `cuju.errors`,
 since the mock servers load them from their files alone. Python rules that the page mirrors keep a
-test that holds both sides equal, in `web/js/export/sizes.js`, `web/js/recording/moments.js` and
-`web/js/presentation/catalog.js`.
+test that holds both sides equal, in `web/js/export/sizes.js`, `web/js/recording/moments.js`,
+`web/js/presentation/catalog.js` and `web/js/play/tournament-layout.js`, whose entrant names
+share their cases with the Python tests in `tests/support/entrant_names.json`.
 
 The page is `web/`. `js/boot.js` is a classic script that runs before every module, and the
 modules sit in folders by concern, from `core/` and `recording/` at the bottom through `world/`,

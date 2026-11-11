@@ -11,6 +11,7 @@
 
 import { formatDateTime, formatNumber, serverText, t, tn, tOr } from '../core/i18n.js';
 import { el as h } from '../core/menu.js';
+import { icon, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 import { scenarioName } from '../core/scenarios.js';
 
@@ -444,7 +445,7 @@ export class ChallengesPanel {
         if (open) {
             this.fillBoard(c, board, this.boards.get(c.id));
         }
-        const toggle = h('button', { type: 'button', class: 'btn small', 'data-action': 'board', 'aria-expanded': open ? 'true' : 'false', 'aria-label': named('challenges.item.board'), onclick: () => this.toggleBoard(c, board, toggle) }, t('challenges.item.board'));
+        const toggle = h('button', { type: 'button', class: 'btn small', 'data-action': 'board', 'aria-expanded': open ? 'true' : 'false', ...symbolOnly(named('challenges.item.board')), onclick: () => this.toggleBoard(c, board, toggle) }, icon('podium'));
         const leaders = c.board && c.board.top && c.board.top.length
             ? t('challenges.item.leader', {
                 name: teamName(c.board.top[0]), value: valueText(c, c.board.top[0].value),
@@ -459,8 +460,8 @@ export class ChallengesPanel {
             h('p', { class: 'small' }, best),
             h('p', { class: 'muted small' }, leaders),
             h('div', { class: 'challenge-actions' },
-                h('button', { type: 'button', class: 'btn small', 'data-action': 'start', 'aria-label': named('challenges.item.start'), onclick: () => this.start(c.id) }, t('challenges.item.start')),
-                h('button', { type: 'button', class: 'btn small', 'data-action': 'headless', 'aria-label': named('challenges.item.headless'), onclick: () => this.runHeadless(c.id) }, t('challenges.item.headless')),
+                h('button', { type: 'button', class: 'btn small', 'data-action': 'start', ...symbolOnly(named('challenges.item.start')), onclick: () => this.start(c.id) }, icon('play')),
+                h('button', { type: 'button', class: 'btn small', 'data-action': 'headless', ...symbolOnly(named('challenges.item.headless')), onclick: () => this.runHeadless(c.id) }, icon('robot')),
                 toggle),
             board);
     }
@@ -587,8 +588,8 @@ export class ChallengesPanel {
         const last = run.index === run.challenge.attempts - 1;
         this.banner.replaceChildren(...[
             h('span', {}, t('challenges.run.banner', { title: challengeTitle(run.challenge), played: run.matches.length, count: run.challenge.attempts })),
-            last ? null : h('button', { type: 'button', class: 'btn small', onclick: () => this.next() }, t('challenges.run.next')),
-            h('button', { type: 'button', class: 'btn small', onclick: () => this.leave() }, t('challenges.run.leave'))].filter(Boolean));
+            last ? null : h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.run.next')), onclick: () => this.next() }, icon('next')),
+            h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.run.leave')), onclick: () => this.leave() }, icon('exit'))].filter(Boolean));
     }
 
     // The end card of a game. A game of a challenge shows its attempt's result and leads on to the
@@ -610,13 +611,13 @@ export class ChallengesPanel {
             h('p', { class: 'muted' }, match ? t('challenges.run.scoring') : t('challenges.run.missed')));
         const buttons = [];
         if (!last) {
-            buttons.push(h('button', { type: 'button', class: 'btn primary', onclick: () => this.next() }, t('challenges.run.next')));
+            buttons.push(h('button', { type: 'button', class: 'btn primary', onclick: () => this.next() }, icon('next'), t('challenges.run.next')));
         }
         if (match) {
-            buttons.push(h('button', { type: 'button', class: 'btn', onclick: () => this.app.openMatchInWatch(match) }, t('challenges.run.watch')));
+            buttons.push(h('button', { type: 'button', class: 'btn', onclick: () => this.app.openMatchInWatch(match) }, icon('watch'), t('challenges.run.watch')));
             buttons[buttons.length - 1].dataset.action = 'watch';
         }
-        buttons.push(h('button', { type: 'button', class: 'btn', onclick: () => this.leave(c.id) }, last ? t('challenges.title') : t('challenges.run.leave')));
+        buttons.push(h('button', { type: 'button', class: 'btn', onclick: () => this.leave(c.id) }, icon('exit'), last ? t('challenges.title') : t('challenges.run.leave')));
         const shown = [lines[0], lines[1], ...lines.filter((line) => line.classList && line.classList.contains('error-text')), result, earned, ...buttons].filter(Boolean);
         this.scoreAttempt(run, index, match, result).then(() => (last ? this.finishRun(run, result, buttons) : null));
         this.renderBanner();
@@ -662,7 +663,7 @@ export class ChallengesPanel {
         } catch (err) {
             host.lastChild.textContent = t('challenges.run.sendFailed', { reason: err.message });
         }
-        const again = h('button', { type: 'button', class: 'btn primary', onclick: () => this.start(c.id) }, t('challenges.run.again'));
+        const again = h('button', { type: 'button', class: 'btn primary', onclick: () => this.start(c.id) }, icon('replay'), t('challenges.run.again'));
         const panel = buttons[0] && buttons[0].parentNode;
         if (panel) {
             panel.insertBefore(again, buttons[0]);
@@ -773,7 +774,7 @@ export class ChallengesPanel {
         const live = job.state === 'queued' || job.state === 'running';
         this.jobLine.hidden = false;
         this.jobLine.replaceChildren(...[h('span', { class: job.state === 'failed' ? 'error-text' : '' }, text),
-            live ? h('button', { type: 'button', class: 'btn small', onclick: () => this.cancelJob(job.id) }, t('challenges.job.cancel')) : null].filter(Boolean));
+            live ? h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.job.cancel')), onclick: () => this.cancelJob(job.id) }, icon('stop')) : null].filter(Boolean));
     }
 
     async cancelJob(id) {

@@ -15,6 +15,7 @@ import { NODE_NAMES } from '../recording/format.js';
 import { h } from './library.js';
 import { uploadDuration } from '../players/retarget.js';
 import { t } from '../core/i18n.js';
+import { icon, symbolOnly } from '../core/icons.js';
 
 // The moves a team's clips add, by their names in the style.
 export function clipMoves(editor) {
@@ -228,6 +229,7 @@ function mappingTable(editor, clip, host) {
                 h('button', {
                     type: 'button',
                     class: 'btn small',
+                    ...symbolOnly(t('clip-editor.saveMapping')),
                     onclick: () => {
                         if (!joints.body) {
                             editor.app.hud.toast(t('clip-editor.needPelvis'), 'error');
@@ -235,7 +237,7 @@ function mappingTable(editor, clip, host) {
                         }
                         save(joints);
                     },
-                }, t('clip-editor.saveMapping')),
+                }, icon('save')),
                 h('button', { type: 'button', class: 'btn small ghost', onclick: () => save({}) }, t('clip-editor.mapByNames'))));
     })();
 }
@@ -264,12 +266,12 @@ export function clipsPanel(editor) {
                 h('span', { class: 'sound-label' }, clip.name),
                 h('span', { class: 'muted small' }, t('clip-editor.rowMeta', { count, size: formatBytes(clip.bytes), mapped }))),
             h('span', { class: 'row sound-actions' },
-                h('button', { type: 'button', class: 'btn small ghost danger', 'aria-label': t('clip-editor.removeLabel', { name: clip.name }), onclick: () => removeClip(editor, clip.name) }, t('editor.remove'))),
+                h('button', { type: 'button', class: 'btn small ghost danger', ...symbolOnly(t('clip-editor.removeLabel', { name: clip.name })), onclick: () => removeClip(editor, clip.name) }, icon('trash'))),
             details);
     });
     const drop = h('div', { class: 'dropzone small' },
         h('p', {}, t('clip-editor.drop')),
-        h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, t('clip-editor.upload')), file);
+        h('button', { type: 'button', class: 'btn', ...symbolOnly(t('clip-editor.upload')), onclick: () => file.click() }, icon('upload')), file);
     drop.addEventListener('dragover', (e) => {
         e.preventDefault();
         e.stopPropagation();

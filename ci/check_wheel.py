@@ -14,6 +14,7 @@ LICENSES = [
     'LICENSE',
     'NOTICE',
     'LICENSES/MIT.txt',
+    'LICENSES/ISC.txt',
     'LICENSES/CC0-1.0.txt',
     'LICENSES/Unlicense.txt',
     'LICENSES/CC-BY-4.0.txt',
@@ -26,6 +27,8 @@ REQUIRED = [
     'cuju/render/web/index.html',
     'cuju/render/web/vendor/three/LICENSE',
     'cuju/render/web/vendor/fabric/LICENSE',
+    'cuju/render/web/vendor/lucide/LICENSE',
+    'cuju/render/web/vendor/lucide/icons.js',
     'cuju/render/samples/sample-5v5.cjr',
     'cuju/render/samples/sample-11v11.cjr',
 ]

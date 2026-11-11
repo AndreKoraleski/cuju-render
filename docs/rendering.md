@@ -7,7 +7,9 @@ and from free characters, and with sound mixed in the browser. It watches two ki
 and a **live source** is one environment of a running batch, which the page shows while the batch
 plays. The renderer is the package cuju-render, which installs beside cuju with
 `pip install 'cuju[render]'` and adds the module `cuju.render`. Its server needs only Python's
-standard library beside cuju's own dependencies, and its page runs in the browser.
+standard library beside cuju's own dependencies, and its page runs in the browser. Video export
+needs a browser and nothing else, the page's own browser on the Watch page, and an installed
+Chrome, Edge or Chromium for the command `cuju render video`.
 
 The viewer reads states. Watching a match therefore leaves every observation, reward, done flag and
 state of the batch as it would be unwatched, bit for bit. GRF's own renderer runs inside the engine
@@ -478,8 +480,8 @@ for a step that the source did not read while nobody watched.
 Annotating reads nothing of the batch and changes nothing of it, so every observation, reward and
 state stays as it was, bit for bit.
 
-On the page, a recording or a live source with annotations shows the button Annotations among the
-Watch controls, and a recording without them keeps the button and the overlay hidden. Under the feet
+On the page, a recording or a live source with annotations shows the Annotations button, a symbol of
+stacked layers, among the Watch controls, and a recording without them keeps the button and the overlay hidden. Under the feet
 of each player in view, clear of the player, the overlay shows the player's numbers, the action
 chosen with the three most likely actions and their probabilities, and the text, and the annotation
 of the whole match shows in a box over the controls. A label that would reach the controls shows
@@ -1192,8 +1194,63 @@ Export alone.
 
 The page holds nine pages, chosen from the bar along its top. The cuju logo at the left of the bar
 opens Home, and tabs open Watch, Play, Recordings, Matches, Tournaments, Teams, Field and Help.
-Commands, Settings and Fullscreen sit at the right end of the bar. On a narrow screen the tabs
-fold into one menu of pages.
+Each tab shows a symbol beside its name, a television for Watch, a controller for Play, a box of
+files for Recordings, crossed swords for Matches, a trophy for Tournaments, a shirt for Teams, a
+plot of land for Field and a question mark for Help. On a screen of middle width the tabs show
+their symbols alone, and the tooltip of each names the page and what it holds. Commands, a
+magnifying glass, Settings, a gear, and Fullscreen, four corners, sit at the right end of the bar.
+On a narrow screen the tabs fold into one menu of pages, each entry with its symbol and its name.
+
+### Symbols
+
+The controls of the page show symbols wherever a symbol reads clearly, from one set of icons, the
+Lucide icons, drawn in the color of the text so that they follow the theme. A control that shows
+its symbol alone keeps its name. The pointer resting on it shows the name as a tooltip, keyboard
+focus shows the same tooltip beside it, and a screen reader reads the name, so every control reads
+the same by mouse, by keyboard and by ear, in every language of the page. The guides and the tour
+name each control by that name.
+
+The symbols that recur across the pages are these.
+
+| Symbol | Name |
+| --- | --- |
+| a triangle | Play, Open, Start, Watch a match |
+| two bars | Pause |
+| a cross | Close, Cancel, Remove an entry |
+| a pencil | Rename, Edit |
+| the letter i in a circle | Details |
+| a folder with an arrow | Move to a folder |
+| a folder with a plus | New folder |
+| a waste bin | Move to Trash, Remove, Delete |
+| an arrow turning back | Restore, Reset |
+| two arrows in a circle | Refresh, Try again |
+| an arrow looping round | Repeat, Run again, Replay |
+| an arrow down onto a line | Export, Download, Save the report |
+| an arrow up from a line | Import, Upload |
+| two sheets | Copy, Duplicate |
+| a floppy disk | Save |
+| two dice | Draw a seed, Surprise me |
+| a plus | Add |
+| chevrons up and down | Move earlier, Move later |
+| arrows left and right | Back, Next |
+| a square | Stop, Cancel a run |
+| a trophy | Trophy ceremony, Match summary |
+| a medal | Leaderboard |
+| a robot | Run headless |
+
+The states of requested matches, tournaments and lessons show as symbols too, a clock while a
+request waits, a turning wheel while it runs, a ticked circle once it is done, a crossed circle
+when it failed and two bars while it stands still, each with its name as its tooltip. The choices
+of the Field page show the time of day as a rising sun, a sun, a setting sun and a moon, the
+weather as a sun, a cloud, rain, a storm, snow and haze, and each way of mowing as its pattern.
+
+Some controls keep their words beside the symbol, where the words are the content or a symbol
+alone could be read two ways. The main action of a page keeps its words, such as Play on Play,
+Play match on Matches, New tournament and Start tournament on Tournaments and Take the tour on
+Help. Deleting for good keeps its words, Delete permanently in the Trash, Delete for a team, a
+preset or a tournament. The menus of a paused game and the card at the end of a game keep their
+words, since Quit, Quit to Home and Home differ in what they keep. The buttons of the touch
+controls keep the short labels of Gameplay Football, as GRF players know them.
 
 Commands, or Ctrl K on any page, opens the **command palette**, a search field over a list of
 everything the page does. The list holds every page, the live sources and the eight newest
@@ -1253,6 +1310,9 @@ that does not answer is shown as such, and a recording file still opens from the
 narrow screen the sections use one column.
 
 **Watch** fills the page with the match. Its bar holds the Match and View menus and camera controls.
+The Match menu carries a list as its symbol, the View menu an eye and Export video a strip of film,
+each beside its name, and on a phone the three show their symbols alone. The address field opens
+its source with the arrow beside it.
 The Match menu opens a recording file from the computer, takes an address, leads to the Recordings
 and Matches pages, lists the goals of the open match, each of which jumps to six seconds before it,
 and lists the live sources and the six newest recordings, with a count of the live sources on the
@@ -1289,7 +1349,10 @@ folder, scenario, team and date, and the list sorts by date, title, goals, teams
 The columns show the title, the teams, the score, the scenario, the steps, the date and the size,
 and a click on a header sorts by it. Recordings are selected one at a time, several at once with
 Ctrl or a range with Shift, and opened, renamed, moved or deleted, with the arrows, Enter, Delete
-and F2 at hand. The count above the list gives the total size of the recordings of the library,
+and F2 at hand. The toolbar above the list shows these actions as symbols, Open as a triangle,
+Rename as a pencil, Details as the letter i, Move to as a folder with an arrow, Restore as an arrow
+turning back, Move to Trash as a waste bin and Refresh as two arrows in a circle, and the Trash
+view names Delete permanently in words beside its waste bin. The count above the list gives the total size of the recordings of the library,
 or of the Trash in the Trash view.
 
 The search also reads the tags and notes of each recording. Three more filters narrow the list,
@@ -1440,7 +1503,7 @@ frames of the old environment leave the view with it.
 
 ### The grid of environments
 
-The Grid button beside these controls, and the Grid of environments entry of the View menu, open
+The Grid button beside these controls, a symbol of four squares, and the Grid of environments entry of the View menu, open
 a panel over the view with many environments of the same batch at once. Each tile is a small 2D
 view of one environment, from above as in the 2D view, with its index, its score and its clock
 along the top, and the tile of the environment that the main view shows carries a border. The
@@ -1616,11 +1679,17 @@ photo.close();
 
 ## Exporting video
 
-The command `cuju render video` turns a range of a recording into an MP4 video. It draws the same
-page that Watch shows, in a copy of Chrome or Chromium that runs without a window, one frame at a
-time, and passes every picture straight to ffmpeg, which encodes the file. Between two pictures the
-page's clocks, timers and animations move by exactly one frame, so the video plays evenly at its
-frame rate however slowly the machine draws. A browser without a graphics card draws in software,
+A range of a recording becomes a video in two ways. The Export video dialog of Watch, described
+under [From the Watch page](#from-the-watch-page), draws and encodes the video in the browser that
+shows the page, so `pip install 'cuju[render]'` and a recent browser are all it takes. The command
+`cuju render video` serves the terminal and scripts, and needs an installed Chrome, Edge or
+Chromium and nothing else.
+
+The command turns a range of a recording into an MP4 or WebM video. It opens the same page that
+Watch shows in a copy of the browser that runs without a window, and the browser draws and encodes
+the video itself, exactly as the dialog of Watch does, then hands the finished file back to the
+command in pieces. Between two frames the page's clocks, timers and animations move by exactly one
+frame, so the video plays evenly at its frame rate however slowly the machine draws. A browser without a graphics card draws in software,
 about one frame a second at 1280 by 720 on a laptop, and a graphics card draws faster.
 
 ```sh
@@ -1631,9 +1700,38 @@ cuju render video match.cjr -o short.mp4 --goal 1 --size vertical --scale 1.25 -
 ```
 
 The source is a `.cjr` file or the identifier of a recording of the library, as the Recordings page
-lists them. The video goes to the file of `-o`, by default the name of the source with the
-extension `.mp4` in the current folder, and a file that already exists stays as it is unless
-`--overwrite` is given.
+lists them. The video goes to the file of `-o`, by default the name of the source in the current
+folder, and a file that already exists stays as it is unless `--overwrite` is given.
+
+### Formats
+
+The command writes MP4 with H.264, which plays everywhere, or WebM with VP9, or VP8 where the
+browser lacks VP9, which every recent browser and most players open. The browser decides what it
+can write. Google Chrome and Microsoft Edge encode H.264, so they write either format. Chromium as
+many Linux distributions build it encodes no H.264 and writes WebM.
+
+| Format | Codec | Browsers that write it |
+| --- | --- | --- |
+| `mp4` | H.264 | Google Chrome, Microsoft Edge |
+| `webm` | VP9 or VP8 | Google Chrome, Microsoft Edge, Chromium |
+
+The option `--format` asks for `mp4`, `webm` or `auto`. Without it, an output named with `-o` asks
+for the format of its suffix, `.mp4` or `.webm`, and an export without `-o` takes `auto`, which
+writes MP4 where the browser encodes H.264 and WebM otherwise, and names the file with the suffix
+of what it wrote. A format that the browser cannot write stops the command before it draws, with a
+message that names the browser and what would write the format.
+
+ffmpeg stays optional and adds one thing, an MP4 from a browser without H.264. When an MP4 is asked
+for, or `auto` finds no H.264, and ffmpeg is on the path, named by `--ffmpeg` or by the variable
+`CUJU_FFMPEG`, the command takes a picture of each frame instead and ffmpeg encodes the pictures
+with its own H.264 encoder, as the command did before browsers could encode. The picture is the
+same either way.
+
+```sh
+cuju render video sample-5v5 --end 20                   # MP4 or WebM, whichever the browser writes
+cuju render video sample-5v5 --end 20 --format webm     # sample-5v5.webm
+cuju render video sample-5v5 -o kickoff.webm --end 20   # the suffix asks for WebM
+```
 
 ### Range
 
@@ -1676,7 +1774,8 @@ export draws far slower than real time, so the sound of the page stays out of th
 
 | Option | Meaning |
 | ------ | ------- |
-| `-o`, `--output` | the MP4 file to write |
+| `-o`, `--output` | the MP4 or WebM file to write |
+| `--format` | `mp4`, `webm` or `auto`, by default the suffix of `-o`, or `auto` without it |
 | `--overwrite` | replace the output file when it exists |
 | `--start`, `--end` | the moments where the video starts and ends |
 | `--goal` | the range around one goal |
@@ -1692,7 +1791,8 @@ export draws far slower than real time, so the sound of the page stays out of th
 | `--broadcast` | keep the team sheets, restarts, celebrations and replays |
 | `--max-seconds` | the longest video, 600 seconds by default and 3600 at most |
 | `--max-size` | the largest file in MB, 2048 by default and 16384 at most |
-| `--chrome`, `--ffmpeg` | the programs to run, found on the path by default |
+| `--chrome` | the Chrome, Edge or Chromium that draws and encodes, found by itself by default |
+| `--ffmpeg` | ffmpeg, optional, which encodes an MP4 where the browser has no H.264 |
 | `--software` | draw in software, without the graphics card |
 | `--no-sandbox` | run Chrome without its sandbox |
 
@@ -1706,13 +1806,17 @@ export.
 
 ### Requirements and progress
 
-Chrome, Chromium and Edge all serve the export, as does any browser built on Chromium. The command
-looks for `google-chrome`, `chromium`, `chromium-browser` and `chrome` on the path and then in the
-usual places of each system, and `--chrome` or the variable `CUJU_CHROME` names another program.
-ffmpeg comes from the path, from `--ffmpeg` or from the variable `CUJU_FFMPEG`. Both stay optional
-and outside cuju's dependencies, and the command says which one is missing and how to install it,
-for example with `apt install chromium ffmpeg` on Debian and Ubuntu, `brew install ffmpeg` on macOS
-or `winget install ffmpeg` on Windows. Chrome running as root, as in many containers, runs without
+The command needs one program beside cuju, a browser that draws the page and encodes the video,
+and the export of the Watch page needs none, since it runs in the browser that shows the page.
+Chrome, Chromium and Edge all serve the command, as does any browser built on Chromium of version
+94 or later, which brought the video encoder. The command looks for `google-chrome`, `chromium`,
+`chromium-browser` and `chrome` on the path and then in the usual places of each system, Edge
+among them, and `--chrome` or the variable `CUJU_CHROME` names another program. The browser stays
+outside cuju's dependencies, and the command says when it finds none and how to install one, for
+example from https://www.google.com/chrome/, or with `apt install chromium` on Debian and Ubuntu,
+which writes WebM. ffmpeg, from the path, `--ffmpeg` or `CUJU_FFMPEG`, serves only an MP4 that
+the browser cannot write, as [Formats](#formats) describes, and installs with
+`apt install ffmpeg`, `brew install ffmpeg` or `winget install ffmpeg`. Chrome running as root, as in many containers, runs without
 its sandbox, which Chrome refuses to the root user, and `--no-sandbox` turns the sandbox off
 elsewhere, for the containers that need it. A machine whose graphics card the headless browser
 cannot use draws in software by itself, and `--software` asks for that from the start.
@@ -1722,11 +1826,13 @@ a range of three seconds at ten frames a second takes about two minutes, and a s
 or a shorter range takes less.
 
 The command prints the range and the number of frames, then one line of progress with the frame,
-the share done and an estimate of the time left. The pictures pass from Chrome to ffmpeg through a
-pipe, and the file is written beside the output under a hidden name, `.NAME.part.mp4`, which takes
-the output's name once the video is complete. Ctrl+C cancels the export, closes Chrome and ffmpeg,
-removes the partial file and the temporary browser profile and ends with exit status 130, so a
-failed or cancelled export leaves nothing behind.
+the share done and an estimate of the time left, and once the video is ready the file, its frames,
+its length and its size. The browser keeps the finished file until the command has read it, piece
+by piece, and the file is written beside the output under a hidden name, such as `.NAME.part.mp4`,
+which takes the output's name once the video is complete. Through ffmpeg the pictures pass from the
+browser to ffmpeg through a pipe into the same hidden file. Ctrl+C cancels the export, closes the
+browser and ffmpeg, removes the partial file and the temporary browser profile and ends with exit
+status 130, so a failed or cancelled export leaves nothing behind.
 
 ### From the Watch page
 
@@ -1740,35 +1846,77 @@ the three qualities, the five cameras and the scoreboard, and for a recording wi
 check box for them, off at first, and it uses the arena and the time of day of the page's own
 field settings. A range is at most 10 minutes.
 
-Export asks the server to run the same export as the command, in a process of its own on the
-machine of the server, and the dialog shows a bar and a line of progress. Once the video is ready,
-the line names its range and size, as in `The video of 0:30 to 0:45 is ready, 56 KB`, since the
-latest export may cover another range than the fields show, and Download video saves it under
-the title of the recording and its range, and Export again starts another. Cancel export stops a
-running export, which removes its partial file. The server runs one export at a time, and a second
-request waits for the first to finish or be cancelled. Closing the dialog leaves the export running,
-and opening it again shows the latest export of that recording.
+#### In the browser
 
-The server looks for Chrome and ffmpeg as the command does, on the path and in the variables
-`CUJU_CHROME` and `CUJU_FFMPEG` of its environment. When either is missing, the dialog says which
-one and how to install it, and the server needs a restart once both are installed. A file dropped
-on the page and a live source carry no recording of the library, and for them the dialog explains
-that the export draws recordings of the library. The size of a finished video reads in KB below a
-megabyte and in MB from there, here and on the command line.
+Export draws and encodes the video in the browser itself, with the video encoder that the browser
+offers through WebCodecs. Recent versions of Chrome, Edge and Firefox have one, and the dialog
+says so in a line under the settings. The browser opens the recording a second time, in a frame of
+its own that stays out of sight, laid out at the size of the picture as the command lays out its
+headless Chrome. It holds the first frame for a second while the players take their kits and the
+camera settles, plays one second before the range so the graphics have settled too, and then moves
+the frame's clocks, timers and animations by exactly one frame at a time. After each step it
+copies the drawn view into a picture of the chosen size and draws the page's graphics over it, the
+scoreboard and clock, the banners and the captions, from the page's own styles. A slow computer
+therefore still draws every frame, and only takes longer. The picture is the one that the command
+draws, with the same layout, safe area, scale of the graphics, camera, arena and time of day, and
+with the team sheets, replays and the offer of the 2D view kept out and the annotations shown only
+when their check box is on.
+
+The file is an MP4 with H.264, the format that plays everywhere, and a browser without an H.264
+encoder writes a WebM with VP9 or VP8 instead, which every recent browser and most players open.
+A key frame starts every two seconds, so a player seeks the file quickly, and the qualities set
+the bit rate, from about 2.8 megabits a second for `standard` at 1280 by 720 and 30
+frames a second to twice that for `high` and half for `draft`. A video is silent, as one of the
+command is.
+
+The dialog shows a bar and a line of progress with the frame drawn and the share done. Once the
+video is ready, the line names its range and size, as in `The video of 0:30 to 0:45 is ready,
+56 KB`, since the latest export may cover another range than the fields show, and Download video
+saves it under the title of the recording and its range, with the extension of its format. Export
+again starts another. Cancel export stops a running export and drops what it has drawn. Closing
+the dialog leaves the export running, and opening it again shows its progress, but the file lives
+in the page until it is saved, so the page stays open until then. A file grows to at most 2048
+MB, and a range of 10 minutes at 1080p fits well within it.
+
+#### Through the server
+
+A browser without a video encoder, or one that refuses to let a page read back its own graphics,
+asks the server to run the same export as the command, in a process of its own on the machine of
+the server, and a line under the settings says so. The server's export runs in a headless Chrome,
+Edge or Chromium of that machine and writes the format `auto` of [Formats](#formats), MP4 where
+that browser encodes H.264 and WebM otherwise. The dialog then shows the server's progress in the
+same way, and the file waits on the server until Download video saves it, with the suffix of its
+format. The server runs one
+export at a time, and a second request waits for the first to finish or be cancelled. Cancel
+export stops a running export, which removes its partial file, and opening the dialog again shows
+the latest export of that recording.
+
+The server looks for its browser as the command does, on the path, in the usual places and in the
+variable `CUJU_CHROME` of its environment, and for ffmpeg, which it uses only as the command does,
+in `CUJU_FFMPEG`. A server that finds no browser needs a restart once one is installed. When
+neither the browser nor the server can export, the dialog says so in two short lines, that a
+recent Chrome, Edge or Firefox exports from the page with nothing else installed, and that the
+server exports once Chrome, Edge or Chromium is installed where `cuju render` runs, with what the
+server lacks behind a disclosure.
+
+A file dropped on the page and a live source carry no recording of the library, and for them the
+dialog explains that the export draws recordings of the library. The size of a finished video
+reads in KB below a megabyte and in MB from there, here and on the command line.
 
 ### Over HTTP
 
-The dialog asks the server through routes that a script or an agent can use the same way. The
+The dialog asks the server for an export through these routes when the browser cannot encode, and
+a script or an agent can use them the same way. The
 server checks the host of every request, and a request that starts or cancels an export comes from
 the page of the same server or carries no origin, as for every request that changes data.
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/video` | `available`, whether the server finds Chrome and ffmpeg, and `missing`, a message for each one it lacks |
+| `GET /api/video` | `available`, whether the server finds a Chrome, Edge or Chromium, and `missing`, a message when it finds none |
 | `POST /api/matches/ID/video` | starts an export of the recording `ID` of the library and answers 201 with its entry |
 | `GET /api/videos` | the entries of the exports, the one that runs and the three newest that ended |
 | `GET /api/videos/VIDEO` | the entry of the export `VIDEO`, asked for again while it runs |
-| `GET /api/videos/VIDEO/file` | the finished MP4 file, as a download under the entry's `filename` |
+| `GET /api/videos/VIDEO/file` | the finished MP4 or WebM file, as a download under the entry's `filename` |
 | `DELETE /api/videos/VIDEO` | cancels a running export or removes an ended one with its file, and answers 204 |
 
 The body of `POST /api/matches/ID/video` is a JSON object, and every field but `end` may stay out.
@@ -2251,6 +2399,33 @@ random from the seed, or by rating. The tournament keeps going while results com
 schedules each match as soon as both its sides are known, and the next stage starts once the
 stage before it has ended. Tournaments take from 2 to 256 entrants.
 
+### Entrants and their names
+
+Every entrant carries a name of its own, which the brackets, tables, fixtures, recordings and the
+trophy ceremony show. A registered team may enter the same tournament more than once, as a club
+enters its first team and its reserves, or as a policy plays against an earlier copy of itself.
+Each such entrant plays the same team of the registry under its own name, keeps its own place in
+the draw, its own row in every table and its own path through a bracket, and two of them may meet
+like any other pair of entrants.
+
+Names are unique within a tournament. Two names that differ only in letter case or in the spaces
+around and between their words count as one, so Rex FC, rex fc and REX FC with a space before
+it all name the same entrant. A name typed for an entrant, on the page, with the option `--as` of
+the command line or in a configuration file, that another typed name already holds is refused
+with a message that names both entrants, in the language of the page, and in English on the
+command line. An entrant without a typed name takes the name of its
+team, of the built in AI at its ability or of its kind, and when another entrant already holds that
+name it takes the first free number from 2, so a team entered three times plays as Rex, Rex 2 and
+Rex 3. Such a numbered name steps around every typed name, wherever the typed one stands in the
+list, so beside a person named Rex 2 the team's second entrant becomes Rex 3.
+
+A match between two entrants of one team is a match of that team against itself, as two different
+teams that share a policy play. Each side loads its own copy of the submission, the recording names
+the two sides by their entrants, and the right side wears its away kit, the colors of its shirt and
+shorts swapped with its trim, so the two sides look apart on the pitch, in the fixture and in Watch.
+Its goalkeeper takes a contrasting color too. A policy that fails in such a match is named by the
+entrant whose side failed.
+
 ### Formats
 
 Each stage plays one of eight formats.
@@ -2344,8 +2519,9 @@ Ratings come from earlier tournaments. Every match that a tournament plays moves
 entrants by the Elo formula, 20 points for an upset at most, and a new entrant starts at 1500.
 A match awarded by forfeit was never played, so it leaves the ratings as they are.
 A registered team, the built in AI at each ability and each person by name keep their own rating.
-An entrant's rating may also be set by hand, and seeding by rating uses the ratings as they stand
-when the tournament is made.
+Every entrant of one team shares the team's rating, and a match between two of them leaves it as it
+is, since the team both wins and loses it. An entrant's rating may also be set by hand, and seeding
+by rating uses the ratings as they stand when the tournament is made.
 
 ### Determinism
 
@@ -2395,7 +2571,12 @@ time, and the arrow keys move between them.
 2. **Entrants** adds registered teams one at a time or every one at once, the built in AI at an
     ability, or four of them at rising abilities, and people by name, with the built in AI or a
     team of dynamic assignment as their teammates. Each entrant may be renamed, given a rating and
-    moved up or down, which is the seeding when it is manual, or removed.
+    moved up or down, which is the seeding when it is manual, or removed. A team added again, or
+    any team whose name an entrant already shows, enters under the first free name, such as Rex 2,
+    with its name field focused so the proposal can be changed at once. A name that repeats
+    another entrant's is marked beside its field with the entrant it repeats, a person is added
+    only under a name of their own, and Review lists every repeated name until each entrant has
+    its own.
 3. **Settings** names the tournament, takes its seed or draws one, and sets the seeding, the
     scenario, match length and ability of every stage, the matches at once and the forfeit score.
 4. **Stages** is the advanced editor. Each stage is a card with every setting that its format
@@ -2458,6 +2639,8 @@ won with the runner up beneath it. Close ends it.
 ```sh
 cuju render tournament new --preset world_cup --name "Office cup" --seed 7 \
     --team t-20261106-101500-3fa9 --builtin 0.3 --builtin 0.8 --person Ana --run
+cuju render tournament new --preset round_robin --team t-20261106-101500-3fa9 \
+    --team t-20261106-101500-3fa9 --as "Reds reserves" --builtin 0.5
 cuju render tournament check --config spring.json
 cuju render tournament list --json
 cuju render tournament show cup-20261110-090000-1a2b
@@ -2472,7 +2655,10 @@ cuju render tournament presets
 
 The new command makes a tournament from a preset, `quick_cup` by default, or from a JSON file of a
 whole configuration given to `--config`, with the entrants in the order of the options `--team`,
-`--builtin`, with an ability or `any`, and `--person`. The options `--seeding`, `--scenario`,
+`--builtin`, with an ability or `any`, and `--person`. A team may be named more than once, and
+`--as` after an entrant gives it a name of its own, so the second example enters the team Reds
+as Reds and as Reds reserves. A team named again without `--as` takes the first free number, Reds
+2, which `check` shows before anything is made. The options `--seeding`, `--scenario`,
 `--length`, `--concurrency` and `--rounds`, the rounds of every Swiss or ladder stage, change the
 preset, and rounds beyond what the entrants allow are refused with the most they allow. A
 tournament's identifier starts with `cup-`. A running server plays a new tournament, and `run`
@@ -2579,7 +2765,7 @@ meet in a final of one match, settled by away goals, a deciding match and lots i
 | `kind` | `team`, `builtin` or `person`, `team` when absent |
 | `team` | the identifier of a registered team, for a team |
 | `ability` | from 0 to 1, or null for the scenario's own, for the built in AI |
-| `name` | the name the tournament shows, up to 40 characters, by default the team's name or Built-in AI with its ability, and required for a person |
+| `name` | the name the tournament shows, up to 40 characters and unique within the tournament without regard to case or spaces, by default the team's name or Built-in AI with its ability, numbered from 2 when another entrant holds it, and required for a person |
 | `teammates` | `builtin` or a registered team of dynamic assignment, for a person |
 | `rating` | a rating from 0 to 10000 that replaces the one of earlier tournaments |
 
@@ -2628,6 +2814,10 @@ its start with the same seed. The ratings and the presets of the user live in `r
 `presets.json` of the same folder. A match length writes a small scenario file into the folder
 `scenarios`, which plays the shipped scenario for that many steps, with the second half starting at
 the same share of the match.
+
+The file of a tournament keeps the names that its rules gave each entrant, so a tournament made
+by an earlier version, sealed or not, loads, resumes and plays to its end as it did, even where the
+rules of now would number or refuse a name of its entrants.
 
 ## Challenges
 
@@ -3043,8 +3233,11 @@ tournaments, leaderboards with runs and live sources, the server of the folder, 
 warnings and errors of the server, the 50 newest, which include every request that failed inside
 the server. The checks then name what is wrong, a home folder that is missing, a file, or cannot be
 written, less than 500 MB of free space, a missing sample or page file, a stale `server.json` and
-whether video export finds Chrome and ffmpeg. Video export is optional, so a missing program marks
-its check `warn`, with `warning` true in the JSON, and the check still passes. The line under the
+whether video export through the server finds a browser to draw and encode in. That export serves
+browsers without a video encoder, so a missing browser marks its check `warn`, with `warning` true
+in the JSON, and the check still passes. The page's side names where Export video makes its
+videos, in this browser with the format of its best encoder, such as MP4 with H.264, or through
+the server. The line under the
 button names each check that fails and each check that warns, and says that every check passes only
 when none does either.
 
@@ -3077,6 +3270,11 @@ cuju render doctor --json --out report.json
 
 ## Installing the page as an app
 
+cuju becomes an app of the computer by two routes. Chrome, Edge and Safari install the page itself
+as an app from the browser, and the command `cuju render app` opens the page in a window of its
+own with any browser and, with `--install`, adds a launcher to the computer's apps, as
+[The app window](#the-app-window) describes.
+
 Chrome and Edge install the page as an app, with a window and an icon of its own and a place
 among the computer's apps. The installed page keeps a copy of its own files, so it starts fast and
 opens even when the server is stopped, and its Home page then says that the server is not
@@ -3088,9 +3286,23 @@ opened in a tab of its own. In **Chrome**, the install icon at the right end of 
 or the menu of the three dots, then Cast, save and share, then Install page as app, asks to
 install cuju, and Install opens it in its own window. In **Edge**, the App available icon of the
 address bar, or the menu of the three dots, then Apps, then Install this site as an app, does the
-same. The Install the app part of Help shows Install the app when the browser offers it, and says
-whether the page runs installed. Each port and host name is a separate app, so `localhost` and
-`127.0.0.1` install apart, and the app opens on the port that it was installed from.
+same. Each port and host name is a separate app, so `localhost` and `127.0.0.1` install apart, and
+the app opens on the port that it was installed from.
+
+The page brings the offer to the person as well. Once the browser is ready to install the page,
+Home shows a small card, Install cuju as an app, from the second visit on, below its opening band.
+Install on the card opens the browser's own question, and Not now puts the card away for good in
+that browser, as does a No in the browser's question. The card stays away while the page runs as
+an installed app, during the tour or a lesson, under a dialog and in broadcast mode, and it never
+takes the focus, so the keyboard reaches its two buttons in the order of the page. The browser
+keeps the visits and the dismissal in its storage, under `cuju.installOffer`. The Install the app
+part of Help keeps the same offer within reach afterwards, shows Install the app while the browser
+offers it, and says whether the page runs installed.
+
+**Safari** on a Mac installs the page from its own menu, File, then Add to Dock, and Help names
+that menu there. Firefox and the other browsers that install no pages reach the same app through
+`cuju render app --install`, which Help names for them, and every browser's Help names the
+command.
 
 A service worker, `sw.js`, keeps the page's own static files, the HTML, styles, scripts, models,
 pictures and sounds, in a cache named after the build of the page. The build is a digest of cuju's
@@ -3128,6 +3340,64 @@ uninstalls the app.
 | `await install.update()` | register the worker of the server's newer build |
 | `await install.unregister()` | remove the worker and its cache |
 | `await install.ready()` | the state once the worker is registered |
+
+`install.state().route` names how this browser installs the page, `browser` for its own offer,
+`safari` for the Dock and `command` for `cuju render app --install`. The card of Home is
+`cuju.installOffer`.
+
+| Call | Effect |
+| ---- | ------ |
+| `installOffer.state()` | the visits, whether the card was dismissed and shows, whether the browser offers to install and whether the page runs installed |
+| `await installOffer.install()` | show the browser's offer, as Install on the card does |
+| `installOffer.dismiss()` | put the card away for good, as Not now does |
+
+### The app window
+
+`cuju render app` opens the page in a window of its own, with no tabs and no address bar, in any
+browser and on Windows, macOS and Linux. It reuses the server of the home folder when one runs,
+and otherwise starts one that ends when the window closes, on port 8780 when that port is free or
+on the port of `--port`. The command takes the first route that the computer has.
+
+1. **The system's web view**, through [pywebview](https://pywebview.flowrl.com/), which draws the
+   page with WebView2 on Windows, WKWebView on macOS and WebKitGTK or Qt on Linux. pywebview comes
+   with the optional extra `app`, `pip install 'cuju-render[app]'`, which a person who installed
+   `cuju[render]` adds the same way. pywebview is under the BSD 3-Clause License. On Linux it also
+   needs the GTK or Qt bindings of the system, and a web view that does not open there leaves the
+   next route with a note.
+2. **A Chromium browser in app mode**, the first of Edge, Chrome, Chromium and Brave that the
+   computer has, Edge first on Windows, where every computer has it. The window has a profile of
+   its own in the folder `app` of the home folder, apart from the person's browsing, its sign in,
+   its extensions and its tabs, and the command follows that profile to tell when the window
+   closes. `--browser PROGRAM` names the browser.
+3. **The default browser**, with a one line note on the two routes above, as a bare `cuju render`
+   opens it.
+
+`--route webview`, `--route chromium` and `--route browser` ask for one route, and the command
+then says so when the computer lacks it. Every route opens the page from the loopback address of
+the server, and nothing is downloaded.
+
+The page works in each window as it does in a browser. WebGL draws the 3D view, sound plays after
+the first click or key, as browsers require, and the page starts muted as always. The offline copy
+of the page is kept where the engine has service workers, as Edge, Chrome and WebView2 do, and the
+Install the app part of Help says when it is off. Video export in the page needs WebCodecs, which
+Chromium and WebView2 have, as does the WebKit of Safari 16.4 and later. The window counts as an
+installed app, so Home shows no offer to install inside it.
+
+`cuju render app --install` adds a launcher that opens the app window the same way, with the cuju
+icon of the page.
+
+| System | Launcher |
+| --- | --- |
+| Windows | a shortcut `cuju` in the Start menu and on the desktop, which runs `pythonw`, so no console opens |
+| Linux | an entry `cuju.desktop` of the applications menu in `~/.local/share/applications`, or in `applications` of `$XDG_DATA_HOME` |
+| macOS | an app `cuju.app` in `~/Applications` |
+
+A launcher runs the Python of the install that made it, with `--home` when the home folder is not
+the default one and with the `--route` and `--browser` given to `--install`. The launchers go only
+into the person's own folders, and only on this command. The folder `app` of the home folder keeps
+the icon files and `launchers.json`, the list of what the install made, so
+`cuju render app --uninstall` removes exactly that. A file of the same name that the install did
+not make stays where it is, and `--install` then stops and names it.
 
 ## Broadcast presentation
 
@@ -3911,6 +4181,7 @@ picks the renderer's folder for that command alone.
 | `cuju render` | serves the page and opens Home, or opens Home of the server that already runs for the folder |
 | `cuju render serve` | serves the page until interrupted, with `--port`, `--open` to open the page and `--remote` for [Remote use](#remote-use) |
 | `cuju render open TARGET` | opens a `.cjr` file, the identifier of a recording or a live source, or a URL of the page, with `--port` for a server that it starts |
+| `cuju render app` | opens the page in a window of its own, with `--port`, `--route` and `--browser`, and adds or removes a launcher with `--install` and `--uninstall`, as [The app window](#the-app-window) describes |
 | `cuju render team add FOLDER` | registers a submission folder or archive, with `--name`, `--format`, the control options and `--json` |
 | `cuju render team list`, `show ID`, `set ID`, `export ID`, `remove ID` | lists, shows, changes with `--name`, `--format` and the control options, exports with `--out` or removes registered teams, as [Teams and requested matches](#teams-and-requested-matches) describes |
 | `cuju render team sound ID KIND FILE` | gives a team the sound of a moment, checked as the page's upload is, removes it with `--remove` in place of the file, or lists the team's sounds without a moment, with `--json` |

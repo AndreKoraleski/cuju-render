@@ -153,3 +153,62 @@ def test_names_of_the_feed_travel_with_their_messages():
     with pytest.raises(_messages.MessageError) as raised:
         _feed.parse_source('nowhere at all')
     assert raised.value.message_id == 'server.feed.source'
+
+
+def test_the_browser_export_draws_as_the_command():
+    """The export of the browser takes the warm-up, the limits and the settings of the command."""
+    from cuju.render._export import video as _video
+
+    source = (_server._WEB / 'js' / 'export' / 'video-plan.js').read_text(encoding='utf-8')
+    assert re.search(r'export const WARMUP = ([\d.]+);', source)[1] == f'{_video.WARMUP:g}'
+    assert f'MAX_BYTES = {_video.DEFAULT_MAX_MEGABYTES} * 1024 * 1024;' in source
+    start = source.index('QUALITY_DRAWING')
+    drawing = dict(re.findall(r"(\w+): '(\w+)'", source[start : source.index('})', start)]))
+    assert drawing == {name: value[2] for name, value in _video.QUALITIES.items()}
+    # Each setting that the command's page stores is one of the browser's page, the same value
+    # where it holds one, and following broadcast where the command follows it.
+    start = source.index('export function exportSettings')
+    body = source[start : source.index('\n}\n', start)]
+    preload = _video.preload_script(_video.Options(quality='draft').check())
+    found = re.findall(r'^localStorage\.setItem\(("[^"]+"), (".*")\);$', preload, re.MULTILINE)
+    stored = {
+        json.loads(key)[len('cuju.') :]: json.loads(json.loads(value)) for key, value in found
+    }
+    following = {'lineups', 'celebrations', 'replays', 'decisionReplays', 'transitions'}
+    for key, value in stored.items():
+        if key in following:
+            assert f'{key}: broadcast,' in body, key
+        elif key in ('quality', 'camera', 'annotations'):
+            assert f'{key}:' in body, key
+        else:
+            assert f'{key}: {json.dumps(value).replace(chr(34), chr(39))},' in body, key
+    assert _video.FORMATS == ('auto', 'mp4', 'webm')
+
+
+def test_the_drawing_page_of_an_export_frames_on_its_own_origin_alone(tmp_path, monkeypatch):
+    """The page that draws a browser's export sits in a frame of the page that encodes it."""
+    from cuju.render._store import home as _home
+
+    monkeypatch.setenv(_home.HOME_VARIABLE, str(tmp_path / 'render'))
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+
+    def headers(path):
+        with urllib.request.urlopen(address + path, timeout=10) as response:
+            return response.headers, response.read()
+
+    try:
+        found, page = headers('/?capture=1&export=%7B%7D&ratio=1.5#match=m-1')
+        assert b'video-boot.js' in page
+        assert found['X-Frame-Options'] == 'SAMEORIGIN'
+        assert found['Content-Security-Policy'] == "frame-ancestors 'self'"
+        for path in ('/?export=1', '/?capture=1', '/export.html'):
+            assert headers(path)[0]['X-Frame-Options'] == 'DENY', path
+        found, page = headers('/export.html')
+        assert found['Content-Type'].startswith('text/html') and b'export-host.js' in page
+    finally:
+        server.shutdown()
+        server.server_close()

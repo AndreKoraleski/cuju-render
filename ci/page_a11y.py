@@ -52,7 +52,7 @@ def a11y_checks(client):
         await wait(() => cuju.tour.state().target);
         const card = document.getElementById('tour');
         window.__tryIt = [...card.querySelectorAll('.tour-actions button')]
-            .find((b) => b.textContent === 'Try it');
+            .find((b) => b.getAttribute('aria-label') === 'Try it');
         window.__tryIt.focus();
         const free = card.getAttribute('aria-modal') === 'false';
         return (free && document.activeElement === window.__tryIt)

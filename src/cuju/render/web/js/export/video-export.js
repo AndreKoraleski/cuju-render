@@ -1,20 +1,23 @@
 // Copyright 2026 The cuju Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// The Export video dialog of the Watch page. It asks the server to draw a range of the open
-// recording into an MP4 file with Chrome and ffmpeg, as `cuju render video` does, follows the
-// export's progress and offers the file once it is ready. A server without Chrome or ffmpeg says
-// what is missing and how to install it.
+// The Export video dialog of the Watch page. A browser with a video encoder draws a range of the
+// open recording and encodes it itself, as video-browser.js does, with nothing else installed. A
+// browser without one asks the server to draw the range with Chrome and ffmpeg, as `cuju render
+// video` does, and follows the export's progress. Either way the dialog offers the file once it is
+// ready. When neither can export, the dialog says in short what would make it work.
 
 import { ARENA_LABELS } from '../world/arenas.js';
-import { serverText, t } from '../core/i18n.js';
+import { language, serverText, t } from '../core/i18n.js';
 import { h } from '../teams/library.js';
+import { icon, labelText, relabel, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 import { sizeFields } from './size-fields.js';
 import {
     VIDEO_CAMERAS, VIDEO_MAX_SECONDS, VIDEO_QUALITIES, VIDEO_RATES, checkRange, exportRequest,
     formatMoment, goalRange, progressText,
 } from './video-range.js';
+import { BrowserExport, browserSupport } from './video-browser.js';
 
 async function call(method, path, json) {
     const init = { method, cache: 'no-store', headers: {} };
@@ -53,6 +56,12 @@ export class VideoExport {
         this.app = app;
         this.entry = null;
         this.timer = null;
+        // The export of the browser that runs, which goes on while the dialog is closed, and the
+        // last file it made with its address.
+        this.job = null;
+        this.result = null;
+        this.fileUrl = null;
+        this.mode = null;
         this.dialog = h('dialog', { class: 'video-export', 'aria-labelledby': 'video-export-title' });
         document.getElementById('app').appendChild(this.dialog);
         this.dialog.addEventListener('close', () => this.stopPolling());
@@ -84,6 +93,23 @@ export class VideoExport {
         if (!source) {
             return;
         }
+        let browser = { supported: false, reason: 'encoder' };
+        try {
+            browser = await browserSupport();
+        } catch {
+            // A browser whose encoder fails to answer exports through the server.
+        }
+        if (!this.dialog.open) {
+            return;
+        }
+        if (browser.supported) {
+            this.mode = 'browser';
+            this.render({ available: true, browser });
+            if (this.entry && this.entry.browser && (this.job || this.entry.match === source.id)) {
+                this.follow(this.entry);
+            }
+            return;
+        }
         let status;
         try {
             status = await call('GET', '/api/video');
@@ -93,7 +119,8 @@ export class VideoExport {
         if (!this.dialog.open) {
             return;
         }
-        this.render(status);
+        this.mode = 'server';
+        this.render({ ...status, browser });
         // An export of this recording that runs or finished in this server's lifetime shows again.
         try {
             const list = await call('GET', '/api/videos');
@@ -117,12 +144,12 @@ export class VideoExport {
         d.replaceChildren();
         const head = h('div', { class: 've-head' },
             h('h2', { id: 'video-export-title' }, t('video.title')),
-            h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('video.close'), title: t('video.close.title'), onclick: () => this.close() }, '×'));
+            h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('video.close'), title: t('video.close.title'), onclick: () => this.close() }, icon('close')));
         d.append(head);
         const source = this.recording();
         if (!source) {
             d.append(h('p', {}, t('video.no_recording')),
-                h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, t('video.close'))));
+                h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', ...symbolOnly(t('video.close'), t('video.close.title')), onclick: () => this.close() }, icon('close'))));
             return;
         }
         if (!status) {
@@ -130,10 +157,15 @@ export class VideoExport {
             return;
         }
         if (!status.available) {
-            d.append(h('p', {}, t('video.unavailable')),
-                h('ul', { class: 've-missing' }, (status.missing || []).map((m) => h('li', {}, m))),
-                h('p', { class: 'muted' }, t('video.unavailable.restart')),
-                h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, t('video.close'))));
+            // Neither this browser nor the server can export, so the dialog says briefly what
+            // would make either work, and the server's own list waits behind a disclosure.
+            d.append(h('p', {}, t(status.browser && status.browser.reason === 'pictures' ? 'video.browser.pictures' : 'video.browser.none')),
+                h('p', {}, t('video.browser.how')),
+                (status.missing || []).length
+                    ? h('details', { class: 've-missing' }, h('summary', {}, t('video.browser.server_lacks')),
+                        h('ul', {}, status.missing.map((m) => h('li', {}, m))))
+                    : null,
+                h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', ...symbolOnly(t('video.close'), t('video.close.title')), onclick: () => this.close() }, icon('close'))));
             return;
         }
         const tl = this.app.timeline;
@@ -171,17 +203,17 @@ export class VideoExport {
             t('video.range.note', { end: formatMoment(duration), count: VIDEO_MAX_SECONDS / 60 }));
         this.progress = h('progress', { max: '1', value: '0', hidden: true, 'aria-label': t('video.progress.label') });
         this.status = h('p', { class: 've-status', role: 'status', 'aria-live': 'polite' });
-        this.exportButton = h('button', { class: 'btn primary', type: 'button', onclick: () => this.start() }, t('video.export'));
-        this.cancelButton = h('button', { class: 'btn', type: 'button', hidden: true, onclick: () => this.cancel() }, t('video.cancel'));
-        this.download = h('a', { class: 'btn primary', hidden: true }, t('video.download'));
+        this.exportButton = h('button', { class: 'btn primary', type: 'button', onclick: () => this.start() }, icon('film'), labelText(t('video.export')));
+        this.cancelButton = h('button', { class: 'btn', type: 'button', hidden: true, ...symbolOnly(t('video.cancel')), onclick: () => this.cancel() }, icon('stop'));
+        this.download = h('a', { class: 'btn primary', hidden: true }, icon('download'), t('video.download'));
         this.sizes = sizeFields('ve', { value: '720p', limits: { even: true } });
         d.append(
             h('div', { class: 've-range' },
                 // A label of the field alone, so the button beside it stays out of its name.
                 h('div', { class: 've-field' }, h('span', {}, h('label', { for: 've-start' }, t('video.start'))), start,
-                    h('button', { class: 'btn small', type: 'button', onclick: () => { start.value = here(); } }, t('video.start.here'))),
+                    h('button', { class: 'btn small', type: 'button', ...symbolOnly(t('video.start.here')), onclick: () => { start.value = here(); } }, icon('crosshair'))),
                 h('div', { class: 've-field' }, h('span', {}, h('label', { for: 've-end' }, t('video.end'))), end,
-                    h('button', { class: 'btn small', type: 'button', onclick: () => { end.value = here(); } }, t('video.end.here'))),
+                    h('button', { class: 'btn small', type: 'button', ...symbolOnly(t('video.end.here')), onclick: () => { end.value = here(); } }, icon('crosshair'))),
                 h('label', { class: 've-field' }, h('span', {}, t('video.goal')), goal)),
             this.note,
             h('div', { class: 've-grid' },
@@ -195,10 +227,11 @@ export class VideoExport {
                 // offered for a recording that has them.
                 annotated ? h('label', { class: 'check' }, h('input', { id: 've-annotations', type: 'checkbox' }), t('video.annotations')) : null),
             h('p', { class: 'muted small' }, t('video.look', { arena, hour })),
+            h('p', { class: 'muted small' }, t(status.browser && status.browser.supported ? 'video.browser.note' : 'video.browser.server_note')),
             this.progress,
             this.status,
             h('div', { class: 've-actions' }, this.exportButton, this.cancelButton, this.download,
-                h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, t('video.close'))));
+                h('button', { class: 'btn', type: 'button', ...symbolOnly(t('video.close'), t('video.close.title')), onclick: () => this.close() }, icon('close'))));
         this.inputs = { start, end };
         start.focus();
     }
@@ -239,6 +272,10 @@ export class VideoExport {
         }
         this.note.classList.remove('error');
         this.exportButton.disabled = true;
+        if (this.mode === 'browser') {
+            this.startBrowser(source, exportRequest(range, choices, this.app.field));
+            return;
+        }
         try {
             const entry = await call('POST', `/api/matches/${encodeURIComponent(source.id)}/video`, exportRequest(range, choices, this.app.field));
             this.follow(entry);
@@ -248,7 +285,60 @@ export class VideoExport {
         }
     }
 
+    // Draws and encodes the export in this browser, showing its progress as the server's entries
+    // show.
+    async startBrowser(source, body) {
+        if (this.job) {
+            return;
+        }
+        if (this.fileUrl) {
+            URL.revokeObjectURL(this.fileUrl);
+            this.fileUrl = null;
+        }
+        const base = { browser: true, match: source.id, start: body.start, end: body.end };
+        const job = new BrowserExport({
+            match: source.id,
+            title: (source.header && source.header.title) || source.id,
+            body,
+            lang: language().code,
+            report: (entry) => {
+                if (this.job === job) {
+                    this.follow({ ...base, ...entry });
+                }
+            },
+        });
+        this.job = job;
+        this.follow({ ...base, state: 'running', frame: 0, progress: 0 });
+        let entry;
+        try {
+            const result = await job.run();
+            this.fileUrl = URL.createObjectURL(result.blob);
+            this.result = result;
+            entry = { ...base, state: 'done', bytes: result.bytes, filename: result.filename, url: this.fileUrl };
+        } catch (err) {
+            if (err && err.id === 'cancelled') {
+                entry = { ...base, state: 'cancelled' };
+            } else {
+                const known = !!(err && typeof err.id === 'string' && err.id.startsWith('video.'));
+                entry = {
+                    ...base,
+                    state: 'failed',
+                    error: known ? t(err.id, err.values) : String((err && err.message) || err),
+                    error_id: known ? err.id : null,
+                    error_values: known ? err.values : null,
+                };
+            }
+        }
+        this.job = null;
+        this.follow(entry);
+    }
+
     async cancel() {
+        if (this.job) {
+            this.cancelButton.disabled = true;
+            this.job.cancel();
+            return;
+        }
         if (!this.entry) {
             return;
         }
@@ -271,16 +361,16 @@ export class VideoExport {
         this.progress.value = entry.state === 'done' ? 1 : entry.progress || 0;
         this.status.textContent = progressText(entry);
         this.exportButton.disabled = running;
-        this.exportButton.textContent = entry.state === 'done' ? t('video.export.again') : t('video.export');
+        relabel(this.exportButton, entry.state === 'done' ? t('video.export.again') : t('video.export'));
         this.cancelButton.hidden = !running;
-        this.cancelButton.disabled = false;
+        this.cancelButton.disabled = !!(this.job && this.job.cancelled);
         this.download.hidden = entry.state !== 'done';
         if (entry.state === 'done') {
-            this.download.href = `/api/videos/${encodeURIComponent(entry.id)}/file`;
+            this.download.href = entry.url || `/api/videos/${encodeURIComponent(entry.id)}/file`;
             this.download.setAttribute('download', entry.filename || 'match.mp4');
         }
         this.stopPolling();
-        if (running && this.dialog.open) {
+        if (running && this.dialog.open && !entry.browser) {
             this.timer = setTimeout(async () => {
                 try {
                     const next = await call('GET', `/api/videos/${encodeURIComponent(entry.id)}`);

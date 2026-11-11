@@ -29,6 +29,7 @@ import urllib.request
 from pathlib import Path
 
 import page_a11y
+import page_export
 import page_feed
 import page_grid
 import page_groups
@@ -471,8 +472,9 @@ def tournament_checks(client):
             document.querySelector('[data-page="tournaments"]').click();
             await until(() => page.built);
             const main = () => page.mainHost;
+            // A button by its accessible name, the label of a symbol or the text it shows.
             const button = (text) => [...main().querySelectorAll('button')]
-                .find((b) => b.textContent.trim() === text);
+                .find((b) => (b.getAttribute('aria-label') || b.textContent).trim() === text);
             page.root.querySelector('.cup-side-head button').click();
             const tabs = [...main().querySelectorAll('[role="tab"]')].map((t) => t.textContent);
             const steps = tabs.length === 5 && tabs[0].endsWith('Format');
@@ -602,7 +604,88 @@ def tournament_checks(client):
         })()
     """)
     assert result is True, f'Award of a failed tournament match {result}'
-    return 3
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const until = async (test, ms = 8000) => {
+                for (let t = 0; t < ms; t += 50) {
+                    if (test()) {
+                        return true;
+                    }
+                    await wait(50);
+                }
+                return false;
+            };
+            const page = cuju.tournaments;
+            const main = () => page.mainHost;
+            const button = (text) => [...main().querySelectorAll('button')]
+                .find((b) => b.textContent.trim() === text);
+            const team = await fetch('/api/teams?name=Derby%20FC&filename=main.py&format=11v11', {
+                method: 'POST', body: 'def agent(obs):\\n    return [0]\\n',
+            }).then((r) => r.json());
+            page.startWizard();
+            await until(() => page.teams.some((x) => x.id === team.id));
+            page.goStep(1);
+            for (let i = 0; i < 2; i++) {
+                main().querySelector('.cup-adder select').value = team.id;
+                button('Add team').click();
+            }
+            // The team entered again takes a free name, which its row shows for a person to change.
+            const entries = page.draft.entrants;
+            const proposed = entries.length === 2 && !entries[0].name
+                && entries[1].name === 'Derby FC 2';
+            const inputs = () => [...main().querySelectorAll('.cup-entrant-name input')];
+            const shown = inputs()[1].value === 'Derby FC 2'
+                && document.activeElement === inputs()[1];
+            const type = (input, text) => {
+                input.value = text;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            };
+            type(inputs()[1], ' derby fc ');
+            await wait(0);
+            const note = main().querySelectorAll('.cup-name-note')[1].textContent;
+            const marked = inputs()[1].getAttribute('aria-invalid') === 'true'
+                && /already the name of entrant 1/.test(note);
+            page.goStep(4);
+            const alert = main().querySelector('.cup-review [role="alert"]');
+            const refused = !!alert
+                && /Entrant 2 is named derby fc, as entrant 1 is/.test(alert.textContent);
+            page.goStep(1);
+            type(inputs()[1], 'Derby reserves');
+            await wait(0);
+            const cleared = !inputs()[1].hasAttribute('aria-invalid')
+                && !main().querySelectorAll('.cup-name-note')[1].textContent;
+            page.goStep(4);
+            const reviewed = await until(
+                () => main().querySelectorAll('.cup-review-stage').length === 1);
+            main().querySelector('.cup-start').click();
+            const done = await until(() => page.mode === 'view' && page.current
+                && page.current.state === 'done'
+                && main().querySelector('.cup-bracket .cup-fixture'), 20000);
+            const cup = page.current;
+            const names = cup.config.entrants.map((e) => e.name).join('|')
+                === 'Derby FC|Derby reserves';
+            const sides = [...main().querySelectorAll('.cup-bracket .cup-side-name')];
+            const both = sides.map((s) => s.textContent).join('|').replace(/\\d/g, '');
+            const apart = sides.length === 2 && both.includes('Derby FC')
+                && both.includes('Derby reserves');
+            // The away side of a team that meets itself shows its away kit.
+            const kits = sides.map((s) => s.querySelector('.kit-shirt-body')
+                ?.getAttribute('style'));
+            const away = kits.length === 2 && !!kits[0] && kits[0] !== kits[1];
+            const champion = ['Derby FC', 'Derby reserves'].includes(cup.champion);
+            await fetch(`/api/tournaments/${cup.id}`, { method: 'DELETE' });
+            await fetch(`/api/teams/${team.id}`, { method: 'DELETE' });
+            page.mode = 'empty';
+            page.openId = null;
+            await page.refresh();
+            const all = { proposed, shown, marked, refused, cleared, reviewed: !!reviewed,
+                done: !!done, names, apart, away, champion };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'A team entered twice {result}'
+    return 4
 
 
 def tournament_play_checks(client, debug, port):
@@ -622,6 +705,10 @@ def tournament_play_checks(client, debug, port):
             localStorage.setItem('cuju.muted', 'true');
             localStorage.setItem('cuju.quality', '"low"');
             localStorage.setItem('cuju.tips', '{"off": true}');
+            // The offer to install the page stays away unless a check asks for it.
+            if (localStorage.getItem('cuju.installOffer') === null) {
+                localStorage.setItem('cuju.installOffer', '{"dismissed": true}');
+            }
             Element.prototype.requestPointerLock = function () {
                 throw new Error('Pointer capture refused by the page check.');
             };
@@ -2794,6 +2881,10 @@ def main():
                 localStorage.setItem('cuju.muted', 'true');
                 localStorage.setItem('cuju.quality', '"low"');
                 localStorage.setItem('cuju.tips', '{"off": true}');
+                // The offer to install the page stays away unless a check asks for it.
+                if (localStorage.getItem('cuju.installOffer') === null) {
+                    localStorage.setItem('cuju.installOffer', '{"dismissed": true}');
+                }
                 Element.prototype.requestPointerLock = function () {
                     throw new Error('Pointer capture refused by the page check.');
                 };
@@ -2912,8 +3003,8 @@ def main():
                 elif code == 'KeyK':
                     assert not client.evaluate('cuju.timeline.playing')
                 checks += 1
-            # Export video opens a dialog over Watch, which says what this server lacks and
-            # closes with Escape.
+            # Export video opens a dialog over Watch, which offers the export of the browser, or
+            # says what would make export work, and closes with Escape.
             result = client.evaluate("""
                 (async () => {
                     document.getElementById('video-export-btn').click();
@@ -2921,11 +3012,12 @@ def main():
                     for (let i = 0; i < 50 && !d.querySelector('.ve-actions'); i++) {
                         await new Promise((r) => setTimeout(r, 100));
                     }
-                    return { open: d.open, text: d.textContent, paused: !cuju.timeline.playing };
+                    return { open: d.open, text: d.textContent, paused: !cuju.timeline.playing,
+                             form: !!d.querySelector('#ve-start') };
                 })()
             """)
             assert result['open'] and result['paused'], result
-            assert 'video export' in result['text'].lower(), result
+            assert result['form'] or 'video encoder' in result['text'], result
             escape = {'key': 'Escape', 'code': 'Escape', 'windowsVirtualKeyCode': 27}
             client.call('Input.dispatchKeyEvent', {'type': 'keyDown', **escape})
             client.call('Input.dispatchKeyEvent', {'type': 'keyUp', **escape})
@@ -3361,8 +3453,8 @@ def main():
                     const targets = play.navTargets([play.setupView]);
                     const navigable = targets.includes(play.inputPanel.querySelector('summary'))
                         && targets.includes(play.deadZone) && targets.includes(button);
-                    [...play.inputPanel.querySelectorAll('button')]
-                        .find((item) => item.textContent === 'Reset input settings').click();
+                    const named = 'button[aria-label="Reset input settings"]';
+                    play.inputPanel.querySelector(named).click();
                     const reset = play.input.keys.shot === 'KeyD' && play.input.deadZone === 0.5
                         && play.input.devices.join() === 'auto,auto';
                     play.inputPanel.open = false;
@@ -3719,6 +3811,7 @@ def main():
             checks += page_a11y.a11y_checks(client)
             checks += page_search.check_search(client)
             checks += page_search.check_captions(client)
+            checks += page_export.export_checks(client)
             checks += page_feed.check_feed(client, f'http://127.0.0.1:{port}/', debug, CDP)
             checks += page_language.check_languages(client)
             checks += hash_checks(client)

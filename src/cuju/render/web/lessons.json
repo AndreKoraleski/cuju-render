@@ -105,7 +105,7 @@
             "title": "Start a challenge",
             "page": "play",
             "needs": null,
-            "ask": "Start a challenge from the Challenges section of Play, under the Play button. Start challenge plays it yourself, and Run headless plays it with a team.",
+            "ask": "Start a challenge from the Challenges section of Play, under the Play button. Start challenge, the triangle, plays it yourself, and Run headless, the robot, plays it with a team.",
             "praise": "The challenge is on. Every attempt plays a fixed seed, so every result compares.",
             "agent": {
                 "check": "challenge",

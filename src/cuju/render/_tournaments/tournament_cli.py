@@ -47,9 +47,16 @@ def _config(options: argparse.Namespace) -> dict[str, Any]:
     if 'stages' not in config and config.get('preset'):
         base = rules.preset_config(config['preset'], _tournament_runner.presets())
         config = {**base, **config}
-    entrants = []
+    entrants: list[dict[str, Any]] = []
     for kind, value in options.entrants or []:
-        if kind == 'team':
+        if kind == 'as':
+            # A team entered again takes a free name, such as Rex 2, unless --as gives one.
+            if not entrants:
+                raise ArgumentError(
+                    'expected --as after the --team, --builtin or --person that it names'
+                )
+            entrants[-1]['name'] = value
+        elif kind == 'team':
             entrants.append({'kind': 'team', 'team': value})
         elif kind == 'person':
             entrants.append({'kind': 'person', 'name': value})

@@ -33,53 +33,41 @@ SPDX-License-Identifier: Apache-2.0
     <script src="js/boot.js"></script>
     <script src="js/capture.js"></script>
     <script type="module" src="js/feed-boot.js"></script>
+    <script type="module" src="js/export/video-boot.js"></script>
     <script type="module" src="js/main.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#pages" data-i18n="html.skip">Skip to main content</a>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
-    <symbol id="i-reverse" viewBox="0 0 24 24"><path d="M16 5v14L5 12z"/></symbol>
-    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></symbol>
-    <symbol id="i-frame-back" viewBox="0 0 24 24"><path d="M6 6h2v12H6zM19 6v12l-9-6z"/></symbol>
-    <symbol id="i-frame-forward" viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM5 6v12l9-6z"/></symbol>
-    <symbol id="i-restart" viewBox="0 0 24 24"><path d="M5 5h2v14H5zM20 5v14L8 12z"/></symbol>
-    <symbol id="i-goal" viewBox="0 0 24 24"><path d="M3 6h18v12h-2V8H5v10H3zM7 10h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2zm-8 4h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z"/></symbol>
-    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 9h4l5-4v14l-5-4H4z"/></symbol>
-    <symbol id="i-muted" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="2"/></symbol>
-    <symbol id="i-fullscreen" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
-    <symbol id="i-help" viewBox="0 0 24 24"><path d="M3 7h18v10H3z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10h2v2H6zm4 0h2v2h-2zm4 0h2v2h-2zm-6 3h8v1.5H8z"/></symbol>
-    <symbol id="i-search" viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 110 13 6.5 6.5 0 010-13zM15.5 15.5L21 21" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
-    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 110 7 3.5 3.5 0 010-7zm8.5 2l-2-.4a6.8 6.8 0 00-.8-1.9l1.2-1.7-1.4-1.4-1.7 1.2a6.8 6.8 0 00-1.9-.8l-.4-2h-2l-.4 2a6.8 6.8 0 00-1.9.8L6.5 5.1 5.1 6.5l1.2 1.7a6.8 6.8 0 00-.8 1.9l-2 .4v2l2 .4c.2.7.4 1.3.8 1.9l-1.2 1.7 1.4 1.4 1.7-1.2c.6.4 1.2.6 1.9.8l.4 2h2l.4-2c.7-.2 1.3-.4 1.9-.8l1.7 1.2 1.4-1.4-1.2-1.7c.4-.6.6-1.2.8-1.9l2-.4z" fill-rule="evenodd"/></symbol>
-</svg>
+<!-- The symbols of the page, which js/core/icons.js draws into this sprite. -->
+<svg id="icons" width="0" height="0" style="position:absolute" aria-hidden="true"></svg>
 
 <div id="app" class="no-source" data-page="home">
     <header id="topbar">
         <!-- The logo is the way to the Home page. -->
         <button id="home-btn" class="brand active" type="button" data-page="home" aria-label="Home" aria-current="page" title="Home" data-i18n-aria-label="html.nav.home" data-i18n-title="html.nav.home"><img class="logo" src="assets/cuju-logo.png" alt="" width="28" height="28"></button>
         <nav class="menu" aria-label="Pages" data-i18n-aria-label="html.nav.pages">
-            <button data-page="watch" data-i18n="html.nav.watch">Watch</button>
-            <button data-page="play" data-i18n="html.nav.play">Play</button>
-            <button data-page="recordings" data-i18n="html.nav.recordings">Recordings</button>
-            <button data-page="matches" data-i18n="html.nav.matches">Matches</button>
-            <button data-page="tournaments" data-i18n="html.nav.tournaments">Tournaments</button>
-            <button data-page="teams" data-i18n="html.nav.teams">Teams</button>
-            <button data-page="field" data-i18n="html.nav.field">Field</button>
-            <button id="open-help" data-page="help" data-i18n="html.nav.help">Help</button>
+            <button data-page="watch"><svg class="icon" aria-hidden="true"><use href="#i-watch"/></svg><span class="nav-label" data-i18n="html.nav.watch">Watch</span></button>
+            <button data-page="play"><svg class="icon" aria-hidden="true"><use href="#i-gamepad"/></svg><span class="nav-label" data-i18n="html.nav.play">Play</span></button>
+            <button data-page="recordings"><svg class="icon" aria-hidden="true"><use href="#i-archive"/></svg><span class="nav-label" data-i18n="html.nav.recordings">Recordings</span></button>
+            <button data-page="matches"><svg class="icon" aria-hidden="true"><use href="#i-matches"/></svg><span class="nav-label" data-i18n="html.nav.matches">Matches</span></button>
+            <button data-page="tournaments"><svg class="icon" aria-hidden="true"><use href="#i-trophy"/></svg><span class="nav-label" data-i18n="html.nav.tournaments">Tournaments</span></button>
+            <button data-page="teams"><svg class="icon" aria-hidden="true"><use href="#i-shirt"/></svg><span class="nav-label" data-i18n="html.nav.teams">Teams</span></button>
+            <button data-page="field"><svg class="icon" aria-hidden="true"><use href="#i-field"/></svg><span class="nav-label" data-i18n="html.nav.field">Field</span></button>
+            <button id="open-help" data-page="help"><svg class="icon" aria-hidden="true"><use href="#i-help"/></svg><span class="nav-label" data-i18n="html.nav.help">Help</span></button>
         </nav>
         <!-- On a narrow screen the pages fold into one dropdown. -->
         <div class="page-switch">
             <button id="page-menu-btn" type="button" aria-label="Pages" data-i18n-aria-label="html.nav.pages"><span id="page-menu-label" data-i18n="html.nav.home">Home</span><span class="dd-caret" aria-hidden="true"></span></button>
             <div id="page-menu" role="menu" aria-label="Pages" data-i18n-aria-label="html.nav.pages">
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="home"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.home">Home</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="watch"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.watch">Watch</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="play"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.play">Play</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="recordings"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.recordings">Recordings</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="matches"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.matches">Matches</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="tournaments"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.tournaments">Tournaments</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="teams"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.teams">Teams</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="field"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.field">Field</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="help"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.help">Help</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="home"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.home">Home</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="watch"><svg class="icon" aria-hidden="true"><use href="#i-watch"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.watch">Watch</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="play"><svg class="icon" aria-hidden="true"><use href="#i-gamepad"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.play">Play</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="recordings"><svg class="icon" aria-hidden="true"><use href="#i-archive"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.recordings">Recordings</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="matches"><svg class="icon" aria-hidden="true"><use href="#i-matches"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.matches">Matches</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="tournaments"><svg class="icon" aria-hidden="true"><use href="#i-trophy"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.tournaments">Tournaments</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="teams"><svg class="icon" aria-hidden="true"><use href="#i-shirt"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.teams">Teams</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="field"><svg class="icon" aria-hidden="true"><use href="#i-field"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.field">Field</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="help"><svg class="icon" aria-hidden="true"><use href="#i-help"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.help">Help</span></span></button>
             </div>
         </div>
         <div class="top-actions">
@@ -97,13 +85,13 @@ SPDX-License-Identifier: Apache-2.0
                 <div id="stage" aria-label="Match view" data-i18n-aria-label="html.watch.stage"></div>
 
                 <div id="watch-bar">
-                    <button id="match-menu-btn" class="bar-btn" type="button" title="Open a match, a live source or a goal" data-i18n-title="html.watch.bar.match.title"><span class="bar-label" data-i18n="html.watch.bar.match">Match</span><span id="live-count" class="live-dot" hidden></span><span class="dd-caret" aria-hidden="true"></span></button>
+                    <button id="match-menu-btn" class="bar-btn" type="button" title="Open a match, a live source or a goal" data-i18n-title="html.watch.bar.match.title"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><span class="bar-label" data-i18n="html.watch.bar.match">Match</span><span id="live-count" class="live-dot" hidden></span><span class="dd-caret" aria-hidden="true"></span></button>
                     <form id="address" autocomplete="off">
                         <input id="address-input" type="text" spellcheck="false" placeholder="Live source or recording id, then Enter" aria-label="Source address" data-i18n-placeholder="html.watch.address.placeholder" data-i18n-aria-label="html.watch.address">
-                        <button class="btn" type="submit" data-i18n="html.watch.address.open">Open</button>
+                        <button class="btn" type="submit" aria-label="Open" title="Open" data-i18n-aria-label="html.watch.address.open" data-i18n-title="html.watch.address.open" data-symbol><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button>
                     </form>
-                    <button id="view-menu-btn" class="bar-btn" type="button" title="Camera, time of day, quality and theme" data-i18n-title="html.watch.bar.view.title"><span class="bar-label" data-i18n="html.watch.bar.view">View</span><span class="dd-caret" aria-hidden="true"></span></button>
-                    <button id="video-export-btn" class="bar-btn" type="button" title="Export a range of the recording as a video file" data-i18n-title="html.watch.bar.export.title"><span class="bar-label" data-i18n="html.watch.bar.export">Export video</span></button>
+                    <button id="view-menu-btn" class="bar-btn" type="button" title="Camera, time of day, quality and theme" data-i18n-title="html.watch.bar.view.title"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg><span class="bar-label" data-i18n="html.watch.bar.view">View</span><span class="dd-caret" aria-hidden="true"></span></button>
+                    <button id="video-export-btn" class="bar-btn" type="button" title="Export a range of the recording as a video file" data-i18n-title="html.watch.bar.export.title" data-symbol><svg class="icon" aria-hidden="true"><use href="#i-film"/></svg><span class="bar-label" data-i18n="html.watch.bar.export">Export video</span></button>
                 </div>
 
                 <div id="hud" aria-live="polite">
@@ -152,7 +140,7 @@ SPDX-License-Identifier: Apache-2.0
                             <button class="text-btn" data-act="back-30" title="Back 30 seconds (Shift Left)" aria-label="Back 30 seconds" data-i18n-title="html.watch.controls.back30.title" data-i18n-aria-label="html.watch.controls.back30">30</button>
                             <button class="text-btn" data-act="back-5" title="Back 5 seconds (Left while playing)" aria-label="Back 5 seconds" data-i18n-title="html.watch.controls.back5.title" data-i18n-aria-label="html.watch.controls.back5">5</button>
                             <button class="icon-btn" data-act="frame-back" title="Previous frame (comma)" aria-label="Previous frame" data-i18n-title="html.watch.controls.frameBack.title" data-i18n-aria-label="html.watch.controls.frameBack"><svg class="icon" aria-hidden="true"><use href="#i-frame-back"/></svg></button>
-                            <button id="btn-reverse" class="icon-btn" data-act="reverse" title="Play backwards (J)" aria-label="Play backwards" data-i18n-title="html.watch.controls.reverse.title" data-i18n-aria-label="html.watch.controls.reverse"><svg class="icon" aria-hidden="true"><use href="#i-reverse"/></svg></button>
+                            <button id="btn-reverse" class="icon-btn" data-act="reverse" title="Play backwards (J)" aria-label="Play backwards" data-i18n-title="html.watch.controls.reverse.title" data-i18n-aria-label="html.watch.controls.reverse"><svg class="icon flip" aria-hidden="true"><use href="#i-play"/></svg></button>
                             <button id="btn-pause" class="icon-btn" data-act="pause" title="Pause (K or Space)" aria-label="Pause" data-i18n-title="html.watch.controls.pause.title" data-i18n-aria-label="html.watch.controls.pause"><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg></button>
                             <button id="btn-play" class="icon-btn big" data-act="play" title="Play (L or Space)" aria-label="Play" data-i18n-title="html.watch.controls.play.title" data-i18n-aria-label="html.watch.controls.play"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg></button>
                             <button class="icon-btn" data-act="frame-forward" title="Next frame (period)" aria-label="Next frame" data-i18n-title="html.watch.controls.frameForward.title" data-i18n-aria-label="html.watch.controls.frameForward"><svg class="icon" aria-hidden="true"><use href="#i-frame-forward"/></svg></button>
@@ -172,15 +160,15 @@ SPDX-License-Identifier: Apache-2.0
                                 </select>
                             </label>
                             <div id="live-box" hidden>
-                                <span id="live-state" data-i18n="html.watch.live.state">Live</span>
-                                <button id="go-live" class="btn small live" data-act="live" hidden data-i18n="html.watch.live.go">Go live</button>
+                                <svg id="live-state-icon" class="icon" aria-hidden="true"><use href="#i-live"/></svg><span id="live-state" data-i18n="html.watch.live.state">Live</span>
+                                <button id="go-live" class="btn small live" data-act="live" hidden><svg class="icon" aria-hidden="true"><use href="#i-live"/></svg><span class="btn-label" data-i18n="html.watch.live.go">Go live</span></button>
                                 <form id="live-env" class="live-env" hidden>
                                     <label title="The environment of the batch that the source shows" data-i18n-title="html.watch.live.environment.title"><span data-i18n="html.watch.live.environment">Environment</span>
                                         <input id="live-env-index" type="number" min="0" step="1" required></label>
-                                    <button id="live-env-go" class="btn small" type="submit" data-i18n="html.watch.live.environment.switch">Switch</button>
+                                    <button id="live-env-go" class="btn small" type="submit" aria-label="Switch" title="Switch" data-i18n-aria-label="html.watch.live.environment.switch" data-i18n-title="html.watch.live.environment.switch" data-symbol><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button>
                                 </form>
-                                <button id="live-grid" class="btn small" type="button" title="Many environments of the batch at once" hidden data-i18n-title="html.watch.live.grid.title" data-i18n="html.watch.live.grid">Grid</button>
-                                <button id="post-show" class="btn small" data-act="post-show" hidden data-i18n="html.watch.live.summary">Match summary</button>
+                                <button id="live-grid" class="btn small" type="button" aria-label="Grid" title="Many environments of the batch at once" hidden data-i18n-aria-label="html.watch.live.grid" data-i18n-title="html.watch.live.grid.title" data-symbol><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg></button>
+                                <button id="post-show" class="btn small" data-act="post-show" hidden><svg class="icon" aria-hidden="true"><use href="#i-trophy"/></svg><span class="btn-label" data-i18n="html.watch.live.summary">Match summary</span></button>
                             </div>
                         </div>
                         <div class="group">
@@ -226,7 +214,7 @@ SPDX-License-Identifier: Apache-2.0
         <section id="page-field" class="page" hidden></section>
         <section id="page-help" class="page" hidden><div id="help" aria-label="Help" data-i18n-aria-label="html.help.title">
             <div class="help-card">
-                <header><h1 data-i18n="html.help.title">Help</h1><button id="help-close" class="icon-btn" aria-label="Close" title="Close (Esc)" data-i18n-aria-label="html.help.close" data-i18n-title="html.help.close.title">✕</button></header>
+                <header><h1 data-i18n="html.help.title">Help</h1><button id="help-close" class="icon-btn" aria-label="Close" title="Close (Esc)" data-i18n-aria-label="html.help.close" data-i18n-title="html.help.close.title"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header>
                 <p id="help-keyboard" data-i18n="html.help.keyboard">Keyboard. Tab and Shift Tab move between controls. Enter or Space activates a control.
                     Arrow keys, Home and End move through menus and lists. Esc closes panels and returns
                     focus. Focus the picture for camera and playback keys. Field arrows turn the camera,

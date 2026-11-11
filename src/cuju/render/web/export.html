@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+Copyright 2026 The cuju Authors
+SPDX-License-Identifier: Apache-2.0
+
+The page of the command cuju render video. A headless browser opens it, and the export of the
+browser itself draws the recording in a frame of the Watch page and encodes it, see
+js/export/export-host.js.
+-->
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; connect-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+    <title>cuju</title>
+    <style>
+        html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; color-scheme: dark; }
+    </style>
+    <script type="module" src="js/export/export-host.js"></script>
+</head>
+<body>
+</body>
+</html>

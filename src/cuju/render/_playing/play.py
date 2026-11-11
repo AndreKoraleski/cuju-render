@@ -209,7 +209,10 @@ def play(
     try:
         reader = _recording.StateReader(int(batch.left_players[0] + batch.right_players[0]))
         batch.reset()
-        policies = Policies(batch, sides, scenario, agents, extended, [0, agents[0]])
+        # A failure names the side by its entrant, so two entrants of one team stay apart.
+        policies = Policies(
+            batch, sides, scenario, agents, extended, [0, agents[0]], side_names(tournament)
+        )
         state = batch.get_state(0)
         lineup = reader.lineup(state)
         timing = _recording.scenario_timing(state)
@@ -306,6 +309,7 @@ class Policies:
         agents: list[int],
         extended: bool,
         firsts: list[int],
+        names: list[Any] | None = None,
     ) -> None:
         """Loads the submission of each side that has one.
 
@@ -317,6 +321,8 @@ class Policies:
             extended: Whether the batch plays the v2 action set, so that a submission of the
                 default set has its answers checked against 19 actions.
             firsts: The column of the first agent that each side's team plays.
+            names: The name of each side that its failure gives, text, a label or `None` for
+                the team's own, such as the entrants of a tournament, or `None` for both.
         """
         self.batch = batch
         self.players: list[dict[str, Any]] = []
@@ -334,7 +340,7 @@ class Policies:
             self.players.append(
                 {
                     'side': side,
-                    'name': team['name'],
+                    'name': (names or [None, None])[side] or team['name'],
                     'runner': AgentRunner(function),
                     'columns': columns,
                     'selected': selected,

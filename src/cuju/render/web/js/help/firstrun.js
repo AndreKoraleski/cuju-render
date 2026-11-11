@@ -22,9 +22,10 @@ export const HELP_TEXT = Object.fromEntries([
     'home-btn', 'open-palette', 'open-settings', 'fullscreen', 'match-menu-btn', 'view-menu-btn',
     'address-input', 'timeline', 'speed', 'mute', 'volume', 'live-env-index',
 ].map((id) => [id, t(`firstrun.help.${id}`)]));
-// The line of help of each page's tab, the message firstrun.tab.<page>.
+// The line of help of each page's tab, the message firstrun.tab.<page> after the name of the page,
+// since a tab of a middle-sized screen shows its symbol alone.
 const TAB_HELP = Object.fromEntries(['watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help']
-    .map((page) => [page, t(`firstrun.tab.${page}`)]));
+    .map((page) => [page, t('symbol.tip', { name: t(`html.nav.${page}`), text: t(`firstrun.tab.${page}`) })]));
 
 // The corners a tip may take, in the order it tries them, the lower left first.
 export const TIP_SPOTS = ['bottom-left', 'bottom-right', 'top-right', 'top-left'];
@@ -249,7 +250,9 @@ export class FirstRun {
     }
 
     // The line of help of a control shows on keyboard focus, and on hover when the control has no
-    // title for the browser to show. Esc, a click, a key or leaving the control hides it.
+    // title for the browser to show. A control that shows its symbol alone shows its title the same
+    // way on keyboard focus, so its name reads by keyboard as it does by mouse. Esc, a click, a key
+    // or leaving the control hides it.
     bindHelp() {
         for (const [id, text] of Object.entries(HELP_TEXT)) {
             document.getElementById(id)?.setAttribute('data-help', text);
@@ -260,7 +263,7 @@ export class FirstRun {
             }
         }
         let timer = null;
-        const target = (node) => (node instanceof Element ? node.closest('[data-help]') : null);
+        const target = (node) => (node instanceof Element ? node.closest('[data-help], [data-symbol], .icon-btn[title], .text-btn[title]') : null);
         document.addEventListener('focusin', (e) => {
             const node = target(e.target);
             if (node && node.matches(':focus-visible')) {
@@ -299,12 +302,17 @@ export class FirstRun {
         if (!rect.width || this.app.tvMode) {
             return;
         }
+        const text = node.dataset.help || node.title || node.getAttribute('aria-label') || '';
+        if (!text) {
+            return;
+        }
         this.hideHelp();
         this.helpFor = node;
-        this.tooltip.textContent = node.dataset.help;
+        this.tooltip.textContent = text;
         this.tooltip.hidden = false;
         const own = node.getAttribute('aria-describedby') || '';
-        if (!own.split(' ').includes('help-tip')) {
+        // A tooltip that only repeats the name of its control adds nothing for a screen reader.
+        if (text !== node.getAttribute('aria-label') && !own.split(' ').includes('help-tip')) {
             node.setAttribute('aria-describedby', `${own} help-tip`.trim());
         }
         const box = this.tooltip.getBoundingClientRect();

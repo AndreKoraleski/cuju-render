@@ -22,6 +22,7 @@ import http.server
 import json
 import os
 import queue
+import secrets
 import shutil
 import socket
 import subprocess
@@ -45,6 +46,10 @@ SERVER_FILE = 'server.json'
 LOG_FILE = 'server.log'
 # The port that a server takes when it is free.
 DEFAULT_PORT = 8780
+# The variable of the environment that names the call of `start` that started a server. A Python
+# of a virtual environment on Windows runs the server in a process of its own beneath the one that
+# `start` made, so the process number alone does not tell the server that a call started.
+STARTER_VARIABLE = 'CUJU_RENDER_STARTER'
 # The pages that may frame the viewer once they hold the key of its server, the notebooks of
 # Jupyter on this machine or behind a forwarded port, of VS Code and of Google Colab.
 FRAME_ANCESTORS = ' '.join(
@@ -188,7 +193,11 @@ def announce(port: int, key: str) -> Path:
     path = _home.home() / SERVER_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f'{path.name}.{os.getpid()}.part')
-    temporary.write_text(json.dumps({'port': port, 'pid': os.getpid(), 'key': key}))
+    entry: dict[str, Any] = {'port': port, 'pid': os.getpid(), 'key': key}
+    starter = os.environ.get(STARTER_VARIABLE)
+    if starter:
+        entry['starter'] = starter
+    temporary.write_text(json.dumps(entry))
     temporary.replace(path)
     return path
 
@@ -329,6 +338,8 @@ def start(port: int | None = None, stay: bool = False, colab: bool = False) -> S
     environment = os.environ.copy()
     paths = [_package_path(), *filter(None, environment.get('PYTHONPATH', '').split(os.pathsep))]
     environment['PYTHONPATH'] = os.pathsep.join(dict.fromkeys(paths))
+    starter = secrets.token_hex(8)
+    environment[STARTER_VARIABLE] = starter
     options: dict[str, Any] = {}
     if sys.platform == 'win32':
         # Windows: 0x08000000 is CREATE_NO_WINDOW, 0x00000008 DETACHED_PROCESS and 0x00000200
@@ -352,7 +363,7 @@ def start(port: int | None = None, stay: bool = False, colab: bool = False) -> S
     deadline = time.monotonic() + _START_SECONDS
     while time.monotonic() < deadline:
         server = running()
-        if server is not None and server.pid == process.pid:
+        if server is not None and (server.pid == process.pid or _starter() == starter):
             server.process = process
             return server
         if process.poll() is not None:
@@ -363,6 +374,14 @@ def start(port: int | None = None, stay: bool = False, colab: bool = False) -> S
     with contextlib.suppress(OSError):
         tail = log.read_text(errors='replace').strip().splitlines()[-1]
     raise Error('the renderer server did not start' + (f', {tail}' if tail else f', see {log}'))
+
+
+def _starter() -> str | None:
+    """Returns the starter that the server file of the home folder names, or `None`."""
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        starter = json.loads((_home.home() / SERVER_FILE).read_text()).get('starter')
+        return starter if isinstance(starter, str) else None
+    return None
 
 
 def _stop(process: subprocess.Popen) -> None:

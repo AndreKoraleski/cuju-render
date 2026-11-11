@@ -17,8 +17,10 @@ function page({ storage = true, now = () => 1e12 } = {}) {
     const store = new Map();
     const reloads = [];
     const timers = [];
+    const events = [];
     const window = {
         addEventListener: (type, fn, capture) => listeners.push({ type, fn, capture }),
+        dispatchEvent: (event) => events.push(event.type),
     };
     const context = {
         window,
@@ -28,6 +30,11 @@ function page({ storage = true, now = () => 1e12 } = {}) {
         Date: { now },
         Number,
         String,
+        Event: class {
+            constructor(type) {
+                this.type = type;
+            }
+        },
         sessionStorage: storage ? {
             getItem: (key) => (store.has(key) ? store.get(key) : null),
             setItem: (key, value) => store.set(key, String(value)),
@@ -49,15 +56,16 @@ function page({ storage = true, now = () => 1e12 } = {}) {
             timer.fn();
         }
     };
-    return { listeners, fail, reloads, window, store };
+    return { listeners, fail, reloads, window, store, events };
 }
 
 const moduleScript = { tagName: 'SCRIPT', type: 'module' };
 
 test('a module that fails to load reloads the page once, after a moment', () => {
     const { listeners, fail, reloads, store } = page();
-    assert.equal(listeners.length, 1);
-    assert.equal(listeners[0].capture, true);
+    const errors = listeners.filter((l) => l.type === 'error');
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].capture, true);
     fail(moduleScript);
     assert.equal(reloads.length, 1);
     assert.ok(store.has('cuju.bootRetry'));
@@ -77,4 +85,18 @@ test('other errors, a started page and a page without storage stay as they are',
     const bare = page({ storage: false });
     bare.fail(moduleScript);
     assert.equal(bare.reloads.length, 0);
+});
+
+test('the browser offer to install is kept for the modules, and an install clears it', () => {
+    const { listeners, window, events } = page();
+    const on = (type) => listeners.find((l) => l.type === type).fn;
+    assert.deepEqual({ ...window.cujuInstall }, { prompt: null, installed: false });
+    let prevented = 0;
+    const offer = { preventDefault: () => prevented++ };
+    on('beforeinstallprompt')(offer);
+    assert.equal(prevented, 1);
+    assert.equal(window.cujuInstall.prompt, offer);
+    on('appinstalled')({});
+    assert.deepEqual({ ...window.cujuInstall }, { prompt: null, installed: true });
+    assert.deepEqual([...events], ['cuju-install', 'cuju-install']);
 });

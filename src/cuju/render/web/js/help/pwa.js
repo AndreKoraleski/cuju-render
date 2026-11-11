@@ -5,10 +5,15 @@
 // a notebook's frame, the page registers its service worker, sw.js, with the build of the page
 // that the server names, and Chrome and Edge then offer to install it as an app. The Help page
 // shows whether the page is installed and offers Install where the browser allows it, Update once
-// the server holds a newer build, and the removal of the copy that the worker keeps. Scripts reach
-// it as window.cuju.install.
+// the server holds a newer build, and the removal of the copy that the worker keeps. Safari on a
+// Mac adds the page to the Dock from its File menu, which Help then names, and every browser
+// reaches an app window through the command cuju render app, which Help names as well. The
+// browser's offer comes from install-state.js, which the card on Home shares. Scripts reach it as
+// window.cuju.install.
 
-import { t } from '../core/i18n.js';
+import { t, tn } from '../core/i18n.js';
+import { icon } from '../core/icons.js';
+import { heldPrompt, installRoute, installedNow, onInstallChange, promptInstall, runsAsApp } from './install-state.js';
 
 const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]'];
 const PREFIX = 'cuju-page-';
@@ -65,28 +70,24 @@ export class AppInstall {
         this.registration = null;
         this.build = null;
         this.latest = null;
-        this.deferred = null;
         this.error = null;
-        this.installed = false;
+        this.route = installRoute({
+            hasEvent: 'onbeforeinstallprompt' in window, userAgent: navigator.userAgent, vendor: navigator.vendor,
+        });
         this.status = h('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' });
-        this.installButton = h('button', { type: 'button', class: 'btn primary', hidden: true, onclick: () => this.install() }, t('pwa.install'));
-        this.updateButton = h('button', { type: 'button', class: 'btn', hidden: true, onclick: () => this.update(true) }, t('pwa.update'));
-        this.forgetButton = h('button', { type: 'button', class: 'btn', hidden: true, onclick: () => this.unregister() }, t('pwa.remove'));
+        this.installButton = h('button', { type: 'button', class: 'btn primary', hidden: true, onclick: () => this.install() }, icon('download'), t('pwa.install'));
+        this.updateButton = h('button', { type: 'button', class: 'btn', hidden: true, onclick: () => this.update(true) }, icon('refresh'), t('pwa.update'));
+        this.forgetButton = h('button', { type: 'button', class: 'btn', hidden: true, onclick: () => this.unregister() }, icon('trash'), t('pwa.remove'));
+        const code = (text) => h('code', {}, text);
         host.replaceChildren(
             h('h2', { id: 'help-install-title' }, t('pwa.title')),
             h('p', {}, t('pwa.text')),
             h('div', { class: 'help-row' }, this.installButton, this.updateButton, this.forgetButton),
-            this.status);
-        window.addEventListener('beforeinstallprompt', (e) => {
-            e.preventDefault();
-            this.deferred = e;
-            this.render();
-        });
-        window.addEventListener('appinstalled', () => {
-            this.deferred = null;
-            this.installed = true;
-            this.render();
-        });
+            this.status,
+            h('p', { id: 'help-install-command' }, tn('pwa.command.text', {
+                command: code('cuju render app'), install: code('cuju render app --install'),
+            })));
+        onInstallChange(() => this.render());
         if (this.supported) {
             navigator.serviceWorker.addEventListener('controllerchange', () => this.render());
         }
@@ -136,16 +137,12 @@ export class AppInstall {
     }
 
     async install() {
-        if (!this.deferred) {
-            this.status.textContent = t('pwa.unavailable');
-            return { outcome: 'unavailable' };
-        }
-        const prompt = this.deferred;
-        this.deferred = null;
-        await prompt.prompt();
-        const choice = await prompt.userChoice;
+        const result = await promptInstall();
         this.render();
-        return { outcome: choice.outcome };
+        if (result.outcome === 'unavailable') {
+            this.status.textContent = t(this.route === 'browser' ? 'pwa.unavailable' : `pwa.route.${this.route}`);
+        }
+        return result;
     }
 
     // Takes the newest build, the worker of the server's build, and with reload shows it at once.
@@ -187,7 +184,7 @@ export class AppInstall {
 
     state() {
         const controller = this.supported ? navigator.serviceWorker.controller : null;
-        const standalone = !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+        const standalone = runsAsApp();
         return {
             supported: this.supported,
             registered: !!this.registration,
@@ -197,16 +194,17 @@ export class AppInstall {
             controllerBuild: controller ? workerBuild(controller.scriptURL) : null,
             waiting: !!(this.registration && (this.registration.waiting || this.registration.installing)),
             updateReady: !!(this.latest && this.build && this.latest !== this.build),
-            installable: !!this.deferred,
-            installed: this.installed || standalone,
+            installable: !!heldPrompt(),
+            installed: installedNow(),
             standalone,
+            route: this.route,
             error: this.error,
         };
     }
 
     render() {
         const state = this.state();
-        this.installButton.hidden = !state.installable;
+        this.installButton.hidden = !state.installable || state.standalone;
         this.updateButton.hidden = !state.updateReady;
         this.forgetButton.hidden = !state.registered;
         let text;
@@ -220,6 +218,9 @@ export class AppInstall {
             text = t('pwa.state.installable');
         } else if (state.installed) {
             text = t('pwa.state.installed');
+        } else if (this.route !== 'browser') {
+            // Safari names its own menu, and another browser the command that makes the app.
+            text = t(`pwa.route.${this.route}`);
         } else if (state.controlled) {
             text = t('pwa.state.keptMenu');
         } else {
@@ -228,7 +229,7 @@ export class AppInstall {
         // A second sentence follows the first, as its own message.
         if (state.updateReady) {
             text += ` ${t('pwa.state.updateReady')}`;
-        } else if (state.controlled && (state.standalone || state.installable || state.installed)) {
+        } else if (state.controlled && (state.standalone || state.installable || state.installed || this.route !== 'browser')) {
             text += ` ${t('pwa.state.kept')}`;
         }
         this.status.textContent = text;

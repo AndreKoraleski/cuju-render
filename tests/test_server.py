@@ -941,7 +941,10 @@ def test_show_starts_a_server_that_ends_with_its_process(render_home):
     view = cuju.render.show(display='none')
     try:
         server = view.server
-        assert server.process is not None and server.pid == server.process.pid
+        # A Python of a virtual environment on Windows runs the server beneath the process that
+        # show made, so the server file names the call that started it.
+        entry = json.loads((render_home / _launch.SERVER_FILE).read_text())
+        assert server.process is not None and entry['pid'] == server.pid and entry['starter']
         assert _launch.running().pid == server.pid
         assert cuju.render.show('sample-5v5', display='none').server.pid == server.pid
         _, body = _get(server.url[:-1], '/api/matches')

@@ -10,6 +10,9 @@ import { formatDay } from './api.js';
 import { t } from './i18n.js';
 import { recordingTitle, summaryTeams, teamName } from './names.js';
 import { scenarioName } from './scenarios.js';
+import { icon } from './icons.js';
+
+export { icon };
 
 const ITEM = '[role^="menuitem"]:not([disabled]):not([aria-disabled="true"])';
 const open = new Set();
@@ -378,12 +381,6 @@ export function enhanceSelect(select, options = {}) {
     return select.enhanced;
 }
 
-// An icon of the page's sprite, parsed as SVG so its use element draws.
-export function icon(name, className = 'icon') {
-    const t = document.createElement('span');
-    t.innerHTML = `<svg class="${className}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
-    return t.firstChild;
-}
 
 export { el };
 
@@ -411,24 +408,26 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
         }
     }
 
+    // Each entry may name a symbol, which shows before its name.
     const radio = (host, entries, current, pick) => {
-        host.replaceChildren(...entries.map(([value, label, kbd]) => menuItem(label, {
-            checked: value === current, kbd, onSelect: () => pick(value),
+        host.replaceChildren(...entries.map(([value, label, kbd, symbol]) => menuItem(label, {
+            checked: value === current, kbd, onSelect: () => pick(value), icon: symbol ? icon(symbol) : null,
         })));
     };
+    const CAMERA_ICONS = { broadcast: 'video', tactical: 'grid', goal: 'goal', player: 'user', free: 'eye', ball: 'circles', owner: 'crosshair' };
     const fillView = () => {
-        radio($('view-cameras'), CAMERA_MODES.map((m) => [m.id, m.label, m.id === 'ball' ? 'B' : m.id === 'owner' ? 'P' : null]),
+        radio($('view-cameras'), CAMERA_MODES.map((m) => [m.id, m.label, m.id === 'ball' ? 'B' : m.id === 'owner' ? 'P' : null, CAMERA_ICONS[m.id]]),
             app.cameras.mode, (id) => app.setCamera(id));
         // The picture alone, as on television, and fullscreen, each a toggle of the view.
         if ($('view-screen')) {
             $('view-screen').replaceChildren(
                 menuItem(t('menu.view.broadcast'), {
                     hint: t('menu.view.broadcast.hint'),
-                    checked: !!app.tvMode, check: true, kbd: 'T', onSelect: () => app.setTvMode(!app.tvMode),
+                    checked: !!app.tvMode, check: true, kbd: 'T', onSelect: () => app.setTvMode(!app.tvMode), icon: icon('watch'),
                 }),
-                menuItem(t('menu.view.fullscreen'), { checked: !!document.fullscreenElement, check: true, kbd: 'F', onSelect: () => app.toggleFullscreen() }),
+                menuItem(t('menu.view.fullscreen'), { checked: !!document.fullscreenElement, check: true, kbd: 'F', onSelect: () => app.toggleFullscreen(), icon: icon('fullscreen') }),
                 ...(app.feedDialog ? [menuItem(t('menu.view.feed'), {
-                    hint: t('menu.view.feed.hint'),
+                    hint: t('menu.view.feed.hint'), icon: icon('link'),
                     onSelect: () => setTimeout(() => app.feedDialog.open(), 0),
                 })] : []));
         }
@@ -437,7 +436,7 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
         }
         radio($('view-quality'), [['low', t('menu.view.quality.low')], ['medium', t('menu.view.quality.medium')], ['high', t('menu.view.quality.high')]],
             app.settings.quality, (q) => app.setQuality(q));
-        radio($('view-theme'), [['system', t('menu.view.theme.system')], ['dark', t('menu.view.theme.dark')], ['light', t('menu.view.theme.light')]],
+        radio($('view-theme'), [['system', t('menu.view.theme.system'), null, 'monitor'], ['dark', t('menu.view.theme.dark'), null, 'moon'], ['light', t('menu.view.theme.light'), null, 'sun']],
             app.settings.theme, (t) => {
                 const sel = $('theme');
                 sel.value = t;
@@ -499,10 +498,10 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
         const parts = [];
         const open = section(t('menu.match.open'));
         open.body.append(
-            menuItem(t('menu.match.open.file'), { hint: t('menu.match.open.file.hint'), onSelect: () => $('file-input').click() }),
-            menuItem(t('menu.match.open.address'), { hint: t('menu.match.open.address.hint'), onSelect: () => setTimeout(() => $('address-input').focus(), 0) }),
-            menuItem(t('menu.match.open.recordings'), { onSelect: () => app.showPage('recordings') }),
-            menuItem(t('menu.match.open.new'), { hint: t('menu.match.open.new.hint'), onSelect: () => app.showPage('matches') }));
+            menuItem(t('menu.match.open.file'), { hint: t('menu.match.open.file.hint'), icon: icon('file'), onSelect: () => $('file-input').click() }),
+            menuItem(t('menu.match.open.address'), { hint: t('menu.match.open.address.hint'), icon: icon('link'), onSelect: () => setTimeout(() => $('address-input').focus(), 0) }),
+            menuItem(t('menu.match.open.recordings'), { icon: icon('archive'), onSelect: () => app.showPage('recordings') }),
+            menuItem(t('menu.match.open.new'), { hint: t('menu.match.open.new.hint'), icon: icon('matches'), onSelect: () => app.showPage('matches') }));
         parts.push(open.head, open.body);
         if (app.timeline && app.source) {
             const goals = section(t('menu.match.goals'));
@@ -511,7 +510,7 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
             if (app.source.kind !== 'live' && app.timeline.store.size > 1) {
                 const stats = section(t('menu.match.this'));
                 stats.body.append(menuItem(t('menu.match.stats'), {
-                    hint: t('menu.match.stats.hint'),
+                    hint: t('menu.match.stats.hint'), icon: icon('stats'),
                     onSelect: () => {
                         if (app.page !== 'watch') {
                             app.showPage('watch');
@@ -521,14 +520,14 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
                 }));
                 if (app.captions) {
                     stats.body.append(menuItem(t('menu.match.captions'), {
-                        hint: t('menu.match.captions.hint'),
+                        hint: t('menu.match.captions.hint'), icon: icon('download'),
                         onSelect: () => app.captions.download(),
                     }));
                 }
                 if (app.moments && app.source.kind === 'match' && app.source.id) {
                     const id = app.source.id;
                     stats.body.append(menuItem(t('menu.match.moments'), {
-                        hint: t('menu.match.moments.hint'),
+                        hint: t('menu.match.moments.hint'), icon: icon('search'),
                         onSelect: () => app.moments.show(`match:${id}`),
                     }));
                 }

@@ -1,0 +1,118 @@
+{
+  "keys": [
+    [
+      "  Rex  FC ",
+      "rex fc"
+    ],
+    [
+      "Straße",
+      "strasse"
+    ],
+    [
+      "STRASSE",
+      "strasse"
+    ],
+    [
+      "ẞ",
+      "ss"
+    ],
+    [
+      "ΟΔΥΣΣΕΥΣ",
+      "οδυσσευσ"
+    ],
+    [
+      "ı and I",
+      "i and i"
+    ],
+    [
+      "Ana Maria",
+      "ana maria"
+    ],
+    [
+      "Ꭰ ꭰ",
+      "ꭰ ꭰ"
+    ],
+    [
+      "İstanbul",
+      "i̇stanbul"
+    ],
+    [
+      "Café",
+      "café"
+    ]
+  ],
+  "free": [
+    [
+      "Rex",
+      [
+        "Rex"
+      ],
+      40,
+      "Rex 2"
+    ],
+    [
+      "Rex",
+      [
+        "rex",
+        "REX 2"
+      ],
+      40,
+      "Rex 3"
+    ],
+    [
+      "Rex",
+      [],
+      40,
+      "Rex"
+    ],
+    [
+      "  Rex   FC ",
+      [
+        "rex fc"
+      ],
+      40,
+      "Rex FC 2"
+    ],
+    [
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      40,
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 2"
+    ],
+    [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx yz",
+      [
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX YZ"
+      ],
+      40,
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 2"
+    ],
+    [
+      "RexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRex",
+      [
+        "rexrexrexrexrexrexrexrexrexrexrexrexrexrexrexrexrexrexrexrex"
+      ],
+      null,
+      "RexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRexRex 2"
+    ],
+    [
+      "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      [
+        "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      ],
+      40,
+      "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀 2"
+    ],
+    [
+      "Straße",
+      [
+        "STRASSE",
+        "strasse 2"
+      ],
+      40,
+      "Straße 3"
+    ]
+  ]
+}

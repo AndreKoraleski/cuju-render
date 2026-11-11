@@ -17,6 +17,7 @@ import { Painter } from '../teams/painter.js';
 import { ARENAS, ARENA_LABELS, ARENA_NOTES, arenaThumbnail } from '../world/arenas.js';
 import { formatHour } from '../world/sky.js';
 import { formatNumber, t, tOr } from '../core/i18n.js';
+import { icon, symbolOnly } from '../core/icons.js';
 
 // Board pictures are read whole before they are scaled down, so a very large file is refused first.
 const BOARD_FILE_BYTES = 32 * 1024 * 1024;
@@ -40,6 +41,12 @@ export const WEATHER_LABELS = {
     storm: t('fieldpage.weather.storm'), snow: t('fieldpage.weather.snow'), fog: t('fieldpage.weather.fog'),
 };
 // The name of a preset in the language of the page, the English name stays its key.
+// The choices that show their symbols alone, the others show their names.
+const CHOICE_ICONS = {
+    stripes: 'stripes', checkers: 'checkers', circles: 'circles', none: 'plain',
+    dawn: 'dawn', day: 'sun', dusk: 'dusk', night: 'moon',
+    clear: 'sun', overcast: 'cloud', rain: 'rain', storm: 'storm', snow: 'snow', fog: 'fog',
+};
 const presetName = (name) => tOr(`fieldpage.preset.${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, name);
 
 // Where the preview looks for each part of the field, used when cameras.js has no table of its
@@ -129,8 +136,9 @@ export class FieldPage {
         const f = this.field;
         const chips = (list, current, key, labels = LABELS) => h('div', { class: 'chips' }, list.map((v) => h('button', {
             type: 'button', class: `chip-btn${v === current ? ' active' : ''}`, 'aria-pressed': v === current ? 'true' : 'false',
+            ...(CHOICE_ICONS[v] ? symbolOnly(labels[v] || v) : {}),
             onclick: () => this.change({ [key]: v }, true),
-        }, labels[v] || v)));
+        }, CHOICE_ICONS[v] ? icon(CHOICE_ICONS[v]) : labels[v] || v)));
         const color = (label, key) => {
             const input = h('input', { type: 'color', value: f[key] });
             input.addEventListener('input', () => this.change({ [key]: input.value }));
@@ -161,10 +169,10 @@ export class FieldPage {
             });
             return h('label', { class: 'swatch' }, input);
         }), f.crowdColors.length < 12 ? h('button', {
-            type: 'button', class: 'btn small', onclick: () => this.change({ crowdColors: [...f.crowdColors, '#888888'], crowd: 'custom' }, true),
-        }, t('fieldpage.crowd.addColor')) : null, f.crowdColors.length > 1 ? h('button', {
-            type: 'button', class: 'btn small ghost', onclick: () => this.change({ crowdColors: f.crowdColors.slice(0, -1), crowd: 'custom' }, true),
-        }, t('fieldpage.crowd.removeLast')) : null);
+            type: 'button', class: 'btn small', ...symbolOnly(t('fieldpage.crowd.addColor')), onclick: () => this.change({ crowdColors: [...f.crowdColors, '#888888'], crowd: 'custom' }, true),
+        }, icon('plus')) : null, f.crowdColors.length > 1 ? h('button', {
+            type: 'button', class: 'btn small ghost', ...symbolOnly(t('fieldpage.crowd.removeLast')), onclick: () => this.change({ crowdColors: f.crowdColors.slice(0, -1), crowd: 'custom' }, true),
+        }, icon('minus')) : null);
         const presets = h('select', { 'aria-label': t('fieldpage.presets') }, h('option', { value: '' }, t('fieldpage.presets.choose')),
             Object.keys(PRESETS).map((n) => h('option', { value: n }, presetName(n))));
         presets.addEventListener('change', () => {
@@ -215,20 +223,20 @@ export class FieldPage {
             f.customBoards.map((url, i) => h('div', { class: 'board-item' },
                 h('img', { src: url, alt: t('fieldpage.board.alt', { number: i + 1 }) }),
                 h('button', {
-                    type: 'button', class: 'btn small ghost danger',
+                    type: 'button', class: 'btn small ghost danger', ...symbolOnly(t('fieldpage.board.remove')),
                     onclick: () => this.change({ customBoards: f.customBoards.filter((_, k) => k !== i) }, true),
-                }, t('fieldpage.board.remove')))),
+                }, icon('close')))),
             h('div', { class: 'row' },
-                h('button', { type: 'button', class: 'btn small', disabled: full, onclick: () => boardFile.click() }, t('fieldpage.board.upload')),
-                h('button', { type: 'button', class: 'btn small', disabled: full, onclick: () => this.drawBoard() }, t('fieldpage.board.draw')),
+                h('button', { type: 'button', class: 'btn small', disabled: full, ...symbolOnly(t('fieldpage.board.upload')), onclick: () => boardFile.click() }, icon('image')),
+                h('button', { type: 'button', class: 'btn small', disabled: full, ...symbolOnly(t('fieldpage.board.draw')), onclick: () => this.drawBoard() }, icon('brush')),
                 boardFile),
             full ? h('p', { class: 'muted small' }, t('fieldpage.board.limit', { count: MAX_BOARDS })) : null);
         const [hour, hourLabel] = slider('time', 0, 24, 0.25, formatHour);
         const named = TIMES.find((time) => Math.abs(TIME_HOURS[time] - f.time) < 0.01);
         const timeChips = h('div', { class: 'chips' }, TIMES.map((time) => h('button', {
             type: 'button', class: `chip-btn${time === named ? ' active' : ''}`, 'aria-pressed': time === named ? 'true' : 'false',
-            title: formatHour(TIME_HOURS[time]), onclick: () => this.change({ time: TIME_HOURS[time] }, true),
-        }, LABELS[time])));
+            ...symbolOnly(LABELS[time], t('symbol.tip', { name: LABELS[time], text: formatHour(TIME_HOURS[time]) })), onclick: () => this.change({ time: TIME_HOURS[time] }, true),
+        }, icon(CHOICE_ICONS[time]))));
         const [amount, amountLabel] = slider('weatherAmount', 0.1, 1, 0.05, percent);
         const [wind, windLabel] = slider('wind', 0, 1, 0.05, (v) => (v < 0.05 ? t('fieldpage.wind.calm') : percent(v)));
         const arenas = h('div', { class: 'arena-list' }, ARENAS.map((name) => h('button', {
@@ -238,16 +246,16 @@ export class FieldPage {
         const form = h('div', { class: 'field-form' },
             section('presets', h('div', { class: 'row' }, presets,
                 h('span', { class: 'spacer' }),
-                h('button', { type: 'button', class: 'btn', onclick: () => exportField(this.field) }, t('fieldpage.export')),
-                h('button', { type: 'button', class: 'btn', onclick: () => importInput.click() }, t('fieldpage.import')),
+                h('button', { type: 'button', class: 'btn', ...symbolOnly(t('fieldpage.export')), onclick: () => exportField(this.field) }, icon('download')),
+                h('button', { type: 'button', class: 'btn', ...symbolOnly(t('fieldpage.import')), onclick: () => importInput.click() }, icon('upload')),
                 h('button', {
-                    type: 'button', class: 'btn ghost',
+                    type: 'button', class: 'btn ghost', ...symbolOnly(t('fieldpage.reset')),
                     onclick: () => {
                         if (confirm(t('fieldpage.reset.confirm'))) {
                             this.change({ ...presetField('Summer afternoon'), arena: 'stadium' }, true);
                         }
                     },
-                }, t('fieldpage.reset')),
+                }, icon('reset')),
                 importInput)),
             section('arena', h('h2', {}, t('fieldpage.arena')),
                 arenas,

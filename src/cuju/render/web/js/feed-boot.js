@@ -12,7 +12,7 @@ import { parseFeed } from './export/feed-params.js';
 const params = new URLSearchParams(location.search);
 
 // Settings in memory, with the interface of localStorage.
-class MemoryStorage {
+export class MemoryStorage {
     constructor(entries) {
         this.map = new Map(entries);
     }

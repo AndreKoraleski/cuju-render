@@ -14,6 +14,7 @@ import { Lessons, loadCatalog } from './lessons.js';
 import { doneCount, lessonAsk, lessonTitle } from './lessons-core.js';
 import { HELP_TOPICS, paletteAction, searchWords } from './palette.js';
 import { serverText, t, tOr, tn } from '../core/i18n.js';
+import { icon, labelText, relabel, stateBadge, symbolOnly } from '../core/icons.js';
 
 // The title and the description of a sample from the server, as the messages
 // helpcenter.sample.<id>.title and .about, with the server's English for a sample without them.
@@ -184,12 +185,12 @@ export class HelpCenter {
         if (!card) {
             return;
         }
-        this.tourButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.tour.start() });
-        this.tourAgain = h('button', { type: 'button', class: 'btn', onclick: () => this.tour.start(0) }, t('helpcenter.tour.again'));
+        this.tourButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.tour.start() }, icon('play'), labelText(''));
+        this.tourAgain = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('helpcenter.tour.again')), onclick: () => this.tour.start(0) }, icon('replay'));
         this.lessonSummary = h('p', { class: 'muted', 'aria-live': 'polite' }, t('helpcenter.lessons.loading'));
         this.lessonList = h('ol', { class: 'lesson-list', 'aria-label': t('helpcenter.lessons.list') });
-        this.continueButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.lessons && this.lessons.start() }, t('helpcenter.lessons.start'));
-        this.resetButton = h('button', { type: 'button', class: 'btn', onclick: () => this.resetLessons() }, t('helpcenter.lessons.reset'));
+        this.continueButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.lessons && this.lessons.start() }, icon('play'), labelText(t('helpcenter.lessons.start')));
+        this.resetButton = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('helpcenter.lessons.reset')), onclick: () => this.resetLessons() }, icon('reset'));
         const learn = h('section', { id: 'help-learn', 'aria-labelledby': 'help-learn-title', tabindex: '-1' },
             h('h2', { id: 'help-learn-title' }, t('helpcenter.learn.title')),
             h('p', {}, t('helpcenter.learn.text')),
@@ -203,7 +204,7 @@ export class HelpCenter {
             })));
         this.sampleList = h('ul', { class: 'sample-list', 'aria-label': t('helpcenter.samples.list') });
         this.sampleNote = h('p', { class: 'muted small', 'aria-live': 'polite' });
-        this.allButton = h('button', { type: 'button', class: 'btn', onclick: () => this.addSamples(null) }, t('helpcenter.samples.all'));
+        this.allButton = h('button', { type: 'button', class: 'btn', onclick: () => this.addSamples(null) }, icon('plus'), t('helpcenter.samples.all'));
         const samples = h('section', { id: 'help-samples', 'aria-labelledby': 'help-samples-title' },
             h('h2', { id: 'help-samples-title' }, t('helpcenter.samples.title')),
             h('p', {}, t('helpcenter.samples.text')),
@@ -246,7 +247,7 @@ export class HelpCenter {
             return;
         }
         const at = this.tour.resumeAt;
-        this.tourButton.textContent = at > 0 ? t('helpcenter.tour.resume', { index: at + 1 }) : t('helpcenter.tour.take');
+        relabel(this.tourButton, at > 0 ? t('helpcenter.tour.resume', { index: at + 1 }) : t('helpcenter.tour.take'));
         this.tourAgain.hidden = at === 0;
     }
 
@@ -267,15 +268,15 @@ export class HelpCenter {
         }
         const done = doneCount(lessons.progress, lessons.ids);
         this.lessonSummary.textContent = t('helpcenter.lessons.summary', { done, count: lessons.ids.length });
-        this.continueButton.textContent = done === 0 ? t('helpcenter.lessons.start') : (done === lessons.ids.length ? t('helpcenter.lessons.again') : t('helpcenter.lessons.continue'));
+        relabel(this.continueButton, done === 0 ? t('helpcenter.lessons.start') : (done === lessons.ids.length ? t('helpcenter.lessons.again') : t('helpcenter.lessons.continue')));
         this.resetButton.disabled = done === 0;
         this.lessonList.replaceChildren(...lessons.lessons.map((lesson) => {
             const finished = lesson.id in lessons.progress.done;
             return h('li', { class: finished ? 'done' : null, 'data-lesson': lesson.id },
-                h('span', { class: 'lesson-mark' }, finished ? t('helpcenter.lesson.done') : t('helpcenter.lesson.todo')),
+                stateBadge(finished ? 'done' : 'todo', finished ? t('helpcenter.lesson.done') : t('helpcenter.lesson.todo'), 'lesson-mark'),
                 h('h3', {}, lessonTitle(lesson)),
                 h('p', { class: 'muted small' }, lessonAsk(lesson)),
-                h('div', {}, h('button', { type: 'button', class: 'btn small', 'aria-label': t('helpcenter.lesson.start.label', { title: lessonTitle(lesson) }), onclick: () => lessons.start(lesson.id) }, finished ? t('helpcenter.lesson.again') : t('helpcenter.lesson.start'))));
+                h('div', {}, h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('helpcenter.lesson.start.label', { title: lessonTitle(lesson) })), onclick: () => lessons.start(lesson.id) }, icon(finished ? 'replay' : 'play'))));
         }));
     }
 
@@ -309,12 +310,12 @@ export class HelpCenter {
         this.allButton.disabled = this.samples.every((entry) => entry.state === 'library');
         this.sampleList.replaceChildren(...this.samples.map((entry) => {
             const action = entry.state === 'library'
-                ? h('button', { type: 'button', class: 'btn small', 'aria-label': t('helpcenter.samples.open.label', { title: sampleTitle(entry) }), onclick: () => this.openSample(entry) }, t('helpcenter.samples.open'))
+                ? h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('helpcenter.samples.open.label', { title: sampleTitle(entry) })), onclick: () => this.openSample(entry) }, icon('play'))
                 : h('button', {
                     type: 'button', class: 'btn small',
-                    'aria-label': t(entry.state === 'trash' ? 'helpcenter.samples.restore.label' : 'helpcenter.samples.add.label', { title: sampleTitle(entry) }),
+                    ...symbolOnly(t(entry.state === 'trash' ? 'helpcenter.samples.restore.label' : 'helpcenter.samples.add.label', { title: sampleTitle(entry) })),
                     onclick: () => this.addSamples([entry.id]),
-                }, entry.state === 'trash' ? t('helpcenter.samples.restore') : t('helpcenter.samples.add'));
+                }, icon(entry.state === 'trash' ? 'reset' : 'plus'));
             return h('li', { 'data-sample': entry.id },
                 h('span', { class: 'sample-state' }, sampleState(entry)),
                 h('h3', {}, sampleTitle(entry)),

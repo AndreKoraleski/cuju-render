@@ -374,7 +374,8 @@ export function serverStyle(style) {
     return out;
 }
 
-// Keeps the two keepers apart when both teams left them at their defaults.
+// Keeps the two keepers apart when both teams left them at their defaults, or when one team plays
+// itself, as two entrants of a tournament may.
 export function separateKeepers(styles, teams) {
     // The right team wears its away kit when its kit looks like the left team's, as on a real
     // matchday, judged by perceptual difference over shirt, pattern and shorts.
@@ -386,7 +387,8 @@ export function separateKeepers(styles, teams) {
     const a = styles[0].goalkeeper.primary;
     const b = styles[1].goalkeeper.primary;
     const explicit = teams[1] && teams[1].style && teams[1].style.goalkeeper;
-    if (distance(a, b) < 60 && !explicit) {
+    const itself = !!(teams[0] && teams[1] && teams[0].id && teams[0].id === teams[1].id);
+    if (distance(a, b) < 60 && (!explicit || itself)) {
         const avoid = [styles[0].kit.primary, styles[1].kit.primary, styles[1].kit.secondary, a];
         const c = contrasting(avoid);
         styles[1].goalkeeper = {

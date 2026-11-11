@@ -456,10 +456,50 @@ def _count(value: Any, name: str, lowest: int, highest: int) -> int:
     return value
 
 
+def name_key(name: Any) -> str:
+    """Returns what two entrant names share when they read as one, trimmed and without case.
+
+    Each character is lowered, raised and lowered again, which folds such letters as the German
+    sharp s, and which the page's `nameKey` in `web/js/play/tournament-layout.js` does alike,
+    character by character, so both give the same key.
+    """
+    text = ' '.join(text_of(name).split())
+    return ''.join(character.lower().upper().lower() for character in text)
+
+
+def free_name(base: str, taken: set[str] | list[str], longest: int | None = 40) -> str:
+    """Returns `base`, or `base` with the first number from 2 whose name no entrant holds.
+
+    `taken` holds the keys of the names in use, as `name_key` gives them. A name keeps to
+    `longest` characters, the most a given name holds, by shortening `base` before its number.
+    The page's `freeName` proposes the same name when a person adds a team that is already an
+    entrant.
+    """
+    base = ' '.join(base.split())
+    if longest is not None:
+        base = base[:longest].rstrip()
+    number = 2
+    name = base
+    while name_key(name) in taken:
+        suffix = f' {number}'
+        cut = base if longest is None else base[: longest - len(suffix)].rstrip()
+        name = f'{cut}{suffix}'
+        number += 1
+    return name
+
+
+def _given_name(entrant: dict[str, Any]) -> str | None:
+    """Returns the name that a person gave an entrant, trimmed, or `None` when it has none."""
+    if entrant.get('name') in (None, ''):
+        return None
+    return _plain_text(entrant['name'], 'an entrant name', 40)
+
+
 def _entrant_name(entrant: dict[str, Any], team: dict[str, Any] | None) -> Any:
     """Returns the name of an entrant, the one a person gave as text, else a label or the team's."""
-    if entrant.get('name') not in (None, ''):
-        return _plain_text(entrant['name'], 'an entrant name', 40)
+    given = _given_name(entrant)
+    if given is not None:
+        return given
     if entrant['kind'] == 'team':
         return label_of(team)
     if entrant['kind'] == 'builtin':
@@ -472,10 +512,48 @@ def _entrant_name(entrant: dict[str, Any], team: dict[str, Any] | None) -> Any:
     raise TournamentMessageError('server.tournament.person_names')
 
 
+def _name_entrants(entrants: list[dict[str, Any]], bases: list[tuple[Any, bool]]) -> None:
+    """Gives each entrant its name, the one a person gave or one that the rules make.
+
+    Two given names that read as one refuse the tournament. A made name, such as that of a team
+    or of the built-in AI at an ability, takes the first free number from 2 when a given name or
+    an earlier made one holds it, as part of its label when the rules made it.
+    """
+    given: dict[str, int] = {}
+    for index, (base, own) in enumerate(bases):
+        if not own:
+            continue
+        key = name_key(base)
+        if key in given:
+            raise TournamentMessageError(
+                'server.tournament.name_taken', entrant=index + 1, name=base, other=given[key] + 1
+            )
+        given[key] = index
+    names = set(given)
+    for entrant, (base, own) in zip(entrants, bases, strict=True):
+        name = base
+        if not own:
+            if isinstance(base, dict):
+                suffix = 2
+                while name_key(name) in names:
+                    name = _label('numbered', name=base, number=suffix)
+                    suffix += 1
+            elif name_key(name) in names:
+                name = free_name(base, names, None)
+            names.add(name_key(name))
+        set_named(entrant, 'name', name)
+
+
 def check_entrants(
     entrants: Any, teams: list[dict[str, Any]], ratings: dict[str, float] | None = None
 ) -> list[dict[str, Any]]:
     """Returns the entrants of a tournament in full, each with its kind, team, name and rating.
+
+    A team of the registry may enter more than once, each entrant under a name of its own. The
+    names that people give are unique within the tournament, compared trimmed and without case,
+    and each keeps its name as given. An entrant without a given name takes the name of its team
+    or kind, with the first free number from 2 when a given name or an earlier entrant already
+    holds it, so a team entered twice plays as Rex and Rex 2.
 
     Args:
         entrants: A list of entrants, each `{'kind': 'team', 'team': identifier}`, `{'kind':
@@ -483,11 +561,12 @@ def check_entrants(
             `name`, `rating` and, for a person, `teammates`, a registry team of dynamic assignment
             or `builtin`.
         teams: The registry, as `_teams.teams` returns it.
-        ratings: The ratings that earlier tournaments gave, by entrant key.
+        ratings: The ratings that earlier tournaments gave, by entrant key. The entrants of one
+            team share its key, and so its rating.
 
     Raises:
-        TournamentError: If an entrant is unknown, repeated or invalid, or there are fewer than 2
-            or more than 256.
+        TournamentError: If an entrant is unknown or invalid, two given names are the same, or
+            there are fewer than 2 or more than 256.
     """
     if not isinstance(entrants, list) or not 2 <= len(entrants) <= MAX_ENTRANTS:
         count = len(entrants) if isinstance(entrants, list) else entrants
@@ -497,7 +576,8 @@ def check_entrants(
     registry = {team['id']: team for team in teams}
     builtin = next((team for team in teams if team.get('kind') == 'builtin'), None)
     ratings = ratings or {}
-    result, names, keys = [], set(), set()
+    result: list[dict[str, Any]] = []
+    bases: list[tuple[Any, bool]] = []
     for index, raw in enumerate(entrants):
         if not isinstance(raw, dict):
             raise TournamentMessageError(
@@ -517,8 +597,6 @@ def check_entrants(
                     'server.tournament.entrant_team', entrant=index + 1, team=repr(raw.get('team'))
                 )
             entrant.update(team=team['id'], format=team.get('format'), key=team['id'])
-            if team['id'] in keys:
-                raise TournamentMessageError('server.tournament.twice', team=team['name'])
         elif kind == 'builtin':
             team = builtin
             ability = raw.get('ability')
@@ -536,18 +614,9 @@ def check_entrants(
         base = _entrant_name({**raw, 'kind': kind}, team)
         if kind == 'person':
             entrant['key'] = f'person:{base}'
-        # A repeated name takes a number, as part of the label of a name that the rules made.
-        name, suffix = base, 2
-        while text_of(name).casefold() in names:
-            name = (
-                _label('numbered', name=base, number=suffix)
-                if isinstance(base, dict)
-                else f'{base} {suffix}'
-            )
-            suffix += 1
-        names.add(text_of(name).casefold())
-        set_named(entrant, 'name', name)
-        keys.add(entrant['key'])
+        # The name comes once every entrant is known, since a made name avoids every given one.
+        entrant['name'] = None
+        bases.append((base, _given_name(raw) is not None))
         rating = raw.get('rating')
         if rating is not None and (not _number(rating) or not 0 <= rating <= 10000):
             raise TournamentMessageError('server.tournament.rating', rating=repr(rating))
@@ -562,6 +631,7 @@ def check_entrants(
         )
         entrant.setdefault('ability', None)
         result.append(entrant)
+    _name_entrants(result, bases)
     return result
 
 
@@ -2047,7 +2117,12 @@ def check_result(result: Any) -> dict[str, Any]:
 def update_ratings(
     ratings: dict[str, dict[str, Any]], home: dict[str, Any], away: dict[str, Any], score: list[int]
 ) -> None:
-    """Moves the ratings of two entrants after a match, by the Elo formula."""
+    """Moves the ratings of two entrants after a match, by the Elo formula.
+
+    Two entrants of one team share its rating, so a match between them leaves it as it is.
+    """
+    if home['key'] == away['key']:
+        return
     first = ratings.setdefault(
         home['key'], {'name': home['name'], 'rating': BASE_RATING, 'matches': 0}
     )

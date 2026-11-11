@@ -980,7 +980,8 @@ def make_handler(
                 ancestors = _launch.FRAME_ANCESTORS
                 self.send_header('Content-Security-Policy', f'frame-ancestors {ancestors}')
             elif getattr(self, '_feed_frame', False):
-                # The page of a clean feed sits in the frame of /feed, a page of this server.
+                # The page of a clean feed sits in the frame of /feed, and the page that draws a
+                # video export in the page that encodes it, both pages of this server.
                 self.send_header('X-Frame-Options', 'SAMEORIGIN')
                 self.send_header('Content-Security-Policy', "frame-ancestors 'self'")
             elif not getattr(self, 'framable', False):
@@ -1532,7 +1533,11 @@ def make_handler(
             key = getattr(self.server, 'frame_key', None)
             given = self._route()[1].get('embed', '').encode()
             self._framed = page and bool(key) and secrets.compare_digest(given, key.encode())
-            self._feed_frame = page and not self._framed and 'feed' in self._route()[1]
+            # The clean feed and the video export of the browser each frame the page on its own
+            # origin alone.
+            query = self._route()[1]
+            framed_here = 'feed' in query or ('capture' in query and 'export' in query)
+            self._feed_frame = page and not self._framed and framed_here
             self.send_response(200)
             self.send_header('Content-Type', kind or 'application/octet-stream')
             self.send_header('Content-Length', str(len(data)))
@@ -1652,7 +1657,8 @@ def make_handler(
             path, filename = found
             size = path.stat().st_size
             self.send_response(200)
-            self.send_header('Content-Type', 'video/mp4')
+            kind = 'video/webm' if path.suffix == '.webm' else 'video/mp4'
+            self.send_header('Content-Type', kind)
             self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
             self.send_header('Content-Length', str(size))
             self.send_header('Cache-Control', 'no-store')

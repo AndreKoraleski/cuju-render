@@ -11,6 +11,7 @@
 // at the top of the file touch nothing of the page, so they hold the same in a test.
 
 import { t } from '../core/i18n.js';
+import { icon, symbolOnly } from '../core/icons.js';
 
 export const TOUCH_KEY = 'cuju.touchControls';
 export const TOUCH_CHOICES = ['auto', 'on', 'off'].map((choice) => [choice, t(`touch.choice.${choice}`)]);
@@ -138,7 +139,7 @@ export class TouchControls {
             this.hold(node, (down) => this.press(button.names, down));
             return node;
         });
-        this.pause = h('button', { type: 'button', class: 'touch-pause', tabindex: '-1', title: t('touch.pause.title') }, t('touch.pause'));
+        this.pause = h('button', { type: 'button', class: 'touch-pause', tabindex: '-1', ...symbolOnly(t('touch.pause'), t('touch.pause.title')) }, icon('pause'));
         this.pause.addEventListener('click', () => {
             if (play.game && !play.game.ended) {
                 play.pause(true);

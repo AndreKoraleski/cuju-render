@@ -19,7 +19,8 @@ import {
 } from '../players/kits.js';
 import { h } from './library.js';
 import { kitShirt } from '../pages/matches.js';
-import { Dropdown, enhanceSelect, icon, menuItem } from '../core/menu.js';
+import { Dropdown, enhanceSelect, menuItem } from '../core/menu.js';
+import { icon, relabel, symbolOnly } from '../core/icons.js';
 import { Painter } from './painter.js';
 import { Players, Rig, clipNames, fileBoneNames, guessJoints, parseModel, restPoseNodes, walkPoseNodes } from '../players/players.js';
 import { animationLibrary, danceNames, posePlayer } from '../broadcast/celebrate.js';
@@ -472,8 +473,8 @@ export class TeamEditor {
             const i = SECTIONS.findIndex((s) => s.id === this.section);
             this.showSection(SECTIONS[(i + d + SECTIONS.length) % SECTIONS.length].id, true);
         };
-        this.prevBtn = h('button', { type: 'button', class: 'icon-btn step-btn', 'aria-label': t('editor.nav.previous'), title: t('editor.nav.previous'), onclick: () => step(-1) }, '‹');
-        this.nextBtn = h('button', { type: 'button', class: 'icon-btn step-btn', 'aria-label': t('editor.nav.next'), title: t('editor.nav.next'), onclick: () => step(1) }, '›');
+        this.prevBtn = h('button', { type: 'button', class: 'icon-btn step-btn', 'aria-label': t('editor.nav.previous'), title: t('editor.nav.previous'), onclick: () => step(-1) }, icon('previous'));
+        this.nextBtn = h('button', { type: 'button', class: 'icon-btn step-btn', 'aria-label': t('editor.nav.next'), title: t('editor.nav.next'), onclick: () => step(1) }, icon('forward'));
         this.titleShirt = h('span', { class: 'title-shirt' });
         this.titleName = h('h2', {});
         this.titleMeta = h('span', { class: 'muted small' });
@@ -484,19 +485,19 @@ export class TeamEditor {
                 h('button', { type: 'button', class: 'chip-btn active', 'data-mode': 'idle', onclick: () => this.setPreviewMode('idle') }, t('editor.preview.idle')),
                 h('button', { type: 'button', class: 'chip-btn', 'data-mode': 'walk', onclick: () => this.setPreviewMode('walk') }, t('editor.preview.walk')),
                 h('button', { type: 'button', class: 'chip-btn', 'data-mode': 'gk', 'aria-pressed': 'false', onclick: () => this.setPreviewMode('gk') }, t('editor.preview.goalkeeper'))));
-        this.saveBtn = h('button', { type: 'button', class: 'btn primary', onclick: () => this.save() }, t('editor.save'));
+        this.saveBtn = h('button', { type: 'button', class: 'btn primary', ...symbolOnly(t('editor.save')), onclick: () => this.save() }, icon('save'));
         this.dirtyNote = h('span', { class: 'dirty-note muted small', hidden: true }, t('editor.unsaved'));
         const actions = h('div', { class: 'editor-actions' },
-            h('button', { type: 'button', class: 'btn ghost', onclick: () => this.resetDefaults() }, t('editor.resetDefaults')),
+            h('button', { type: 'button', class: 'btn ghost', ...symbolOnly(t('editor.resetDefaults')), onclick: () => this.resetDefaults() }, icon('reset')),
             h('span', { class: 'spacer' }),
             this.dirtyNote,
-            h('button', { type: 'button', class: 'btn', onclick: () => this.close() }, t('editor.cancel')),
+            h('button', { type: 'button', class: 'btn', ...symbolOnly(t('editor.cancel')), onclick: () => this.close() }, icon('close')),
             this.saveBtn);
         const body = h('div', { class: 'editor' },
             h('header', { class: 'editor-head' },
                 h('div', { class: 'editor-title' }, this.titleShirt, h('div', {}, this.titleName, this.titleMeta)),
                 h('nav', { class: 'section-nav', 'aria-label': t('editor.nav.label') }, this.prevBtn, sectionBtn, this.nextBtn),
-                h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('editor.close.label'), title: t('editor.close.title'), onclick: () => this.close() }, '✕')),
+                h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('editor.close.label'), title: t('editor.close.title'), onclick: () => this.close() }, icon('close'))),
             h('div', { class: 'editor-grid' }, preview, this.formHost), actions, sectionMenu);
         // Keep the preview canvas across teams, a new WebGL context each time is slow.
         if (oldStage && this.renderer) {
@@ -772,7 +773,7 @@ export class TeamEditor {
             h('div', { class: 'player-head' },
                 badge,
                 h('span', { class: 'player-role' }, i === 0 ? t('editor.roster.goalkeeper') : t('editor.roster.outfield', { n: i })),
-                h('button', { type: 'button', class: 'link small', onclick: () => this.focusPlayer(i) }, t('editor.roster.preview'))),
+                h('button', { type: 'button', class: 'link small', ...symbolOnly(t('editor.roster.preview')), onclick: () => this.focusPlayer(i) }, icon('eye'))),
             h('div', { class: 'player-fields' },
                 h('label', { class: 'mini grow' }, t('editor.roster.name'), name),
                 h('label', { class: 'mini' }, t('editor.roster.number'), number)),
@@ -849,8 +850,8 @@ export class TeamEditor {
             h('div', { class: 'slot-thumb', style: thumb ? `background-image:url(${thumb})` : '' }, has ? null : h('span', { class: 'muted small' }, t('editor.slot.empty'))),
             h('div', { class: 'slot-label' }, label),
             h('div', { class: 'row' },
-                h('button', { type: 'button', class: 'btn small', onclick: () => this.paint(slot, label, kind) }, has ? t('editor.slot.edit') : t('editor.slot.create')),
-                has ? h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.removeSlot(slot) }, t('editor.remove')) : null));
+                h('button', { type: 'button', class: 'btn small', ...symbolOnly(has ? t('editor.slot.edit') : t('editor.slot.create')), onclick: () => this.paint(slot, label, kind) }, icon(has ? 'edit' : 'plus')),
+                has ? h('button', { type: 'button', class: 'btn small ghost danger', ...symbolOnly(t('editor.remove')), onclick: () => this.removeSlot(slot) }, icon('trash')) : null));
     }
 
     // Redraws the artwork tiles where they are shown, after a drawing saved or loaded.
@@ -875,9 +876,9 @@ export class TeamEditor {
 
     exportSection() {
         return h('div', { class: 'sec-body' },
-            h('a', { class: 'btn primary', href: api.exportUrl(this.team.id), download: `${this.team.name || 'team'}.zip` }, t('editor.export.button')),
+            h('a', { class: 'btn primary', href: api.exportUrl(this.team.id), download: `${this.team.name || 'team'}.zip`, ...symbolOnly(t('editor.export.button')) }, icon('download')),
             h('p', { class: 'muted small' }, t('editor.export.note')),
-            this.team.kind !== 'builtin' ? h('button', { class: 'btn', type: 'button', onclick: (e) => this.duplicate(e.currentTarget) }, t('editor.export.duplicate')) : null,
+            this.team.kind !== 'builtin' ? h('button', { class: 'btn', type: 'button', ...symbolOnly(t('editor.export.duplicate')), onclick: (e) => this.duplicate(e.currentTarget) }, icon('copy')) : null,
             this.team.kind !== 'builtin' ? h('p', { class: 'muted small' }, t('editor.export.duplicateNote')) : null);
     }
 
@@ -1025,7 +1026,7 @@ export class TeamEditor {
             });
             const drop = h('div', { class: 'dropzone small' },
                 h('p', {}, t('editor.model.drop')),
-                h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, t('editor.model.choose')), file);
+                h('button', { type: 'button', class: 'btn', ...symbolOnly(t('editor.model.choose')), onclick: () => file.click() }, icon('upload')), file);
             drop.addEventListener('dragover', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1047,7 +1048,7 @@ export class TeamEditor {
             }
             if (this.team.model || this.model) {
                 parts.push(h('button', {
-                    type: 'button', class: 'btn ghost danger',
+                    type: 'button', class: 'btn ghost danger', ...symbolOnly(t('editor.model.remove')),
                     onclick: () => {
                         this.model = null;
                         this.customRig = null;
@@ -1058,7 +1059,7 @@ export class TeamEditor {
                         this.invalidate('model', 'kit', 'roster', 'celebrations');
                         this.refreshPreview();
                     },
-                }, t('editor.model.remove')));
+                }, icon('trash')));
             }
         }
         parts.push(this.colorsBlock());
@@ -1381,14 +1382,14 @@ export class TeamEditor {
                 return h('div', { class: 'fan-color' },
                     h('label', { class: 'swatch' }, input, h('span', {}, t('editor.fans.color', { n: i + 1 }))),
                     colors.length > 1 ? h('button', {
-                        type: 'button', class: 'link small danger', 'aria-label': t('editor.fans.removeLabel', { n: i + 1 }),
+                        type: 'button', class: 'link small danger', ...symbolOnly(t('editor.fans.removeLabel', { n: i + 1 })),
                         onclick: () => {
                             colors.splice(i, 1);
                             this.crowdFollowsKit = false;
                             fill();
                             this.markDirty();
                         },
-                    }, t('editor.remove')) : null);
+                    }, icon('close')) : null);
             }), ...(colors.length < 4 ? [h('button', {
                 type: 'button', class: 'btn small add-color',
                 onclick: () => {
@@ -1489,7 +1490,7 @@ export class TeamEditor {
                 return h('div', { class: `move${name.startsWith('clip:') || own ? ' clip' : ''}` },
                     box,
                     h('label', { for: id }, label, hint ? h('span', { class: 'muted small' }, hint) : null),
-                    h('button', { type: 'button', class: 'btn small ghost', 'aria-label': t('editor.celebrations.playLabel', { name: label }), onclick: () => this.playCelebration(name) }, icon('play'), t('editor.play')));
+                    h('button', { type: 'button', class: 'btn small ghost', ...symbolOnly(t('editor.celebrations.playLabel', { name: label })), onclick: () => this.playCelebration(name) }, icon('play')));
             }));
         };
         const summaryText = () => (s.celebrations.length
@@ -1546,9 +1547,9 @@ export class TeamEditor {
             h('span', { class: 'sound-icon', 'aria-hidden': 'true' }, has ? '♪' : '·'),
             h('span', { class: 'sound-text' }, h('span', { class: 'sound-label' }, label), h('span', { class: 'muted small' }, has ? t('editor.sounds.uploaded', { hint }) : hint)),
             h('span', { class: 'row sound-actions' },
-                has ? h('button', { type: 'button', class: 'btn small', 'aria-label': t('editor.sounds.playLabel', { name: label.toLowerCase() }), onclick: () => this.playSound(slot) }, icon('play'), t('editor.play')) : null,
-                h('button', { type: 'button', class: 'btn small', onclick: () => file.click() }, has ? t('editor.sounds.replace') : t('editor.sounds.upload')),
-                has ? h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.removeSound(slot) }, t('editor.remove')) : null,
+                has ? h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('editor.sounds.playLabel', { name: label.toLowerCase() })), onclick: () => this.playSound(slot) }, icon('play')) : null,
+                h('button', { type: 'button', class: 'btn small', ...symbolOnly(has ? t('editor.sounds.replace') : t('editor.sounds.upload')), onclick: () => file.click() }, icon('upload')),
+                has ? h('button', { type: 'button', class: 'btn small ghost danger', ...symbolOnly(t('editor.remove')), onclick: () => this.removeSound(slot) }, icon('trash')) : null,
                 file));
         li.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -1727,7 +1728,7 @@ export class TeamEditor {
         }
         this.saving = true;
         this.saveBtn.disabled = true;
-        this.saveBtn.textContent = t('editor.saving');
+        relabel(this.saveBtn, t('editor.saving'));
         try {
             if (removeModel && team.model) {
                 await api.deleteModel(team.id);
@@ -1747,7 +1748,7 @@ export class TeamEditor {
         } finally {
             this.saving = false;
             this.saveBtn.disabled = false;
-            this.saveBtn.textContent = t('editor.save');
+            relabel(this.saveBtn, t('editor.save'));
         }
     }
 

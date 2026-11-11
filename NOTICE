@@ -13,9 +13,11 @@ cuju-render is the renderer of cuju, which reimplements Google Research Football
 (https://github.com/google-research/football), Copyright 2019 Google LLC, Apache License 2.0.
 cuju is not affiliated with or endorsed by Google.
 
-The renderer in src/cuju/render ships three.js (MIT, Copyright 2010-2026 three.js authors) and
-Fabric.js (MIT, Copyright 2008-2015 Printio, Juriy Zaytsev and Maxim Chernyak), each with its
-license beside it in web/vendor. Every asset that web/assets/manifest.json lists, the player, ball,
+The renderer in src/cuju/render ships three.js (MIT, Copyright 2010-2026 three.js authors),
+Fabric.js (MIT, Copyright 2008-2015 Printio, Juriy Zaytsev and Maxim Chernyak) and the icons of
+lucide-static 1.72.0 that the page uses (ISC, Copyright 2026 Lucide Icons and Contributors, the
+icons derived from Feather MIT, Copyright 2013-present Cole Bemis), each with its license beside it
+in web/vendor. Every asset that web/assets/manifest.json lists, the player, ball,
 goal, kits, pitch, grass, crowd and advertising boards among them, is converted from the media of
 Gameplay Football as Google Research Football ships it, dedicated to the public domain. The
 player models in web/assets/models come from KayKit Character Packs Skeletons 1.1 and Adventurers

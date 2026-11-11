@@ -4,15 +4,17 @@
 """The command line of the renderer, `cuju render`, also `python -m cuju.render`.
 
 `cuju render` serves the page and opens Home, `cuju render open` opens a recording or a live
-source, `cuju render team add FOLDER` registers a Kaggle submission folder, `cuju render play`
-records a match between two registered teams, `cuju render challenge` lists the challenges or
-plays one headless with a team, `cuju render tournament` makes, lists, shows, runs
+source, `cuju render app` opens the page in a window of its own and with `--install` adds it to
+the computer's apps, `cuju render team add FOLDER` registers a Kaggle submission folder,
+`cuju render play` records a match between two registered teams, `cuju render challenge` lists
+the challenges or plays one headless with a team, `cuju render tournament` makes, lists, shows, runs
 and cancels tournaments, and `cuju render sample` adds the shipped sample matches and the starter
 team again, or brings them back from the Trash. `cuju render recordings` lists the
 library with the group of each challenge run, `cuju render search` finds moments across the
 library, and `cuju render captions` writes the captions of a recording as WebVTT. `cuju render demo`
 streams a live match between the built-in AIs to the page, and `cuju render video` exports a range
-of a recording as an MP4 video, drawn by the page in a headless Chrome and encoded by ffmpeg.
+of a recording as an MP4 or WebM video, drawn and encoded by the page in a headless Chrome, Edge or
+Chromium.
 `cuju render tutorial` prints the lessons of the page for an agent and checks each one from the
 home folder, `cuju render doctor` prints a diagnostic report, and `cuju render feed` prints the
 addresses of clean feeds, pictures of fixed size for a streaming program such as OBS.
@@ -70,6 +72,7 @@ def main(arguments: list[str] | None = None) -> int:
         default=8780,
         help='the port of a server that it starts, 8780 by default',
     )
+    _app_parser(commands)
     team = commands.add_parser(
         'team', help='add, list, show, set, export, remove or give sounds to teams of the registry'
     )
@@ -210,9 +213,11 @@ def main(arguments: list[str] | None = None) -> int:
 
     video = commands.add_parser(
         'video',
-        help='export a range of a recording as an MP4 video, with Chrome and ffmpeg',
-        description='Draws a range of a recording on the page in a headless Chrome, frame by '
-        'frame, and encodes it with ffmpeg. The video is silent.',
+        help='export a range of a recording as an MP4 or WebM video, with Chrome or Edge',
+        description='Draws a range of a recording on the page in a headless Chrome, Edge or '
+        'Chromium, frame by frame, and encodes it in the browser, MP4 with H.264 where the browser '
+        'encodes it and WebM otherwise. ffmpeg, when installed, encodes an MP4 that the browser '
+        'cannot. The video is silent.',
     )
     _video.add_arguments(video)
     from ._export import feed as _feed
@@ -285,6 +290,51 @@ def main(arguments: list[str] | None = None) -> int:
         return _failed(error, as_json)
 
 
+def _app_parser(commands: Any) -> None:
+    """Adds `cuju render app`, the page in a window of its own, and its launchers."""
+    app = commands.add_parser(
+        'app',
+        help="open the page in a window of its own, or add it to the computer's apps",
+        description='Opens the page in a window of its own, through the system web view of '
+        "pywebview, from the extra cuju-render[app], else a Chromium browser's app mode, else "
+        'the default browser. A server of the home folder is reused, and one that this command '
+        'starts ends with the window. --install adds a launcher to the Start menu and the desktop '
+        'on Windows, the applications menu on Linux or ~/Applications on macOS, and --uninstall '
+        'removes exactly what --install made.',
+    )
+    app.add_argument(
+        '--port', type=int, default=None, help='the port of a server that it starts, 8780 when free'
+    )
+    app.add_argument(
+        '--route',
+        choices=['auto', 'webview', 'chromium', 'browser'],
+        default='auto',
+        help='the system web view, a Chromium app window or the default browser, the first that '
+        'the computer has by default',
+    )
+    app.add_argument('--browser', help='the Chromium browser for the route chromium, its program')
+    launcher = app.add_mutually_exclusive_group()
+    launcher.add_argument(
+        '--install', action='store_true', help="add a launcher of the app to the computer's apps"
+    )
+    launcher.add_argument(
+        '--uninstall', action='store_true', help='remove the launchers that --install made'
+    )
+
+
+def _app(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
+    """Runs `cuju render app`."""
+    if options.install or options.uninstall:
+        from ._http import launchers as _launchers
+
+        return _launchers.run(options.install, options.route, options.browser)
+    if options.port is not None and not 0 <= options.port <= 65535:
+        parser.error('expected a port from 0 to 65535')
+    from ._http import window as _window
+
+    return _window.run(options.port, options.route, options.browser)
+
+
 def _failed(error: BaseException, as_json: bool) -> int:
     """Prints the error of a command that failed and returns the exit status 1.
 
@@ -315,6 +365,8 @@ def _json_usage(message: str) -> None:
 
 def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
     """Runs one command of the parsed command line."""
+    if options.command == 'app':
+        return _app(parser, options)
     if options.command == 'team':
         from ._registry import teams as _teams
 
@@ -650,10 +702,14 @@ def _tournament_parser(commands: Any) -> None:
     """Adds `cuju render tournament` with its actions and options."""
 
     class Entrant(argparse.Action):
-        """Keeps the entrants of every kind in the order the command line names them."""
+        """Keeps the entrants of every kind in the order the command line names them.
+
+        `--as` names the entrant just before it, so a team entered twice reads apart.
+        """
 
         def __call__(self, parser: Any, namespace: Any, value: Any, flag: Any = None) -> None:
-            kind = {'--team': 'team', '--builtin': 'builtin', '--person': 'person'}[flag]
+            kinds = {'--team': 'team', '--builtin': 'builtin', '--person': 'person', '--as': 'as'}
+            kind = kinds[flag]
             entrants = getattr(namespace, 'entrants', None) or []
             entrants.append((kind, value))
             namespace.entrants = entrants
@@ -688,6 +744,13 @@ def _tournament_parser(commands: Any) -> None:
         '--builtin', action=Entrant, dest='entrants', help='the built-in AI at an ability, or any'
     )
     cup.add_argument('--person', action=Entrant, dest='entrants', help='a person, by name')
+    cup.add_argument(
+        '--as',
+        action=Entrant,
+        dest='entrants',
+        metavar='NAME',
+        help='the name of the entrant just before it, such as a team entered twice',
+    )
     cup.add_argument('--seeding', choices=('random', 'manual', 'rating'))
     cup.add_argument('--scenario', help='the scenario of every stage')
     cup.add_argument('--length', type=int, help='the steps of every match')

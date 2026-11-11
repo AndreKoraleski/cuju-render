@@ -85,6 +85,37 @@ export function entrantName(entrant) {
     return entrant ? serverText(entrant, 'name') : '';
 }
 
+// The longest name that a person gives an entrant, as the server takes it.
+export const NAME_LONGEST = 40;
+
+// The spaces between the words of a name, those that Python's split takes.
+const SPACES = /[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/;
+
+// The words of a name with one space between them, as the server's rules trim it.
+function trimmed(name) {
+    return String(name ?? '').split(SPACES).filter(Boolean).join(' ');
+}
+
+// What two entrant names share when they read as one, trimmed and without case, as `name_key`
+// of the server's rules gives it. Each character is lowered, raised and lowered again, which
+// folds such letters as the German sharp s, one by one as Python does it.
+export function nameKey(name) {
+    return Array.from(trimmed(name), (c) => c.toLowerCase().toUpperCase().toLowerCase()).join('');
+}
+
+// The name itself, or the name with the first number from 2 whose key no entrant holds, kept to
+// the longest name an entrant takes, as `free_name` of the server's rules gives it.
+export function freeName(base, taken, longest = NAME_LONGEST) {
+    const cut = (text, most) => Array.from(text).slice(0, Math.max(0, most)).join('').trimEnd();
+    const clean = cut(trimmed(base), longest ?? Infinity);
+    let name = clean;
+    for (let number = 2; taken.has(nameKey(name)); number++) {
+        const suffix = ` ${number}`;
+        name = `${longest == null ? clean : cut(clean, longest - suffix.length)}${suffix}`;
+    }
+    return name;
+}
+
 export const SETTLE_NAMES = {
     away_goals: t('tournament.settle.away_goals'),
     replay: t('tournament.settle.replay'),
