@@ -70,11 +70,11 @@ test('menus, tabs, sliders and controls inside a dialog keep their letters', () 
 });
 
 test('each page has a title of its own, and Watch names its recording', () => {
-    assert.equal(pageTitle('home'), 'cuju');
-    assert.equal(pageTitle('help'), 'Help · cuju');
-    assert.equal(pageTitle('recordings', 'Sample match'), 'Recordings · cuju');
-    assert.equal(pageTitle('watch', 'Sample match'), 'Sample match · cuju');
-    assert.equal(pageTitle('watch'), 'Watch · cuju');
+    assert.equal(pageTitle('home'), 'Cuju');
+    assert.equal(pageTitle('help'), 'Help · Cuju');
+    assert.equal(pageTitle('recordings', 'Sample match'), 'Recordings · Cuju');
+    assert.equal(pageTitle('watch', 'Sample match'), 'Sample match · Cuju');
+    assert.equal(pageTitle('watch'), 'Watch · Cuju');
     assert.equal(pageName('tournaments'), 'Tournaments');
 });
 

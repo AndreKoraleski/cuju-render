@@ -35,6 +35,14 @@ REQUIRED = [
     'cuju/render/samples/sample-5v5.cjr',
     'cuju/render/samples/sample-11v11.cjr',
     'cuju/render/web/assets/challenges/manifest.json',
+    # The logo, its PNG pictures and the manifest of the installable page that names them.
+    'cuju/render/web/manifest.webmanifest',
+    'cuju/render/web/assets/cuju-logo.svg',
+    'cuju/render/web/assets/cuju-logo.png',
+    'cuju/render/web/assets/cuju-logo-384.png',
+    'cuju/render/web/assets/icons/cuju-192.png',
+    'cuju/render/web/assets/icons/cuju-512.png',
+    'cuju/render/web/assets/icons/cuju-maskable-512.png',
 ]
 # The folder of the page's languages, which holds English alone.
 LANGUAGES = 'cuju/render/web/languages/'

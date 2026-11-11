@@ -32,6 +32,9 @@ from . import launch as _launch
 
 # The routes that `--route` names, auto taking the first that the computer has.
 ROUTES = ('auto', 'webview', 'chromium', 'browser')
+# The name of the app that people read, in the title of its window and on its launchers. The
+# command, the package and the files keep the lowercase cuju.
+DISPLAY_NAME = 'Cuju'
 # The folder of the home folder that holds the profiles of the app window and its launchers.
 APP_FOLDER = 'app'
 # The size of a new window, in pixels.
@@ -64,7 +67,7 @@ def app_folder() -> Path:
 
 
 def icon(size: int = 512) -> Path:
-    """Returns the cuju icon of the page at `size`, 192 or 512 pixels."""
+    """Returns the icon of the page at `size`, 192 or 512 pixels."""
     return Path(__file__).resolve().parents[1] / 'web' / 'assets' / 'icons' / f'cuju-{size}.png'
 
 
@@ -245,7 +248,7 @@ def open_webview(webview: Any, url: str, folder: Path) -> None:
         settings['ALLOW_DOWNLOADS'] = True
         settings['OPEN_EXTERNAL_LINKS_IN_BROWSER'] = True
     webview.create_window(
-        'cuju',
+        DISPLAY_NAME,
         url,
         width=WINDOW_SIZE[0],
         height=WINDOW_SIZE[1],

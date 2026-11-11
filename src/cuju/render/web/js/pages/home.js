@@ -242,7 +242,7 @@ export class HomePage {
             h('div', { class: 'home-wrap home-hero-inner' },
                 h('p', { class: 'home-eyebrow' }, t('home.hero.eyebrow')),
                 h('h1', { class: 'home-title' },
-                    h('img', { class: 'home-wordmark', src: 'assets/cuju-logo-384.png', alt: 'cuju', width: '384', height: '384' })),
+                    h('img', { class: 'home-wordmark', src: 'assets/cuju-logo.svg', alt: t('structure.name'), width: '384', height: '384' })),
                 h('p', { class: 'home-tagline' }, t('home.hero.tagline')),
                 h('p', { class: 'home-lede' }, t('home.hero.lede')),
                 h('nav', { class: 'home-actions', 'aria-label': t('home.hero.pages') },
@@ -317,7 +317,7 @@ export class HomePage {
             h('div', { class: 'home-wrap' },
                 h('div', { class: 'home-foot-grid' }, about, linkList),
                 h('div', { class: 'home-colophon' },
-                    h('img', { class: 'home-colophon-logo', src: 'assets/cuju-logo.png', alt: '', width: '24', height: '24' }),
+                    h('img', { class: 'home-colophon-logo', src: 'assets/cuju-logo.svg', alt: '', width: '24', height: '24' }),
                     h('span', {}, t('home.license')),
                     this.version)));
     }

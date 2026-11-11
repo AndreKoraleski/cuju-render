@@ -10,10 +10,11 @@ SPDX-License-Identifier: Apache-2.0
     <meta name="color-scheme" content="dark light">
     <!-- The policy allows this page's own files only. The hash is that of the import map below, change both together. -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; connect-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-lBIL8ypNcoDfLbcuy6MwwDfepPEr9EFYgYRzwmYX9mg='; object-src 'none'; base-uri 'self'; form-action 'self'">
-    <title>cuju</title>
-    <link rel="icon" type="image/png" href="assets/cuju-logo.png">
+    <title>Cuju</title>
+    <link rel="icon" type="image/png" sizes="128x128" href="assets/cuju-logo.png">
+    <link rel="icon" type="image/svg+xml" sizes="any" href="assets/cuju-logo.svg">
     <link rel="manifest" href="manifest.webmanifest">
-    <link rel="apple-touch-icon" href="assets/icons/cuju-192.png">
+    <link rel="apple-touch-icon" href="assets/icons/cuju-maskable-512.png">
     <meta name="theme-color" content="#202124">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="home.css">
@@ -44,7 +45,7 @@ SPDX-License-Identifier: Apache-2.0
 <div id="app" class="no-source" data-page="home">
     <header id="topbar">
         <!-- The logo is the way to the Home page. -->
-        <button id="home-btn" class="brand active" type="button" data-page="home" aria-label="Home" aria-current="page" title="Home" data-i18n-aria-label="html.nav.home" data-i18n-title="html.nav.home"><img class="logo" src="assets/cuju-logo.png" alt="" width="28" height="28"></button>
+        <button id="home-btn" class="brand active" type="button" data-page="home" aria-label="Cuju, Home" aria-current="page" title="Cuju, Home" data-i18n-aria-label="html.nav.brand" data-i18n-title="html.nav.brand"><img class="logo" src="assets/cuju-logo.svg" alt="" width="28" height="28"></button>
         <nav class="menu" aria-label="Pages" data-i18n-aria-label="html.nav.pages">
             <button data-page="watch"><svg class="icon" aria-hidden="true"><use href="#i-watch"/></svg><span class="nav-label" data-i18n="html.nav.watch">Watch</span></button>
             <button data-page="play"><svg class="icon" aria-hidden="true"><use href="#i-gamepad"/></svg><span class="nav-label" data-i18n="html.nav.play">Play</span></button>
@@ -111,7 +112,7 @@ SPDX-License-Identifier: Apache-2.0
                     <div id="replay-badge" hidden data-prompt><span class="replay-word" data-i18n="html.watch.replay">Replay</span><span id="replay-hint" hidden></span></div>
                     <div id="follow-label" hidden></div>
                 </div>
-                <div id="stinger" hidden aria-hidden="true"><div class="stinger-band"></div><div class="stinger-band two"></div><img class="stinger-logo" src="assets/cuju-logo.png" alt=""></div>
+                <div id="stinger" hidden aria-hidden="true"><div class="stinger-band"></div><div class="stinger-band two"></div><img class="stinger-logo" src="assets/cuju-logo.svg" alt=""></div>
 
                 <div id="watch-empty">
                     <p data-i18n="html.watch.empty">Open a recording or a live source from the <b data-i18n="html.watch.bar.match">Match</b> menu above, type its id and press Enter, or drop a .cjr file here. <button id="open-file" class="link" type="button" data-i18n="html.watch.empty.choose">Choose a file</button></p>

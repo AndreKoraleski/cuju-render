@@ -765,7 +765,7 @@ class App {
             return;
         }
         if (!this.source || !this.styles) {
-            this.stadium.setTeams(['cuju', 'cuju'], ['#202124', '#ff6f00'], []);
+            this.stadium.setTeams(['Cuju', 'Cuju'], ['#202124', '#ff6f00'], []);
             return;
         }
         const names = this.source.header.teams.map((team) => teamName(team));

@@ -137,7 +137,7 @@ test('a recording that the worker refuses keeps its message', async () => {
     const bytes = new TextEncoder().encode('This is no recording at all.');
     await assert.rejects(decoder.decodeRecording(bytes, { makeWorker: nodeWorker }), (err) => {
         assert.ok(err instanceof FormatError);
-        assert.match(err.message, /not a cuju recording/);
+        assert.match(err.message, /not a Cuju recording/);
         return true;
     });
 });

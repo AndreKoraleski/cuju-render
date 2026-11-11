@@ -1,7 +1,7 @@
 {
-    "name": "cuju",
-    "short_name": "cuju",
-    "description": "Watch, play and run tournaments of cuju's football matches, served from this computer.",
+    "name": "Cuju",
+    "short_name": "Cuju",
+    "description": "Watch, play and run tournaments of Cuju's football matches, served from this computer.",
     "id": "./",
     "start_url": "./#page=home",
     "scope": "./",
@@ -11,7 +11,8 @@
     "icons": [
         {"src": "assets/icons/cuju-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
         {"src": "assets/icons/cuju-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-        {"src": "assets/icons/cuju-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+        {"src": "assets/icons/cuju-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        {"src": "assets/cuju-logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
     ],
     "shortcuts": [
         {"name": "Watch", "url": "./#page=watch", "icons": [{"src": "assets/icons/cuju-192.png", "sizes": "192x192", "type": "image/png"}]},

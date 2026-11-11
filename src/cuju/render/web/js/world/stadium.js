@@ -636,36 +636,24 @@ function validFans(list) {
 // The last fans a stadium was given, so a stadium built again when the art arrives keeps them.
 let lastFans = [null, null];
 
-// The cuju logo in white for the dark boards, null until it loads. The logo is dark gray on
-// transparent, so each channel is turned around and the alpha kept.
+// The cuju mark for the boards, null until it loads. The mark carries its own dark square and
+// gray gradient border, so it stands on any panel as it is.
 let boardLogo = null;
 const boardLogoReady = new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < data.data.length; i += 4) {
-            data.data[i] = 255 - data.data[i];
-            data.data[i + 1] = 255 - data.data[i + 1];
-            data.data[i + 2] = 255 - data.data[i + 2];
-        }
-        ctx.putImageData(data, 0, 0);
-        boardLogo = canvas;
-        resolve(canvas);
+        boardLogo = img;
+        resolve(img);
     };
     img.onerror = () => resolve(null);
-    img.src = 'assets/cuju-logo.png';
+    img.src = 'assets/cuju-logo.svg';
 });
 
 // LED boards, the cuju logo and the team names on colored panels, with the asset boards between
 // them. The logo panel shows the word until the logo has loaded.
 function makeBoardTexture(names, colors, images, sponsors) {
     const h = 64;
-    const cuju = (fill) => (boardLogo ? { logo: boardLogo, fill } : { word: 'cuju', fill });
+    const cuju = (fill) => (boardLogo ? { logo: boardLogo, fill } : { word: 'Cuju', fill });
     const panels = sponsors.length ? [
         cuju('#202124'),
         ...sponsors.map((image) => ({ image })),

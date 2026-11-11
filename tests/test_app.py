@@ -5,6 +5,7 @@
 import json
 import os
 import plistlib
+import re
 import struct
 import sys
 import types
@@ -115,7 +116,7 @@ def test_the_system_web_view_opens_the_page_of_a_running_server(render_home, mon
     monkeypatch.setattr(_launch, 'start', lambda port: pytest.fail('a running server is reused'))
     assert _window.run(None) == 0
     (_, title, url, options), (_, started) = calls
-    assert (title, url) == ('cuju', URL)
+    assert (title, url) == ('Cuju', URL)
     assert options['background_color'] == '#202124'
     assert started['private_mode'] is False
     assert Path(started['storage_path']) == render_home / 'app' / 'webview'
@@ -214,6 +215,7 @@ def test_linux_gets_an_entry_of_the_applications_menu(render_home, tmp_path):
     text = entry.read_text(encoding='utf-8')
     assert 'Exec=/usr/bin/python3 -m cuju.render app\n' in text
     assert f'Icon={icon}\n' in text and 'Terminal=false' in text
+    assert 'Name=Cuju\n' in text
     assert 'Comment[pt_BR]=' in text
     assert icon.read_bytes()[:8] == b'\x89PNG\r\n\x1a\n'
     assert _launchers.installed_paths(render_home) == made
@@ -247,10 +249,11 @@ def test_macos_gets_an_app_in_applications(render_home, tmp_path):
     folders = _folders(tmp_path)
     command = ['/usr/local/bin/python3', '-m', 'cuju.render', 'app']
     (bundle,) = _launchers.install(render_home, 'darwin', folders, command)
-    assert bundle == folders['applications'] / 'cuju.app'
+    assert bundle == folders['applications'] / 'Cuju.app'
     with (bundle / 'Contents' / 'Info.plist').open('rb') as stream:
         info = plistlib.load(stream)
     assert info['CFBundleIdentifier'] == _launchers.BUNDLE_ID
+    assert info['CFBundleName'] == 'Cuju' and info['CFBundleDisplayName'] == 'Cuju'
     assert info['CFBundleExecutable'] == 'cuju' and info['CFBundleIconFile'] == 'cuju'
     script = (bundle / 'Contents' / 'MacOS' / 'cuju').read_text(encoding='utf-8')
     assert script == '#!/bin/sh\nexec /usr/local/bin/python3 -m cuju.render app\n'
@@ -271,7 +274,7 @@ def test_windows_gets_shortcuts_of_the_start_menu_and_the_desktop(render_home, t
 
     command = [r'C:\Python\pythonw.exe', '-m', 'cuju.render', 'app']
     made = _launchers.install(render_home, 'win32', folders, command, shortcut)
-    start, desktop = folders['start'] / 'cuju.lnk', folders['desktop'] / 'cuju.lnk'
+    start, desktop = folders['start'] / 'Cuju.lnk', folders['desktop'] / 'Cuju.lnk'
     icon = render_home / 'app' / 'cuju.ico'
     assert made == [icon, start, desktop]
     assert [entry[0] for entry in written] == [start, desktop]
@@ -283,6 +286,62 @@ def test_windows_gets_shortcuts_of_the_start_menu_and_the_desktop(render_home, t
     assert data[struct.unpack('<I', data[18:22])[0] :][:4] == b'\x89PNG'
     assert set(_launchers.uninstall(render_home)) == set(made)
     assert not any(path.exists() for path in made)
+
+
+def _old_install(render_home, made):
+    """Writes the files and the record of an install made before the name Cuju."""
+    for path in made:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'old')
+    record = render_home / 'app' / 'launchers.json'
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({'created': [str(path) for path in made]}), encoding='utf-8')
+
+
+def test_launchers_of_the_old_name_still_go(render_home, tmp_path):
+    folders = _folders(tmp_path)
+    old = [
+        render_home / 'app' / 'cuju.ico',
+        folders['start'] / 'cuju.lnk',
+        folders['desktop'] / 'cuju.lnk',
+    ]
+    _old_install(render_home, old)
+    assert set(_launchers.uninstall(render_home)) == set(old)
+    assert not any(path.exists() for path in old)
+    # An old app of macOS goes too, while its identifier is cuju's.
+    bundle = folders['applications'] / 'cuju.app'
+    (bundle / 'Contents').mkdir(parents=True)
+    with (bundle / 'Contents' / 'Info.plist').open('wb') as stream:
+        plistlib.dump({'CFBundleIdentifier': _launchers.BUNDLE_ID}, stream)
+    _old_install(render_home, [])
+    (render_home / 'app' / 'launchers.json').write_text(
+        json.dumps({'created': [str(bundle)]}), encoding='utf-8'
+    )
+    assert _launchers.uninstall(render_home) == [bundle]
+    assert not bundle.exists()
+
+
+def test_an_install_replaces_the_launchers_of_the_old_name(render_home, tmp_path):
+    folders = _folders(tmp_path)
+    old = [
+        render_home / 'app' / 'cuju.ico',
+        folders['start'] / 'cuju.lnk',
+        folders['desktop'] / 'cuju.lnk',
+    ]
+    _old_install(render_home, old)
+    written = []
+
+    def shortcut(link, command, icon, folder):
+        link.write_bytes(b'link')
+        written.append(link.name)
+
+    made = _launchers.install(render_home, 'win32', folders, ['pythonw.exe'], shortcut)
+    assert written == ['Cuju.lnk', 'Cuju.lnk']
+    assert [path.name for path in made] == ['cuju.ico', 'Cuju.lnk', 'Cuju.lnk']
+    # The shortcuts of the old name are gone, whether or not the system tells the case of names.
+    for role in ('start', 'desktop'):
+        assert [entry.name for entry in folders[role].iterdir()] == ['Cuju.lnk']
+    assert set(_launchers.uninstall(render_home)) == set(made)
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='the shell of Windows writes the shortcut')
@@ -335,3 +394,119 @@ def test_the_command_line_installs_and_removes_the_launchers(
         main(['app', '--install', '--uninstall'])
     with pytest.raises(SystemExit):
         main(['app', '--route', 'nowhere'])
+
+
+WEB = Path(_window.__file__).resolve().parents[1] / 'web'
+LOGO = WEB / 'assets' / 'cuju-logo.svg'
+# Each PNG of the mark, its side and whether it is the maskable icon, as ci/make_logo.py makes them.
+PICTURES = {
+    'assets/cuju-logo.png': (128, False),
+    'assets/cuju-logo-384.png': (384, False),
+    'assets/icons/cuju-192.png': (192, False),
+    'assets/icons/cuju-512.png': (512, False),
+    'assets/icons/cuju-maskable-512.png': (512, True),
+}
+# The elements and attributes of plain shapes and their gray gradients, all the SVG may hold.
+SHAPES = {'svg', 'defs', 'g', 'rect', 'path', 'linearGradient', 'radialGradient', 'stop'}
+ATTRIBUTES = {
+    'x1',
+    'y1',
+    'x2',
+    'y2',
+    'width',
+    'height',
+    'viewBox',
+    'x',
+    'y',
+    'rx',
+    'd',
+    'fill',
+    'transform',
+    'id',
+    'gradientUnits',
+    'cx',
+    'cy',
+    'r',
+    'offset',
+    'stop-color',
+}
+
+
+def _make_logo():
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / 'ci' / 'make_logo.py'
+    spec = importlib.util.spec_from_file_location('make_logo', script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_logo_is_plain_shapes_alone():
+    import xml.etree.ElementTree as ET
+
+    text = LOGO.read_text(encoding='utf-8')
+    assert '<!-- The cuju mark.' in text
+    root = ET.fromstring(text)
+    ids = {element.get('id') for element in root.iter()}
+    for element in root.iter():
+        namespace, _, tag = element.tag.rpartition('}')
+        assert namespace == '{http://www.w3.org/2000/svg' and tag in SHAPES, element.tag
+        assert set(element.attrib) <= ATTRIBUTES, (tag, element.attrib)
+        assert not (element.text or '').strip() and not (element.tail or '').strip()
+        # A fill names a color or a gradient of the file itself, never a file elsewhere.
+        fill = element.get('fill', '#000000')
+        found = re.fullmatch(r'url\(#([\w-]+)\)', fill)
+        assert re.fullmatch(r'#[0-9a-f]{6}', fill) or (found and found.group(1) in ids), fill
+    assert root.get('viewBox') == '0 0 512 512'
+    assert root.find('{http://www.w3.org/2000/svg}g[@id="frame"]') is not None
+    assert root.find('{http://www.w3.org/2000/svg}g[@id="mark"]') is not None
+
+
+def test_the_manifest_names_cuju_with_the_svg_and_every_png():
+    manifest = json.loads((WEB / 'manifest.webmanifest').read_text(encoding='utf-8'))
+    assert manifest['name'] == manifest['short_name'] == _window.DISPLAY_NAME == 'Cuju'
+    icons = {icon['src']: icon for icon in manifest['icons']}
+    assert icons['assets/cuju-logo.svg'] == {
+        'src': 'assets/cuju-logo.svg',
+        'sizes': 'any',
+        'type': 'image/svg+xml',
+        'purpose': 'any',
+    }
+    for src, (side, mask) in PICTURES.items():
+        if src.startswith('assets/icons/'):
+            assert icons[src]['sizes'] == f'{side}x{side}' and icons[src]['type'] == 'image/png'
+            assert icons[src]['purpose'] == ('maskable' if mask else 'any')
+    assert len(icons) == 4
+    page = (WEB / 'index.html').read_text(encoding='utf-8')
+    assert '<link rel="icon" type="image/svg+xml" sizes="any" href="assets/cuju-logo.svg">' in page
+    assert '<link rel="icon" type="image/png" sizes="128x128" href="assets/cuju-logo.png">' in page
+    assert '<img class="logo" src="assets/cuju-logo.svg"' in page and '<title>Cuju</title>' in page
+
+
+def test_each_png_of_the_logo_has_its_size_and_shape():
+    make_logo = _make_logo()
+    assert {name: (side, mask) for name, side, mask in make_logo.PICTURES} == {
+        src.removeprefix('assets/'): value for src, value in PICTURES.items()
+    }
+    for src, (side, mask) in PICTURES.items():
+        data = (WEB / src).read_bytes()
+        assert data[:8] == b'\x89PNG\r\n\x1a\n'
+        assert struct.unpack('>II', data[16:24]) == (side, side), src
+        _, _, rows = make_logo.rgba(data)
+        corner = rows[0][:4]
+        middle = rows[side // 2][side * 2 : side * 2 + 4]
+        edge = rows[side // 2][:4]
+        if mask:
+            # The maskable icon fills its square with the dark background.
+            assert corner == edge == bytes((0x20, 0x21, 0x24, 255)), src
+        else:
+            # The others are clear outside their rounded corners, with a gray border that holds
+            # three quarters white over its top left half and darkens toward a quarter white at the
+            # bottom right, so its left side is the light gray and its right side darker.
+            right = rows[side // 2][(side - 1) * 4 : side * 4]
+            assert corner[3] == 0 and edge == bytes((0xBF, 0xBF, 0xBF, 255)), src
+            assert (
+                right[3] == 255 and right[0] == right[1] == right[2] and 0x40 < right[0] < 0xBF
+            ), src
+        assert middle[3] == 255, src

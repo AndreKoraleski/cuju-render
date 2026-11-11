@@ -58,6 +58,13 @@ def parts_checks(client):
                 'install'].every((key) => !!cuju[key]),
             manifest: document.querySelector('link[rel="manifest"]')?.getAttribute('href')
                 === 'manifest.webmanifest',
+            favicon: document.querySelector('link[rel="icon"][type="image/svg+xml"]')
+                ?.getAttribute('href') === 'assets/cuju-logo.svg'
+                && !!document.querySelector('link[rel="icon"][type="image/png"]'),
+            brand: document.getElementById('home-btn').getAttribute('aria-label') === 'Cuju, Home'
+                && document.querySelector('#home-btn img').getAttribute('src')
+                === 'assets/cuju-logo.svg'
+                && document.querySelector('#home-btn img').naturalWidth > 0,
             lessons: !!(await wait(
                 () => document.querySelectorAll('.lesson-list li').length === 8)),
             topics: (await import('./js/help/palette.js')).HELP_TOPICS
@@ -503,6 +510,7 @@ def pwa_checks(client, port):
         const urls = (await cache.keys()).map((request) => new URL(request.url).pathname);
         const manifest = await fetch('manifest.webmanifest');
         const parsed = await manifest.json();
+        const logo = await fetch('assets/cuju-logo.svg');
         const all = {
             registered: state.registered && state.supported,
                 controlled: !!navigator.serviceWorker.controller,
@@ -511,7 +519,9 @@ def pwa_checks(client, port):
             lazy: urls.includes('/js/broadcast/hud.js') || urls.includes('/js/main.js'),
             api: !urls.some((path) => path.startsWith('/api/')),
             manifest: manifest.headers.get('Content-Type') === 'application/manifest+json'
-                && parsed.icons.length === 3,
+                && parsed.name === 'Cuju' && parsed.icons.length === 4,
+            logo: logo.headers.get('Content-Type') === 'image/svg+xml'
+                && urls.includes('/assets/cuju-logo.svg'),
         };
         return Object.values(all).every(Boolean) || JSON.stringify({ ...all, urls });
         """,
@@ -604,7 +614,7 @@ def offer_checks(client, port):
             prevented: event.defaultPrevented,
             shown,
             title: document.getElementById('install-offer-title').textContent
-                === 'Install cuju as an app',
+                === 'Install Cuju as an app',
             focus: document.activeElement === install,
             help: !!help && !help.hidden,
             command: document.getElementById('help-install-command').textContent

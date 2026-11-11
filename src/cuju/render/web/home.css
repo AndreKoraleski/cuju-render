@@ -103,7 +103,6 @@ SPDX-License-Identifier: Apache-2.0
     display: block;
     width: 168px;
     height: 168px;
-    filter: var(--logo-filter);
 }
 
 .home-tagline {
@@ -691,7 +690,6 @@ SPDX-License-Identifier: Apache-2.0
 .home-colophon-logo {
     width: 24px;
     height: 24px;
-    filter: var(--logo-filter);
     opacity: 0.8;
 }
 

@@ -651,7 +651,7 @@ class Wipe {
         this.bands = [el('div', 'wipe-band lead', this.root), el('div', 'wipe-band mid', this.root), el('div', 'wipe-band trail', this.root)];
         this.plate = el('div', 'wipe-plate', this.bands[1]);
         const img = el('img', 'wipe-logo', this.plate);
-        img.src = 'assets/cuju-logo.png';
+        img.src = 'assets/cuju-logo.svg';
         img.alt = '';
         this.label = el('div', 'wipe-label', this.plate);
         watch.insertBefore(this.root, hud);
@@ -727,7 +727,7 @@ class TitleCard {
         this.root.setAttribute('role', 'status');
         const inner = el('div', 'tc-inner', this.root);
         const logo = el('img', 'tc-logo', inner);
-        logo.src = 'assets/cuju-logo.png';
+        logo.src = 'assets/cuju-logo.svg';
         logo.alt = '';
         this.kicker = el('div', 'tc-kicker', inner);
         const row = el('div', 'tc-row', inner);

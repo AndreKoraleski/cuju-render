@@ -146,7 +146,7 @@ export class Feed {
         slate.id = 'feed-slate';
         slate.setAttribute('aria-live', 'polite');
         const logo = document.createElement('img');
-        logo.src = 'assets/cuju-logo.png';
+        logo.src = 'assets/cuju-logo.svg';
         logo.alt = '';
         this.slateText = document.createElement('div');
         this.slateText.className = 'feed-slate-text';

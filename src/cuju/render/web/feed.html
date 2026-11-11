@@ -12,8 +12,9 @@ scales the frame to the picture, see js/feed-frame.js.
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
-    <title data-i18n="feed.page.title">cuju feed</title>
-    <link rel="icon" type="image/png" href="assets/cuju-logo.png">
+    <title data-i18n="feed.page.title">Cuju feed</title>
+    <link rel="icon" type="image/png" sizes="128x128" href="assets/cuju-logo.png">
+    <link rel="icon" type="image/svg+xml" sizes="any" href="assets/cuju-logo.svg">
     <style>
         html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; cursor: none; }
         #feed-frame { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; background: transparent; pointer-events: none; color-scheme: dark; }
@@ -22,6 +23,6 @@ scales the frame to the picture, see js/feed-frame.js.
     <script type="module" src="js/feed-frame.js"></script>
 </head>
 <body>
-<iframe id="feed-frame" title="cuju feed" data-i18n-title="feed.page.frame" scrolling="no" tabindex="-1"></iframe>
+<iframe id="feed-frame" title="Cuju feed" data-i18n-title="feed.page.frame" scrolling="no" tabindex="-1"></iframe>
 </body>
 </html>

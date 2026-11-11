@@ -24,7 +24,6 @@ SPDX-License-Identifier: Apache-2.0
     --stage-bottom: #202124;
     --checker-a: #2b2c2f;
     --checker-b: #26272a;
-    --logo-filter: invert(0.9);
     color-scheme: dark;
     --font: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
     --bar: 46px;
@@ -50,7 +49,6 @@ SPDX-License-Identifier: Apache-2.0
         --stage-bottom: #dadce0;
         --checker-a: #e8eaed;
         --checker-b: #f8f9fa;
-        --logo-filter: none;
         color-scheme: light;
     }
 }
@@ -74,7 +72,6 @@ SPDX-License-Identifier: Apache-2.0
     --stage-bottom: #dadce0;
     --checker-a: #e8eaed;
     --checker-b: #f8f9fa;
-    --logo-filter: none;
     color-scheme: light;
 }
 
@@ -420,12 +417,11 @@ fieldset.plain:disabled {
     cursor: pointer;
 }
 
-/* The logo is dark gray, which the dark theme inverts to light gray. */
+/* The logo carries its own dark square and gray gradient border, so both themes show it as it is. */
 .logo {
     display: block;
     width: 28px;
     height: 28px;
-    filter: var(--logo-filter);
 }
 
 .menu {
@@ -1255,7 +1251,6 @@ body.offline .offline-note {
     width: 92px;
     height: 92px;
     opacity: 0;
-    filter: invert(0.92);
     transform: translate(-50%, -50%) scale(0.6);
 }
 
@@ -4857,12 +4852,11 @@ dialog.painter .toolbar {
     transform: translate(-50%, -50%) skewX(14deg);
 }
 
+/* The mark's own gray gradient border is the plate, and the shadow follows its rounded corners. */
 .wipe-logo {
     width: clamp(84px, 11vw, 150px);
     height: auto;
-    padding: 14px;
-    background: #ffffff;
-    border-radius: 14px;
+    border-radius: 22%;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 0 0 4px rgba(255, 255, 255, 0.25);
 }
 
@@ -4919,9 +4913,6 @@ dialog.painter .toolbar {
 .tc-logo {
     width: 46px;
     height: 46px;
-    padding: 6px;
-    background: #ffffff;
-    border-radius: 9px;
 }
 
 .tc-kicker {

@@ -17,9 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     view through pywebview, the new extra `cuju-render[app]`, else Edge, Chrome, Chromium or Brave
     in app mode with a profile of its own, else the default browser with a note, and `--route`
     and `--browser` choose. A server that it starts ends with the window.
-    `cuju render app --install` adds a launcher with the cuju icon, a Start menu and desktop
-    shortcut on Windows, an entry of the applications menu on Linux and `cuju.app` in
-    `~/Applications` on macOS, and `--uninstall` removes exactly what it made.
+    `cuju render app --install` adds a launcher named Cuju with the icon of the page, a Start
+    menu and desktop shortcut on Windows, an entry of the applications menu on Linux and
+    `Cuju.app` in `~/Applications` on macOS, and `--uninstall` removes exactly what it made.
 - An offer to install the page as an app comes to the person. Once Chrome or Edge is ready to
     install the page, Home shows a small card from the second visit on, whose Install opens the
     browser's question and whose Not now keeps it away for good in that browser. The card hides
@@ -319,7 +319,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     WebGPU, the decode worker, the sound, the home folder, the library and the server's recent
     errors, as text to copy or a file, holding no personal path beyond the home folder and no
     secret.
-- The page installs as an app in Chrome and Edge, with a manifest, icons made in the repository
+- The page installs as an app in Chrome and Edge, with a manifest, icons rendered from the logo
     and a service worker that keeps the page's own files for a fast start and an offline start,
     never an answer of the API, follows each new build and works on the loopback addresses alone.
 - A clean feed at `/feed` for OBS and other streaming programs, the match at a fixed size with
@@ -338,6 +338,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The app is named Cuju wherever a person reads its name, in the titles of the page, the
+    manifest, the app window, the launchers, the install card and Help, while commands, packages,
+    modules and files keep the lowercase cuju. Launchers that an earlier install made under the
+    name cuju still uninstall, and a new install replaces them.
+- The logo is a vector drawing, `web/assets/cuju-logo.svg`, the same four letters with their
+    stacked gray copies on a dark square with rounded corners and a gray gradient border. The top bar,
+    Home, the favicon, the manifest, the broadcast wipes, the clean feed's slate and the boards of
+    the stadium show it, sharp at every size, and `ci/make_logo.py` renders every PNG icon from it
+    at its own size through headless Chrome. The maskable icon fills its square with the dark
+    background and leaves the border out, since Android cuts such an icon to a shape of its own.
 - The controls of the page show symbols, the Lucide icons that the page ships in
     `web/vendor/lucide` under the ISC License. Toolbars, rows, dialogs, the painter, the tabs of the
     top bar, the menus of Watch, the choices of the Field page and the states of requests,

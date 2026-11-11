@@ -27,7 +27,8 @@ const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]'];
 const SHELL = [
     '', 'style.css', 'home.css', 'easy.css', 'flat.css', 'js/main.js', 'js/boot.js', 'js/capture.js', 'lessons.json',
     'languages/en.json',
-    'manifest.webmanifest', 'assets/cuju-logo.png', 'assets/icons/cuju-192.png', 'assets/icons/cuju-512.png',
+    'manifest.webmanifest', 'assets/cuju-logo.svg', 'assets/cuju-logo.png', 'assets/icons/cuju-192.png',
+    'assets/icons/cuju-512.png',
 ];
 // Media that the page streams in ranges, which the cache leaves to the server.
 const STREAMED = /\.(mp4|webm|mov|m4v|cjr)$/i;

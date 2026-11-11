@@ -35,7 +35,7 @@ window.promo = (() => {
     font-family: var(--font); }
 .promo-logo .pl-inner { display: flex; flex-direction: column; align-items: center; gap: 18px;
     animation: promo-rise 0.8s cubic-bezier(0.2, 0.9, 0.2, 1) both; }
-.promo-logo img { width: 300px; height: auto; filter: var(--logo-filter); }
+.promo-logo img { width: 300px; height: auto; }
 .promo-logo .pl-rule { width: 0; height: 4px; background: var(--accent); animation: promo-rule 0.7s ease-out 0.25s forwards; }
 .promo-logo .pl-line { font-size: 40px; letter-spacing: 0.02em; animation: promo-fade 0.6s ease-out 0.35s both; }
 .promo-logo .pl-sub { color: var(--muted); font-family: var(--broadcast-font, sans-serif); font-size: 20px;

@@ -1243,8 +1243,9 @@ Export alone.
 
 ## Page layout
 
-The page holds nine pages, chosen from the bar along its top. The cuju logo at the left of the bar
-opens Home, and tabs open Watch, Play, Recordings, Matches, Tournaments, Teams, Field and Help.
+The page holds nine pages, chosen from the bar along its top. The logo at the left of the bar, the
+letters of the name on a dark rounded square with a gray gradient border, opens Home, and a screen reader
+names it Cuju, Home. Tabs open Watch, Play, Recordings, Matches, Tournaments, Teams, Field and Help.
 Each tab shows a symbol beside its name, a television for Watch, a controller for Play, a box of
 files for Recordings, crossed swords for Matches, a trophy for Tournaments, a shirt for Teams, a
 plot of land for Field and a question mark for Help. On a screen of middle width the tabs show
@@ -3680,6 +3681,18 @@ as an app from the browser, and the command `cuju render app` opens the page in 
 own with any browser and, with `--install`, adds a launcher to the computer's apps, as
 [The app window](#the-app-window) describes.
 
+By either route the app is named Cuju, with a capital letter, as the titles of the page, its
+manifest, the app window and the launchers show it, while the commands, the packages and the files
+keep the lowercase cuju. Its icon is the logo, the letters C, U, J and U in a two by two grid, each
+with two copies behind it in darker grays, on a dark square with rounded corners and a gray gradient border.
+The logo is a vector drawing, `web/assets/cuju-logo.svg`, which the tab of the browser shows as its
+icon and which stays sharp at any size, with the PNG `cuju-logo.png` for browsers that draw no SVG
+icon. The manifest names the SVG beside PNG icons of 192 and 512 pixels and a maskable icon of 512
+pixels, which fills its whole square with the dark background and leaves the border out, since
+Android cuts a maskable icon to a shape of its own, and keeps the letters inside the circle that
+any such shape leaves whole. The script `ci/make_logo.py` of the repository renders every PNG from
+the SVG at its own size through headless Chrome.
+
 Chrome and Edge install the page as an app, with a window and an icon of its own and a place
 among the computer's apps. The installed page keeps a copy of its own files, so it starts fast and
 opens even when the server is stopped, and its Home page then says that the server is not
@@ -3689,7 +3702,7 @@ server, and a recording file still opens from the computer.
 The page installs from the address that the server prints, `http://127.0.0.1:8780/` by default,
 opened in a tab of its own. In **Chrome**, the install icon at the right end of the address bar,
 or the menu of the three dots, then Cast, save and share, then Install page as app, asks to
-install cuju, and Install opens it in its own window. In **Edge**, the App available icon of the
+install Cuju, and Install opens it in its own window. In **Edge**, the App available icon of the
 address bar, or the menu of the three dots, then Apps, then Install this site as an app, does the
 same. Each port and host name is a separate app, so `localhost` and `127.0.0.1` install apart, and
 the app opens on the port that it was installed from.
@@ -3788,21 +3801,23 @@ Install the app part of Help says when it is off. Video export in the page needs
 Chromium and WebView2 have, as does the WebKit of Safari 16.4 and later. The window counts as an
 installed app, so Home shows no offer to install inside it.
 
-`cuju render app --install` adds a launcher that opens the app window the same way, with the cuju
-icon of the page.
+The window's title is Cuju. `cuju render app --install` adds a launcher named Cuju that opens the
+app window the same way, with the icon of the page.
 
 | System | Launcher |
 | --- | --- |
-| Windows | a shortcut `cuju` in the Start menu and on the desktop, which runs `pythonw`, so no console opens |
-| Linux | an entry `cuju.desktop` of the applications menu in `~/.local/share/applications`, or in `applications` of `$XDG_DATA_HOME` |
-| macOS | an app `cuju.app` in `~/Applications` |
+| Windows | a shortcut `Cuju.lnk` in the Start menu and on the desktop, which runs `pythonw`, so no console opens |
+| Linux | an entry `cuju.desktop` named Cuju of the applications menu in `~/.local/share/applications`, or in `applications` of `$XDG_DATA_HOME` |
+| macOS | an app `Cuju.app` in `~/Applications` |
 
 A launcher runs the Python of the install that made it, with `--home` when the home folder is not
 the default one and with the `--route` and `--browser` given to `--install`. The launchers go only
 into the person's own folders, and only on this command. The folder `app` of the home folder keeps
 the icon files and `launchers.json`, the list of what the install made, so
 `cuju render app --uninstall` removes exactly that. A file of the same name that the install did
-not make stays where it is, and `--install` then stops and names it.
+not make stays where it is, and `--install` then stops and names it. An install of an earlier
+version named its shortcut `cuju.lnk` and its app `cuju.app`, and `--uninstall` removes those as
+well, while a new `--install` replaces them with the launchers named Cuju.
 
 ## Broadcast presentation
 

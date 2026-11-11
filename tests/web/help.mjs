@@ -412,14 +412,22 @@ test('the page registers its worker only at the top of a loopback http page', ()
     assert.equal(workerBuild('not a url'), null);
 });
 
-test('the manifest names the icons that ship, and the start address opens Home', () => {
+test('the manifest names Cuju and the icons that ship, and the start address opens Home', () => {
     const manifest = JSON.parse(readFileSync(new URL('manifest.webmanifest', web), 'utf8'));
+    assert.equal(manifest.name, 'Cuju');
+    assert.equal(manifest.short_name, 'Cuju');
     assert.equal(manifest.display, 'standalone');
     assert.equal(manifest.start_url, './#page=home');
     for (const icon of manifest.icons) {
         const bytes = readFileSync(new URL(icon.src, web));
+        if (icon.type === 'image/svg+xml') {
+            assert.equal(icon.sizes, 'any', icon.src);
+            assert.match(bytes.toString('utf8'), /^<svg /, icon.src);
+            continue;
+        }
         const [width, height] = [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
         assert.equal(`${width}x${height}`, icon.sizes, icon.src);
     }
     assert.ok(manifest.icons.some((icon) => icon.purpose === 'maskable'));
+    assert.ok(manifest.icons.some((icon) => icon.src === 'assets/cuju-logo.svg'));
 });

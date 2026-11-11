@@ -104,7 +104,7 @@ def a11y_checks(client):
             text, now: bar.getAttribute('aria-valuenow') === '83',
             min: bar.getAttribute('aria-valuemin') === '0',
             max: Number(bar.getAttribute('aria-valuemax')) > 83,
-            title: document.title.endsWith(' · cuju') && document.title !== 'Watch · cuju',
+            title: document.title.endsWith(' · Cuju') && document.title !== 'Watch · Cuju',
         };
         return Object.values(all).every(Boolean) || JSON.stringify(all);
         """,
@@ -178,14 +178,14 @@ def a11y_checks(client):
         const all = {
             hash: location.hash === '#page=recordings', focus: document.activeElement === pages,
             label: pages.getAttribute('aria-label') === 'Recordings',
-            title: document.title === 'Recordings · cuju',
+            title: document.title === 'Recordings · Cuju',
             heading: document.getElementById('page-name').textContent === 'Recordings'
                 && !document.getElementById('page-name').hidden,
         };
         cuju.showPage('help');
-        all.help = document.title === 'Help · cuju';
+        all.help = document.title === 'Help · Cuju';
         cuju.showPage('home');
-        all.home = document.title === 'cuju' && document.getElementById('page-name').hidden
+        all.home = document.title === 'Cuju' && document.getElementById('page-name').hidden
             && !!document.querySelector('#page-home h1');
         return Object.values(all).every(Boolean) || JSON.stringify(all);
         """,

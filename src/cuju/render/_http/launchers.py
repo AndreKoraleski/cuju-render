@@ -4,12 +4,14 @@
 """The launchers of the app window, `cuju render app --install` and `--uninstall`.
 
 A launcher runs `cuju render app` with the Python of this install, so it opens the app window by
-the same routes. Windows gets a shortcut in the Start menu and on the desktop, Linux an entry of
-the applications menu in `~/.local/share/applications`, and macOS an app `cuju.app` in
-`~/Applications`, each with the cuju icon of the page. The launchers go only into the person's own
-folders, and only on the explicit command. The folder `app` of the home folder keeps the icon files
-and `launchers.json`, the list of what the install made, so `--uninstall` removes exactly that and
-leaves alone any file of the same name that the install did not make.
+the same routes. Windows gets a shortcut `Cuju.lnk` in the Start menu and on the desktop, Linux an
+entry `cuju.desktop` of the applications menu in `~/.local/share/applications`, and macOS an app
+`Cuju.app` in `~/Applications`, each named Cuju and with the icon of the page. The launchers go
+only into the person's own folders, and only on the explicit command. The folder `app` of the home
+folder keeps the icon files and `launchers.json`, the list of what the install made, so
+`--uninstall` removes exactly that and leaves alone any file of the same name that the install did
+not make. Installs before the name Cuju made `cuju.lnk` and `cuju.app`, which uninstall still
+removes and a new install replaces.
 """
 
 from __future__ import annotations
@@ -33,12 +35,22 @@ from .._store import home as _home
 from . import window as _window
 
 RECORD = 'launchers.json'
+# The name of the files that people never read, the icons, the entry of Linux and the program of
+# the app of macOS.
 NAME = 'cuju'
+# The name that people read, which the shortcut of Windows and the app of macOS show as their file
+# name.
+DISPLAY_NAME = _window.DISPLAY_NAME
+SHORTCUT = f'{DISPLAY_NAME}.lnk'
+BUNDLE = f'{DISPLAY_NAME}.app'
+ENTRY = f'{NAME}.desktop'
 # The bundle identifier of the app of macOS, which uninstall checks before it removes the bundle.
 BUNDLE_ID = 'io.github.andrekoraleski.cuju-render'
-# The names of what an install makes, the only names that uninstall removes.
-MADE_NAMES = {f'{NAME}.lnk', f'{NAME}.ico', f'{NAME}.png', f'{NAME}.desktop', f'{NAME}.app'}
-COMMENT = "Watch, play and run tournaments of cuju's football matches, served from this computer."
+# The names of the launchers that installs before the name Cuju made.
+OLD_NAMES = {f'{NAME}.lnk', f'{NAME}.app'}
+# The names of what an install makes, now or before, the only names that uninstall removes.
+MADE_NAMES = {SHORTCUT, BUNDLE, ENTRY, f'{NAME}.ico', f'{NAME}.png'} | OLD_NAMES
+COMMENT = "Watch, play and run tournaments of Cuju's football matches, served from this computer."
 
 
 def launcher_command(
@@ -147,7 +159,7 @@ def desktop_entry(command: list[str], icon_path: Path, comments: dict[str, str])
         '[Desktop Entry]',
         'Type=Application',
         'Version=1.0',
-        f'Name={NAME}',
+        f'Name={DISPLAY_NAME}',
         f'Comment={COMMENT}',
         *(f'Comment[{code}]={text}' for code, text in sorted(comments.items())),
         f'Exec={desktop_exec(command)}',
@@ -268,14 +280,18 @@ def install(
     folder.mkdir(parents=True, exist_ok=True)
     before = set(installed_paths(home))
     if platform == 'win32':
-        targets = [folders['start'] / f'{NAME}.lnk', folders['desktop'] / f'{NAME}.lnk']
+        targets = [folders['start'] / SHORTCUT, folders['desktop'] / SHORTCUT]
     elif platform == 'darwin':
-        targets = [folders['applications'] / f'{NAME}.app']
+        targets = [folders['applications'] / BUNDLE]
     else:
-        targets = [folders['applications'] / f'{NAME}.desktop']
+        targets = [folders['applications'] / ENTRY]
     for target in targets:
-        if os.path.lexists(target) and target not in before:
+        if os.path.lexists(target) and not any(_same_name(target, path) for path in before):
             raise Error(f'{target} is in the way and no install of cuju made it, remove it first')
+    # A launcher of an earlier install under the old name goes, so the new name takes its place.
+    for path in before:
+        if path.name in OLD_NAMES and path.name not in {target.name for target in targets}:
+            _remove(path)
     made: list[Path] = []
     if platform == 'win32':
         icon_path = folder / f'{NAME}.ico'
@@ -302,8 +318,13 @@ def install(
     return made
 
 
+def _same_name(target: Path, path: Path) -> bool:
+    """Tells whether `path` names `target` on a system that ignores the case of names."""
+    return path.parent == target.parent and path.name.casefold() == target.name.casefold()
+
+
 def _write_bundle(bundle: Path, command: list[str]) -> list[Path]:
-    """Writes the app `cuju.app` of macOS, whose program is a script that runs `command`."""
+    """Writes the app `Cuju.app` of macOS, whose program is a script that runs `command`."""
     from .._version import __version__
 
     if bundle.exists():
@@ -312,8 +333,8 @@ def _write_bundle(bundle: Path, command: list[str]) -> list[Path]:
     (contents / 'MacOS').mkdir(parents=True)
     (contents / 'Resources').mkdir()
     info: dict[str, Any] = {
-        'CFBundleName': NAME,
-        'CFBundleDisplayName': NAME,
+        'CFBundleName': DISPLAY_NAME,
+        'CFBundleDisplayName': DISPLAY_NAME,
         'CFBundleIdentifier': BUNDLE_ID,
         'CFBundleExecutable': NAME,
         'CFBundleIconFile': NAME,
@@ -335,6 +356,25 @@ def _write_bundle(bundle: Path, command: list[str]) -> list[Path]:
     return [bundle]
 
 
+def _remove(path: Path) -> bool:
+    """Removes one path of a record and tells whether it went.
+
+    Only the names that an install makes go, a bundle of macOS only while its identifier is cuju's,
+    and every other path only while it is a file.
+    """
+    if path.name not in MADE_NAMES:
+        return False
+    if path.is_dir() and not path.is_symlink():
+        if path.suffix == '.app' and _bundle_is_ours(path):
+            shutil.rmtree(path)
+            return True
+        return False
+    if path.is_file():
+        path.unlink()
+        return True
+    return False
+
+
 def uninstall(home: Path | None = None) -> list[Path]:
     """Removes what an earlier install made and returns what it removed.
 
@@ -342,17 +382,7 @@ def uninstall(home: Path | None = None) -> list[Path]:
     and every other path only while it is a file.
     """
     home = _home.home() if home is None else home
-    removed = []
-    for path in installed_paths(home):
-        if path.name not in MADE_NAMES:
-            continue
-        if path.is_dir() and not path.is_symlink():
-            if path.suffix == '.app' and _bundle_is_ours(path):
-                shutil.rmtree(path)
-                removed.append(path)
-        elif path.is_file():
-            path.unlink()
-            removed.append(path)
+    removed = [path for path in installed_paths(home) if _remove(path)]
     record = _record_path(home)
     if record.exists():
         record.unlink()

@@ -1736,22 +1736,16 @@ def test_achievements_through_the_server(render_home):
 
 
 def test_installable_page_files_build_and_routes(render_home, tmp_path, monkeypatch):
-    from pathlib import Path
-
     from cuju.render._http import pwa as _pwa
 
     web = _server._WEB
     manifest = json.loads((web / 'manifest.webmanifest').read_text(encoding='utf-8'))
     assert manifest['display'] == 'standalone' and manifest['start_url'] == './#page=home'
-    for icon in manifest['icons']:
-        data = (web / icon['src']).read_bytes()
-        assert data[:8] == b'\x89PNG\r\n\x1a\n'
-        assert '{}x{}'.format(*struct.unpack('>II', data[16:24])) == icon['sizes']
+    # tests/test_app.py checks the icons themselves.
+    assert all((web / icon['src']).is_file() for icon in manifest['icons'])
     assert '<link rel="manifest" href="manifest.webmanifest">' in (web / 'index.html').read_text(
         encoding='utf-8'
     )
-    script = Path(__file__).resolve().parents[1] / 'ci' / 'make_app_icons.py'
-    assert subprocess.run([sys.executable, str(script), '--check'], timeout=300).returncode == 0
     # The build follows every file of the page.
     copy = tmp_path / 'web'
     copy.mkdir()

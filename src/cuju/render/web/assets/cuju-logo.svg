@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+    <!-- The cuju mark. The letters C, U, J and U stand in a two by two grid, each a rounded square
+         stroke with two copies behind it, offset down and to the right in darker grays, on a dark
+         square with rounded corners and a gray border that stays three quarters white over its top left
+         half and darkens to a quarter white at the bottom right, as the light falls on the letters. Each gray brightens outward from near the
+         middle of the grid. ci/make_logo.py renders the PNG icons of the page from this file. -->
+    <defs>
+        <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#bfbfbf"/>
+            <stop offset="0.5" stop-color="#bfbfbf"/>
+            <stop offset="1" stop-color="#404040"/>
+        </linearGradient>
+        <radialGradient id="back" gradientUnits="userSpaceOnUse" cx="178" cy="178" r="256">
+            <stop offset="0" stop-color="#47484a"/>
+            <stop offset="1" stop-color="#7c7c7d"/>
+        </radialGradient>
+        <radialGradient id="middle" gradientUnits="userSpaceOnUse" cx="178" cy="178" r="256">
+            <stop offset="0" stop-color="#6a6a6c"/>
+            <stop offset="1" stop-color="#b3b3b4"/>
+        </radialGradient>
+        <radialGradient id="front" gradientUnits="userSpaceOnUse" cx="178" cy="178" r="256">
+            <stop offset="0" stop-color="#bbbbbb"/>
+            <stop offset="1" stop-color="#d1d1d1"/>
+        </radialGradient>
+    </defs>
+    <g id="frame">
+        <rect width="512" height="512" rx="112" fill="url(#ring)"/>
+        <rect x="32" y="32" width="448" height="448" rx="80" fill="#202124"/>
+    </g>
+    <g id="mark" transform="translate(64 64)">
+        <path fill="url(#back)" d="M50 30H172A20 20 0 0 1 192 50H50V172H192A20 20 0 0 1 172 192H50A20 20 0 0 1 30 172V50A20 20 0 0 1 50 30Z
+            M222 50A20 20 0 0 1 242 30V172H364V30A20 20 0 0 1 384 50V172A20 20 0 0 1 364 192H242A20 20 0 0 1 222 172Z
+            M172 222A20 20 0 0 1 192 242V364A20 20 0 0 1 172 384H50A20 20 0 0 1 30 364H172Z
+            M222 242A20 20 0 0 1 242 222V364H364V222A20 20 0 0 1 384 242V364A20 20 0 0 1 364 384H242A20 20 0 0 1 222 364Z"/>
+        <path fill="url(#middle)" d="M35 15H157A20 20 0 0 1 177 35H35V157H177A20 20 0 0 1 157 177H35A20 20 0 0 1 15 157V35A20 20 0 0 1 35 15Z
+            M207 35A20 20 0 0 1 227 15V157H349V15A20 20 0 0 1 369 35V157A20 20 0 0 1 349 177H227A20 20 0 0 1 207 157Z
+            M157 207A20 20 0 0 1 177 227V349A20 20 0 0 1 157 369H35A20 20 0 0 1 15 349H157Z
+            M207 227A20 20 0 0 1 227 207V349H349V207A20 20 0 0 1 369 227V349A20 20 0 0 1 349 369H227A20 20 0 0 1 207 349Z"/>
+        <path fill="url(#front)" d="M20 0H142A20 20 0 0 1 162 20H20V142H162A20 20 0 0 1 142 162H20A20 20 0 0 1 0 142V20A20 20 0 0 1 20 0Z
+            M192 20A20 20 0 0 1 212 0V142H334V0A20 20 0 0 1 354 20V142A20 20 0 0 1 334 162H212A20 20 0 0 1 192 142Z
+            M142 192A20 20 0 0 1 162 212V334A20 20 0 0 1 142 354H20A20 20 0 0 1 0 334H142Z
+            M192 212A20 20 0 0 1 212 192V334H334V192A20 20 0 0 1 354 212V334A20 20 0 0 1 334 354H212A20 20 0 0 1 192 334Z"/>
+    </g>
+</svg>

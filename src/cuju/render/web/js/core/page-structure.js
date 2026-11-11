@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The structure of the page for a screen reader and the browser. Each page has a title of its own
-// in the window, such as Help · cuju, and Watch takes the title of the recording that plays. The
+// in the window, such as Help · Cuju, and Watch takes the title of the recording that plays. The
 // main region takes the name of the page in view, a heading names each page that lacks one of its
 // own, and a change of page is said aloud. A page whose own visible title is its h1, as Teams,
 // Tournaments and Help have, keeps that heading alone, so every page has one h1 and the headings
@@ -21,11 +21,11 @@ export function pageName(page) {
     return PAGE_NAMES[page] || (page ? `${page[0].toUpperCase()}${page.slice(1)}` : '');
 }
 
-// The title of the window on a page. Home is cuju alone, Watch names the recording that plays,
+// The title of the window on a page. Home is Cuju alone, Watch names the recording that plays,
 // and every other page names itself.
 export function pageTitle(page, watchTitle = null) {
     if (!page || page === 'home') {
-        return 'cuju';
+        return t('structure.name');
     }
     if (page === 'watch' && watchTitle) {
         return t('structure.title', { title: watchTitle });

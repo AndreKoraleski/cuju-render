@@ -88,7 +88,7 @@
             "title": "Register a team",
             "page": "teams",
             "needs": null,
-            "ask": "**Register a team** on the Teams page. Upload a submission folder with a `main.py`, or add the starter team that cuju ships.",
+            "ask": "**Register a team** on the Teams page. Upload a submission folder with a `main.py`, or add the starter team that Cuju ships.",
             "praise": "The team joins the lists of Play, Matches and Tournaments. **Choose it on Teams** to dress it.",
             "agent": {
                 "check": "team",
