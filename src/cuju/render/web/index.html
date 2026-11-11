@@ -106,7 +106,7 @@ SPDX-License-Identifier: Apache-2.0
                         <div class="goal-head"><i class="goal-chip"></i><span class="goal-title" data-i18n="html.watch.goal.title">Goal</span><span id="goal-team"></span><span id="goal-score" hidden></span></div>
                         <div class="goal-who"><span id="goal-number" hidden></span><span id="goal-scorer" hidden></span><span id="goal-minute" hidden></span></div>
                         <div id="goal-assist" hidden></div>
-                        <button id="goal-replay" class="btn small" data-i18n="html.watch.goal.replay">Replay <kbd>R</kbd></button>
+                        <button id="goal-replay" class="btn small" data-i18n="html.watch.goal.replay"><svg class="icon" aria-hidden="true"><use href="#i-replay"/></svg>Replay <kbd>R</kbd></button>
                     </div>
                     <div id="replay-badge" hidden data-prompt><span class="replay-word" data-i18n="html.watch.replay">Replay</span><span id="replay-hint" hidden></span></div>
                     <div id="follow-label" hidden></div>
@@ -180,7 +180,7 @@ SPDX-License-Identifier: Apache-2.0
                     </div>
                 </div>
 
-                <div id="tv-hint" aria-hidden="true" data-i18n="html.watch.tvHint">Broadcast mode. The bottom edge or <kbd data-i18n="html.key.esc">Esc</kbd> shows the controls, <kbd>T</kbd> leaves.</div>
+                <div id="tv-hint" aria-hidden="true" data-i18n="html.watch.tvHint">Broadcast mode. The bottom edge or <kbd data-key="Esc">Esc</kbd> shows the controls, <kbd>T</kbd> leaves.</div>
 
                 <div id="drop-hint"><div data-i18n="html.watch.drop">Drop a .cjr recording to open it</div></div>
                 <div id="loading" hidden role="status">
@@ -247,27 +247,27 @@ SPDX-License-Identifier: Apache-2.0
                     The controls card in Play sets up other controllers.</p>
                 <p data-i18n="html.help.pause">Home pauses your game. Return to Play to Resume or Quit. Quit to Home ends the game
                     and saves it when Save to Recordings is selected.</p>
-                <p><a href="https://github.com/AndreKoraleski/cuju/blob/main/docs/rendering.md" data-i18n="html.help.guide">Full guide</a>
-                    <a href="https://github.com/AndreKoraleski/cuju" data-i18n="html.help.repository">Repository</a></p></section>
+                <p><a href="https://github.com/AndreKoraleski/cuju/blob/main/docs/rendering.md" data-i18n="html.help.guide"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-external"/></svg>Full guide</a>
+                    <a href="https://github.com/AndreKoraleski/cuju" data-i18n="html.help.repository"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-external"/></svg>Repository</a></p></section>
                 <div class="help-grid">
                     <section>
                         <h2 id="help-playback" data-i18n="html.help.playback.title">Playback</h2>
                         <dl>
-                            <dt><kbd data-i18n="html.key.space">Space</kbd></dt><dd data-i18n="html.help.playback.toggle.text">Play or pause</dd>
+                            <dt><kbd data-key="Space">Space</kbd></dt><dd data-i18n="html.help.playback.toggle.text">Play or pause</dd>
                             <dt><kbd>L</kbd></dt><dd data-i18n="html.help.playback.forward.text">Play forward, again to speed up</dd>
                             <dt><kbd>J</kbd></dt><dd data-i18n="html.help.playback.backward.text">Play backwards, again to speed up</dd>
                             <dt><kbd>K</kbd></dt><dd data-i18n="html.help.playback.pause.text">Pause</dd>
-                            <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="html.help.playback.step.text">One frame when paused, 5 seconds when playing</dd>
-                            <dt><kbd data-i18n="html.key.shift">Shift</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="html.help.playback.jump.text">30 seconds</dd>
+                            <dt><kbd data-key="Left">←</kbd> <kbd data-key="Right">→</kbd></dt><dd data-i18n="html.help.playback.step.text">One frame when paused, 5 seconds when playing</dd>
+                            <dt><kbd data-key="Shift">Shift</kbd> <kbd data-key="Left">←</kbd> <kbd data-key="Right">→</kbd></dt><dd data-i18n="html.help.playback.jump.text">30 seconds</dd>
                             <dt><kbd>,</kbd> <kbd>.</kbd></dt><dd data-i18n="html.help.playback.frame.text">One frame</dd>
-                            <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd data-i18n="html.help.playback.speed.text">Faster, slower</dd>
-                            <dt><kbd data-i18n="html.key.home">Home</kbd></dt><dd data-i18n="html.help.playback.restart.text">Restart</dd>
-                            <dt><kbd data-i18n="html.key.end">End</kbd></dt><dd data-i18n="html.help.playback.end.text">End, or go live</dd>
+                            <dt><kbd data-key="Up">↑</kbd> <kbd data-key="Down">↓</kbd></dt><dd data-i18n="html.help.playback.speed.text">Faster, slower</dd>
+                            <dt><kbd data-key="Home">Home</kbd></dt><dd data-i18n="html.help.playback.restart.text">Restart</dd>
+                            <dt><kbd data-key="End">End</kbd></dt><dd data-i18n="html.help.playback.end.text">End, or go live</dd>
                             <dt><kbd>N</kbd></dt><dd data-i18n="html.help.playback.goal.text">Next goal, with Shift the previous one</dd>
                             <dt><kbd>R</kbd></dt><dd data-i18n="html.help.playback.replay.text">Replay the last goal</dd>
-                            <dt><kbd data-i18n="html.key.shift">Shift</kbd> <kbd>R</kbd></dt><dd data-i18n="html.help.playback.angles.text">More angles of the last goal</dd>
-                            <dt><kbd data-i18n="html.key.enter">Enter</kbd></dt><dd data-i18n="html.help.playback.skip.text">Skip the lineups, a celebration, a replay or a post-match part</dd>
-                            <dt><kbd data-i18n="html.key.esc">Esc</kbd></dt><dd data-i18n="html.help.playback.endShow.text">End the lineups, replays or the post-match show</dd>
+                            <dt><kbd data-key="Shift">Shift</kbd> <kbd>R</kbd></dt><dd data-i18n="html.help.playback.angles.text">More angles of the last goal</dd>
+                            <dt><kbd data-key="Enter">Enter</kbd></dt><dd data-i18n="html.help.playback.skip.text">Skip the lineups, a celebration, a replay or a post-match part</dd>
+                            <dt><kbd data-key="Esc">Esc</kbd></dt><dd data-i18n="html.help.playback.endShow.text">End the lineups, replays or the post-match show</dd>
                         </dl>
                     </section>
                     <section>
@@ -282,7 +282,7 @@ SPDX-License-Identifier: Apache-2.0
                             <dt><kbd>P</kbd></dt><dd data-i18n="html.help.cameras.owner.text">Follow the player on the ball</dd>
                             <dt><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></dt><dd data-i18n="html.help.cameras.move.text">Move, starts the free camera</dd>
                             <dt><kbd>E</kbd> <kbd>Q</kbd></dt><dd data-i18n="html.help.cameras.updown.text">Up and down, <kbd>C</kbd> also down</dd>
-                            <dt><kbd data-i18n="html.key.shift">Shift</kbd></dt><dd data-i18n="html.help.cameras.faster.text">Move faster</dd>
+                            <dt><kbd data-key="Shift">Shift</kbd></dt><dd data-i18n="html.help.cameras.faster.text">Move faster</dd>
                             <dt data-i18n="html.help.cameras.drag">Drag</dt><dd data-i18n="html.help.cameras.drag.text">Look around, a right click captures the pointer when the setting allows it</dd>
                             <dt data-i18n="html.help.cameras.wheel">Wheel</dt><dd data-i18n="html.help.cameras.wheel.text">Flying speed, or distance when following</dd>
                         </dl>
@@ -290,11 +290,11 @@ SPDX-License-Identifier: Apache-2.0
                     <section>
                         <h2 id="help-view" data-i18n="html.help.view.title">View</h2>
                         <dl>
-                            <dt><kbd>T</kbd></dt><dd data-i18n="html.help.view.tv.text">Broadcast mode, the picture alone, <kbd data-i18n="html.key.esc">Esc</kbd> shows the controls, twice leaves</dd>
+                            <dt><kbd>T</kbd></dt><dd data-i18n="html.help.view.tv.text">Broadcast mode, the picture alone, <kbd data-key="Esc">Esc</kbd> shows the controls, twice leaves</dd>
                             <dt><kbd>F</kbd></dt><dd data-i18n="html.help.view.fullscreen.text">Fullscreen</dd>
                             <dt><kbd>M</kbd></dt><dd data-i18n="html.help.view.mute.text">Mute</dd>
                             <dt><kbd>H</kbd></dt><dd data-i18n="html.help.view.help.text">This help</dd>
-                            <dt><kbd data-i18n="html.key.esc">Esc</kbd></dt><dd data-i18n="html.help.view.close.text">Close panels, leave a player camera, release the pointer</dd>
+                            <dt><kbd data-key="Esc">Esc</kbd></dt><dd data-i18n="html.help.view.close.text">Close panels, leave a player camera, release the pointer</dd>
                         </dl>
                     </section>
                 </div>
@@ -305,31 +305,31 @@ SPDX-License-Identifier: Apache-2.0
 
     <div id="settings" class="popover" role="dialog" aria-label="Settings" data-i18n-aria-label="html.top.settings">
         <h3 class="panel-title" data-i18n="html.top.settings">Settings</h3>
-        <label class="check" data-i18n="html.settings.idleReturn"><input type="checkbox" id="idle-return"> Return to broadcast when idle</label>
-        <label data-i18n="html.settings.idleSeconds">Seconds without input before the free camera returns
+        <label class="check" data-i18n="html.settings.idleReturn"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-video"/></svg><input type="checkbox" id="idle-return"> Return to broadcast when idle</label>
+        <label data-i18n="html.settings.idleSeconds"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-clock"/></svg>Seconds without input before the free camera returns
             <input type="number" id="idle-seconds" min="5" max="300" step="5" value="20">
         </label>
-        <label class="check" data-i18n="html.settings.trail"><input type="checkbox" id="trail"> Ball trail</label>
-        <label class="check" data-i18n="html.settings.tvMode"><input type="checkbox" id="tv-mode"> Broadcast mode, the picture alone as on television <kbd>T</kbd></label>
-        <label class="check" data-i18n="html.settings.lineups"><input type="checkbox" id="lineups-on"> Lineups before kick-off</label>
-        <label class="check" data-i18n="html.settings.celebrations"><input type="checkbox" id="celebrations-on"> Celebrations after goals</label>
-        <label class="check" data-i18n="html.settings.replays"><input type="checkbox" id="replays"> Replays after goals</label>
-        <label class="check" data-i18n="html.settings.decisionReplays"><input type="checkbox" id="decision-replays"> Decision replays, fouls, cards and offsides</label>
+        <label class="check" data-i18n="html.settings.trail"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-trail"/></svg><input type="checkbox" id="trail"> Ball trail</label>
+        <label class="check" data-i18n="html.settings.tvMode"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-watch"/></svg><input type="checkbox" id="tv-mode"> Broadcast mode, the picture alone as on television <kbd>T</kbd></label>
+        <label class="check" data-i18n="html.settings.lineups"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-people"/></svg><input type="checkbox" id="lineups-on"> Lineups before kick-off</label>
+        <label class="check" data-i18n="html.settings.celebrations"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-celebrate"/></svg><input type="checkbox" id="celebrations-on"> Celebrations after goals</label>
+        <label class="check" data-i18n="html.settings.replays"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-replay"/></svg><input type="checkbox" id="replays"> Replays after goals</label>
+        <label class="check" data-i18n="html.settings.decisionReplays"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-flag"/></svg><input type="checkbox" id="decision-replays"> Decision replays, fouls, cards and offsides</label>
         <label class="check" data-i18n="html.settings.transitions"><input type="checkbox" id="restart-transitions"> Restart transitions</label>
-        <label data-i18n="html.settings.slowmo">Slow motion in replays
+        <label data-i18n="html.settings.slowmo"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-slow"/></svg>Slow motion in replays
             <select id="slowmo">
                 <option value="1" data-i18n="html.settings.slowmo.off">Off</option>
                 <option value="0.5" data-i18n="html.settings.slowmo.half">Half speed</option>
                 <option value="0.25" data-i18n="html.settings.slowmo.quarter">Quarter speed</option>
             </select>
         </label>
-        <label class="check" data-i18n="html.settings.podium"><input type="checkbox" id="podium-on"> Post-match show, facts, highlights, player of the match, podium</label>
+        <label class="check" data-i18n="html.settings.podium"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-trophy"/></svg><input type="checkbox" id="podium-on"> Post-match show, facts, highlights, player of the match, podium</label>
         <label class="check" data-i18n="html.settings.view2d"><input type="checkbox" id="view-2d"> 2D view, a flat drawing from above without WebGL</label>
-        <label class="check" data-i18n="html.settings.classic"><input type="checkbox" id="classic"> GRF classic pitch</label>
-        <label class="check" data-i18n="html.settings.pointerLock"><input type="checkbox" id="pointer-lock"> Capture the mouse on right click in the free camera, Esc releases it</label>
-        <label class="check" data-i18n="html.settings.savedStyle"><input type="checkbox" id="saved-style"> Use the kits saved in the match</label>
+        <label class="check" data-i18n="html.settings.classic"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-field"/></svg><input type="checkbox" id="classic"> GRF classic pitch</label>
+        <label class="check" data-i18n="html.settings.pointerLock"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-mouse"/></svg><input type="checkbox" id="pointer-lock"> Capture the mouse on right click in the free camera, Esc releases it</label>
+        <label class="check" data-i18n="html.settings.savedStyle"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-shirt"/></svg><input type="checkbox" id="saved-style"> Use the kits saved in the match</label>
         <p class="muted small" data-i18n="html.settings.savedStyle.note">Without that, teams known to this server wear their current style.</p>
-        <label data-i18n="html.settings.theme">Theme
+        <label data-i18n="html.settings.theme"><svg class="icon text-symbol" aria-hidden="true"><use href="#i-palette"/></svg>Theme
             <select id="theme">
                 <option value="system" data-i18n="html.settings.theme.system">Follow the system</option>
                 <option value="dark" data-i18n="html.settings.theme.dark">Dark</option>

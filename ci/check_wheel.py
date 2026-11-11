@@ -4,8 +4,10 @@
 
 Usage: `python ci/check_wheel.py <wheel>...`. A wheel of cuju-render holds `cuju/render/` alone,
 never `cuju/__init__.py` or another top-level name, and requires a cuju that ships no renderer.
+It holds every teaser and still that the manifest of the challenge cards names.
 """
 
+import json
 import re
 import sys
 import zipfile
@@ -25,17 +27,35 @@ REQUIRED = [
     'cuju/render/_version.py',
     'cuju/render/_http/server.py',
     'cuju/render/web/index.html',
+    'cuju/render/web/languages/en.json',
     'cuju/render/web/vendor/three/LICENSE',
     'cuju/render/web/vendor/fabric/LICENSE',
     'cuju/render/web/vendor/lucide/LICENSE',
     'cuju/render/web/vendor/lucide/icons.js',
     'cuju/render/samples/sample-5v5.cjr',
     'cuju/render/samples/sample-11v11.cjr',
+    'cuju/render/web/assets/challenges/manifest.json',
 ]
+# The folder of the page's languages, which holds English alone.
+LANGUAGES = 'cuju/render/web/languages/'
+TEASERS = 'cuju/render/web/assets/challenges/'
 # The first cuju whose wheel holds no renderer of its own.
 MIN_CUJU = '0.2.1'
 # The requirement of cuju stops before this version.
 BELOW_CUJU = '0.3'
+
+
+def teaser_problems(path, names):
+    """Returns the teasers and stills that the manifest of the challenge cards names and the wheel
+    lacks."""
+    if f'{TEASERS}manifest.json' not in names:
+        return []
+    with zipfile.ZipFile(path) as wheel:
+        manifest = json.loads(wheel.read(f'{TEASERS}manifest.json'))
+    listed = [
+        entry[kind] for entry in manifest['challenges'].values() for kind in ('teaser', 'still')
+    ]
+    return [f'missing {TEASERS}{name}' for name in listed if f'{TEASERS}{name}' not in names]
 
 
 def problems(path):
@@ -51,6 +71,7 @@ def problems(path):
         if not any(n.endswith(f'licenses/{name}') for n in names)
     ]
     found += [f'missing {name}' for name in REQUIRED if name not in names]
+    found += teaser_problems(path, names)
     if not any(n.startswith('cuju/render/web/vendor/three/build/') for n in names):
         found.append('missing the build of three.js')
     for name in names:
@@ -60,6 +81,9 @@ def problems(path):
             found.append(f'unexpected {name}, the wheel holds cuju/render/ alone')
         elif '__pycache__' in name or name.endswith('.pyc'):
             found.append(f'unexpected {name}')
+        elif name.startswith(LANGUAGES) and name != f'{LANGUAGES}en.json':
+            # The page ships in English, and the drafts of other languages stay in translations/.
+            found.append(f'unexpected {name}, the wheel ships English alone')
     requires = re.findall(r'^Requires-Dist: (.*)$', metadata, re.MULTILINE)
     cuju = [r for r in requires if re.match(r'cuju\b(?!-)', r) and 'extra ==' not in r]
     bounds = cuju[0].replace(' ', '') if len(cuju) == 1 else ''

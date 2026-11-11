@@ -44,6 +44,8 @@ from typing import Any
 
 from cuju.errors import ArgumentError, Error
 
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from . import sizes as _sizes
 
 # The cameras that follow the match by themselves, as the page names them.
@@ -78,21 +80,15 @@ WARMUP = 1.0
 # The identifier under which the export's server offers a recording file outside the library.
 _FILE_IDENTIFIER = 'video-source'
 
-# How to install each program. The command names a program with an option or a variable, and a
-# server with the variable alone, set before it starts.
-_INSTALL_CHROME = (
-    'Install Google Chrome or Chromium, from https://www.google.com/chrome/ or with the package '
-    'manager, such as apt install chromium, or name the program with {named}.'
-)
-_INSTALL_FFMPEG = (
-    'Install ffmpeg, from https://ffmpeg.org/download.html or with the package manager, such as '
-    'apt install ffmpeg, brew install ffmpeg or winget install ffmpeg, or name the program with '
-    '{named}.'
-)
-
 
 class VideoError(Error, RuntimeError):
     """Raised when an export cannot run or stops, with what to do about it."""
+
+
+class VideoMessageError(_messages.Message, VideoError):
+    """A `VideoError` whose text is a message of the server, which the page translates."""
+
+    _wrapper = True
 
 
 class CancelledError(VideoError):
@@ -143,46 +139,50 @@ class Options:
     def check(self) -> Options:
         """Returns the options after checking each, or raises `ArgumentError`."""
         if self.format is not None and self.format not in FORMATS:
-            raise ArgumentError(f'expected a format of {", ".join(FORMATS)}, found {self.format!r}')
+            raise MessageError(
+                'server.video.format', formats=', '.join(FORMATS), format=repr(self.format)
+            )
         if self.camera not in CAMERAS:
-            raise ArgumentError(f'expected a camera of {", ".join(CAMERAS)}, found {self.camera!r}')
+            raise MessageError(
+                'server.video.camera', cameras=', '.join(CAMERAS), camera=repr(self.camera)
+            )
         check_size(self.width, self.height)
         fps = self.fps
         if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= MAX_FPS:
-            raise ArgumentError(f'expected a frame rate from 1 to {MAX_FPS}, found {self.fps!r}')
+            raise MessageError('server.video.rate', most=MAX_FPS, fps=repr(self.fps))
         if not isinstance(self.annotations, bool):
-            raise ArgumentError(
-                f'expected annotations as true or false, found {self.annotations!r}'
-            )
+            raise MessageError('server.video.annotations', annotations=repr(self.annotations))
         if self.quality not in QUALITIES:
-            raise ArgumentError(
-                f'expected a quality of {", ".join(QUALITIES)}, found {self.quality!r}'
+            raise MessageError(
+                'server.video.quality', qualities=', '.join(QUALITIES), quality=repr(self.quality)
             )
         if self.arena is not None and self.arena not in ARENAS:
-            raise ArgumentError(f'expected an arena of {", ".join(ARENAS)}, found {self.arena!r}')
+            raise MessageError(
+                'server.video.arena', arenas=', '.join(ARENAS), arena=repr(self.arena)
+            )
         if self.hour is not None and not (_number(self.hour) and 0 <= self.hour <= 24):
-            raise ArgumentError(f'expected an hour from 0 to 24, found {self.hour!r}')
+            raise MessageError('server.video.hour', hour=repr(self.hour))
         if not _number(self.graphics):
-            raise ArgumentError(f'expected a scale of the graphics, found {self.graphics!r}')
+            raise MessageError('server.video.scale', graphics=repr(self.graphics))
         self.graphics = _sizes.parse_graphics(self.graphics)
         self.safe = _sizes.parse_safe(self.safe)
         if self.goal is not None and (
             isinstance(self.goal, bool) or not isinstance(self.goal, int) or self.goal < 1
         ):
-            raise ArgumentError(f'expected a goal number from 1, found {self.goal!r}')
+            raise MessageError('server.video.goal', goal=repr(self.goal))
         if not (_number(self.max_seconds) and 0 < self.max_seconds <= LIMIT_SECONDS):
-            raise ArgumentError(
-                f'expected a maximum length above 0 and up to {LIMIT_SECONDS:.0f} seconds, '
-                f'found {self.max_seconds!r}'
+            raise MessageError(
+                'server.video.max_seconds',
+                most=f'{LIMIT_SECONDS:.0f}',
+                value=repr(self.max_seconds),
             )
         if (
             isinstance(self.max_megabytes, bool)
             or not isinstance(self.max_megabytes, int)
             or not 1 <= self.max_megabytes <= LIMIT_MEGABYTES
         ):
-            raise ArgumentError(
-                f'expected a maximum size from 1 to {LIMIT_MEGABYTES} MB, '
-                f'found {self.max_megabytes!r}'
+            raise MessageError(
+                'server.video.max_megabytes', most=LIMIT_MEGABYTES, value=repr(self.max_megabytes)
             )
         return self
 
@@ -302,9 +302,9 @@ def recording_facts(path: Path) -> Facts:
             previous = score
             count += 1
     except (OSError, EOFError, ValueError, KeyError, struct.error, Error) as error:
-        raise VideoError(f'{path} is not a readable recording, {error}') from error
+        raise VideoMessageError('server.video.unreadable', path=path, error=error) from error
     if count == 0:
-        raise VideoError(f'{path} holds no frames')
+        raise VideoMessageError('server.video.no_frames', path=path)
     return Facts(str(header.get('title') or path.stem), count, sps, tuple(goals))
 
 
@@ -321,12 +321,7 @@ def resolve_range(options: Options, facts: Facts) -> tuple[float, float]:
 
     def goal_time(number: int) -> float:
         if number > len(facts.goals):
-            count = len(facts.goals)
-            raise ArgumentError(
-                f'expected a goal from 1 to {count}, found goal {number}'
-                if count
-                else f'expected a goal, found none in the recording, asked for goal {number}'
-            )
+            raise MessageError('server.video.goal_range', count=len(facts.goals), goal=number)
         return facts.goals[number - 1]
 
     def at(moment: Moment) -> float:
@@ -342,9 +337,11 @@ def resolve_range(options: Options, facts: Facts) -> tuple[float, float]:
         end = at(options.end)
     start, end = max(0.0, start), min(facts.duration, end)
     if end - start < 1 / facts.steps_per_second:
-        raise ArgumentError(
-            f'expected a range that holds frames, the recording runs from 0 to '
-            f'{facts.duration:.1f} seconds, found {start:.1f} to {end:.1f}'
+        raise MessageError(
+            'server.video.empty_range',
+            duration=f'{facts.duration:.1f}',
+            start=f'{start:.1f}',
+            end=f'{end:.1f}',
         )
     return start, end
 
@@ -360,7 +357,7 @@ def find_program(names: tuple[str, ...], explicit: str | None, variable: str) ->
         if given:
             found = shutil.which(given) or (given if Path(given).is_file() else None)
             if found is None:
-                raise VideoError(f'expected a program at {given}, found none')
+                raise VideoMessageError('server.video.program', given=given)
             return found
     for name in names:
         found = shutil.which(name)
@@ -404,38 +401,32 @@ def find_ffmpeg(explicit: str | None = None) -> str | None:
     return find_program(('ffmpeg',), explicit, 'CUJU_FFMPEG')
 
 
-def tools(options: Options, server: bool = False) -> tuple[str | None, str | None, list[str]]:
+def tools(
+    options: Options, server: bool = False
+) -> tuple[str | None, str | None, list[dict[str, Any]]]:
     """Returns the paths of Chrome and ffmpeg and a message for each one missing.
+
+    Each message is a label of `_messages.label`, which says how to install the program or how to
+    name it, so the page shows it in its own language, and its English text is in `text`.
 
     Args:
         options: The options, which may name either program.
         server: Whether the messages are for the page's server, which takes the variables alone.
     """
-
-    def named(option: str, variable: str) -> str:
-        if server:
-            return f'${variable} in the environment of cuju render serve'
-        return f'{option} or ${variable}'
-
+    tail = '' if server else '_command'
     missing = []
     chrome = find_chrome(options.chrome)
     if chrome is None:
         missing.append(chrome_missing(server))
     ffmpeg = find_ffmpeg(options.ffmpeg)
     if ffmpeg is None:
-        hint = _INSTALL_FFMPEG.format(named=named('--ffmpeg', 'CUJU_FFMPEG'))
-        missing.append(f'Video export needs ffmpeg, found none. {hint}')
+        missing.append(_messages.label(f'server.video.missing_ffmpeg{tail}'))
     return chrome, ffmpeg, missing
 
 
-def chrome_missing(server: bool = False) -> str:
-    """Returns the message of a missing Chrome, for the command or for the page's server."""
-    if server:
-        named = '$CUJU_CHROME in the environment of cuju render serve'
-    else:
-        named = '--chrome or $CUJU_CHROME'
-    hint = _INSTALL_CHROME.format(named=named)
-    return f'Video export needs Chrome or Chromium, found neither. {hint}'
+def chrome_missing(server: bool = False) -> dict[str, Any]:
+    """Returns the message of a missing Chrome as a label, for the command or the page's server."""
+    return _messages.label('server.video.missing_chrome' + ('' if server else '_command'))
 
 
 def requested_format(output: Path, options: Options) -> str | None:
@@ -446,18 +437,20 @@ def requested_format(output: Path, options: Options) -> str | None:
     for that container alone.
 
     Raises:
-        ArgumentError: If the output ends in neither .mp4 nor .webm, or in the other one's suffix.
+        MessageError: If the output ends in neither .mp4 nor .webm, or in the other one's suffix.
     """
     suffix = output.suffix.lower()
     if suffix not in SUFFIXES.values():
-        raise ArgumentError(f'expected an output file ending in .mp4 or .webm, found {output.name}')
+        raise MessageError('server.video.output', name=output.name)
     if options.format == 'auto':
         return None
     if options.format in SUFFIXES:
         if SUFFIXES[options.format] != suffix:
-            raise ArgumentError(
-                f'expected an output file ending in {SUFFIXES[options.format]} for the format '
-                f'{options.format}, found {output.name}'
+            raise MessageError(
+                'server.video.output_format',
+                suffix=SUFFIXES[options.format],
+                format=options.format,
+                name=output.name,
             )
         return options.format
     return 'mp4' if suffix == '.mp4' else 'webm'
@@ -479,7 +472,7 @@ def choose_encoding(
         browser: The browser's name for the messages.
 
     Raises:
-        VideoError: If neither the browser nor ffmpeg writes the container asked for.
+        VideoMessageError: If neither the browser nor ffmpeg writes the container asked for.
     """
     usable = bool(support.get('pictures'))
     mp4 = usable and bool(support.get('mp4'))
@@ -492,16 +485,18 @@ def choose_encoding(
     if wanted in (None, 'webm') and webm:
         return 'browser', 'webm'
     if wanted == 'mp4':
-        alternative = ' or ask for WebM with --format webm,' if webm else ''
-        raise VideoError(
-            f'expected a browser that encodes H.264 for an MP4, found none in {browser}, so use '
-            f'Google Chrome or Edge,{alternative} or install ffmpeg, which then encodes the MP4'
-        )
-    raise VideoError(
-        f'expected a browser that encodes {"VP9 or VP8 for a WebM" if wanted else "video"}, found '
-        f'none in {browser}, so update it or use Google Chrome or Edge'
-        + ('' if wanted else ', or install ffmpeg, which then encodes an MP4')
+        found = 'server.video.no_h264_webm' if webm else 'server.video.no_h264'
+        raise VideoMessageError(found, browser=browser)
+    raise VideoMessageError(
+        'server.video.no_webm' if wanted else 'server.video.no_encoder', browser=browser
     )
+
+
+def missing_label(missing: list[dict[str, Any]]) -> dict[str, Any]:
+    """Returns one label for the messages of `tools` of the missing programs, one or both."""
+    if len(missing) == 1:
+        return missing[0]
+    return _messages.label('server.video.missing_both', chrome=missing[0], ffmpeg=missing[1])
 
 
 def view(width: int, height: int, graphics: float = 1.0) -> tuple[int, int, float]:
@@ -659,6 +654,12 @@ _HOLD = """(() => {
     if (app.director.lineup && (%(broadcast)s === false || %(at)s > 0)) {
         app.director.closeLineups(false);
     }
+    // A short recording may play to its end while the page loads, so the card and the show of
+    // its end go before the first frame is held.
+    clearTimeout(app.fullTimeTimer);
+    if (app.postMatch && app.postMatch.running) app.postMatch.end();
+    if (app.transition && app.transition.title) app.transition.title.hide();
+    app.endCard = false;
     app.timeline.pause();
     app.setCamera(%(camera)s);
     const tl = app.timeline;
@@ -712,10 +713,10 @@ class _CDP:
         while not header.endswith(b'\r\n\r\n'):
             chunk = self.socket.recv(1)
             if not chunk:
-                raise VideoError('Chrome closed the debugging connection at its start')
+                raise VideoMessageError('server.video.cdp_start')
             header += chunk
         if b' 101 ' not in header.split(b'\r\n')[0]:
-            raise VideoError(f'Chrome refused the debugging connection, {header[:80]!r}')
+            raise VideoMessageError('server.video.cdp_refused', header=repr(header[:80]))
         self.sequence = 0
         self.errors: list[str] = []
 
@@ -728,7 +729,7 @@ class _CDP:
         while len(data) < size:
             chunk = self.socket.recv(min(size - len(data), 1 << 20))
             if not chunk:
-                raise VideoError('Chrome closed the debugging connection')
+                raise VideoMessageError('server.video.cdp_closed')
             data += chunk
         return bytes(data)
 
@@ -754,7 +755,7 @@ class _CDP:
                 size = struct.unpack('!Q', self._read(8))[0]
             payload = self._read(size)
             if first & 15 == 8:
-                raise VideoError('Chrome closed the debugging connection')
+                raise VideoMessageError('server.video.cdp_closed')
             if first & 15 != 1:
                 continue
             message = json.loads(payload)
@@ -763,7 +764,9 @@ class _CDP:
                 self.errors.append(str(details.get('exception', {}).get('description', details)))
             if message.get('id') == self.sequence:
                 if 'error' in message:
-                    raise VideoError(f'Chrome could not run {method}, {message["error"]}')
+                    raise VideoMessageError(
+                        'server.video.cdp_method', method=method, error=message['error']
+                    )
                 return message.get('result', {})
 
     def evaluate(self, expression: str) -> Any:
@@ -774,7 +777,7 @@ class _CDP:
         if 'exceptionDetails' in result:
             details = result['exceptionDetails']
             text = details.get('exception', {}).get('description') or details.get('text')
-            raise VideoError(f'the page failed, {text}')
+            raise VideoMessageError('server.video.page_failed', error=text)
         return result.get('result', {}).get('value')
 
 
@@ -881,16 +884,13 @@ class _Chrome:
         port = None
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                raise VideoError(
-                    f'Chrome stopped at its start with exit code {self.process.returncode}. '
-                    'Chrome in some containers needs --no-sandbox.'
-                )
+                raise VideoMessageError('server.video.chrome_exit', code=self.process.returncode)
             with contextlib.suppress(OSError, ValueError, IndexError):
                 port = int(marker.read_text(encoding='utf-8').split()[0])
                 break
             time.sleep(0.1)
         if port is None:
-            raise VideoError(f'Chrome did not open its debugging port within {timeout:.0f} s')
+            raise VideoMessageError('server.video.chrome_port', seconds=f'{timeout:.0f}')
         targets: list[dict[str, Any]] = []
         while time.monotonic() < deadline and not targets:
             with contextlib.suppress(OSError, ValueError):
@@ -899,7 +899,7 @@ class _Chrome:
             if not targets:
                 time.sleep(0.1)
         if not targets:
-            raise VideoError('Chrome opened no page')
+            raise VideoMessageError('server.video.chrome_page')
         self.client = _CDP(targets[0]['webSocketDebuggerUrl'])
         return self.client
 
@@ -924,15 +924,15 @@ def _wait_ready(client: _CDP, identifier: str, timeout: float = 120) -> None:
     while time.monotonic() < deadline:
         state = client.evaluate(expression) or {}
         if state.get('fatal'):
-            raise VideoError(f'the page cannot draw in this Chrome, {state["fatal"]}')
+            raise VideoMessageError('server.video.page_draw', error=state['fatal'])
         if state.get('ready'):
             return
         time.sleep(0.2)
     errors = '; '.join(client.errors[:3])
-    raise VideoError(
-        f'the page did not open the recording within {timeout:.0f} s'
-        + (f', {errors}' if errors else '')
-    )
+    seconds = f'{timeout:.0f}'
+    if errors:
+        raise VideoMessageError('server.video.page_ready_errors', seconds=seconds, errors=errors)
+    raise VideoMessageError('server.video.page_ready', seconds=seconds)
 
 
 def _wait_host(client: _CDP, options: Options, timeout: float = 120) -> dict[str, Any]:
@@ -948,30 +948,26 @@ def _wait_host(client: _CDP, options: Options, timeout: float = 120) -> dict[str
             return support
         time.sleep(0.2)
     errors = '; '.join(client.errors[:3])
-    raise VideoError(
-        f'the page of the export did not load within {timeout:.0f} s'
-        + (f', {errors}' if errors else '')
-    )
+    if errors:
+        raise VideoMessageError('server.video.host_errors', seconds=f'{timeout:.0f}', errors=errors)
+    raise VideoMessageError('server.video.host', seconds=f'{timeout:.0f}')
 
 
-def _browser_error(state: dict[str, Any], options: Options) -> str:
-    """Returns the message of an export that failed in the browser, from the state it left."""
+def _browser_error(state: dict[str, Any], options: Options) -> VideoMessageError:
+    """Returns the error of an export that failed in the browser, from the state it left."""
     found = state.get('id')
     values = state.get('values') or {}
     if found == 'video.browser.error.size':
-        return (
-            f'the video reached its maximum size of {options.max_megabytes} MB, '
-            'so choose a shorter range or raise the maximum size'
-        )
+        return VideoMessageError('server.video.max_size', most=options.max_megabytes)
     if found == 'video.browser.error.page':
-        return f'the page cannot draw in this Chrome, {values.get("error")}'
+        return VideoMessageError('server.video.page_draw', error=values.get('error'))
     if found == 'video.browser.error.timeout':
-        return f'the page did not open the recording within {values.get("seconds")} s'
+        return VideoMessageError('server.video.page_ready', seconds=values.get('seconds'))
     if found == 'video.browser.error.encoder':
-        return f"the browser's video encoder stopped, {values.get('error')}"
+        return VideoMessageError('server.video.encoder', error=values.get('error'))
     if found == 'video.browser.error.codec':
-        return 'expected a browser that encodes the format asked for, found none at this size'
-    return f'the page failed, {state.get("message")}'
+        return VideoMessageError('server.video.codec')
+    return VideoMessageError('server.video.page_failed', error=state.get('message'))
 
 
 def _draw_in_browser(
@@ -1032,7 +1028,7 @@ def _draw_in_browser(
         if stage == 'cancelled':
             raise CancelledError('the export was cancelled')
         if stage == 'failed':
-            raise VideoError(_browser_error(state, options))
+            raise _browser_error(state, options)
         if stage == 'done':
             break
         now = time.monotonic()
@@ -1056,13 +1052,11 @@ def _draw_in_browser(
                 raise CancelledError('the export was cancelled')
             piece = base64.b64decode(client.evaluate(f'cujuVideoExport.read({offset}, {_PIECE})'))
             if not piece:
-                raise VideoError('the browser lost the finished video before it was saved')
+                raise VideoMessageError('server.video.lost')
             stream.write(piece)
     client.evaluate('cujuVideoExport.clear()')
     if partial.stat().st_size != size:
-        raise VideoError(
-            f'expected {size} bytes of video from the browser, found {partial.stat().st_size}'
-        )
+        raise VideoMessageError('server.video.bytes', size=size, found=partial.stat().st_size)
     return written, limited, str(state.get('codec') or '')
 
 
@@ -1145,12 +1139,11 @@ def _draw_with_ffmpeg(
                 encoder.wait(30)
                 limit_bytes = options.max_megabytes * 1024 * 1024
                 if partial.exists() and partial.stat().st_size >= 0.9 * limit_bytes:
-                    raise VideoError(
-                        f'the video reached its maximum size of {options.max_megabytes} MB, '
-                        'so choose a shorter range or raise the maximum size'
+                    raise VideoMessageError(
+                        'server.video.max_size', most=options.max_megabytes
                     ) from error
                 tail = b''.join(stderr).decode(errors='replace').strip()[-400:]
-                raise VideoError(f'ffmpeg stopped while encoding, {tail}') from error
+                raise VideoMessageError('server.video.ffmpeg_stopped', detail=tail) from error
             index += 1
             now = time.monotonic()
             if now - reported >= 0.5 or index == total:
@@ -1175,7 +1168,7 @@ def _draw_with_ffmpeg(
         code = encoder.wait()
         if code != 0:
             tail = b''.join(stderr).decode(errors='replace').strip()[-400:]
-            raise VideoError(f'ffmpeg failed with exit code {code}, {tail}')
+            raise VideoMessageError('server.video.ffmpeg_exit', code=code, detail=tail)
         return index, limited
     finally:
         if encoder.poll() is None:
@@ -1227,14 +1220,17 @@ def export(
     frames = frame_count(start, end, options.fps)
     limit = round(options.max_seconds * options.fps)
     if not options.broadcast and frames > limit:
-        raise ArgumentError(
-            f'expected at most {options.max_seconds:g} seconds of video, the range from '
-            f'{start:.1f} to {end:.1f} runs {end - start:.1f} seconds, so choose a shorter range '
-            'or raise the maximum length'
+        raise MessageError(
+            'server.video.max_length',
+            most=f'{options.max_seconds:g}',
+            start=f'{start:.1f}',
+            end=f'{end:.1f}',
+            length=f'{end - start:.1f}',
         )
     chrome = find_chrome(options.chrome)
     if chrome is None:
-        raise VideoError(chrome_missing())
+        found = chrome_missing()
+        raise VideoMessageError(found['id'], **found['values'])
     # ffmpeg is optional and serves only an MP4 that the browser cannot encode.
     ffmpeg = find_ffmpeg(options.ffmpeg) if wanted != 'webm' else None
     summary = {
@@ -1331,9 +1327,7 @@ def resolve_source(source: str) -> tuple[Path, str | None]:
     found = _library.path_of(source)
     if found is not None:
         return found, source
-    raise ArgumentError(
-        f'expected a .cjr file or the identifier of a recording of the library, found {source!r}'
-    )
+    raise MessageError('server.video.source', source=repr(source))
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1615,7 +1609,7 @@ def main(arguments: list[str] | None = None) -> int:
         emit({'stage': 'cancelled'})
         return 130
     except (Error, OSError) as error:
-        emit({'stage': 'failed', 'error': str(error)})
+        emit({'stage': 'failed', 'error': str(error), **_messages.id_fields(error)})
         return 1
     return 0
 

@@ -36,6 +36,7 @@ from typing import Any
 from cuju.errors import Error
 
 from ._store import home as _home
+from ._text.messages import counted
 
 
 def main(arguments: list[str] | None = None) -> int:
@@ -622,7 +623,8 @@ def _find(options: argparse.Namespace) -> int:
         print(f'  {result["minute"]:>6}  t={result["t"]:g}  {result["text"]}')
         print(f'          {base}{result["url"]}')
     shown = len(found['results'])
-    print(f'{shown} of {found["total"]} moments in {found["recordings"]} recordings')
+    moments = counted(found['total'], 'moment')
+    print(f'{shown} of {moments} in {counted(found["recordings"], "recording")}')
     if shown and server is None:
         print('No server runs, and cuju render open with an address above in quotes starts one.')
     return 0
@@ -829,7 +831,8 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
                 f'{medal} {target}'
                 for medal, target in zip(_challenges.MEDALS, entry['targets'], strict=True)
             )
-            print(f'{entry["id"]}  {entry["title"]}, {entry["attempts"]} attempts, {targets}')
+            attempts = counted(entry['attempts'], 'attempt')
+            print(f'{entry["id"]}  {entry["title"]}, {attempts}, {targets}')
             print(f'    {entry["goal"]}')
         return 0
     if not options.team:
@@ -840,9 +843,9 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
 
     def show(result: dict) -> None:
         if result['scored']:
-            seconds = f'scored after {result["seconds"]:g} seconds'
+            seconds = f'scored after {counted(result["seconds"], "second")}'
             if not result['counts'] and spec['limit'] is not None:
-                seconds += f', past the limit of {spec["limit"]:g} seconds'
+                seconds += f', past the limit of {counted(spec["limit"], "second")}'
         else:
             seconds = 'no goal'
         goals = f'{result["goals"][0]} for, {result["goals"][1]} against'
@@ -869,7 +872,7 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
         print(json.dumps(outcome, indent=1))
         return 0
     if any(result['counts'] for result in outcome['attempts']):
-        print(f'value {outcome["value"]:g}, {outcome["seconds"]:g} seconds to score')
+        print(f'value {outcome["value"]:g}, {counted(outcome["seconds"], "second")} to score')
     elif spec['measure'] == 'margin':
         print(f'value {outcome["value"]:g}, no goal scored')
     else:
@@ -879,7 +882,7 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
     else:
         print(f'medal {outcome["medal"] or "none"}, rank {outcome["rank"] or "outside the board"}')
         best = outcome['personal_best']
-        print(f'personal best {best["value"]:g} in {best["seconds"]:g} seconds')
+        print(f'personal best {best["value"]:g} in {counted(best["seconds"], "second")}')
     if outcome['group']:
         print(f'group {outcome["group"]}, list it with cuju render recordings --group')
     return 0
@@ -897,7 +900,7 @@ def _recordings(options: argparse.Namespace) -> int:
             print(json.dumps({'group': moved, 'restored' if restore else 'trashed': changed}))
         elif changed:
             where = 'from the Trash' if restore else 'to the Trash'
-            print(f'moved {len(changed)} recordings of {moved} {where}')
+            print(f'moved {counted(len(changed), "recording")} of {moved} {where}')
         if not changed:
             place = 'the Trash' if restore else 'the library'
             print(f'cuju render: no group {moved} in {place}', file=sys.stderr)
@@ -921,7 +924,8 @@ def _recordings(options: argparse.Namespace) -> int:
         listed.add(group['id'])
         members = [item for item in entries if (item.get('group') or {}).get('id') == group['id']]
         members.sort(key=lambda item: item['group'].get('attempt', 0))
-        print(f'{group["id"]}  {group["title"]}, {group["result"]}, {len(members)} recordings')
+        shown = counted(len(members), 'recording')
+        print(f'{group["id"]}  {group["title"]}, {group["result"]}, {shown}')
         for member in members:
             print(f'    {member["id"]}  attempt {member["group"].get("attempt", 0) + 1}')
     return 0

@@ -1,0 +1,947 @@
+{
+  "goalkeeper": {
+    "pt": "goleiro"
+  },
+  "keeper": {
+    "pt": "goleiro",
+    "note": "Same word as goalkeeper. Never 'guarda-redes'."
+  },
+  "defender": {
+    "pt": "defensor",
+    "note": "Generic role. 'zagueiro' only for a centre back, which the app never names."
+  },
+  "attacker": {
+    "pt": "atacante"
+  },
+  "outfield player": {
+    "pt": "jogador de linha",
+    "note": "Roster label 'Outfield {n}' = 'Jogador de linha {n}' or 'Linha {n}' where space is short."
+  },
+  "team": {
+    "pt": "time",
+    "note": "Never 'equipe' in football context."
+  },
+  "side": {
+    "pt": "lado",
+    "note": "Left side / right side of a match. 'Your side' = 'Seu lado'."
+  },
+  "home (playing at home)": {
+    "pt": "mandante",
+    "note": "'Left, at home' = 'Esquerda (mandante)'."
+  },
+  "away (playing away)": {
+    "pt": "visitante"
+  },
+  "home and away": {
+    "pt": "ida e volta",
+    "note": "For a league: 'turno e returno'. For a tie: 'ida e volta'. Avoid 'em casa e fora'."
+  },
+  "role (GK, DF, MF, FW)": {
+    "pt": "posição",
+    "note": "Short labels GOL, DEF, MEI, ATA. In control settings 'GRF role' = 'função no GRF'."
+  },
+  "kit": {
+    "pt": "uniforme"
+  },
+  "away kit": {
+    "pt": "uniforme reserva"
+  },
+  "shirt": {
+    "pt": "camisa"
+  },
+  "shorts": {
+    "pt": "calção"
+  },
+  "socks": {
+    "pt": "meiões",
+    "note": "Football socks are 'meião' in Brazil. pt.json says 'Meias' today."
+  },
+  "trim": {
+    "pt": "detalhes",
+    "note": "'Trim color' = 'Cor dos detalhes'. pt.json uses singular 'detalhe', which reads oddly."
+  },
+  "badge": {
+    "pt": "escudo"
+  },
+  "shirt number": {
+    "pt": "número da camisa",
+    "note": "In captions 'number {number}' = 'camisa {number}' is good and stays."
+  },
+  "hoops": {
+    "pt": "listras horizontais"
+  },
+  "halves": {
+    "pt": "meio a meio",
+    "note": "pt.json says 'Metades'. 'Camisa meio a meio' is what fans say."
+  },
+  "sash": {
+    "pt": "faixa diagonal"
+  },
+  "artwork": {
+    "pt": "arte",
+    "note": "'Shirt artwork' = 'Arte da camisa'."
+  },
+  "roster": {
+    "pt": "elenco"
+  },
+  "lineups": {
+    "pt": "escalações"
+  },
+  "match": {
+    "pt": "partida",
+    "note": "A match between two sides. Short labels may use 'jogo'."
+  },
+  "kick-off (start of match)": {
+    "pt": "pontapé inicial"
+  },
+  "kick-off (restart after a goal)": {
+    "pt": "saída de bola",
+    "note": "format.mode.kickoff and transition.restart.kickoff are restarts. Use 'Saída de bola' there."
+  },
+  "half time": {
+    "pt": "intervalo"
+  },
+  "full time": {
+    "pt": "fim de jogo"
+  },
+  "goal": {
+    "pt": "gol"
+  },
+  "scorer": {
+    "pt": "autor do gol"
+  },
+  "assist": {
+    "pt": "assistência"
+  },
+  "shot (action, button)": {
+    "pt": "chute"
+  },
+  "shots (statistic)": {
+    "pt": "finalizações",
+    "note": "Stat columns and charts. 'Shots and goals' = 'Finalizações e gols'."
+  },
+  "on target": {
+    "pt": "no gol",
+    "note": "'Shots on target' = 'finalizações no gol'. Column 'On target' = 'No gol'."
+  },
+  "header": {
+    "pt": "cabeceio",
+    "note": "'Header at goal' = 'Cabeceio para o gol'."
+  },
+  "save (goalkeeper)": {
+    "pt": "defesa"
+  },
+  "block": {
+    "pt": "bloqueio",
+    "note": "Caption 'Blocked, {player}' = 'Chute bloqueado por {player}'."
+  },
+  "high pass": {
+    "pt": "passe alto"
+  },
+  "through ball": {
+    "pt": "passe em profundidade"
+  },
+  "key pass": {
+    "pt": "passe decisivo"
+  },
+  "pass accuracy": {
+    "pt": "precisão nos passes"
+  },
+  "tackle (statistic, event)": {
+    "pt": "desarme",
+    "note": "pt.json uses 'carrinho' for every tackle. Stats, moments filter, sound 'when a player wins the ball' and awards count desarmes."
+  },
+  "sliding tackle": {
+    "pt": "carrinho"
+  },
+  "sliding (GRF action)": {
+    "pt": "carrinho"
+  },
+  "slide": {
+    "pt": "carrinho"
+  },
+  "dribble": {
+    "pt": "drible",
+    "note": "Verb 'driblar'. Button while held: 'Driblar (segurar)'."
+  },
+  "sprint": {
+    "pt": "corrida",
+    "note": "Button 'Correr'. Engine action 'release sprint' = 'parar de correr'."
+  },
+  "release direction / sprint / dribble": {
+    "pt": "soltar direção / parar de correr / parar de driblar",
+    "note": "GRF sticky actions. 'Soltar corrida' reads as a literal calque."
+  },
+  "touch (of the ball)": {
+    "pt": "toque"
+  },
+  "possession": {
+    "pt": "posse de bola",
+    "note": "Short form 'posse'."
+  },
+  "foul": {
+    "pt": "falta"
+  },
+  "offside": {
+    "pt": "impedimento"
+  },
+  "referee calls / decisions": {
+    "pt": "lances de arbitragem",
+    "note": "'Decision replays' = 'Replays dos lances de arbitragem'. 'Replays de decisões' is a calque."
+  },
+  "set piece": {
+    "pt": "bola parada"
+  },
+  "restart": {
+    "pt": "reinício",
+    "note": "The restart of play after a stoppage. 'Restart transitions' = 'Transições nos reinícios'. For the playback control 'Restart' see 'restart (playback)'."
+  },
+  "corner": {
+    "pt": "escanteio"
+  },
+  "free kick": {
+    "pt": "tiro livre",
+    "note": "In captions 'Falta para {team}' also reads naturally, but keep 'tiro livre' in labels and filters."
+  },
+  "penalty": {
+    "pt": "pênalti"
+  },
+  "penalty spot": {
+    "pt": "marca do pênalti",
+    "note": "Achievement 'From the spot' = 'Da marca da cal' is good."
+  },
+  "throw-in": {
+    "pt": "lateral"
+  },
+  "goal kick": {
+    "pt": "tiro de meta"
+  },
+  "woodwork": {
+    "pt": "trave",
+    "note": "Moments filter 'Woodwork' = 'Bolas na trave'."
+  },
+  "bar": {
+    "pt": "travessão"
+  },
+  "just wide": {
+    "pt": "passou raspando",
+    "note": "'Just over' = 'por cima, raspando'."
+  },
+  "counterattack": {
+    "pt": "contra-ataque"
+  },
+  "pitch": {
+    "pt": "gramado",
+    "note": "'campo' also fine, but 'Campo' is the page name, so prefer 'gramado' for the playing surface."
+  },
+  "crowd": {
+    "pt": "torcida"
+  },
+  "fans": {
+    "pt": "torcida",
+    "note": "'Fan colors' = 'cores da torcida'."
+  },
+  "boards": {
+    "pt": "placas",
+    "note": "Advertising boards. 'placas de publicidade' where context needs it."
+  },
+  "floodlights": {
+    "pt": "refletores"
+  },
+  "draw (result)": {
+    "pt": "empate"
+  },
+  "goal difference": {
+    "pt": "saldo de gols"
+  },
+  "goals for": {
+    "pt": "gols pró",
+    "note": "Table column 'For' = 'GP' or 'Pró'. In prose 'gols marcados'."
+  },
+  "goals against / conceded": {
+    "pt": "gols sofridos",
+    "note": "Table column 'Against' = 'GC' or 'Contra'."
+  },
+  "clean sheet": {
+    "pt": "sem sofrer gols",
+    "note": "As Cartola says it (SG). Column short form 'SG'."
+  },
+  "comeback": {
+    "pt": "virada"
+  },
+  "rout": {
+    "pt": "goleada"
+  },
+  "hat trick": {
+    "pt": "hat-trick"
+  },
+  "brace": {
+    "pt": "bis",
+    "note": "pt.json says 'Doblete', which is Spanish. Narrators say 'fez o bis'."
+  },
+  "screamer": {
+    "pt": "golaço"
+  },
+  "late winner": {
+    "pt": "gol da vitória no fim",
+    "note": "Or 'gol no apagar das luzes' in the award name."
+  },
+  "player of the match": {
+    "pt": "craque da partida"
+  },
+  "MVP": {
+    "pt": "craque da partida",
+    "note": "'MVP medal' = 'Medalha de craque da partida'. 'Most valuable player' = 'Craque da partida' too."
+  },
+  "playmaker (most assists)": {
+    "pt": "garçom",
+    "note": "Brazilian slang for the assist king. 'Creator' (key passes) = 'Armador'."
+  },
+  "creator (most key passes)": {
+    "pt": "armador"
+  },
+  "wall (most saves)": {
+    "pt": "paredão"
+  },
+  "engine (most touches)": {
+    "pt": "motor do time"
+  },
+  "ball winner": {
+    "pt": "ladrão de bolas"
+  },
+  "sharpshooter": {
+    "pt": "pé calibrado"
+  },
+  "rating (player, 0 to 10)": {
+    "pt": "nota"
+  },
+  "celebration": {
+    "pt": "comemoração"
+  },
+  "move (celebration)": {
+    "pt": "comemoração",
+    "note": "The list of celebration moves. Use 'movimento' only where 'comemoração' would repeat badly."
+  },
+  "highlights": {
+    "pt": "melhores momentos"
+  },
+  "post-match show": {
+    "pt": "pós-jogo",
+    "note": "Noun. 'Show at full time' = 'Pós-jogo'. Avoid 'show pós-jogo'."
+  },
+  "tournament": {
+    "pt": "torneio"
+  },
+  "classic league": {
+    "pt": "pontos corridos",
+    "note": "Preset 'Classic league' = 'Pontos corridos', the Brazilian name of the double round robin."
+  },
+  "round robin": {
+    "pt": "todos contra todos"
+  },
+  "knockout": {
+    "pt": "mata-mata"
+  },
+  "double elimination": {
+    "pt": "dupla eliminação"
+  },
+  "group stage": {
+    "pt": "fase de grupos"
+  },
+  "league phase": {
+    "pt": "fase de liga"
+  },
+  "king of the hill": {
+    "pt": "quem ganha fica",
+    "note": "The pickup-football rule Brazilians know, and exactly this format. 'Rei da colina' is a calque. 'king {name}' in round labels = 'no comando: {name}'."
+  },
+  "gauntlet": {
+    "pt": "escalada"
+  },
+  "playoffs": {
+    "pt": "playoffs"
+  },
+  "stage": {
+    "pt": "fase"
+  },
+  "round": {
+    "pt": "rodada"
+  },
+  "matchday": {
+    "pt": "rodada"
+  },
+  "round of N": {
+    "pt": "fase de {count}",
+    "note": "Count is a placeholder, so 'oitavas' cannot be used. Keep 'fase de {count}'."
+  },
+  "bracket": {
+    "pt": "chave"
+  },
+  "bye": {
+    "pt": "folga"
+  },
+  "seed (bracket position)": {
+    "pt": "cabeça de chave",
+    "note": "'top seeds' = 'melhores cabeças de chave', 'lowest seeds' = 'piores cabeças de chave'."
+  },
+  "seeding": {
+    "pt": "chaveamento",
+    "note": "pt.json says 'distribuição', which hides the meaning."
+  },
+  "seed (random number)": {
+    "pt": "semente",
+    "note": "Placeholder 'Random' = 'Aleatória'. 'Draw a seed' = 'Sortear uma semente'."
+  },
+  "draw (lots, verb on a seed button)": {
+    "pt": "sortear"
+  },
+  "draw (of groups)": {
+    "pt": "sorteio"
+  },
+  "lots": {
+    "pt": "sorteio",
+    "note": "'by lots' = 'por sorteio'."
+  },
+  "entrant": {
+    "pt": "participante"
+  },
+  "enter (a tournament)": {
+    "pt": "inscrever",
+    "note": "'{count} entrants so far' = '{count} inscritos até agora'."
+  },
+  "holder (of a ladder or hill place)": {
+    "pt": "quem ocupa o lugar"
+  },
+  "tie (two-legged pairing)": {
+    "pt": "confronto"
+  },
+  "leg": {
+    "pt": "jogo",
+    "note": "'Two legged ties' = 'confrontos de ida e volta'. '{match}, leg {number}' = '{match}, jogo {number}'."
+  },
+  "away goals": {
+    "pt": "gols fora de casa"
+  },
+  "replay (extra tournament match)": {
+    "pt": "jogo extra",
+    "note": "pt.json says 'nova partida'. Not to be confused with the broadcast replay."
+  },
+  "decider / deciding match": {
+    "pt": "jogo de desempate"
+  },
+  "tiebreaker": {
+    "pt": "critério de desempate"
+  },
+  "head to head": {
+    "pt": "confronto direto"
+  },
+  "standings / table": {
+    "pt": "classificação",
+    "note": "The table itself = 'tabela'. 'Final ranking' = 'Classificação final'."
+  },
+  "place (position in a table)": {
+    "pt": "posição"
+  },
+  "forfeit / awarded match": {
+    "pt": "W.O.",
+    "note": "'Award to {name}' = 'Dar W.O. a {name}'. Button 'Award' = 'Dar W.O.'."
+  },
+  "trophy ceremony": {
+    "pt": "entrega da taça"
+  },
+  "rating (entrant, Elo-like)": {
+    "pt": "rating",
+    "note": "As Brazilian chess and games say it. Distinct from the player 'nota'."
+  },
+  "concurrency (matches of agents at once)": {
+    "pt": "partidas simultâneas"
+  },
+  "format (team, 5v5 or 11v11)": {
+    "pt": "formato",
+    "note": "'5 against 5' = '5 contra 5'. 'five a side' = 'cinco contra cinco'. 'Eleven a side' = 'onze contra onze'."
+  },
+  "vs / against (two teams)": {
+    "pt": "x",
+    "note": "'{left} against {right}' = '{left} x {right}' everywhere. pt.json mixes 'contra' and 'x'. Use 'contra' only in prose such as 'jogar contra a IA'."
+  },
+  "score (result)": {
+    "pt": "placar",
+    "note": "'{left} to {right}' = '{left} a {right}'."
+  },
+  "recording": {
+    "pt": "gravação"
+  },
+  "Recorder": {
+    "pt": "Recorder",
+    "note": "The Python class cuju.render.Recorder stays in English in backticks. As a source label 'Recorder' = 'Gravador (script)'."
+  },
+  "Trash": {
+    "pt": "Lixeira",
+    "note": "Capitalized as a place, as Windows pt-BR does."
+  },
+  "move to Trash": {
+    "pt": "mover para a Lixeira"
+  },
+  "delete permanently": {
+    "pt": "excluir para sempre",
+    "note": "Button may stay 'Excluir permanentemente'. Confirmation prose reads better with 'para sempre'."
+  },
+  "top level (no folder)": {
+    "pt": "raiz",
+    "note": "'No folder, the top level' = 'Sem pasta (raiz)'."
+  },
+  "favorite": {
+    "pt": "favorita",
+    "note": "Agrees with 'gravação'."
+  },
+  "tags": {
+    "pt": "tags",
+    "note": "What Brazilian apps say. pt.json says 'etiquetas'."
+  },
+  "provenance": {
+    "pt": "origem",
+    "note": "pt.json says 'procedência', which sounds like a legal document."
+  },
+  "source (of a recording)": {
+    "pt": "origem",
+    "note": "Filter 'Source' on Recordings and Moments = 'Origem'. Different from 'live source'."
+  },
+  "live source": {
+    "pt": "fonte ao vivo",
+    "note": "The running script that streams. Keep distinct from the stream itself."
+  },
+  "live stream": {
+    "pt": "transmissão ao vivo"
+  },
+  "go live": {
+    "pt": "voltar ao vivo",
+    "note": "pt.json says 'Ir para o ao vivo'."
+  },
+  "behind live": {
+    "pt": "de atraso",
+    "note": "'{time} behind live' = '{time} de atraso'."
+  },
+  "request (a match)": {
+    "pt": "solicitar",
+    "note": "Noun 'solicitação'. server.feed strings use 'pedida', align them."
+  },
+  "requested match": {
+    "pt": "partida solicitada"
+  },
+  "built-in AI": {
+    "pt": "IA nativa",
+    "note": "GRF's own bot. 'IA embutida' (47 uses today) sounds like hardware. 'GRF's built-in AI' = 'IA nativa do GRF'. Also a team name in lists."
+  },
+  "ability (of the built-in AI, 0 to 1)": {
+    "pt": "habilidade"
+  },
+  "difficulty (scenario)": {
+    "pt": "dificuldade"
+  },
+  "agent": {
+    "pt": "agente"
+  },
+  "policy": {
+    "pt": "política",
+    "note": "RL term. 'Python policy' = 'Política em Python'."
+  },
+  "submission": {
+    "pt": "submissão",
+    "note": "Kaggle term Brazilian Kagglers use."
+  },
+  "register (a team)": {
+    "pt": "cadastrar"
+  },
+  "registered team": {
+    "pt": "time cadastrado",
+    "note": "pt.json says 'registrado'. 'Cadastrar' is what Brazilian apps say."
+  },
+  "registry (of teams)": {
+    "pt": "cadastro de times",
+    "note": "'In the registry' = 'Cadastrado'."
+  },
+  "starter team": {
+    "pt": "time de exemplo",
+    "note": "'time inicial' reads as starting lineup."
+  },
+  "sample": {
+    "pt": "exemplo",
+    "note": "'Sample match' = 'partida de exemplo'."
+  },
+  "person (human player)": {
+    "pt": "pessoa",
+    "note": "Tournament entrant kind 'Person' = 'Pessoa'. 'two people' = 'duas pessoas'."
+  },
+  "scenario": {
+    "pt": "cenário"
+  },
+  "episode": {
+    "pt": "episódio",
+    "note": "'End of episode' = 'Fim do episódio'. pt.json says 'Partida encerrada', which is wrong for academy episodes that end early."
+  },
+  "step (engine)": {
+    "pt": "passo",
+    "note": "'steps' of a match. Different from tour and wizard steps."
+  },
+  "step (tour, wizard, setup)": {
+    "pt": "etapa"
+  },
+  "batch": {
+    "pt": "lote"
+  },
+  "environment": {
+    "pt": "ambiente"
+  },
+  "action set": {
+    "pt": "conjunto de ações"
+  },
+  "assignment (dynamic, fixed)": {
+    "pt": "atribuição",
+    "note": "'dinâmica', 'fixa'."
+  },
+  "frame": {
+    "pt": "quadro"
+  },
+  "academy (GRF scenario family)": {
+    "pt": "treino",
+    "note": "'Academia' means gym in Brazil. 'Academy, corner' = 'Treino: escanteio'. Achievement 'Academy graduate' = 'Cria da base'. Keep code names academy_* untouched."
+  },
+  "drill": {
+    "pt": "exercício"
+  },
+  "challenge": {
+    "pt": "desafio"
+  },
+  "run (of a challenge)": {
+    "pt": "sessão",
+    "note": "pt.json says 'rodada', which collides with tournament rounds, and 'execução' in server messages. 'Full run' = 'Sessão completa'."
+  },
+  "run headless": {
+    "pt": "simular",
+    "note": "Plays on the server without the page, faster than real time. pt.json says 'Rodar em segundo plano'. 'headless run' = 'simulação'."
+  },
+  "practice": {
+    "pt": "prática",
+    "note": "'Practice, one attempt' = 'Prática (uma tentativa)'. Verb 'praticar'."
+  },
+  "target (bronze, silver, gold)": {
+    "pt": "meta"
+  },
+  "leaderboard": {
+    "pt": "ranking",
+    "note": "Challenge boards. Keeps 'classificação' free for tournament standings."
+  },
+  "rank": {
+    "pt": "posição"
+  },
+  "personal best": {
+    "pt": "recorde pessoal"
+  },
+  "achievement": {
+    "pt": "conquista"
+  },
+  "earn (an achievement)": {
+    "pt": "conquistar"
+  },
+  "off the mark (achievement)": {
+    "pt": "desencantou",
+    "note": "First goal. pt.json says 'Saiu do zero'."
+  },
+  "giant slayer (achievement)": {
+    "pt": "deu zebra",
+    "note": "Beating the strongest AI. pt.json says 'Matador de gigantes'."
+  },
+  "lesson": {
+    "pt": "lição"
+  },
+  "guided tour": {
+    "pt": "tour guiado"
+  },
+  "tip": {
+    "pt": "dica"
+  },
+  "diagnostic report": {
+    "pt": "relatório de diagnóstico"
+  },
+  "check (diagnostic)": {
+    "pt": "verificação",
+    "note": "'ok' / 'aviso' / 'FALHA'."
+  },
+  "clean feed": {
+    "pt": "sinal limpo",
+    "note": "Brazilian TV term for the feed without overlays. Here it keeps the broadcast graphics, so 'sinal' alone is fine after first mention."
+  },
+  "feed": {
+    "pt": "sinal"
+  },
+  "safe area": {
+    "pt": "área segura"
+  },
+  "graphics (broadcast overlays)": {
+    "pt": "gráficos",
+    "note": "'Graphics scale' = 'Escala dos gráficos'."
+  },
+  "picture": {
+    "pt": "imagem"
+  },
+  "broadcast": {
+    "pt": "transmissão"
+  },
+  "broadcast camera": {
+    "pt": "câmera de transmissão"
+  },
+  "presentation (broadcast presentation)": {
+    "pt": "apresentação"
+  },
+  "presentation package": {
+    "pt": "pacote de apresentação"
+  },
+  "worker": {
+    "pt": "worker",
+    "note": "Web worker. Stays in English."
+  },
+  "replay (broadcast)": {
+    "pt": "replay",
+    "note": "Noun. Verb 'Replay the last goal' = 'Rever o último gol'."
+  },
+  "reverse angle": {
+    "pt": "contraplano"
+  },
+  "moment (searchable event)": {
+    "pt": "lance",
+    "note": "The Moments feature. 'Search moments' = 'Buscar lances'. 'Moments of this match' = 'Lances desta partida'."
+  },
+  "moment (point in time)": {
+    "pt": "momento",
+    "note": "'Go to the newest moment' = 'Ir para o momento mais recente'."
+  },
+  "captions": {
+    "pt": "legendas"
+  },
+  "annotations": {
+    "pt": "anotações"
+  },
+  "team editor": {
+    "pt": "editor de times"
+  },
+  "field editor": {
+    "pt": "página Campo",
+    "note": "The app calls it the Field page. Say 'na página Campo'."
+  },
+  "painter": {
+    "pt": "editor de desenho"
+  },
+  "photo mode": {
+    "pt": "modo foto"
+  },
+  "look (photo filter)": {
+    "pt": "filtro",
+    "note": "Photo mode 'Look' = 'Filtro'. Player 'looks' = 'aparência'. Team look = 'visual'."
+  },
+  "model (3D)": {
+    "pt": "modelo"
+  },
+  "rigged": {
+    "pt": "com esqueleto"
+  },
+  "skin (glTF)": {
+    "pt": "skin"
+  },
+  "home folder (renderer's folder)": {
+    "pt": "pasta do cuju",
+    "note": "The folder chosen by --home. pt.json says 'pasta base'."
+  },
+  "custom": {
+    "pt": "personalizado",
+    "note": "Agree with the noun: 'Personalizada' for predefinição."
+  },
+  "theme": {
+    "pt": "tema",
+    "note": "'Follow the system' = 'Usar o do sistema'."
+  },
+  "follow the browser (language)": {
+    "pt": "usar o do navegador"
+  },
+  "motion (reduced motion)": {
+    "pt": "animações",
+    "note": "'Reduced motion' = 'Animações reduzidas'. 'Movimento' reads as player movement."
+  },
+  "command palette": {
+    "pt": "paleta de comandos"
+  },
+  "View menu": {
+    "pt": "menu Exibir",
+    "note": "pt-BR software names this menu 'Exibir'. pt.json says 'Visualização'."
+  },
+  "tile": {
+    "pt": "miniatura",
+    "note": "pt.json says 'bloco'."
+  },
+  "id": {
+    "pt": "ID"
+  },
+  "controller": {
+    "pt": "controle"
+  },
+  "bumper": {
+    "pt": "bumper",
+    "note": "Brazilian players say RB and LB. 'Right bumper' = 'Bumper direito (RB)' where room allows."
+  },
+  "dead zone": {
+    "pt": "zona morta"
+  },
+  "tester (input)": {
+    "pt": "teste de controles",
+    "note": "'Input tester' = 'Teste de controles'. 'Testador' sounds like a job title."
+  },
+  "touch controls": {
+    "pt": "controles de toque"
+  },
+  "save (verb)": {
+    "pt": "salvar"
+  },
+  "delete": {
+    "pt": "excluir"
+  },
+  "restore (from Trash)": {
+    "pt": "restaurar"
+  },
+  "upload": {
+    "pt": "enviar"
+  },
+  "download": {
+    "pt": "baixar"
+  },
+  "drop (a file)": {
+    "pt": "arrastar e soltar",
+    "note": "'Drop a .cjr file here' = 'Arraste um arquivo .cjr para cá'."
+  },
+  "choose / pick / select": {
+    "pt": "escolher",
+    "note": "'selecionar' for items in a list or canvas."
+  },
+  "set up": {
+    "pt": "configurar"
+  },
+  "reset (to defaults)": {
+    "pt": "restaurar o padrão",
+    "note": "'Reset' alone on a control = 'Redefinir'. Reset the roll or zoom = 'zerar'."
+  },
+  "restart (playback, server)": {
+    "pt": "reiniciar"
+  },
+  "try again / retry": {
+    "pt": "tentar de novo"
+  },
+  "skip": {
+    "pt": "pular"
+  },
+  "next": {
+    "pt": "próximo",
+    "note": "Agree with the noun: 'Próxima' for etapa, lição, tentativa. Wizard button = 'Avançar'."
+  },
+  "finish": {
+    "pt": "concluir"
+  },
+  "start": {
+    "pt": "começar",
+    "note": "'iniciar' for processes and the server. 'Start challenge' = 'Iniciar desafio'."
+  },
+  "play (playback)": {
+    "pt": "reproduzir"
+  },
+  "play (a game or match)": {
+    "pt": "jogar"
+  },
+  "resume (game)": {
+    "pt": "continuar"
+  },
+  "resume (tour, tournament)": {
+    "pt": "retomar"
+  },
+  "unmute": {
+    "pt": "ativar o som"
+  },
+  "watch": {
+    "pt": "assistir",
+    "note": "'Watch {title}' = 'Assistir a {title}' in prose, 'Assistir' on buttons."
+  },
+  "seek": {
+    "pt": "ir para outro ponto",
+    "note": "'A click on the timeline seeks' = 'Clique na linha do tempo para ir a outro ponto'. pt.json says 'muda o ponto da partida'."
+  },
+  "preview": {
+    "pt": "prévia",
+    "note": "Noun. Verb 'visualizar'."
+  },
+  "could not / failed to": {
+    "pt": "não foi possível",
+    "note": "'X could not be read, {reason}' = 'Não foi possível ler X: {reason}'."
+  },
+  "loading": {
+    "pt": "carregando…"
+  },
+  "waiting (for)": {
+    "pt": "aguardando…"
+  },
+  "done (finished)": {
+    "pt": "concluído",
+    "note": "Lesson state 'Done' = 'Concluída'."
+  },
+  "running (status)": {
+    "pt": "em andamento"
+  },
+  "playing (status)": {
+    "pt": "em jogo"
+  },
+  "nothing matches": {
+    "pt": "nenhum resultado"
+  },
+  "seconds / minutes": {
+    "pt": "s / min",
+    "note": "Short labels '12 s', '3 min'. Prose may spell 'segundos', 'minutos'."
+  },
+  "page names": {
+    "pt": "Início, Assistir, Jogar, Gravações, Partidas, Torneios, Times, Campo, Ajuda",
+    "note": "Home, Watch, Play, Recordings, Matches, Tournaments, Teams, Field, Help. Cited in prose without quotes: 'na página Partidas'."
+  },
+  "library": {
+    "pt": "biblioteca"
+  },
+  "fixture": {
+    "pt": "jogo",
+    "note": "'Fixtures and results' = 'Jogos e resultados'."
+  },
+  "medal": {
+    "pt": "medalha",
+    "note": "bronze, prata, ouro. '{medal} medal' = 'Medalha de {medal}'."
+  },
+  "attempt": {
+    "pt": "tentativa"
+  },
+  "preset": {
+    "pt": "predefinição",
+    "note": "Presentation, field and tournament presets alike. 'Custom' preset = 'Personalizada'."
+  },
+  "settings": {
+    "pt": "configurações"
+  },
+  "camera": {
+    "pt": "câmera",
+    "note": "Broadcast = 'transmissão', tactical = 'tática', behind the goal = 'atrás do gol', free = 'livre', follow player = 'seguir jogador'."
+  },
+  "quality": {
+    "pt": "qualidade",
+    "note": "baixa, média, alta. Video 'Draft' = 'Rascunho', 'Standard' = 'Padrão'."
+  },
+  "frame rate": {
+    "pt": "taxa de quadros",
+    "note": "'{rate} a second' = '{rate} por segundo'."
+  },
+  "stick": {
+    "pt": "analógico"
+  },
+  "D-pad": {
+    "pt": "direcional"
+  }
+}

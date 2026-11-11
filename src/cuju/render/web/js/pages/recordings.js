@@ -269,12 +269,13 @@ export class RecordingsPage {
         return rows;
     }
 
-    // A select of the toolbar, made a dropdown, whose change runs pick.
-    filterSelect(label, prefix, entries, value, pick, align = 'left') {
+    // A select of the toolbar, made a dropdown, whose change runs pick. Its look is the words of
+    // a prefix, or a symbol given as { icon }, which then stands in front of the value.
+    filterSelect(label, look, entries, value, pick, align = 'left') {
         const el = h('select', { 'aria-label': label }, entries.map(([v, t]) => h('option', { value: v }, t)));
         el.value = entries.some(([v]) => v === value) ? value : entries[0][0];
         el.addEventListener('change', () => pick(el.value));
-        queueMicrotask(() => enhanceSelect(el, { label, prefix, align }));
+        queueMicrotask(() => enhanceSelect(el, { label, ...(typeof look === 'string' ? { prefix: look } : look), align }));
         return el;
     }
 
@@ -297,31 +298,31 @@ export class RecordingsPage {
             this.filters.source = 'all';
         }
         const filters = h('div', { class: 'filter-bar' },
-            this.filterSelect(t('recordings.filter.view'), t('recordings.filter.view'), [['library', t('recordings.view.library')], ['trash', t('recordings.view.trash')]], this.trash ? 'trash' : 'library', (v) => {
+            this.filterSelect(t('recordings.filter.view'), { icon: (v) => (v === 'trash' ? 'trash' : 'archive') }, [['library', t('recordings.view.library')], ['trash', t('recordings.view.trash')]], this.trash ? 'trash' : 'library', (v) => {
                 this.trash = v === 'trash';
                 this.selected.clear();
                 this.editing = null;
                 this.refresh();
             }),
-            this.filterSelect(t('recordings.filter.folder'), t('recordings.filter.folder'), folderNames.map((p) => [p, p || t('recordings.folder.any')]), this.folder, (v) => {
+            this.filterSelect(t('recordings.filter.folder'), { icon: 'folder' }, folderNames.map((p) => [p, p || t('recordings.folder.any')]), this.folder, (v) => {
                 this.folder = v;
                 this.query = '';
                 this.selected.clear();
                 this.render();
             }),
-            this.filterSelect(t('recordings.filter.scenario'), t('recordings.filter.scenario'), [['all', t('recordings.scenario.any')], ...scenarios.map((s) => [s, scenarioName(s)])], this.filters.scenario, (v) => {
+            this.filterSelect(t('recordings.filter.scenario'), { icon: 'field' }, [['all', t('recordings.scenario.any')], ...scenarios.map((s) => [s, scenarioName(s)])], this.filters.scenario, (v) => {
                 this.filters.scenario = v;
                 this.renderTable();
             }),
-            this.filterSelect(t('recordings.filter.team'), t('recordings.filter.team'), [['all', t('recordings.team.any')], ...teams.map((name) => [name, shownTeams.get(name)])], this.filters.team, (v) => {
+            this.filterSelect(t('recordings.filter.team'), { icon: 'shirt' }, [['all', t('recordings.team.any')], ...teams.map((name) => [name, shownTeams.get(name)])], this.filters.team, (v) => {
                 this.filters.team = v;
                 this.renderTable();
             }),
-            this.filterSelect(t('recordings.filter.date'), t('recordings.filter.date'), RANGES, this.filters.range, (v) => {
+            this.filterSelect(t('recordings.filter.date'), { icon: 'calendar' }, RANGES, this.filters.range, (v) => {
                 this.filters.range = v;
                 this.renderTable();
             }),
-            this.filterSelect(t('recordings.filter.favorites'), t('recordings.filter.show'), [['all', t('recordings.favorite.all')], ['yes', t('recordings.favorite.yes')]], this.filters.favorite, (v) => {
+            this.filterSelect(t('recordings.filter.favorites'), { icon: 'star' }, [['all', t('recordings.favorite.all')], ['yes', t('recordings.favorite.yes')]], this.filters.favorite, (v) => {
                 this.filters.favorite = v;
                 this.renderTable();
             }),
@@ -333,7 +334,7 @@ export class RecordingsPage {
                 this.filters.result = v;
                 this.renderTable();
             }),
-            this.sortSelectEl = this.filterSelect(t('recordings.filter.sort'), t('recordings.filter.sort'), SORTS, `${this.sortKey}:${this.sortDir}`, (v) => {
+            this.sortSelectEl = this.filterSelect(t('recordings.filter.sort'), { icon: 'sort' }, SORTS, `${this.sortKey}:${this.sortDir}`, (v) => {
                 const [key, dir] = v.split(':');
                 this.sortKey = key;
                 this.sortDir = Number(dir);
@@ -412,7 +413,7 @@ export class RecordingsPage {
             h('div', { class: 'provenance' },
                 h('h4', {}, t('recordings.details.provenance')),
                 rows.length ? h('dl', {}, rows) : h('p', { class: 'muted small' }, t('recordings.details.noProvenance')),
-                h('p', { class: 'muted small' }, t('recordings.details.provenanceNote'))),
+                h('p', { class: 'muted small' }, tn('recordings.details.provenanceNote'))),
             h('div', { class: 'toolbar' }, save,
                 h('button', { class: 'btn', type: 'button', ...symbolOnly(t('recordings.details.close')), onclick: close }, icon('close'))));
         form.addEventListener('keydown', (e) => {
@@ -549,7 +550,7 @@ export class RecordingsPage {
         }
         if (this.error) {
             this.tableHost.replaceChildren(h('div', { class: 'notice error' }, h('p', {}, this.error.message),
-                h('p', { class: 'muted' }, t('recordings.error.hint')),
+                h('p', { class: 'muted' }, tn('recordings.error.hint')),
                 h('button', { class: 'btn', type: 'button', ...symbolOnly(t('recordings.error.retry')), onclick: () => this.refresh() }, icon('refresh'))));
             this.updateActions();
             return;
@@ -605,15 +606,15 @@ export class RecordingsPage {
         const filtered = Object.entries(DEFAULT_FILTERS).some(([key, value]) => this.filters[key] !== value);
         const empty = rows.length ? null : this.trash && !this.list.length ? h('div', { class: 'empty-state' },
             h('p', { class: 'empty-title' }, t('recordings.empty.trash.title')),
-            h('p', { class: 'muted' }, t('recordings.empty.trash.text')))
+            h('p', { class: 'muted' }, tn('recordings.empty.trash.text')))
             : h('div', { class: 'empty-state' },
                 h('p', { class: 'empty-title' }, t(this.query || filtered ? 'recordings.empty.filtered.title' : this.list.length ? 'recordings.empty.folder.title' : 'recordings.empty.none.title')),
-                h('p', { class: 'muted' }, this.query || filtered ? t('recordings.empty.filtered.text')
-                    : this.list.length ? t('recordings.empty.folder.text')
+                h('p', { class: 'muted' }, this.query || filtered ? tn('recordings.empty.filtered.text')
+                    : this.list.length ? tn('recordings.empty.folder.text')
                         : tn('recordings.empty.none.text', { sample: h('code', {}, 'cuju render sample'), recorder: h('code', {}, 'cuju.render.Recorder') })),
                 !this.list.length ? h('div', { class: 'empty-actions' },
-                    h('button', { type: 'button', class: 'btn primary', onclick: () => this.app.showPage('matches') }, t('recordings.empty.none.match')),
-                    h('button', { type: 'button', class: 'btn', onclick: () => this.app.palette?.helpTopic('help-start') }, t('recordings.empty.none.help'))) : null);
+                    h('button', { type: 'button', class: 'btn primary', onclick: () => this.app.showPage('matches') }, icon('matches'), t('recordings.empty.none.match')),
+                    h('button', { type: 'button', class: 'btn', onclick: () => this.app.palette?.helpTopic('help-start') }, icon('help'), t('recordings.empty.none.help'))) : null);
         this.tableHost.replaceChildren(table, ...(empty ? [empty] : []));
         if (focusedKey) {
             const again = this.tableHost.querySelector(`tr[data-key="${CSS.escape(focusedKey)}"]`);

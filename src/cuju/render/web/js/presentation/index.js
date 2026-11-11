@@ -39,7 +39,7 @@ import { chainOf, maskLayers, reach } from './rigging.js';
 import { checkShader, extendMaterial, shaderMaterial, teamUniforms, tryCompile } from './shaders.js';
 import { TeamAudio } from './teamaudio.js';
 import { SIDES, readSides } from './assign.js';
-import { t } from '../core/i18n.js';
+import { labelText, t } from '../core/i18n.js';
 
 const LINEUP_LENGTH = 9;
 const tmpMatrix = new THREE.Matrix4();
@@ -901,7 +901,7 @@ export class Presentation {
                 context: pkg.developer ? { app: this.app, THREE } : null,
                 hello: this.hello(pkg),
                 onResponse: (msg) => this.respond(pkg, msg),
-                onStatus: (status, detail) => this.workerStatus(pkg, status, detail),
+                onStatus: (status, detail, label) => this.workerStatus(pkg, status, detail, label),
             });
         };
         if (pkg.developer) {
@@ -909,7 +909,8 @@ export class Presentation {
         } else {
             fetchFile(pkg.teamId, m.worker, 'text').then(start).catch((err) => {
                 pkg.hostPending = false;
-                this.workerStatus(pkg, 'failed', `the worker did not load, ${err.message}`);
+                const detail = `the worker did not load, ${err.message}`;
+                this.workerStatus(pkg, 'failed', detail, { id: 'presentation.reason.load', text: detail, values: { error: String(err.message) } });
             });
         }
     }
@@ -930,7 +931,7 @@ export class Presentation {
 
     // A worker that failed or restarts hands what it drove back to the manifest's own look,
     // faded so nothing snaps.
-    workerStatus(pkg, status, detail) {
+    workerStatus(pkg, status, detail, label = null) {
         // A worker that failed for good keeps its status and reason, a later disposal included.
         if (pkg.status === 'failed') {
             return;
@@ -940,7 +941,9 @@ export class Presentation {
         if (status === 'failed') {
             // The team draws its manifest alone from now on, and the viewer learns why.
             pkg.levels.level = pkg.levels.level === 'stock' ? 'stock' : 'manifest';
-            this.notice(t('presentation.notice.workerStopped', { team: pkg.manifest.name || t('presentation.notice.aTeam'), detail }));
+            // The viewer reads the reason in the page's language, the English one stays in detail.
+            const reason = label ? labelText(label) : detail;
+            this.notice(t('presentation.notice.workerStopped', { team: pkg.manifest.name || t('presentation.notice.aTeam'), detail: reason }));
         }
         if (status === 'stopped') {
             this.notice(t('presentation.notice.workerResting', { team: pkg.manifest.name || t('presentation.notice.aTeam') }));

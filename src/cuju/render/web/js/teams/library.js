@@ -114,7 +114,7 @@ export class TeamsPage {
                 this.setOffline(true);
             }
             this.root.replaceChildren(message('error', err.message,
-                h('p', { class: 'muted' }, t('library.offline')),
+                h('p', { class: 'muted' }, tn('library.offline')),
                 h('button', { class: 'btn', ...symbolOnly(t('library.retry')), onclick: () => this.refresh() }, icon('refresh'))));
             return;
         }
@@ -131,7 +131,7 @@ export class TeamsPage {
         }
         // With the built-in AI alone, the list points to the way an agent of one's own looks.
         const first = teams.some((team) => team.kind !== 'builtin') ? null : h('div', { class: 'empty-state teams-first' },
-            h('p', { class: 'muted' }, t('library.firstNote')),
+            h('p', { class: 'muted' }, tn('library.firstNote')),
             h('button', { type: 'button', class: 'btn', ...symbolOnly(t('library.firstHelp')), onclick: () => this.app.palette?.helpTopic('help-teams') }, icon('help')));
         this.root.replaceChildren(
             h('section', { class: 'panel-section' }, h('h1', {}, t('library.heading')), list, first),
@@ -244,7 +244,7 @@ export class TeamsPage {
                     name: h('strong', {}, p.label), files: p.kind === 'folder' ? p.files.length : 0, count: p.kind === 'folder' ? p.files.length : 0, size: formatBytes(p.size),
                 }),
                 too ? h('div', { class: 'error-text' }, t('library.add.tooLarge')) : null,
-                !hasMain ? h('div', { class: 'error-text' }, t('library.add.noMain')) : null,
+                !hasMain ? h('div', { class: 'error-text' }, tn('library.add.noMain')) : null,
             ].filter(Boolean));
             send.disabled = too || !hasMain;
             if (!name.value.trim()) {

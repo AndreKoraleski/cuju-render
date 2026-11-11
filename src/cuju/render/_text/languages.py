@@ -27,7 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from .._store import home as _home
-from .messages import MessageError
+from . import messages as _messages
+from .messages import MessageError, counted
 
 SHIPPED = Path(__file__).parents[1] / 'web' / 'languages'
 HEADER = '@language'
@@ -95,80 +96,87 @@ def placeholders(value: Any) -> set[str]:
     return set()
 
 
-def _header_problems(header: Any, code: str | None) -> list[str]:
+def _problem(name: str, **values: Any) -> dict[str, Any]:
+    """Returns a problem of a file as a label of the message `server.language.problem.<name>`."""
+    return _messages.label(f'server.language.problem.{name}', **values)
+
+
+def _header_problems(header: Any, code: str | None) -> list[dict[str, Any]]:
     if not isinstance(header, dict):
-        return [f'expected {HEADER} as an object with code, name, dir and plurals']
+        return [_problem('header')]
     problems = []
     if not valid_code(header.get('code')):
-        problems.append(
-            'expected a code of lowercase letters and digits, such as pt or pt-br, '
-            f'found {header.get("code")!r}'
-        )
+        problems.append(_problem('code', code=repr(header.get('code'))))
     elif code is not None and header.get('code') != code:
-        problems.append(
-            f'expected the code {code!r} of the file name, found {header.get("code")!r}'
-        )
+        problems.append(_problem('file_code', code=repr(code), found=repr(header.get('code'))))
     if not isinstance(header.get('name'), str) or not header.get('name').strip():
-        problems.append('expected the name of the language in itself, such as Português (Brasil)')
+        problems.append(_problem('name'))
     for key in ('english', 'locale'):
         if key in header and not isinstance(header[key], str):
-            problems.append(f'expected {key} as text, found {header[key]!r}')
+            problems.append(_problem('text', key=key, value=repr(header[key])))
     if header.get('dir', 'ltr') not in ('ltr', 'rtl'):
-        problems.append(f'expected dir as ltr or rtl, found {header.get("dir")!r}')
+        problems.append(_problem('dir', value=repr(header.get('dir'))))
     plurals = header.get('plurals')
     if not isinstance(plurals, list) or not plurals or not all(p in CATEGORIES for p in plurals):
-        problems.append(
-            f'expected plurals as a list of the categories {", ".join(CATEGORIES)}, '
-            f'found {plurals!r}'
-        )
+        problems.append(_problem('plurals', categories=', '.join(CATEGORIES), value=repr(plurals)))
     elif 'other' not in plurals:
-        problems.append('expected the plural category other among the plurals')
+        problems.append(_problem('other'))
     else:
         base = str(header.get('code', '')).split('-')[0]
         lacking = [p for p in PLURALS.get(base, []) if p not in plurals]
         if lacking:
-            problems.append(
-                f'expected the plural categories of {base}, the file lacks {", ".join(lacking)}'
-            )
+            problems.append(_problem('categories', language=base, lacking=', '.join(lacking)))
     return problems
 
 
-def _message_problem(key: str, value: Any, reference: Any, plurals: list[str]) -> str | None:
-    """Returns what is malformed about one message against its English, or None."""
+def _message_problem(
+    key: str, value: Any, reference: Any, plurals: list[str]
+) -> dict[str, Any] | None:
+    """Returns what is malformed about one message against its English as a label, or None."""
     if isinstance(value, str):
         if isinstance(reference, dict) and plurals != ['other']:
-            return 'expected plural forms, as the English message has'
+            return _problem('forms_expected')
     elif isinstance(value, dict):
         if not value or not all(isinstance(form, str) for form in value.values()):
-            return 'expected plural forms as texts'
+            return _problem('form_texts')
         if key.startswith('caption.'):
-            return 'expected a caption as a text, captions have no plural forms'
+            return _problem('caption')
         unknown = [form for form in value if form not in CATEGORIES and not _EXACT.fullmatch(form)]
         if unknown:
-            return (
-                f'expected plural categories or exact counts such as =0, found {", ".join(unknown)}'
-            )
+            return _problem('form_names', unknown=', '.join(unknown))
         lacking = [form for form in plurals if form not in value]
         if lacking:
-            return f'expected the plural forms {", ".join(lacking)} of the language'
+            return _problem('forms_lacking', lacking=', '.join(lacking))
         # A language may count what English leaves alone, when the English text holds {count}.
         if isinstance(reference, str) and 'count' not in placeholders(reference):
-            return 'expected a text, as the English message is'
+            return _problem('text_expected')
     else:
-        return 'expected a text or an object of plural forms'
+        return _problem('kind')
     if reference is None:
         return None
     own, theirs = placeholders(value), placeholders(reference)
     extra = sorted(own - theirs)
     if extra:
-        return (
-            f'expected the placeholders of English, found {", ".join("{" + p + "}" for p in extra)}'
-        )
+        return _problem('extra', extra=', '.join('{' + p + '}' for p in extra))
     # A plural form may leave the count out, as in "one recording", every other value stays.
     lost = sorted(theirs - own - ({'count'} if isinstance(value, dict) else set()))
     if lost:
-        return f'expected the placeholders {", ".join("{" + p + "}" for p in lost)} of English'
+        return _problem('lost', lost=', '.join('{' + p + '}' for p in lost))
+    # Commands and shortcuts are code and must survive, while bold words are the translator's
+    # choice, since each language stresses its own words.
+    if _code_spans(value) != _code_spans(reference):
+        return _problem('marks')
     return None
+
+
+def _code_spans(value: Any) -> int:
+    """Returns how many code spans a message holds, its commands, names and shortcuts.
+
+    A plural message counts the spans of its form `other`, which every language has.
+    """
+    text = value if isinstance(value, str) else (value or {}).get('other', '')
+    found = _messages._MARK.findall(text if isinstance(text, str) else '')
+    return sum(1 for _, code in found if code)
 
 
 def check(
@@ -183,7 +191,8 @@ def check(
 
     Returns:
         A report with `code`, `name`, `messages`, `ok`, and lists `missing` and `unused` of ids,
-        `malformed` of objects with `id` and `problem`, and `untranslated`, the ids whose text is
+        `malformed` of objects with `id` and `problem`, the English text of the problem, with its
+        message in `problem_id` and `problem_values`, and `untranslated`, the ids whose text is
         the English one, which a template starts with and which is no fault of its own.
     """
     reference = english() if reference is None else reference
@@ -197,9 +206,8 @@ def check(
         'untranslated': [],
     }
     if not isinstance(document, dict):
-        report['malformed'].append(
-            {'id': HEADER, 'problem': 'expected a JSON object keyed by message id'}
-        )
+        problem = _messages.named('problem', _problem('document'))
+        report['malformed'].append({'id': HEADER, **problem})
         report['ok'] = False
         return report
     header = document.get(HEADER)
@@ -207,7 +215,7 @@ def check(
         report['code'] = header.get('code')
         report['name'] = header.get('name')
     for problem in _header_problems(header, code):
-        report['malformed'].append({'id': HEADER, 'problem': problem})
+        report['malformed'].append({'id': HEADER, **_messages.named('problem', problem)})
     plurals = (
         header.get('plurals')
         if isinstance(header, dict) and isinstance(header.get('plurals'), list)
@@ -217,16 +225,14 @@ def check(
         if key == HEADER:
             continue
         if not _ID.fullmatch(key):
-            report['malformed'].append(
-                {'id': key, 'problem': 'expected an id of letters, digits, _, . and -'}
-            )
+            report['malformed'].append({'id': key, **_messages.named('problem', _problem('id'))})
             continue
         report['messages'] += 1
         if key not in reference:
             report['unused'].append(key)
         problem = _message_problem(key, value, reference.get(key), plurals)
         if problem:
-            report['malformed'].append({'id': key, 'problem': problem})
+            report['malformed'].append({'id': key, **_messages.named('problem', problem)})
         elif report['code'] != 'en' and value == reference.get(key):
             report['untranslated'].append(key)
     report['missing'] = [key for key in reference if key != HEADER and key not in document]
@@ -301,7 +307,7 @@ def listing() -> list[dict[str, Any]]:
     for path in shipped:
         entries.append(_entry(_read(path), path.stem, 'shipped', reference))
     names = {entry['code'] for entry in entries}
-    for path in sorted(folder().glob('*.json')):
+    for path in sorted(folder().glob('*.json'), key=lambda path: path.stem):
         if path.stem in names or not valid_code(path.stem):
             continue
         try:
@@ -376,7 +382,13 @@ def add(document: Any) -> dict[str, Any]:
     report = check(document, code)
     if report['malformed']:
         first = report['malformed'][0]
-        raise MessageError('server.language.malformed', first=f'{first["id"]}, {first["problem"]}')
+        problem = {
+            'id': first.get('problem_id'),
+            'text': first['problem'],
+            'values': first.get('problem_values') or {},
+        }
+        place = _messages.label('server.language.problem_at', id=first['id'], problem=problem)
+        raise MessageError('server.language.malformed', first=place)
     body = json.dumps(document, ensure_ascii=False, indent=4) + '\n'
     if len(body.encode('utf-8')) > MAXIMUM_BYTES:
         raise MessageError('server.language.size', most=MAXIMUM_BYTES // (1024 * 1024))
@@ -461,7 +473,7 @@ def add_arguments(parser: Any) -> None:
 
 def _print_report(report: dict[str, Any], path: str) -> None:
     name = report.get('name') or report.get('code') or path
-    print(f'{path}, {name}, {report["messages"]} messages')
+    print(f'{path}, {name}, {counted(report["messages"], "message")}')
     for key in report['missing']:
         print(f'  missing {key}')
     for key in report['unused']:
@@ -469,7 +481,7 @@ def _print_report(report: dict[str, Any], path: str) -> None:
     for item in report['malformed']:
         print(f'  malformed {item["id"]}, {item["problem"]}')
     if report['untranslated']:
-        print(f'  {len(report["untranslated"])} messages read as in English')
+        print(f'  {counted(len(report["untranslated"]), "message")} read as in English')
     print('ok' if report['ok'] else 'not ok')
 
 
@@ -498,7 +510,7 @@ def run(options: Any) -> int:
                     json.dumps({'code': target, 'path': str(path), 'messages': len(document) - 1})
                 )
             else:
-                print(f'wrote {path}, {len(document) - 1} messages from English')
+                print(f'wrote {path}, {counted(len(document) - 1, "message")} from English')
             return 0
         if action == 'check':
             path = Path(target)

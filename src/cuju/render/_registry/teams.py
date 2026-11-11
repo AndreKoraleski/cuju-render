@@ -229,7 +229,7 @@ _BUILTIN_KIT = {
 }
 
 
-def _color(value: Any, name: str) -> list[int]:
+def _color(value: Any, name: Any) -> list[int]:
     """Returns an RGB color as three integers from 0 to 255, or raises `ArgumentError`."""
     if (
         not isinstance(value, (list, tuple))
@@ -253,7 +253,12 @@ def _printable(text: str) -> str:
     return ''.join(character if character.isprintable() else ' ' for character in text)
 
 
-def _choice(value: Any, choices: tuple[str, ...], name: str) -> str:
+def _field(name: str) -> dict[str, Any]:
+    """Returns the name of a field of a team in a message, the label `server.teams.field.<name>`."""
+    return _messages.label(f'server.teams.field.{name}')
+
+
+def _choice(value: Any, choices: tuple[str, ...], name: Any) -> str:
     """Returns `value` if it is one of `choices`, or raises `ArgumentError`."""
     if value not in choices:
         raise MessageError(
@@ -282,18 +287,18 @@ def _players(
                     raise MessageError('server.teams.shirt_number', number=repr(entry))
                 roster[index][key] = entry
             elif key == 'skin':
-                roster[index][key] = _choice(entry, _SKINS, 'the skin')
+                roster[index][key] = _choice(entry, _SKINS, _field('skin'))
             elif key == 'hair':
-                roster[index][key] = _choice(entry, _HAIRS, 'the hair')
+                roster[index][key] = _choice(entry, _HAIRS, _field('hair'))
             elif key == 'hair_color':
-                roster[index][key] = _choice(entry, _HAIR_COLORS, 'the hair color')
+                roster[index][key] = _choice(entry, _HAIR_COLORS, _field('hair_color'))
             elif key == 'celebration':
                 # `team` picks among the team's celebrations, any other value is the player's own.
                 roster[index][key] = _celebration(entry)
             elif key == 'model':
                 # `team` follows the team's model, any other value gives the player one of its own.
                 roster[index][key] = _choice(
-                    entry, ('team', 'grf', 'custom', *models), 'the player model'
+                    entry, ('team', 'grf', 'custom', *models), _field('player_model')
                 )
             else:
                 raise MessageError('server.teams.player_entry', key=repr(key))
@@ -326,7 +331,7 @@ def _colors(value: Any, models: tuple[str, ...]) -> dict[str, dict[str, str]]:
         raise MessageError('server.teams.colors', value=repr(value))
     result: dict[str, dict[str, str]] = {}
     for model, pairs in value.items():
-        _choice(model, models, 'the model of the colors')
+        _choice(model, models, _field('colors_model'))
         if not isinstance(pairs, dict) or len(pairs) > _MAXIMUM_RECOLORS:
             raise MessageError(
                 'server.teams.colors_count', count=_MAXIMUM_RECOLORS, model=repr(model)
@@ -381,15 +386,15 @@ def style(
                 raise MessageError('server.teams.style_part_object', key=key, value=repr(value))
             for part, entry in value.items():
                 if key == 'kit' and part == 'pattern':
-                    result[key][part] = _choice(entry, _PATTERNS, 'the pattern')
+                    result[key][part] = _choice(entry, _PATTERNS, _field('pattern'))
                 elif part in _PARTS:
                     result[key][part] = _color(entry, f'{key} {part}')
                 else:
                     raise MessageError('server.teams.style_part', key=key, part=repr(part))
         elif key == 'model':
-            result[key] = _choice(value, ('grf', 'custom', *models), 'the model')
+            result[key] = _choice(value, ('grf', 'custom', *models), _field('model'))
         elif key == 'number':
-            result[key] = _choice(value, _NUMBERS, 'the numbers')
+            result[key] = _choice(value, _NUMBERS, _field('numbers'))
         elif key == 'badge':
             if not isinstance(value, str) or len(value) > 3:
                 raise MessageError('server.teams.badge', value=repr(value))
@@ -410,7 +415,7 @@ def style(
             colors = value.get('colors', result[key]['colors'])
             if not isinstance(colors, list) or not 1 <= len(colors) <= 4:
                 raise MessageError('server.teams.crowd_colors')
-            result[key] = {'colors': [_color(color, 'a color of the fans') for color in colors]}
+            result[key] = {'colors': [_color(color, _field('fans_color')) for color in colors]}
         else:
             raise MessageError('server.teams.style_entry', key=repr(key))
     return result
@@ -606,10 +611,12 @@ def check_control(control: Any, format: str) -> dict[str, Any]:
         raise MessageError('server.teams.control.players', most=most)
     legacy = 'assignment' not in control
     keeper = _choice(
-        control.get('goalkeeper', 'scenario'), ('agent', 'builtin', 'scenario'), 'goalkeeper'
+        control.get('goalkeeper', 'scenario'),
+        ('agent', 'builtin', 'scenario'),
+        _field('goalkeeper'),
     )
     assignment = control.get('assignment', 'fixed' if keeper == 'builtin' else 'dynamic')
-    _choice(assignment, ('dynamic', 'fixed'), 'assignment')
+    _choice(assignment, ('dynamic', 'fixed'), _field('assignment'))
     if legacy and keeper == 'builtin' and (format != '11v11' or players != 10):
         raise MessageError('server.teams.control.legacy_goalkeeper')
     if legacy and keeper == 'agent':
@@ -630,7 +637,9 @@ def check_control(control: Any, format: str) -> dict[str, Any]:
         roles = all(isinstance(item, str) and item in ROLES for item in selection)
         if not (indices or roles) or (indices and len(set(selection)) != len(selection)):
             raise MessageError('server.teams.control.selection_distinct')
-    action_set = _choice(control.get('action_set', 'default'), ('default', 'v2'), 'action set')
+    action_set = _choice(
+        control.get('action_set', 'default'), ('default', 'v2'), _field('action_set')
+    )
     return dict(
         players=players,
         assignment=assignment,
@@ -743,7 +752,7 @@ def update(
             current.pop('name_id', None)
             current.pop('name_values', None)
     if format is not None:
-        current['format'] = _choice(format, tuple(FORMATS), 'the format')
+        current['format'] = _choice(format, tuple(FORMATS), _field('format'))
         current['style'] = _resize(current['style'], current['format'])
     if control is not None:
         current['control'] = check_control(control, current['format'])
@@ -829,7 +838,7 @@ def set_image(identifier: str, slot: str, data: bytes) -> dict[str, Any]:
         ArgumentError: If the team or slot is unknown, or the data is too large or of another kind.
     """
     entry(identifier)
-    _choice(slot, IMAGE_SLOTS, 'the image slot')
+    _choice(slot, IMAGE_SLOTS, _field('image_slot'))
     if len(data) > _MAXIMUM_IMAGE_BYTES:
         raise MessageError('server.teams.image_size', size=len(data))
     suffix = _image_suffix(slot, data)
@@ -951,7 +960,7 @@ def set_sound(identifier: str, slot: str, data: bytes) -> dict[str, Any]:
         ArgumentError: If the team or slot is unknown, or the data is too large or of another kind.
     """
     entry(identifier)
-    _choice(slot, SOUND_SLOTS, 'the sound slot')
+    _choice(slot, SOUND_SLOTS, _field('sound_slot'))
     if len(data) > _MAXIMUM_SOUND_BYTES:
         raise MessageError('server.teams.sound_size', size=len(data))
     suffix = _sound_suffix(data)
@@ -1213,7 +1222,7 @@ def game_agents(teams_: list[dict[str, Any]], scenario: str, humans: Any) -> lis
                     'server.teams.beside_count',
                     team=shown_name(team),
                     scenario=_messages.scenario(scenario),
-                    available=available,
+                    count=available,
                 )
         agents.append(count)
     return agents
@@ -1549,7 +1558,7 @@ def add(
     """
     if len(data) > _MAXIMUM_BYTES:
         raise MessageError('server.teams.submission.size', size=len(data))
-    _choice(format, tuple(FORMATS), 'the format')
+    _choice(format, tuple(FORMATS), _field('format'))
     if control is not None:
         check_control(control, format)
     name_given = bool(name and name.strip())

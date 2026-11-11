@@ -5,7 +5,7 @@
 // queue of requested matches with their progress, cancelling and watching.
 
 import { api, controlLabel, uiLocale } from '../core/api.js';
-import { formatNumber, serverText, t } from '../core/i18n.js';
+import { formatNumber, serverText, t, tn } from '../core/i18n.js';
 import { css, normalizeStyle } from '../players/kits.js';
 import { Dropdown, el as h, enhanceSelect, menuItem } from '../core/menu.js';
 import { icon, stateBadge, symbolOnly } from '../core/icons.js';
@@ -40,12 +40,17 @@ export function kitShirt(team, side = 0, size = 'small') {
         }, style.badge ? h('b', { class: 'kit-badge' }, style.badge) : null));
 }
 
+// The state of a request, a failed one by the id of its message, or by its English text for an
+// entry of a server that named no id.
 function stateOf(r) {
-    if (r.state === 'failed' && r.error === 'cancelled') {
+    const id = typeof r.error_id === 'string' ? r.error_id : null;
+    if (r.state === 'failed' && (id ? id === 'server.requests.cancelled' : r.error === 'cancelled')) {
         return 'cancelled';
     }
     // A restart of the server marks the requests that waited or played as interrupted.
-    if (r.state === 'failed' && typeof r.error === 'string' && r.error.startsWith('interrupted by a server restart')) {
+    const interrupted = id ? id.startsWith('server.requests.interrupted')
+        : typeof r.error === 'string' && r.error.startsWith('interrupted by a server restart');
+    if (r.state === 'failed' && interrupted) {
         return 'interrupted';
     }
     return r.state;
@@ -139,7 +144,7 @@ export class MatchesPage {
             this.built = false;
             this.root.replaceChildren(h('div', { class: 'page-pad' }, h('div', { class: 'notice error' },
                 h('p', {}, this.error.message),
-                h('p', { class: 'muted' }, t('matches.offline.hint')),
+                h('p', { class: 'muted' }, tn('matches.offline.hint')),
                 h('button', { class: 'btn', type: 'button', ...symbolOnly(t('matches.offline.retry')), onclick: () => this.refresh() }, icon('refresh')))));
             return;
         }
@@ -179,7 +184,7 @@ export class MatchesPage {
         const setup = h('section', { class: 'match-setup', 'aria-labelledby': 'setup-title' },
             h('header', { class: 'setup-head' },
                 h('h2', { id: 'setup-title' }, t('matches.setup.title')),
-                h('p', { class: 'muted' }, t('matches.setup.text'))),
+                h('p', { class: 'muted' }, tn('matches.setup.text'))),
             h('div', { class: 'versus' }, this.sides[0].root, h('div', { class: 'vs', 'aria-hidden': 'true' }, t('matches.versus')), this.sides[1].root),
             h('div', { class: 'setup-row' },
                 h('label', { class: 'field' }, t('matches.setup.scenario'), this.scenarioSelect),
@@ -270,7 +275,7 @@ export class MatchesPage {
         let ok = this.scenarios.filter((sc) => fits(l, sc) && fits(r, sc));
         if (clash) {
             ok = ok.filter((sc) => sc.startsWith('academy_'));
-            this.clash.replaceChildren(t('matches.setup.clash'));
+            this.clash.replaceChildren(...tn('matches.setup.clash'));
         } else if (!l || !r) {
             this.clash.replaceChildren(t('matches.setup.noTeams'));
         }
@@ -333,11 +338,11 @@ export class MatchesPage {
         this.sortSelect = select('sort', t('matches.filter.sort'), [['newest', t('matches.filter.sort.newest')], ['oldest', t('matches.filter.sort.oldest')]]);
         const bar = h('div', { class: 'filter-bar' }, this.statusFilter, this.teamFilter, this.scenarioFilter, this.dateFilter, this.sortSelect);
         queueMicrotask(() => {
-            enhanceSelect(this.statusFilter, { label: t('matches.filter.status'), prefix: t('matches.filter.status.prefix') });
-            enhanceSelect(this.teamFilter, { label: t('matches.filter.team'), prefix: t('matches.filter.team') });
-            enhanceSelect(this.scenarioFilter, { label: t('matches.filter.scenario'), prefix: t('matches.filter.scenario') });
-            enhanceSelect(this.dateFilter, { label: t('matches.filter.date'), prefix: t('matches.filter.date') });
-            enhanceSelect(this.sortSelect, { label: t('matches.filter.sort'), prefix: t('matches.filter.sort'), align: 'right' });
+            enhanceSelect(this.statusFilter, { label: t('matches.filter.status'), icon: 'filter' });
+            enhanceSelect(this.teamFilter, { label: t('matches.filter.team'), icon: 'shirt' });
+            enhanceSelect(this.scenarioFilter, { label: t('matches.filter.scenario'), icon: 'field' });
+            enhanceSelect(this.dateFilter, { label: t('matches.filter.date'), icon: 'calendar' });
+            enhanceSelect(this.sortSelect, { label: t('matches.filter.sort'), icon: 'sort', align: 'right' });
         });
         return bar;
     }
@@ -396,7 +401,7 @@ export class MatchesPage {
         if (!this.requests.length) {
             this.queueHost.replaceChildren(h('div', { class: 'empty-state' },
                 h('p', { class: 'empty-title' }, t('matches.queue.empty.title')),
-                h('p', { class: 'muted' }, t('matches.queue.empty.text'))));
+                h('p', { class: 'muted' }, tn('matches.queue.empty.text'))));
             return;
         }
         if (!rows.length) {

@@ -18,6 +18,7 @@ from cuju.render._store import home as _home
 from cuju.render._store import library as _library
 from cuju.render._tournaments import tournament as rules
 from cuju.render._tournaments import tournament_runner as runner
+from support.common import _shipped_language, _translation
 
 _BUILTIN = {
     'id': 'builtin',
@@ -655,7 +656,6 @@ def test_a_team_enters_more_than_once_under_names_of_its_own():
 
 
 def test_given_names_that_read_as_one_are_refused_in_both_languages():
-    from cuju.render._http import server as _server
     from cuju.render._text import messages as _messages
 
     with pytest.raises(rules.TournamentError) as caught:
@@ -679,8 +679,8 @@ def test_given_names_that_read_as_one_are_refused_in_both_languages():
         'other': '1',
     }
     for code in ('en', 'pt'):
-        path = _server._WEB / 'languages' / f'{code}.json'
-        text = json.loads(path.read_text(encoding='utf-8'))['server.tournament.name_taken']
+        messages = _shipped_language(code) if code == 'en' else _translation(code)
+        text = messages['server.tournament.name_taken']
         assert _messages.placeholders(text) == {'entrant', 'name', 'other'}
     assert 'server.tournament.twice' not in _messages.MESSAGES
 

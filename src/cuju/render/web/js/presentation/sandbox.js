@@ -141,12 +141,12 @@
                 // the package's module loads in it by a dynamic import.
                 worker = new Worker(url, { name: String(m.name || 'cuju team worker').slice(0, 80) });
             } catch (error) {
-                e.source.postMessage({ type: 'error', instanceId: m.instanceId, message: `no worker, ${error.message}` }, '*');
+                e.source.postMessage({ type: 'error', instanceId: m.instanceId, message: `no worker, ${error.message}`, reason: 'noWorker', error: String(error.message) }, '*');
                 return;
             }
             worker.onerror = (ev) => {
                 ev.preventDefault();
-                e.source.postMessage({ type: 'error', instanceId: m.instanceId, message: `the worker failed, ${ev.message || 'without a message'}` }, '*');
+                e.source.postMessage({ type: 'error', instanceId: m.instanceId, message: `the worker failed, ${ev.message || 'without a message'}`, reason: 'workerFailed', error: String(ev.message || '') }, '*');
             };
             worker.postMessage({ type: 'port', port, probe }, [port]);
         } else if (m.type === 'stop' && worker) {

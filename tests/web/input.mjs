@@ -18,7 +18,7 @@ cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/core/input-settings.j
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const {
-    ACTION_NAMES, BINDINGS, STORAGE_KEY, actionName, defaultSettings, devicesClash, keyLabel, keyMap,
+    ACTION_NAMES, BINDINGS, STORAGE_KEY, actionName, defaultSettings, devicesClash, keyMap,
     keyProblem, loadSettings, normalize, saveSettings, stickDirections,
 } = await import(pathToFileURL(join(folder, 'core/input-settings.js')).href);
 
@@ -94,9 +94,6 @@ test('devices, labels and the names of the engine actions', () => {
     assert.equal(devicesClash(['keyboard', 'keyboard']), true);
     assert.equal(devicesClash(['auto', 'auto']), false);
     assert.equal(devicesClash(['pad0', 'pad1']), false);
-    assert.equal(keyLabel('KeyQ'), 'Q');
-    assert.equal(keyLabel('Digit3'), '3');
-    assert.equal(keyLabel('ArrowUp'), '↑');
     assert.equal(ACTION_NAMES.length, 20);
     assert.equal(actionName(13), 'sprint');
     assert.equal(actionName(19), 'built-in AI');

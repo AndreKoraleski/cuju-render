@@ -221,13 +221,18 @@ def _bundle_is_ours(bundle: Path) -> bool:
 
 
 def _comments() -> dict[str, str]:
-    """Returns the comment of the launcher in each shipped language other than English."""
+    """Returns the comment of the launcher in each usable language other than English."""
     from .._text import languages as _languages
 
     out = {}
-    for code, locale in (('pt', 'pt_BR'),):
+    try:
+        entries = [e for e in _languages.listing() if e['code'] != 'en' and e['usable']]
+    except Exception:
+        entries = []
+    for entry in entries:
+        locale = str(entry['locale']).replace('-', '_')
         try:
-            text = _languages.read(code).get('pwa.manifest.description')
+            text = _languages.read(entry['code']).get('pwa.manifest.description')
         except Exception:
             text = None
         if isinstance(text, str) and text.strip():

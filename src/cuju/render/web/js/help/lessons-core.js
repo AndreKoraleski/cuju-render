@@ -10,7 +10,7 @@
 // the ask and the praise of a lesson as the messages lesson.<id>.title, .ask and .praise, whose
 // English is the catalog's, and the catalog's own text stands in for a lesson without messages.
 
-import { t, tOr } from '../core/i18n.js';
+import { has, plainMarks, plainText, t, tn, tOr } from '../core/i18n.js';
 
 export const LESSONS_KEY = 'cuju.lessons';
 
@@ -186,6 +186,19 @@ export function lessonAsk(lesson) {
 
 export function lessonPraise(lesson) {
     return tOr(`lesson.${lesson.id}.praise`, lesson.praise);
+}
+
+// The ask and the praise as nodes, their marks as strong words, code and keycaps, for the page.
+function markedOr(id, fallback) {
+    return has(id) ? tn(id) : [plainMarks(plainText(fallback))];
+}
+
+export function lessonAskNodes(lesson) {
+    return markedOr(`lesson.${lesson.id}.ask`, lesson.ask);
+}
+
+export function lessonPraiseNodes(lesson) {
+    return markedOr(`lesson.${lesson.id}.praise`, lesson.praise);
 }
 
 // The words a screen reader hears when a lesson begins.

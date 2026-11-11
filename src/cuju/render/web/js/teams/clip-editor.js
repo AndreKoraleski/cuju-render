@@ -14,7 +14,7 @@ import {
 import { NODE_NAMES } from '../recording/format.js';
 import { h } from './library.js';
 import { uploadDuration } from '../players/retarget.js';
-import { t } from '../core/i18n.js';
+import { t, tn } from '../core/i18n.js';
 import { icon, symbolOnly } from '../core/icons.js';
 
 // The moves a team's clips add, by their names in the style.
@@ -223,7 +223,7 @@ function mappingTable(editor, clip, host) {
             }
         };
         host.replaceChildren(
-            h('p', { class: 'muted small' }, t('clip-editor.mappingNote')),
+            h('p', { class: 'muted small' }, tn('clip-editor.mappingNote')),
             h('table', {}, h('tbody', {}, rows)),
             h('div', { class: 'row' },
                 h('button', {
@@ -286,7 +286,7 @@ export function clipsPanel(editor) {
     });
     return h('section', { class: 'clips' },
         h('h4', {}, t('clip-editor.heading')),
-        h('p', { class: 'muted small' }, t('clip-editor.note')),
+        h('p', { class: 'muted small' }, tn('clip-editor.note')),
         rows.length ? h('ul', { class: 'sound-list clip-list' }, rows) : null,
         drop,
         h('p', { class: 'clip-message muted small', role: 'status', 'data-kind': 'info' }));

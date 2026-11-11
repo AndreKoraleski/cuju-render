@@ -8,7 +8,8 @@
 // of the window where it covers no control of the page and no notice. The browser keeps every
 // dismissal, and the rules at the top of the file touch nothing of the page.
 
-import { t, tn } from '../core/i18n.js';
+import { t, tm, tn } from '../core/i18n.js';
+import { icon, symbolOnly } from '../core/icons.js';
 
 export const TIPS_KEY = 'cuju.tips';
 
@@ -98,7 +99,7 @@ export class FirstRun {
         this.tip = h('aside', { id: 'tip', class: 'tip', 'aria-label': t('firstrun.tip.label'), hidden: true },
             this.tipText = h('p', { class: 'tip-text' }),
             h('div', { class: 'tip-actions' },
-                h('button', { type: 'button', class: 'btn small', onclick: () => this.dismiss() }, t('firstrun.gotIt')),
+                h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('firstrun.gotIt')), onclick: () => this.dismiss() }, icon('check')),
                 h('button', { type: 'button', class: 'link small', onclick: () => this.setOff(true) }, t('firstrun.noMore'))));
         this.tooltip = h('div', { id: 'help-tip', class: 'help-tip', role: 'tooltip', hidden: true });
         // The tip comes right after the top bar in the order of the Tab key, before the page.
@@ -149,9 +150,10 @@ export class FirstRun {
         if (this.tip.dataset.page !== page) {
             this.tip.hidden = true;
         }
-        const line = text ? t('firstrun.tip.line', { text }) : '';
-        if (show && this.tipText.textContent !== line) {
-            this.tipText.textContent = line;
+        // The tip shows with its marks, its words in bold and its shortcuts as keycaps.
+        if (show && this.tipText.dataset.tip !== page) {
+            this.tipText.dataset.tip = page;
+            this.tipText.replaceChildren(...tn('firstrun.tip.line', { text: tm(`firstrun.tip.${page}`) }));
         }
         if (this.tip.hidden === show) {
             this.tip.hidden = !show;

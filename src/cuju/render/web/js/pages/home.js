@@ -14,6 +14,7 @@ import { recordingTitle, summaryTeams } from '../core/names.js';
 import { scenarioName } from '../core/scenarios.js';
 import { t, tn } from '../core/i18n.js';
 import { icon, reicon, relabel, symbolOnly } from '../core/icons.js';
+import { chord } from '../core/keys.js';
 
 const REFRESH_MS = 8000;
 const LATEST = 5;
@@ -41,8 +42,9 @@ const FEATURES = [
     ['field', 'field'],
 ];
 
-// Each key group lists keys, where an array of keys reads as one chord or one row of keys. The
-// group's name is the message home.keys.<group>.title and each row's text home.keys.<group>.<row>.
+// Each key group lists its rows, each row its keys, where a key is a chord such as `Shift R`
+// that the keyboard kit draws, and `to` joins a range. The group's name is the message
+// home.keys.<group>.title and each row's text home.keys.<group>.<row>.
 const KEYS = [
     ['cameras', [
         [['V'], 'cycle'],
@@ -56,12 +58,12 @@ const KEYS = [
     ['playback', [
         [['Space'], 'play'],
         [['J', 'K', 'L'], 'shuttle'],
-        [['←', '→'], 'step'],
+        [['Left', 'Right'], 'step'],
         [['N'], 'next'],
     ]],
     ['replays', [
         [['R'], 'last'],
-        [['Shift', 'R'], 'angles'],
+        [['Shift R'], 'angles'],
         [['Enter'], 'skip'],
         [['Esc'], 'end'],
     ]],
@@ -156,12 +158,7 @@ function command(text) {
 
 function keyChord(keys) {
     return keys.flatMap((k, i) => {
-        let node;
-        if (k === 'to') {
-            node = h('span', { class: 'home-key-word' }, t('home.keys.to'));
-        } else {
-            node = h('kbd', {}, k === 'Space' ? t('home.key.space') : k);
-        }
+        const node = k === 'to' ? h('span', { class: 'home-key-word' }, t('home.keys.to')) : chord(k);
         return i ? [' ', node] : [node];
     });
 }
@@ -285,13 +282,13 @@ export class HomePage {
     keysBand() {
         const groups = KEYS.map(([name, rows]) => h('div', { class: 'home-keys-group' },
             h('h3', {}, t(`home.keys.${name}.title`)),
-            h('dl', {}, ...rows.flatMap(([keys, row]) => [h('dt', {}, ...keyChord(keys)), h('dd', {}, t(`home.keys.${name}.${row}`))]))));
+            h('dl', {}, ...rows.flatMap(([keys, row]) => [h('dt', {}, ...keyChord(keys)), h('dd', {}, tn(`home.keys.${name}.${row}`))]))));
         const all = h('button', { type: 'button', class: 'btn ghost', onclick: () => {
             const btn = document.getElementById('open-help');
             if (btn) {
                 btn.click();
             }
-        } }, ...tn('home.keys.all', { key: h('kbd', { 'aria-hidden': 'true' }, 'H') }));
+        } }, icon('keyboard'), ...tn('home.keys.all'));
         return h('section', { class: 'home-band home-keys', 'aria-labelledby': 'home-keys-title' },
             h('div', { class: 'home-wrap' },
                 bandHead('home-keys-title', t('home.keys.title'), { eyebrow: t('home.keys.eyebrow'), aside: all }),
@@ -308,8 +305,8 @@ export class HomePage {
         const notice = h('a', { href: NOTICE_URL, target: '_blank', rel: 'noopener noreferrer' }, ...newTab('NOTICE'));
         const about = h('section', { class: 'home-about', 'aria-labelledby': 'home-about-title' },
             bandHead('home-about-title', t('home.about.title')),
-            h('p', {}, t('home.about.runs')),
-            h('p', {}, t('home.about.watch')),
+            h('p', {}, tn('home.about.runs')),
+            h('p', {}, tn('home.about.watch')),
             h('p', {}, h('a', { href: 'https://en.wikipedia.org/wiki/Cuju', target: '_blank', rel: 'noopener noreferrer' },
                 ...newTab(t('home.about.name')))),
             h('p', { class: 'home-credits' }, ...tn('home.about.credits', { notice })));
@@ -411,10 +408,10 @@ export class HomePage {
         return h('section', { class: 'home-block home-wide home-offline', 'aria-labelledby': 'home-offline-title' },
             bandHead('home-offline-title', t('home.offline.title')),
             h('div', { class: 'home-prose' },
-                h('p', {}, t('home.offline.text')),
+                h('p', {}, tn('home.offline.text')),
                 command('cuju render serve --open'),
                 h('div', { class: 'home-row' },
-                    h('button', { type: 'button', class: 'btn primary', 'data-focus-key': 'open-file', onclick: () => this.openFile() }, t('home.openFile')),
+                    h('button', { type: 'button', class: 'btn primary', 'data-focus-key': 'open-file', onclick: () => this.openFile() }, icon('folder'), t('home.openFile')),
                     h('button', { type: 'button', class: 'btn', 'data-focus-key': 'retry', ...symbolOnly(t('home.offline.retry')), onclick: () => this.refresh() }, icon('refresh')))));
     }
 
@@ -428,14 +425,14 @@ export class HomePage {
             bandHead('home-first-title', t('home.first.title'), { eyebrow: t('home.first.eyebrow') }),
             h('p', { class: 'home-intro' }, t('home.first.intro')),
             h('ol', { class: 'home-steps' },
-                step(1, t('home.first.serve.title'), t('home.first.serve.text'),
+                step(1, t('home.first.serve.title'), tn('home.first.serve.text'),
                     command('cuju render serve --open')),
-                step(2, t('home.first.stream.title'), t('home.first.stream.text'),
+                step(2, t('home.first.stream.title'), tn('home.first.stream.text'),
                     command('CUJU_RENDER=on python train.py')),
                 step(3, t('home.first.record.title'), tn('home.first.record.text', { code: h('code', {}, 'cuju.render.Recorder') }),
                     h('div', { class: 'home-row' },
-                        h('button', { type: 'button', class: 'btn', 'data-focus-key': 'first-matches', onclick: () => this.app.showPage('matches') }, t('home.requestMatch')),
-                        h('button', { type: 'button', class: 'btn ghost', 'data-focus-key': 'first-file', onclick: () => this.openFile() }, t('home.openFile'))))));
+                        h('button', { type: 'button', class: 'btn', 'data-focus-key': 'first-matches', onclick: () => this.app.showPage('matches') }, icon('matches'), t('home.requestMatch')),
+                        h('button', { type: 'button', class: 'btn ghost', 'data-focus-key': 'first-file', onclick: () => this.openFile() }, icon('folder'), t('home.openFile'))))));
     }
 
     liveBlock(state) {
@@ -459,9 +456,9 @@ export class HomePage {
                         type: 'button',
                         class: 'btn small primary',
                         'data-focus-key': `live:${s.id}`,
-                        'aria-label': t('home.live.watch.label', { title: recordingTitle(s) || s.id }),
+                        ...symbolOnly(t('home.live.watch.label', { title: recordingTitle(s) || s.id })),
                         onclick: () => this.app.openLive(s.id),
-                    }, t('home.live.watch')));
+                    }, icon('play')));
             }));
         }
         return h('section', { class: 'home-block home-live', 'aria-labelledby': 'home-live-title' },
@@ -484,7 +481,7 @@ export class HomePage {
             body = h('div', { class: 'home-empty' },
                 h('p', { class: 'muted' }, ...tn('home.recordings.empty', { code: h('code', {}, 'cuju.render.Recorder') })),
                 h('div', { class: 'home-row' },
-                    h('button', { type: 'button', class: 'btn', 'data-focus-key': 'rec-matches', onclick: () => this.app.showPage('matches') }, t('home.requestMatch'))));
+                    h('button', { type: 'button', class: 'btn', 'data-focus-key': 'rec-matches', onclick: () => this.app.showPage('matches') }, icon('matches'), t('home.requestMatch'))));
         } else {
             body = h('ul', { class: 'home-list' }, ...latest.map((m) => this.recordingItem(m)));
         }

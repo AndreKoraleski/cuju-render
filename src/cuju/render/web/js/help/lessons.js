@@ -11,8 +11,8 @@
 // region beside the page, so every control stays usable, and Esc closes it while it has the
 // focus. Scripts reach it as window.cuju.tutorial.
 
-import { LESSONS_KEY, checkLesson, doneCount, lessonAnnouncement, lessonAsk, lessonPraise, lessonTitle, markDone, needMet, nextLesson, progressState } from './lessons-core.js';
-import { t } from '../core/i18n.js';
+import { LESSONS_KEY, checkLesson, doneCount, lessonAnnouncement, lessonAskNodes, lessonPraiseNodes, lessonTitle, markDone, needMet, nextLesson, progressState } from './lessons-core.js';
+import { t, tn } from '../core/i18n.js';
 import { icon, reicon, relabel, symbolOnly } from '../core/icons.js';
 
 // The panel looks this often while a lesson is under way.
@@ -226,14 +226,14 @@ export class Lessons {
         const index = this.ids.indexOf(lesson.id);
         this.count.textContent = t('lessons.count', { index: index + 1, count: this.ids.length });
         this.title.textContent = lessonTitle(lesson);
-        this.ask.textContent = lessonAsk(lesson);
+        this.ask.replaceChildren(...lessonAskNodes(lesson));
         this.panel.hidden = false;
         this.panel.classList.remove('lesson-done');
         if (this.app.page !== lesson.page && !(lesson.page === 'watch' && this.app.page === 'watch')) {
             this.app.showPage(lesson.page);
         }
         const done = lesson.id in this.progress.done;
-        this.status.textContent = done ? t('lessons.doneBefore') : lessonAnnouncement(lesson, index, this.ids.length);
+        this.status.replaceChildren(...(done ? tn('lessons.doneBefore') : [lessonAnnouncement(lesson, index, this.ids.length)]));
         this.showNext(lesson);
         this.updateOffer();
         this.title.focus({ preventScroll: true });
@@ -361,7 +361,9 @@ export class Lessons {
         this.progress = markDone(this.progress, lesson.id, new Date().toISOString(), this.ids);
         this.save();
         this.panel.classList.add('lesson-done');
-        this.status.textContent = t('lessons.done', { praise: lessonPraise(lesson) });
+        const praise = document.createDocumentFragment();
+        praise.append(...lessonPraiseNodes(lesson));
+        this.status.replaceChildren(...tn('lessons.done', { praise }));
         this.showNext(lesson);
         this.report([lesson.id]);
         if (this.onDone) {

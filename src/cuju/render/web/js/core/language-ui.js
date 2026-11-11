@@ -8,7 +8,8 @@
 // cuju.language, with list(), choose(code) and importText(text).
 
 import { enhanceSelect, el as h } from './menu.js';
-import { listLanguages, setLanguage, storedLanguage, t } from './i18n.js';
+import { listLanguages, setLanguage, storedLanguage, t, tn } from './i18n.js';
+import { icon } from './icons.js';
 
 const FOLLOW = '';
 
@@ -22,12 +23,17 @@ export class LanguageSettings {
         }
         this.select = h('select', { id: 'language', 'aria-label': t('language.label') });
         this.file = h('input', { type: 'file', accept: '.json,application/json', hidden: '' });
-        this.importButton = h('button', { type: 'button', class: 'btn small', id: 'language-import' }, t('language.import'));
+        // The import keeps its words beside its symbol, since it stands alone while English is the only language.
+        this.importButton = h('button', { type: 'button', class: 'btn small', id: 'language-import' }, icon('upload'), t('language.import'));
         this.status = h('p', { class: 'muted small', id: 'language-status', role: 'status' });
         this.importButton.addEventListener('click', () => this.file.click());
         this.file.addEventListener('change', () => this.onFile());
         this.select.addEventListener('change', () => this.choose(this.select.value || null));
-        const label = h('label', { id: 'language-row' }, t('language.label'), this.select);
+        const label = h('label', { id: 'language-row' }, icon('languages', 'icon text-symbol'), t('language.label'), this.select);
+        // The list shows once there is a language to choose besides English, such as one the
+        // import added, and the import stays in reach either way.
+        this.row = label;
+        label.hidden = true;
         panel.append(label, h('div', { class: 'language-actions' }, this.importButton, this.file), this.status);
         this.fill([]);
         enhanceSelect(this.select, { className: 'in-panel', align: 'right', label: t('language.label') });
@@ -55,11 +61,14 @@ export class LanguageSettings {
             options.push(h('optgroup', { label: t('language.own') }, ...own.map(option)));
         }
         this.select.replaceChildren(...options);
+        if (this.row) {
+            this.row.hidden = languages.filter((l) => l.usable !== false).length < 2 && !own.length;
+        }
         this.select.value = stored && languages.some((l) => l.code === stored) ? stored : FOLLOW;
         const refused = own.filter((l) => l.usable === false);
-        this.status.textContent = refused.length
-            ? t('language.refusedNote', { count: refused.length, names: refused.map((l) => `${l.code}.json`).join(', ') })
-            : '';
+        this.status.replaceChildren(...(refused.length
+            ? tn('language.refusedNote', { count: refused.length, names: refused.map((l) => `${l.code}.json`).join(', ') })
+            : []));
     }
 
     // The languages to choose from, shipped first.

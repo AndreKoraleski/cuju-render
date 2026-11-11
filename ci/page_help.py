@@ -187,7 +187,9 @@ def tour_checks(client):
         cuju.palette.run(cuju.palette.active);
         const palette = !!(await wait(() => cuju.tour.state().open));
         cuju.tour.leave();
-        const tip = [...cuju.firstRun.tip.querySelectorAll('button')].map((b) => b.textContent);
+        // The buttons of the tip by their accessible names, the name of a symbol or the words.
+        const tip = [...cuju.firstRun.tip.querySelectorAll('button')]
+            .map((b) => b.getAttribute('aria-label') || b.textContent.trim());
         cuju.firstRun.tip.querySelector('button + button').click();
         const fromTip = !!(await wait(() => cuju.tour.state().open));
         cuju.tour.leave();
@@ -398,7 +400,7 @@ def pwa_checks(client, port):
         cuju.showPage('help');
         const ready = await wait(() => cuju.install.state().updateReady);
         const button = [...document.querySelectorAll('#help-install button')]
-            .find((b) => b.textContent === 'Update');
+            .find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === 'Update');
         const offered = !!button && !button.hidden;
         await cuju.install.update();
         const moved = await wait(() => cuju.install.state().controllerBuild === 'next', 200);
@@ -468,7 +470,8 @@ def offer_checks(client, port):
         const install = card().querySelector('button.primary');
         install.focus();
         const help = [...document.querySelectorAll('#help-install button')]
-            .find((b) => b.textContent === 'Install the app');
+            .find((b) => (b.getAttribute('aria-label') || b.textContent.trim())
+                === 'Install the app');
         const all = {
             prevented: event.defaultPrevented,
             shown,
@@ -496,7 +499,7 @@ def offer_checks(client, port):
         offer('dismissed');
         const shown = !!(await wait(seen));
         const later = [...card().querySelectorAll('button')]
-            .find((b) => b.textContent === 'Not now');
+            .find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === 'Not now');
         later.focus();
         later.click();
         const all = {

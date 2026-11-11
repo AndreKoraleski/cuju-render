@@ -28,6 +28,7 @@ from support.common import (
     _SEVERAL,
     _frames,
     _get,
+    _install_translation,
     _library_ids,
     _names_lineup,
     _play_to_end,
@@ -787,6 +788,8 @@ def test_names_of_the_recorder_and_the_manifest(render_home):
     with open(os.path.join(web, 'manifest.webmanifest'), 'rb') as file:
         shipped = file.read()
     assert _pwa.manifest(shipped, None) == shipped
+    # A language of the folder names the manifest in its words, as the Portuguese draft does.
+    _install_translation('pt')
     portuguese = json.loads(_pwa.manifest(shipped, 'pt'))
     assert portuguese['lang'] == 'pt'
     assert portuguese['description'] != json.loads(shipped)['description']

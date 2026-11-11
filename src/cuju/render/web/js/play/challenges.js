@@ -9,11 +9,12 @@
 // disk for teams and in the browser for the person. Scripts reach it all through
 // window.cuju.challenges.
 
-import { formatDateTime, formatNumber, serverText, t, tn, tOr } from '../core/i18n.js';
+import { formatDateTime, formatNumber, serverNodes, serverText, t, tn, tOr } from '../core/i18n.js';
 import { el as h } from '../core/menu.js';
-import { icon, symbolOnly } from '../core/icons.js';
+import { icon, reicon, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 import { scenarioName } from '../core/scenarios.js';
+import { TeaserCards, loadTeasers } from './teasers.js';
 
 const NAME_KEY = 'cuju.challengeName';
 // Whether the attempts of a run stay as recordings, which the browser keeps, true by default.
@@ -27,6 +28,30 @@ const MEDALS = ['bronze', 'silver', 'gold'];
 const DAY = { year: 'numeric', month: 'numeric', day: 'numeric' };
 // A headless run is followed this often while it waits or plays.
 const POLL_MS = 1000;
+// The kinds of challenge, as CATEGORIES of challenges.py, each with its symbol and its accent in
+// the dark and the light theme. Every accent keeps a contrast of 4.5 to 1 or more as text on the
+// surfaces of its theme, and as the background of a label in the ink of its theme.
+const CATEGORIES = {
+    finishing: { symbol: 'finishing', dark: '#f6c344', light: '#8a5a00' },
+    dribbling: { symbol: 'dribbling', dark: '#4fd1c5', light: '#00756b' },
+    combination: { symbol: 'combination', dark: '#7cb3ff', light: '#1a5fc4' },
+    set_piece: { symbol: 'set-piece', dark: '#c9a3ff', light: '#6f3fc0' },
+    counterattack: { symbol: 'counterattack', dark: '#ff8a80', light: '#b3261e' },
+    breakthrough: { symbol: 'breakthrough', dark: '#8fd694', light: '#2e7d32' },
+    duel: { symbol: 'duel', dark: '#f48fc8', light: '#a3216e' },
+};
+const DIFFICULTIES = ['easy', 'medium', 'hard'];
+
+// The accent of each kind of challenge in both themes, the light one from the system or the page.
+function categoryStyle() {
+    const rules = (theme, ink, scope = '') => Object.entries(CATEGORIES)
+        .map(([name, kind]) => `${scope}.challenge-item.cat-${name} { --cat: ${kind[theme]}; --cat-ink: ${ink}; }`).join('\n');
+    return `${rules('dark', '#202124')}
+@media (prefers-color-scheme: light) {
+${rules('light', '#ffffff', ':root:not([data-theme="dark"]) ')}
+}
+${rules('light', '#ffffff', ':root[data-theme="light"] ')}`;
+}
 
 function injectChallengeStyle() {
     if (document.getElementById('cuju-challenges-style')) {
@@ -42,16 +67,65 @@ function injectChallengeStyle() {
 .challenge-banner[hidden], .challenge-job[hidden] { display: none; }
 .challenge-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
-.challenge-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex;
-    flex-direction: column; gap: 4px; }
+.challenge-item { --cat: var(--accent); --cat-ink: var(--on-accent); border: 1px solid var(--border);
+    border-top: 4px solid var(--cat); border-radius: 8px; padding: 0 12px 10px; display: flex;
+    flex-direction: column; gap: 4px; overflow: hidden; background: var(--surface); }
 .challenge-item h3 { margin: 0; font-size: 16px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .challenge-item p { margin: 0; }
 .challenge-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-.challenge-medal { font-size: 12px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--border); }
+.challenge-media { order: -1; position: relative; margin: 0 -12px 6px; aspect-ratio: 16 / 9; overflow: hidden;
+    background: var(--stage-bottom); }
+.challenge-media > img, .challenge-media > video, .challenge-drawn { position: absolute; inset: 0; width: 100%;
+    height: 100%; object-fit: cover; display: block; }
+.challenge-media > video { opacity: 0; transition: opacity 0.2s; }
+.challenge-media[data-playing="true"] > video.ready { opacity: 1; }
+.reduced-motion .challenge-media > video { transition: none; }
+.challenge-media[data-picture="still"] .challenge-drawn { display: none; }
+.challenge-drawn { display: grid; place-items: center; color: var(--cat); background-color: var(--surface);
+    background-image: var(--pattern); }
+.challenge-drawn .icon { width: 30%; height: 30%; opacity: 0.85; }
+.challenge-chip, .challenge-difficulty, .challenge-media .challenge-medal { position: absolute; display: inline-flex;
+    align-items: center; gap: 5px; font-size: 12px; font-weight: 600; line-height: 1; padding: 4px 8px;
+    border-radius: 999px; }
+.challenge-chip { top: 8px; left: 8px; background: var(--cat); color: var(--cat-ink); }
+.challenge-chip .icon { width: 14px; height: 14px; }
+.challenge-difficulty { top: 8px; right: 8px; background: var(--surface); color: var(--text); border: 1px solid var(--cat); }
+.challenge-pips { display: inline-flex; gap: 2px; }
+.challenge-pips i { width: 6px; height: 10px; border-radius: 1px; border: 1px solid currentColor; }
+.challenge-pips i.on { background: var(--cat); border-color: var(--cat); }
+.challenge-media .challenge-medal { bottom: 8px; left: 8px; border: none; }
+.challenge-media .challenge-medal .icon { width: 14px; height: 14px; }
+.challenge-teaser { position: absolute; right: 8px; bottom: 8px; border-radius: 999px; background: var(--overlay);
+    color: var(--text); border: 1px solid var(--border); }
+.challenge-teaser[hidden] { display: none; }
+.challenge-item:hover, .challenge-item:focus-within { border-color: var(--cat); }
+.challenge-item.difficulty-hard .challenge-media::after { content: ""; position: absolute; inset: auto 0 0 0; height: 3px;
+    background: repeating-linear-gradient(90deg, var(--cat) 0 10px, transparent 10px 16px); }
+.challenge-item.cat-finishing { --pattern: repeating-radial-gradient(circle at 50% 50%, transparent 0 18px,
+    color-mix(in srgb, var(--cat) 22%, transparent) 18px 21px); }
+.challenge-item.cat-dribbling { --pattern: repeating-linear-gradient(135deg, transparent 0 14px,
+    color-mix(in srgb, var(--cat) 20%, transparent) 14px 18px); }
+.challenge-item.cat-combination { --pattern: radial-gradient(color-mix(in srgb, var(--cat) 35%, transparent) 2px,
+    transparent 2.5px) 0 0 / 22px 22px; }
+.challenge-item.cat-set_piece { --pattern: repeating-radial-gradient(circle at 0 100%, transparent 0 26px,
+    color-mix(in srgb, var(--cat) 22%, transparent) 26px 29px); }
+.challenge-item.cat-counterattack { --pattern: repeating-linear-gradient(90deg, transparent 0 22px,
+    color-mix(in srgb, var(--cat) 22%, transparent) 22px 24px, transparent 24px 30px,
+    color-mix(in srgb, var(--cat) 12%, transparent) 30px 31px); }
+.challenge-item.cat-breakthrough { --pattern: linear-gradient(color-mix(in srgb, var(--cat) 22%, transparent) 2px,
+    transparent 2px) 0 0 / 36px 18px, linear-gradient(90deg, color-mix(in srgb, var(--cat) 22%, transparent) 2px,
+    transparent 2px) 0 0 / 36px 36px, linear-gradient(90deg, color-mix(in srgb, var(--cat) 22%, transparent) 2px,
+    transparent 2px) 18px 18px / 36px 36px; }
+.challenge-item.cat-duel { --pattern: linear-gradient(90deg, color-mix(in srgb, var(--cat) 16%, transparent) 50%,
+    transparent 50%); }
+${categoryStyle()}
+.challenge-medal { font-size: 12px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--border);
+    display: inline-flex; align-items: center; gap: 4px; }
 .challenge-medal.gold { background: #d4a017; color: #1b1300; border-color: #d4a017; }
 .challenge-medal.silver { background: #b8bec6; color: #15181c; border-color: #b8bec6; }
 .challenge-medal.bronze { background: #b0703c; color: #fff; border-color: #b0703c; }
 .challenge-item:has(.challenge-board:not([hidden])) { grid-column: 1 / -1; }
+.challenge-item:has(.challenge-board:not([hidden])) .challenge-media { max-height: 220px; }
 .challenge-board { overflow-x: auto; }
 .challenge-board table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .challenge-board th, .challenge-board td { text-align: left; padding: 2px 6px; border-bottom: 1px solid var(--border); }
@@ -268,6 +342,9 @@ export class ChallengesPanel {
         this.polling = false;
         this.root = null;
         this.boards = new Map();
+        // The teasers of the cards, which play under full motion alone unless asked for.
+        this.teaserFiles = {};
+        this.teasers = new TeaserCards({ reduced: () => this.motionReduced() });
         // Scripts and agents reach the challenges through the page object.
         this.app.challenges = this.script();
     }
@@ -285,16 +362,17 @@ export class ChallengesPanel {
         this.banner = h('div', { class: 'challenge-banner', role: 'status', hidden: true });
         this.jobLine = h('div', { class: 'challenge-job', role: 'status', 'aria-live': 'polite', hidden: true });
         this.list = h('ul', { class: 'challenge-list', 'aria-label': t('challenges.title') });
+        this.bindTeasers(this.list);
         this.note = h('p', { class: 'muted small', role: 'status' });
         this.root = h('section', { class: 'challenges', 'aria-labelledby': 'challenges-title' },
             h('h2', { id: 'challenges-title' }, t('challenges.title')),
-            h('p', { class: 'muted' }, t('challenges.text')),
+            h('p', { class: 'muted' }, tn('challenges.text')),
             h('div', { class: 'setup-row' },
                 h('label', { class: 'field' }, t('challenges.name'), this.nameField),
                 h('label', { class: 'field' }, t('challenges.team'), this.teamSelect),
                 h('label', { class: 'field' }, t('challenges.attempts'), this.attemptSelect)),
             h('label', { class: 'check' }, this.keepBox, t('challenges.keep')),
-            h('p', { class: 'muted small', id: 'challenge-keep-hint' }, t('challenges.keep.hint')),
+            h('p', { class: 'muted small', id: 'challenge-keep-hint' }, tn('challenges.keep.hint')),
             this.banner, this.jobLine, this.note, this.list, this.achievementsPart());
         return this.root;
     }
@@ -306,7 +384,7 @@ export class ChallengesPanel {
         this.achievementNote = h('p', { class: 'muted small', role: 'status' });
         return h('section', { class: 'achievements', 'aria-labelledby': 'achievements-title' },
             h('h3', { id: 'achievements-title' }, t('challenges.achievements.title')),
-            h('p', { class: 'muted' }, t('challenges.achievements.text')),
+            h('p', { class: 'muted' }, tn('challenges.achievements.text')),
             h('label', { class: 'field' }, t('challenges.achievements.whose'), this.whoseSelect),
             this.achievementNote, this.achievementList);
     }
@@ -341,7 +419,7 @@ export class ChallengesPanel {
         const whose = this.whoseSelect.value;
         const earned = whose === 'you' ? readEarned() : (this.achievements.teams[whose] || {});
         const count = this.achievements.catalog.filter((a) => earned[a.id]).length;
-        this.achievementNote.textContent = t('challenges.achievements.count', { earned: count, count: this.achievements.catalog.length });
+        this.achievementNote.textContent = t('challenges.achievements.count', { count, total: this.achievements.catalog.length });
         this.achievementList.replaceChildren(...this.achievements.catalog.map((a) => {
             const got = earned[a.id];
             const first = got ? formatDateTime(whose === 'you' ? got.first : got.first * 1000, DAY) : '';
@@ -361,7 +439,7 @@ export class ChallengesPanel {
         const others = ids.filter((id) => !fresh.includes(id));
         return h('div', { class: 'achievement-new', role: 'status' },
             fresh.length ? h('p', {}, t('challenges.achievements.new', { count: fresh.length, names: fresh.map((id) => this.nameOf(id)).join(', ') })) : null,
-            others.length ? h('p', { class: 'muted' }, t('challenges.achievements.again', { names: others.map((id) => this.nameOf(id)).join(', ') })) : null);
+            others.length ? h('p', { class: 'muted' }, t('challenges.achievements.again', { count: others.length, names: others.map((id) => this.nameOf(id)).join(', ') })) : null);
     }
 
     // The person's achievements of a game, from the ended report of the game's process.
@@ -377,6 +455,14 @@ export class ChallengesPanel {
             ids.forEach((id) => seen.add(id));
         }
         return this.achievementLines(shown, fresh);
+    }
+
+    // Whether motion is reduced, by the page's setting or else the system's.
+    motionReduced() {
+        if (typeof this.app.reducedMotion === 'boolean') {
+            return this.app.reducedMotion;
+        }
+        return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     }
 
     personName() {
@@ -400,6 +486,7 @@ export class ChallengesPanel {
             this.note.textContent = t('challenges.unavailable', { reason: err.message });
         }
         await this.loadAchievements();
+        this.teaserFiles = await loadTeasers();
         this.renderTeams();
         this.render();
         this.renderAchievements();
@@ -425,6 +512,7 @@ export class ChallengesPanel {
         }
         const focused = document.activeElement && this.list.contains(document.activeElement)
             ? [document.activeElement.closest('[data-id]')?.dataset.id, document.activeElement.dataset.action] : null;
+        this.teasers.clear();
         this.list.replaceChildren(...this.catalog.map((c) => this.item(c)));
         if (focused && focused[0]) {
             const again = this.list.querySelector(`[data-id="${focused[0]}"] [data-action="${focused[1]}"]`);
@@ -452,8 +540,14 @@ export class ChallengesPanel {
                 people: t('challenges.item.people', { count: c.board.people }), agents: t('challenges.item.agents', { count: c.board.agents }),
             })
             : t('challenges.item.empty');
-        return h('li', { class: 'challenge-item', 'data-id': c.id },
-            h('h3', {}, title, medalBadge(mine && mine.medal)),
+        const kind = Object.prototype.hasOwnProperty.call(CATEGORIES, c.category) ? c.category : null;
+        const difficulty = DIFFICULTIES.includes(c.difficulty) ? c.difficulty : null;
+        const heading = `challenge-title-${c.id}`;
+        const classes = ['challenge-item', kind ? `cat-${kind}` : '', difficulty ? `difficulty-${difficulty}` : ''].filter(Boolean).join(' ');
+        // The card takes its name from its title alone, and its picture comes first on screen.
+        return h('li', { class: classes, 'data-id': c.id, 'aria-labelledby': heading },
+            h('h3', { id: heading }, title),
+            this.media(c, title, kind, difficulty, mine && mine.medal),
             h('p', {}, challengeGoal(c)),
             h('p', { class: 'muted small' }, t('challenges.item.plays', { scenario: scenarioName(c.scenario), count: c.attempts, targets: targetsText(c) })),
             h('p', { class: 'muted small' }, abilityText(c)),
@@ -464,6 +558,129 @@ export class ChallengesPanel {
                 h('button', { type: 'button', class: 'btn small', 'data-action': 'headless', ...symbolOnly(named('challenges.item.headless')), onclick: () => this.runHeadless(c.id) }, icon('robot')),
                 toggle),
             board);
+    }
+
+    // The picture of a card, its still or a drawing of its kind, the teaser that plays over it,
+    // the kind, the difficulty and the person's medal. The video is decoration and never sounds.
+    media(c, title, kind, difficulty, medal) {
+        const files = (this.teaserFiles && this.teaserFiles[c.id]) || {};
+        const box = h('div', { class: 'challenge-media', 'data-picture': files.still ? 'still' : 'drawn', 'data-playing': 'false' },
+            h('div', { class: 'challenge-drawn', 'aria-hidden': 'true' }, icon(kind ? CATEGORIES[kind].symbol : 'trophy')));
+        const card = { id: c.id, still: files.still || null, teaser: files.teaser || null, video: null };
+        if (files.still) {
+            const still = h('img', { class: 'challenge-still', src: files.still, alt: '', width: '480', height: '270', loading: 'lazy', decoding: 'async' });
+            still.addEventListener('error', () => {
+                card.still = null;
+                still.remove();
+                box.dataset.picture = 'drawn';
+            });
+            box.append(still);
+        }
+        if (kind) {
+            box.append(h('span', { class: 'challenge-chip' }, icon(CATEGORIES[kind].symbol), t(`challenges.category.${kind}`)));
+        }
+        if (difficulty) {
+            const level = DIFFICULTIES.indexOf(difficulty);
+            const words = t(`challenges.difficulty.${difficulty}`);
+            box.append(h('span', { class: 'challenge-difficulty' },
+                h('span', { class: 'challenge-pips', 'aria-hidden': 'true' }, ...DIFFICULTIES.map((_, i) => h('i', { class: i <= level ? 'on' : '' }))),
+                h('span', { class: 'sr-only' }, t('challenges.difficulty.label', { level: words })),
+                h('span', { 'aria-hidden': 'true' }, words)));
+        }
+        const badge = medalBadge(medal);
+        if (badge) {
+            badge.prepend(icon('podium'));
+            box.append(badge);
+        }
+        const play = h('button', {
+            type: 'button', class: 'btn small challenge-teaser', 'data-action': 'teaser', 'aria-pressed': 'false',
+            hidden: !files.teaser, ...symbolOnly(t('challenges.teaser.play', { title })),
+        }, icon('play'));
+        box.append(play);
+        card.show = (view) => this.showTeaser(card, box, play, view);
+        play.addEventListener('click', () => this.teasers.toggle(c.id));
+        this.teasers.add(card);
+        return box;
+    }
+
+    // Draws what the teasers' controller says of a card, starting or stopping its video.
+    showTeaser(card, box, play, view) {
+        box.dataset.picture = card.still ? 'still' : 'drawn';
+        box.dataset.playing = view.playing ? 'true' : 'false';
+        play.hidden = !view.button;
+        play.setAttribute('aria-pressed', view.playing ? 'true' : 'false');
+        reicon(play, view.playing ? 'pause' : 'play');
+        if (view.playing) {
+            if (!card.video) {
+                const video = h('video', {
+                    class: 'challenge-video', 'aria-hidden': 'true', tabindex: '-1', muted: true, playsinline: true, loop: true,
+                    preload: 'auto', disablepictureinpicture: true, disableremoteplayback: true, width: '480', height: '270',
+                });
+                video.muted = true;
+                video.defaultMuted = true;
+                video.volume = 0;
+                video.addEventListener('playing', () => video.classList.add('ready'));
+                video.addEventListener('error', () => this.teasers.fail(card.id));
+                video.src = card.teaser;
+                card.video = video;
+                play.before(video);
+            }
+            card.video.muted = true;
+            const started = card.video.play();
+            if (started && typeof started.catch === 'function') {
+                started.catch(() => {});
+            }
+        } else if (card.video) {
+            card.video.pause();
+            card.video.classList.remove('ready');
+            try {
+                card.video.currentTime = 0;
+            } catch {
+                // A video without data has no time to go back to.
+            }
+        }
+    }
+
+    // The pointer and the keyboard focus on the cards, followed once on the list. Focus that a
+    // click gives a button plays nothing, only focus that the keyboard moves does.
+    bindTeasers(list) {
+        const cardOf = (target) => (target && target.closest ? target.closest('.challenge-item[data-id]') : null);
+        list.addEventListener('pointerover', (event) => {
+            const card = cardOf(event.target);
+            if (card && event.pointerType !== 'touch' && !card.contains(event.relatedTarget)) {
+                this.teasers.enter(card.dataset.id, 'hover');
+            }
+        });
+        list.addEventListener('pointerout', (event) => {
+            const card = cardOf(event.target);
+            if (card && !card.contains(event.relatedTarget)) {
+                this.teasers.leave(card.dataset.id, 'hover');
+            }
+        });
+        list.addEventListener('focusin', (event) => {
+            const card = cardOf(event.target);
+            let keyboard = true;
+            try {
+                keyboard = event.target.matches(':focus-visible');
+            } catch {
+                // A browser without :focus-visible counts every focus.
+            }
+            if (card && keyboard) {
+                this.teasers.enter(card.dataset.id, 'focus');
+            }
+        });
+        list.addEventListener('focusout', (event) => {
+            const card = cardOf(event.target);
+            if (card && !card.contains(event.relatedTarget)) {
+                this.teasers.leave(card.dataset.id, 'focus');
+            }
+        });
+        // A change of the motion setting, which marks the page's root, stops or allows the
+        // teasers at once.
+        if (typeof MutationObserver === 'function') {
+            new MutationObserver(() => this.teasers.refresh())
+                .observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        }
     }
 
     async toggleBoard(c, board, button) {
@@ -587,7 +804,7 @@ export class ChallengesPanel {
         }
         const last = run.index === run.challenge.attempts - 1;
         this.banner.replaceChildren(...[
-            h('span', {}, t('challenges.run.banner', { title: challengeTitle(run.challenge), played: run.matches.length, count: run.challenge.attempts })),
+            h('span', {}, t('challenges.run.banner', { title: challengeTitle(run.challenge), count: run.matches.length, total: run.challenge.attempts })),
             last ? null : h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.run.next')), onclick: () => this.next() }, icon('next')),
             h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.run.leave')), onclick: () => this.leave() }, icon('exit'))].filter(Boolean));
     }
@@ -635,7 +852,8 @@ export class ChallengesPanel {
             run.results[index] = scored.result;
             host.children[1].textContent = attemptText(c, scored.result);
             if (scored.problem) {
-                host.append(h('p', { class: 'error-text' }, t('challenges.run.problem', { problem: serverText(scored, 'problem') })));
+                // The reason shows with its marks, such as a field of the recording as code.
+                host.append(h('p', { class: 'error-text' }, tn('challenges.run.problem', { problem: h('span', {}, serverNodes(scored, 'problem')) })));
             }
         } catch (err) {
             host.children[1].textContent = t('challenges.run.scoreFailed', { reason: err.message });
@@ -685,7 +903,7 @@ export class ChallengesPanel {
             h('p', {}, outcome.medal ? medalBadge(outcome.medal, t('challenges.outcome.medal', { medal: MEDAL_NAMES[outcome.medal] })) : t('challenges.outcome.noMedal')),
         ];
         if (outcome.practice) {
-            lines.push(h('p', { class: 'muted' }, t('challenges.outcome.practice')));
+            lines.push(h('p', { class: 'muted' }, tn('challenges.outcome.practice')));
         } else if (outcome.personal_best) {
             const best = outcome.personal_best;
             const rank = outcome.rank ?? t('challenges.rank.outside');
@@ -760,7 +978,7 @@ export class ChallengesPanel {
         if (job.state === 'queued') {
             text = t('challenges.job.queued', { name: teamName(job), title });
         } else if (job.state === 'running') {
-            text = t('challenges.job.running', { name: teamName(job), title, done: job.results.length, count: job.attempts });
+            text = t('challenges.job.running', { name: teamName(job), title, count: job.results.length, total: job.attempts });
         } else if (job.state === 'done' && job.result) {
             const r = job.result;
             const rank = r.rank ?? t('challenges.rank.outside');

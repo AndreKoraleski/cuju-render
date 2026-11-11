@@ -29,6 +29,7 @@ import urllib.request
 from pathlib import Path
 
 import page_a11y
+import page_challenges
 import page_export
 import page_feed
 import page_grid
@@ -1102,8 +1103,9 @@ def ui_a11y_checks(client):
                 { name: 'video export', ok: true, warning: true, detail: 'missing' },
             ] } });
             all.warning = status === 'The report is ready. 1 check warns, video export.' || status;
-            all.language = cuju.palette.actions()
-                .some((action) => action.title === 'Language, Português (Brasil)');
+            // English ships alone, so the palette offers no other language until one is imported.
+            all.language = !cuju.palette.actions()
+                .some((action) => action.title.startsWith('Language, '));
             cuju.showPage('home');
             return all;
         })()
@@ -1223,7 +1225,7 @@ def first_run_checks(client):
             box.click();
             cuju.showPage('home');
             const tip = document.getElementById('tip');
-            const shown = await wait(() => !tip.hidden && tip.textContent.includes('Ctrl K'));
+            const shown = await wait(() => !tip.hidden && !!tip.querySelector('kbd.chord'));
             tip.querySelector('button').click();
             const dismissed = tip.hidden
                 && JSON.parse(localStorage.getItem('cuju.tips')).dismissed.includes('home');
@@ -3375,7 +3377,8 @@ def main():
                         cuju.play.pause(true);
                         const sameGame = cuju.play.game;
                         const pick = (text) => [...cuju.play.menu.querySelectorAll('button')]
-                            .find((button) => button.textContent === text).click();
+                            .find((b) => (b.getAttribute('aria-label') || b.textContent.trim())
+                                === text).click();
                         pick('Home');
                         await new Promise((resolve) => setTimeout(resolve, 50));
                         const home = cuju.page === 'home' && quitCount === 0
@@ -3418,8 +3421,9 @@ def main():
                         code, key: code, bubbles: true, cancelable: true,
                     }));
                     press('KeyH');
+                    // The note names H, M and F, each drawn as a keycap.
                     const reserved = play.input.keys.shot === 'KeyD'
-                        && /H, M and F/.test(play.inputNote.textContent);
+                        && play.inputNote.querySelectorAll('kbd.chord').length === 3;
                     press('KeyW');
                     const taken = play.input.keys.shot === 'KeyD'
                         && /already/.test(play.inputNote.textContent);
@@ -3806,6 +3810,7 @@ def main():
             checks += worklet_checks(client, port)
             checks += worker_checks(client)
             checks += photo_checks(client)
+            checks += page_challenges.card_checks(client)
             checks += challenge_checks(client)
             checks += page_help.help_checks(client, port)
             checks += page_a11y.a11y_checks(client)

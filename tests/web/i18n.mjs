@@ -19,7 +19,8 @@ writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const i18n = await import(pathToFileURL(join(folder, 'core/i18n.js')).href);
 const languages = new URL('../../src/cuju/render/web/languages/', import.meta.url);
-const read = (code) => JSON.parse(readFileSync(new URL(`${code}.json`, languages), 'utf8'));
+// English ships with the page, and the Portuguese draft waits in translations/.
+const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`${code}.json`, languages) : new URL(`../../translations/${code}.json`, import.meta.url), 'utf8'));
 const english = read('en');
 const PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
 const places = (value) => new Set((typeof value === 'string' ? [value] : Object.values(value)).flatMap((form) => [...form.matchAll(PLACEHOLDER)].map((m) => m[1])));
@@ -85,10 +86,11 @@ test('numbers, dates and lists use the locale of the language', () => {
     assert.equal(i18n.validCode('PT'), false);
 });
 
-test('every shipped language holds the ids of English with its placeholders and plural forms', () => {
+test('English and the Portuguese draft hold the ids of English with its placeholders and plural forms', () => {
+    // English ships alone, and the Portuguese draft, which the page imports, follows the same rules.
     const files = readdirSync(languages).filter((name) => name.endsWith('.json'));
-    assert.ok(files.includes('en.json') && files.includes('pt.json'));
-    for (const name of files) {
+    assert.deepEqual(files, ['en.json']);
+    for (const name of [...files, 'pt.json']) {
         const file = read(name.replace(/\.json$/, ''));
         const head = file['@language'];
         assert.equal(head.code, name.replace(/\.json$/, ''), name);
@@ -98,7 +100,11 @@ test('every shipped language holds the ids of English with its placeholders and 
             if (id === '@language') {
                 continue;
             }
-            assert.ok(id in file, `${name} lacks ${id}`);
+            // A draft may lack a message, which the page then shows in English.
+            if (!(id in file)) {
+                assert.notEqual(name, 'en.json', `${name} lacks ${id}`);
+                continue;
+            }
             const own = file[id];
             // A language may count what English leaves alone, when the English text holds {count}.
             if (typeof value === 'object' || !places(value).has('count')) {

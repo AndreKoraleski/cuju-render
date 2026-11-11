@@ -602,7 +602,9 @@ class Tournaments:
             reported = _messages.report_fields(reply)
             if reported['error_id'] is not None:
                 raise MessageError(reported['error_id'], **reported['error_values'])
-            raise ArgumentError(reported['error'] or 'the process that runs it refused the change')
+            if reported['error']:
+                raise ArgumentError(reported['error'])
+            raise MessageError('server.tournament.refused')
         self._scan()
         return self.get(identifier)
 

@@ -35,6 +35,10 @@ export const SYMBOLS = {
     star: 'star', flag: 'flag', exit: 'log-out', robot: 'bot', sparkle: 'sparkles', more: 'ellipsis',
     layers: 'layers', link: 'link', podium: 'medal', video: 'video', user: 'user', crosshair: 'crosshair',
     monitor: 'monitor', stats: 'chart-column', palette: 'palette', languages: 'languages', external: 'external-link',
+    install: 'monitor-down', server: 'server', terminal: 'terminal', swap: 'arrow-left-right',
+    // The symbols of selects and settings.
+    speed: 'gauge', calendar: 'calendar', sort: 'arrow-down-wide-narrow', filter: 'funnel', slow: 'snail',
+    people: 'users', celebrate: 'party-popper', mouse: 'mouse', trail: 'route',
     // States.
     clock: 'clock', running: 'loader', alert: 'triangle-alert', waiting: 'hourglass', done: 'circle-check',
     failed: 'circle-x', warning: 'circle-alert',
@@ -46,6 +50,9 @@ export const SYMBOLS = {
     sun: 'sun', dawn: 'sunrise', dusk: 'sunset', moon: 'moon', cloud: 'cloud', rain: 'cloud-rain',
     storm: 'cloud-lightning', snow: 'cloud-snow', fog: 'haze', stripes: 'columns-3', checkers: 'grid-3x3',
     circles: 'circle-dot', plain: 'ban',
+    // The kinds of challenge on the cards of Play.
+    finishing: 'target', dribbling: 'footprints', combination: 'route', 'set-piece': 'flag-triangle-right',
+    counterattack: 'zap', breakthrough: 'brick-wall', duel: 'swords',
 };
 
 // Fills the sprite of the page with every symbol it lacks, making the sprite when the page has none.

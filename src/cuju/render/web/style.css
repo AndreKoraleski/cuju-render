@@ -120,6 +120,69 @@ kbd {
     text-align: center;
 }
 
+/* Code and keycaps of the messages share one inline highlight, the text color on the second
+   surface with a rule around it, which reads at more than 10 to 1 in both themes. Strong words
+   keep the color of their text and stand out by weight. */
+code {
+    padding: 0 0.3em;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+    font-size: 0.88em;
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+}
+
+strong {
+    font-weight: 700;
+}
+
+/* A shortcut, its keycaps side by side, each shaped as its key and sized to the line. */
+kbd.chord {
+    display: inline;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    white-space: nowrap;
+}
+
+.chord-keys {
+    display: inline-flex;
+    gap: 0.2em;
+    vertical-align: -0.15em;
+}
+
+kbd.keycap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.55em;
+    height: 1.45em;
+    padding: 0 0.3em;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: 600 0.78em/1 var(--font);
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+kbd.keycap svg {
+    width: 1.05em;
+    height: 1.05em;
+}
+
+kbd.keycap-wide {
+    min-width: 2.6em;
+}
+
+kbd.keycap-space {
+    min-width: 4.2em;
+}
+
 .sr-only {
     position: absolute;
     width: 1px;
@@ -7461,6 +7524,49 @@ table.grid td.wrap {
 .state-pill[data-symbol] .icon {
     width: 14px;
     height: 14px;
+}
+
+/* A symbol beside words, in a line of text, a link, a note, a toast or a label, at the size of
+   the text. */
+.text-symbol {
+    flex: none;
+    width: 1.15em;
+    height: 1.15em;
+    margin-right: 0.35em;
+    vertical-align: -0.2em;
+}
+
+/* A select made a dropdown may show a symbol in place of the words of its prefix. */
+.dd-select > .icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    color: var(--muted);
+}
+
+/* A toggle of the settings shows its box, then its symbol and its words, and a field of the
+   settings keeps its control at the end of its row. */
+.popover label > .text-symbol {
+    margin-right: 0;
+    color: var(--muted);
+}
+
+.popover label > .text-symbol + input[type="checkbox"] {
+    order: -1;
+}
+
+.popover label:not(.check):has(> .text-symbol) {
+    justify-content: flex-start;
+}
+
+.popover label:not(.check):has(> .text-symbol) > :last-child {
+    margin-left: auto;
+}
+
+/* A list whose items open with a symbol, such as the names that repeat on a tournament's review. */
+.symbol-list {
+    padding-left: 0;
+    list-style: none;
 }
 
 .tool[data-symbol] {

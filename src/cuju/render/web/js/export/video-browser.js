@@ -157,6 +157,16 @@ export class BrowserExport {
         if (app.director.lineup && (this.body.broadcast !== true || at > 0)) {
             app.director.closeLineups(false);
         }
+        // A short recording may play to its end while the page loads, so the card and the show
+        // of its end go before the first frame is held.
+        clearTimeout(app.fullTimeTimer);
+        if (app.postMatch && app.postMatch.running) {
+            app.postMatch.end();
+        }
+        if (app.transition && app.transition.title) {
+            app.transition.title.hide();
+        }
+        app.endCard = false;
         app.timeline.pause();
         app.setCamera(this.body.camera);
         const tl = app.timeline;

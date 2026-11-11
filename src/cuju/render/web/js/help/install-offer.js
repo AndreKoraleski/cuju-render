@@ -9,6 +9,7 @@
 // card as window.cuju.installOffer.
 
 import { t } from '../core/i18n.js';
+import { icon, symbolOnly } from '../core/icons.js';
 import {
     OFFER_KEY, countVisit, dismissOffer, heldPrompt, installedNow, offerShown, offerState,
     onInstallChange, promptInstall,
@@ -48,6 +49,7 @@ function injectStyle() {
     padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px;
     background: var(--surface); color: var(--text); }
 .install-offer-text { flex: 1 1 280px; min-width: 0; }
+.install-offer-symbol { flex: none; width: 28px; height: 28px; color: var(--accent); }
 .install-offer h2 { margin: 0 0 2px; font-size: 16px; }
 .install-offer p { margin: 0; }
 .install-offer-actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -62,10 +64,12 @@ export class InstallOffer {
         this.state = countVisit(loadState());
         this.save();
         injectStyle();
-        this.installButton = h('button', { type: 'button', class: 'btn primary small', onclick: () => this.install() }, t('installOffer.install'));
-        this.laterButton = h('button', { type: 'button', class: 'btn small', onclick: () => this.dismiss() }, t('installOffer.later'));
+        // Install keeps its words as the action of the card, and Not now shows its symbol alone.
+        this.installButton = h('button', { type: 'button', class: 'btn primary small', onclick: () => this.install() }, icon('download'), t('installOffer.install'));
+        this.laterButton = h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('installOffer.later')), onclick: () => this.dismiss() }, icon('close'));
         this.card = h('aside', { id: 'install-offer', class: 'install-offer', 'aria-labelledby': 'install-offer-title', hidden: true },
             h('div', { class: 'install-offer-card' },
+                icon('install', 'icon install-offer-symbol'),
                 h('div', { class: 'install-offer-text' },
                     h('h2', { id: 'install-offer-title' }, t('installOffer.title')),
                     h('p', {}, t('installOffer.text')),

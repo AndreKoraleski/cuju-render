@@ -12,6 +12,7 @@ from typing import Any
 
 from cuju.errors import ArgumentError
 
+from .._text.messages import counted
 from . import tournament as rules
 from . import tournament_runner as _tournament_runner
 
@@ -196,18 +197,19 @@ def preview_lines(preview: dict[str, Any]) -> list[str]:
         return 'a bye' if side is None else names[side]
 
     lines = [
-        f'{config["name"]}, seed {config["seed"]}, {len(names)} entrants, '
-        f'{preview["matches"]} matches known before any result'
+        f'{config["name"]}, seed {config["seed"]}, {counted(len(names), "entrant")}, '
+        f'{counted(preview["matches"], "match", "matches")} known before any result'
     ]
     last = len(config['stages']) - 1
     pairs = zip(config['stages'], preview['stages'], strict=True)
     for index, (settings, stage) in enumerate(pairs):
-        parts = [f'{settings["entrants"]} entrants']
+        parts = [counted(settings['entrants'], 'entrant')]
         if index < last:
-            parts.append(f'{settings["advance"]} advance')
+            advance = settings['advance']
+            parts.append(f'{advance} advances' if advance == 1 else f'{advance} advance')
         parts.append(settings['scenario'])
         if settings['length']:
-            parts.append(f'{settings["length"]} steps a match')
+            parts.append(f'{counted(settings["length"], "step")} a match')
         lines.append(f'{index + 1}. {_stage_title(settings)}, {", ".join(parts)}')
         if settings['format'] == 'groups':
             for table in stage['tables']:

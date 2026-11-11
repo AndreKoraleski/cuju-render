@@ -8,7 +8,7 @@
 // between the tiles.
 
 import { api } from '../core/api.js';
-import { t } from '../core/i18n.js';
+import { t, tn } from '../core/i18n.js';
 import { drawPitch, drawScene, formatClock, pitchTransform, teamPaint } from './pitch2d.js';
 
 // The sizes of the grid, square numbers of tiles up to the most that a request may ask for.
@@ -356,9 +356,9 @@ export class EnvironmentGrid {
                 return;
             }
             const waiting = document_.tiles.filter((tile) => !tile).length;
-            this.status.textContent = waiting
-                ? t('grid.status.waiting', { waiting, total: document_.tiles.length })
-                : t('grid.status.ready');
+            this.status.replaceChildren(...(waiting
+                ? [t('grid.status.waiting', { count: waiting, total: document_.tiles.length })]
+                : tn('grid.status.ready')));
             document_.tiles.forEach((tile, i) => {
                 if (tile) {
                     this.held.set(first + i, tile);

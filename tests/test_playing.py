@@ -32,6 +32,7 @@ from support.common import (
     _short_challenges,
     _short_matches,
     _toy_team,
+    _translation,
 )
 
 
@@ -947,7 +948,7 @@ def test_server_catalogs_match_the_language_files():
     from cuju.render._tournaments import tournament as _tournament
 
     english = _shipped_language('en')
-    portuguese = _shipped_language('pt')
+    portuguese = _translation('pt')
     expected = {}
     for entry in _challenges.CATALOG:
         expected[f'challenge.{entry["id"]}.title'] = entry['title']

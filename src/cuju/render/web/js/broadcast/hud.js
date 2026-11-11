@@ -8,6 +8,7 @@ import { GAME_MODES } from '../recording/format.js';
 import { t } from '../core/i18n.js';
 import { css } from '../players/kits.js';
 import { teamName } from '../core/names.js';
+import { icon } from '../core/icons.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -251,12 +252,14 @@ export class Hud {
     }
 
     // The replay badge, with a hint of the keys while a replay runs.
+    // The hint is a text or the nodes of a message, its shortcuts as keycaps.
     setReplay(on, hint = '') {
         this.el.replay.hidden = !on;
         const h = $('replay-hint');
         if (h) {
-            h.textContent = hint;
-            h.hidden = !hint;
+            const parts = Array.isArray(hint) ? hint : [hint];
+            h.replaceChildren(...parts);
+            h.hidden = !parts.some((part) => part);
         }
     }
 
@@ -329,9 +332,10 @@ export class Hud {
         }
     }
 
-    toast(text, kind = 'info', ms = 4000) {
+    // A toast may show a symbol before its words, such as a pencil for a name the page proposes.
+    toast(text, kind = 'info', ms = 4000, symbol = null) {
         const t = this.el.toast;
-        t.textContent = text;
+        t.replaceChildren(...(symbol ? [icon(symbol, 'icon text-symbol'), text] : [text]));
         t.dataset.kind = kind;
         t.classList.add('show');
         clearTimeout(this.toastTimer);

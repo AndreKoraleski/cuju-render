@@ -1216,8 +1216,9 @@ The symbols that recur across the pages are these.
 | --- | --- |
 | a triangle | Play, Open, Start, Watch a match |
 | two bars | Pause |
-| a cross | Close, Cancel, Remove an entry |
-| a pencil | Rename, Edit |
+| a cross | Close, Cancel, Remove an entry, Not now |
+| a tick | Got it, Apply |
+| a pencil | Rename, Edit, the name of an entrant |
 | the letter i in a circle | Details |
 | a folder with an arrow | Move to a folder |
 | a folder with a plus | New folder |
@@ -1237,12 +1238,44 @@ The symbols that recur across the pages are these.
 | a trophy | Trophy ceremony, Match summary |
 | a medal | Leaderboard |
 | a robot | Run headless |
+| a gauge | Speed |
+| a calendar | Date |
+| lines of falling length | Sort |
+| a funnel | Show, the state of requested matches |
+| a shirt | Team, Use the kits saved in the match |
+| a plot of land | Scenario, GRF classic pitch |
+| a folder | Folder, Open a file |
+| a star | Favorites |
+| a keyboard | All shortcuts |
+| a screen with an arrow down | Install cuju as an app |
+| a terminal | the command `cuju render app` |
+| a screen | Made in this browser |
+| a server | Made by the server |
+| a sign of warning | A name that repeats another |
 
 The states of requested matches, tournaments and lessons show as symbols too, a clock while a
 request waits, a turning wheel while it runs, a ticked circle once it is done, a crossed circle
 when it failed and two bars while it stands still, each with its name as its tooltip. The choices
 of the Field page show the time of day as a rising sun, a sun, a setting sun and a moon, the
 weather as a sun, a cloud, rain, a storm, snow and haze, and each way of mowing as its pattern.
+
+The lists that choose a value keep the value in words, and the name of the list shows as a symbol
+before it. Speed on Watch, the filters and the order of Recordings, Matches and the search of
+moments show a gauge, a folder, a plot of land, a shirt, a calendar, a star, a clock or lines of
+falling length, and the View list of Recordings shows a box for the library and a waste bin for
+the Trash. The tooltip of each list names it, and a screen reader reads the name with the value,
+such as Sort, Newest first. The settings show a symbol beside the words of each choice whose
+symbol reads clearly, such as a route for Ball trail, a television for Broadcast mode, two people
+for Lineups, a popper for Celebrations, a snail for Slow motion in replays, a mouse for Capture the
+mouse, a palette for Theme and the symbol of languages for Language.
+
+Lines of state show their symbol before their words. The line of progress of Export video opens
+with the symbol of the export's state, its notes show a screen when the browser makes the video
+and a server when the server makes it, and Install the app on Help shows a ticked circle for an
+installed app and a terminal before the command `cuju render app`. On Tournaments, a name of an
+entrant that repeats another shows a warning beside the field and in the review, and the note that
+proposes a free name, such as Rex 2, shows a pencil. The card on Home that offers the app shows a
+screen with an arrow down, Install with its words and Not now as a cross.
 
 Some controls keep their words beside the symbol, where the words are the content or a symbol
 alone could be read two ways. The main action of a page keeps its words, such as Play on Play,
@@ -1251,6 +1284,15 @@ Help. Deleting for good keeps its words, Delete permanently in the Trash, Delete
 preset or a tournament. The menus of a paused game and the card at the end of a game keep their
 words, since Quit, Quit to Home and Home differ in what they keep. The buttons of the touch
 controls keep the short labels of Gameplay Football, as GRF players know them.
+
+The lists of Source and Result on Recordings and of Kind, Score and Source in the search of
+moments keep the words of their names, since no symbol names a source, a kind of moment or a
+result in one reading. Restart transitions, 2D view, Motion and the levels of sound keep their
+words alone in the settings for the same reason. The words stay where a button names its own
+choice, as Use the 2D view and Keep 3D, Use low quality and Keep this quality, Map by names, the
+offers of the tour and the lessons, Show more on Matches and No more tips. Install on the card keeps its words
+as the action of the card, and Import a language file keeps them beside its symbol, since it
+stands alone while English is the only language.
 
 Commands, or Ctrl K on any page, opens the **command palette**, a search field over a list of
 everything the page does. The list holds every page, the live sources and the eight newest
@@ -2848,25 +2890,35 @@ earlier first. An attempt that ends before its episode does, when a person quits
 goals against and no goals for, so quitting never helps. An attempt that a person leaves before its
 first step has no recording and counts as missed.
 
-| Challenge | Scenario | Attempts | Measure | Bronze | Silver | Gold |
-| --------- | -------- | -------- | ------- | ------ | ------ | ---- |
-| Empty goal from close range | `academy_empty_goal_close` | 5 | Within 3 seconds | 3 | 4 | 5 |
-| Empty goal | `academy_empty_goal` | 5 | Within 8 seconds | 3 | 4 | 5 |
-| Run to score | `academy_run_to_score` | 5 | Within 6.5 seconds | 1 | 3 | 5 |
-| Run to score past a keeper | `academy_run_to_score_with_keeper` | 5 | Scored | 1 | 3 | 5 |
-| Pass and shoot past a keeper | `academy_pass_and_shoot_with_keeper` | 5 | Scored | 1 | 3 | 5 |
-| Run, pass and shoot past a keeper | `academy_run_pass_and_shoot_with_keeper` | 5 | Scored | 1 | 3 | 5 |
-| Three against one | `academy_3_vs_1_with_keeper` | 5 | Scored | 1 | 3 | 5 |
-| Corner | `academy_corner` | 5 | Scored | 1 | 2 | 4 |
-| Counterattack | `academy_counterattack_easy` | 5 | Scored | 1 | 3 | 5 |
-| Counterattack, hard | `academy_counterattack_hard` | 5 | Scored | 1 | 2 | 4 |
-| Single goal against a lazy team | `academy_single_goal_versus_lazy` | 5 | Within 30 seconds | 2 | 4 | 5 |
-| One on one | `1_vs_1_easy` | 3 | Margin | 1 | 3 | 6 |
-| One on one, hard | `1_vs_1_easy` | 3 | Margin | 1 | 2 | 4 |
+| Challenge | Kind | Difficulty | Scenario | Attempts | Measure | Bronze | Silver | Gold |
+| --------- | ---- | ---------- | -------- | -------- | ------- | ------ | ------ | ---- |
+| Empty goal from close range | Finishing | Easy | `academy_empty_goal_close` | 5 | Within 3 seconds | 3 | 4 | 5 |
+| Empty goal | Finishing | Easy | `academy_empty_goal` | 5 | Within 8 seconds | 3 | 4 | 5 |
+| Run to score | Dribbling | Medium | `academy_run_to_score` | 5 | Within 6.5 seconds | 1 | 3 | 5 |
+| Run to score past a keeper | Dribbling | Medium | `academy_run_to_score_with_keeper` | 5 | Scored | 1 | 3 | 5 |
+| Pass and shoot past a keeper | Combination play | Medium | `academy_pass_and_shoot_with_keeper` | 5 | Scored | 1 | 3 | 5 |
+| Run, pass and shoot past a keeper | Combination play | Hard | `academy_run_pass_and_shoot_with_keeper` | 5 | Scored | 1 | 3 | 5 |
+| Three against one | Combination play | Medium | `academy_3_vs_1_with_keeper` | 5 | Scored | 1 | 3 | 5 |
+| Corner | Set piece | Hard | `academy_corner` | 5 | Scored | 1 | 2 | 4 |
+| Counterattack | Counterattack | Medium | `academy_counterattack_easy` | 5 | Scored | 1 | 3 | 5 |
+| Counterattack, hard | Counterattack | Hard | `academy_counterattack_hard` | 5 | Scored | 1 | 2 | 4 |
+| Single goal against a lazy team | Breaking through | Easy | `academy_single_goal_versus_lazy` | 5 | Within 30 seconds | 2 | 4 | 5 |
+| One on one | Duel | Medium | `1_vs_1_easy` | 3 | Margin | 1 | 3 | 6 |
+| One on one, hard | Duel | Hard | `1_vs_1_easy` | 3 | Margin | 1 | 2 | 4 |
 
 The targets come from runs of the built in AI on the whole left side and of simple agents that run
 at the goal and shoot, so bronze asks for a little better than standing still and gold for a clean
 run.
+
+Each challenge has a kind, which says what the drill trains, and a difficulty, easy, medium or
+hard, which weighs its targets and the defenders it faces. Finishing asks for a clean shot at an
+empty goal, Dribbling for a run past chasing defenders, Combination play for a pass that frees a
+teammate, Set piece for a goal from a corner, Counterattack for a quick attack against few
+defenders, Breaking through for a way past a defense that stands still, and Duel for a short match
+of one player against one. The catalog names them as `category` and `difficulty`, with the
+identifiers `finishing`, `dribbling`, `combination`, `set_piece`, `counterattack`, `breakthrough`
+and `duel` and the levels `easy`, `medium` and `hard`, and `cuju render challenge list --json`
+prints them with the rest of each challenge.
 
 ### On the Play page
 
@@ -2906,6 +2958,43 @@ Leaderboard opens the board of a challenge below it, with the rank, the competit
 person or an agent, the value, the seconds to score, the medal and the date of each best run, and
 the seeds of the attempts. The keyboard and a controller work every control of the section, as they
 work the rest of the setup card.
+
+### The cards
+
+The Challenges section lists every challenge as a card, and each card shows what its challenge is
+before a run starts. The card opens with a picture of the drill, a still of its first moments that
+shows where the players and the ball stand, and over the picture sit the kind of the challenge, in
+its own color with its own symbol, the difficulty as a badge of one, two or three bars with its
+word, and the medal of the person's best run, when there is one. The kinds share one design and
+differ in their color, their symbol and the pattern drawn behind a card whose picture cannot load,
+and the colors keep the contrast that the Web Content Accessibility Guidelines ask of text at
+level AA in the light and the dark theme. A hard challenge carries a dashed line of its color
+along the foot of its picture.
+
+A short teaser of the challenge, three to five seconds of the built in AI or of a simple scripted
+player meeting its goal, plays over the still while the pointer rests on the card or while the
+keyboard focus is on one of its buttons, and stops and returns to the still once the pointer and
+the focus have left. Only one teaser plays at a time, so a teaser that starts stops any other. The
+play button at the foot of the picture starts and stops the teaser by hand, by mouse, touch or
+keyboard, and says whether it plays. Under reduced motion, from the system or from Motion in the
+settings, no teaser starts by itself, the card keeps its still, and the play button alone starts
+one. A teaser never makes a sound, since its video is silent and the page plays it muted, and it
+stays out of the way of screen readers, which read each card by its title, the challenge's name.
+A card whose teaser is missing keeps its still, and a card without a still draws the pattern and
+symbol of its kind, so every card stays whole.
+
+The stills load as they come into view, and each teaser loads when it first plays. The teasers are
+H.264 videos in MP4, 480 by 270 pixels at 24 frames a second and silent, and the stills are WebP
+pictures of the same size, all of them made ahead of time and shipped with the page in
+`web/assets/challenges/`, about 2.5 MB in all. The manifest of the folder, `manifest.json`, maps
+each challenge to its files with the SHA-256 and the size of each, and records how each teaser was
+made, the policy, the seed and its place in the seeds tried, the goal and the range of each attempt
+shown.
+
+The script `ci/make_challenge_teasers.py` of the repository makes them again, by hand, with
+Chrome or Edge and ffmpeg. It plays each challenge on the challenge's own seeds with the built in
+AI, or with a simple scripted player where the built in AI never meets the goal, records the first
+attempts that meet it with `cuju.render.Recorder`, and exports each teaser with `cuju render video`.
 
 ### Agents
 
@@ -3739,8 +3828,9 @@ the floodlights, and the page picks one from the device.
 
 ## Languages
 
-The page speaks English and Brazilian Portuguese, and a language of anyone's own joins them as one
-file. Every text the page shows comes from a language file, the pages, menus, buttons, titles,
+The page ships in English, and any other language joins it as one file that the language import
+loads. The folder `translations` of the repository holds a draft in Brazilian Portuguese, which
+loads the same way. Every text the page shows comes from a language file, the pages, menus, buttons, titles,
 labels for screen readers, tips, the tour and the lessons, toasts and messages, the captions, the
 names and texts of the scenarios, and the messages of the server that the page shows, such as the
 reasons an upload or a request was refused. The command line and the answers of the API stay in
@@ -3750,13 +3840,14 @@ were given.
 
 ### Choosing a language
 
-The Language list of the settings panel offers Follow the browser, then the languages that ship
-with cuju, then the languages of the person's own. Follow the browser, the default, picks the
+The Language list of the settings panel offers Follow the browser, then English, which ships
+with cuju, then the languages of the person's own. The list shows once a second language exists,
+and Import a language file stays beside it either way. Follow the browser, the default, picks the
 first language of the browser that a file exists for, by its whole code such as `pt-br` and then
 by its language alone such as `pt`, and English otherwise. A choice in the list stays in the
 browser, and the page reloads at the same address in the new language, so the open page, the
 open recording and its moment come back as they were. A file opened from the computer opens again
-after the change. Numbers and dates follow the language too, so the Portuguese page writes `0,5`
+after the change. Numbers and dates follow the language too, so a Portuguese page writes `0,5`
 and its own dates. The command palette lists each other language too, as Language with its name,
 and Language follows the browser while a language is chosen, so the word language, or the name of
 a language, finds them.
@@ -3765,7 +3856,7 @@ The parameter `lang` of the address, such as `?lang=pt`, picks a language for on
 storing it, which suits a clean feed for OBS and scripts. A choice stored in the browser comes
 first, and the feed keeps its own storage, so `lang` decides there. A message that a language
 lacks shows in English, so a language that covers only part of the page still works. The server
-puts the shipped languages into the page itself, so the page starts without asking for them.
+puts English into the page itself, so the page starts without asking for it.
 
 ### Adding a language
 
@@ -3800,8 +3891,21 @@ Unicode CLDR names them, `zero`, `one`, `two`, `few`, `many` and `other`. Portug
 form for an exact count, such as `=0`, comes before the categories. A text keeps the placeholders
 of its English message and adds none, and a plural form may leave the count out, as in `one
 recording`. A message may count what English leaves alone when the English text holds `{count}`.
-The captions stay plain texts. A message never holds markup, and the page puts every text in as
-text.
+The value `count` picks the form, so a message whose words agree with another number names that
+number `{count}`. Brazilian Portuguese counts 0 as `one`, so its messages give 0 a form `=0` of
+its own, such as `0 gravações`. A count given with decimals, such as `1.0`, takes the form that
+the language gives a number written with decimals, so English reads `1.0 minutes`. The captions
+stay plain texts.
+
+A message may mark words in two ways, and a translation marks the same words. Two asterisks on
+each side, `**Restart the server**`, give strong emphasis, for the key noun or action of a
+sentence or a warning, and backticks mark code, a command, a program, a file or a variable, such
+as `` `cuju render serve` `` or `` `$CUJU_FFMPEG` ``. A shortcut in backticks, a chord of key
+names in English such as `` `Ctrl K` ``, `` `Shift + ?` `` or `` `Esc` ``, shows as keycaps, each
+key named in the language of the page for a screen reader, and `Mod` names the primary modifier,
+Ctrl, or Command on a Mac. The page builds strong, code and keycap elements from the marks and
+puts every word in as text, so a message never holds markup, and where a text goes into a title,
+a tooltip or a notification the marks drop away and a shortcut shows its legends.
 
 `cuju render language new de --name Deutsch` writes `de.json` with every English message, the
 header and the plural forms of German filled in, ready to translate in place. `cuju render
@@ -3816,19 +3920,25 @@ dropped there joins the Language list once the page lists the languages again, a
 language file on the settings panel sends a file to the server, which checks it and keeps it there
 when every message is well formed. Missing messages are allowed and show in English. A malformed
 file is refused with the first problem named, a file in the folder that is malformed shows in the
-list as refused, and the code of a shipped language belongs to that language, so a variant of it
-takes a code of its own, such as `pt-x-mine`. `cuju render language add FILE`, `list` and `remove
-CODE` do the same from the command line.
+list as refused, and the code `en` belongs to English, so a variant of it takes a code of its own,
+such as `en-x-mine`. A message is well formed when it holds the placeholders of its English
+message, the plural forms of its language and as many code spans as the English, since commands,
+names and shortcuts are code. Bold words are the translator's choice, since each language stresses
+its own words. `cuju render language add FILE`, `list` and `remove CODE` do the same from the
+command line.
 
 ### Contributing a language
 
-A language for everyone ships in `src/cuju/render/web/languages` of the repository. A
-contribution adds its file there, with a code that names the language, and the check passes on it.
-The test suite checks every shipped file the same way, so a message added to the page in English
-and missing from a shipped file fails the tests until each language holds it. English is the
-reference, and a new message of the page joins `en.json` first. A translation follows the plain
-style of the English, short sentences joined by commas and periods, and the same term for the same
-thing everywhere, and a native speaker reads it through before it ships.
+English is the reference, and a new message of the page joins `en.json` first, in
+`src/cuju/render/web/languages` of the repository. Other languages live in the folder
+`translations` at the root of the repository, outside the package, and load through the language
+import. The folder holds the Brazilian Portuguese draft, `pt.json`, with its style guide and its
+glossary. A draft may lack messages, which then show in English, and the test suite checks that
+each message it has keeps the placeholders, the plural forms and the marks of the English, and
+the tests that need a second language import the Portuguese draft. A translation writes in the
+voice of its own language and uses that language's own punctuation for an interface, rather than
+the plain commas and periods of the English, keeps the same term for the same thing everywhere,
+and a native speaker reads it through.
 
 ### Agents and scripts
 

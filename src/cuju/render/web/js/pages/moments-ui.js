@@ -7,8 +7,9 @@
 // their terms to it. A result opens Watch a few seconds before its moment.
 
 import { formatDate } from '../core/api.js';
-import { serverText, t } from '../core/i18n.js';
+import { serverNodes, serverText, t, tn } from '../core/i18n.js';
 import { enhanceSelect } from '../core/menu.js';
+import { icon } from '../core/icons.js';
 import { composeQuery, looksLikeMoments as looksMoments } from '../recording/moments-query.js';
 
 export { KIND_WORDS, composeQuery, looksLikeMoments } from '../recording/moments-query.js';
@@ -47,7 +48,10 @@ async function fetchSearch(query, limit, signal = undefined) {
     const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { cache: 'no-store', signal });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-        throw new Error(body.error ? serverText(body) : t('moments.serverStatus', { status: res.status }));
+        const error = new Error(body.error ? serverText(body) : t('moments.serverStatus', { status: res.status }));
+        // The answer itself, whose message shows with its marks, such as a filter as code.
+        error.answer = body.error ? body : null;
+        throw error;
     }
     return body;
 }
@@ -90,11 +94,12 @@ export class MomentSearch {
         return composeQuery(this.text, { ...this.filters, since: this.date === '' ? '' : daysAgo(Number(this.date)) });
     }
 
-    select(label, choices, value, pick) {
+    // A select of the filters, which shows a symbol where one reads clearly and its label otherwise.
+    select(label, choices, value, pick, symbol = null) {
         const node = el('select', { 'aria-label': label }, choices.map(([v, t]) => el('option', { value: v }, t)));
         node.value = value;
         node.addEventListener('change', () => pick(node.value));
-        queueMicrotask(() => enhanceSelect(node, { label, prefix: label }));
+        queueMicrotask(() => enhanceSelect(node, symbol ? { label, icon: symbol } : { label, prefix: label }));
         return node;
     }
 
@@ -104,7 +109,7 @@ export class MomentSearch {
         this.toggle = el('button', {
             type: 'button', class: 'btn', id: 'moments-toggle', 'aria-expanded': this.open ? 'true' : 'false',
             'aria-controls': 'moments-panel', onclick: () => this.setOpen(!this.open),
-        }, t('moments.toggle'));
+        }, icon('search'), t('moments.toggle'));
         this.input = el('input', {
             type: 'search', id: 'moments-query', class: 'search', value: this.text, spellcheck: 'false',
             'aria-label': t('moments.query.label'), placeholder: t('moments.query.placeholder'),
@@ -138,24 +143,24 @@ export class MomentSearch {
         const filters = el('div', { class: 'filter-bar moments-filters' },
             this.select(t('moments.filter.kind'), KIND_CHOICES, this.filters.kind, pick('kind')),
             this.select(t('moments.filter.team'), [['', t('moments.team.any')], ['left', t('moments.team.left')],
-                ['right', t('moments.team.right')], ...teams.map((name) => [name, name])], this.filters.team, pick('team')),
+                ['right', t('moments.team.right')], ...teams.map((name) => [name, name])], this.filters.team, pick('team'), 'shirt'),
             player,
-            this.select(t('moments.filter.time'), TIME_CHOICES, this.filters.time, pick('time')),
+            this.select(t('moments.filter.time'), TIME_CHOICES, this.filters.time, pick('time'), 'clock'),
             this.select(t('moments.filter.score'), SCORE_CHOICES, this.filters.score, pick('score')),
             this.select(t('moments.filter.scenario'), [['', t('moments.scenario.any')], ...scenarios.map(([v, name]) => [v, name])],
-                this.filters.scenario, pick('scenario')),
+                this.filters.scenario, pick('scenario'), 'field'),
             this.select(t('moments.filter.source'), SOURCE_CHOICES, this.filters.source, pick('source')),
             this.select(t('moments.filter.date'), DATE_CHOICES, this.date, (v) => {
                 this.date = v;
                 this.run();
-            }));
+            }, 'calendar'));
         this.status = el('p', { class: 'muted small moments-status', role: 'status', 'aria-live': 'polite' });
         this.list = el('ul', { class: 'moments-list', id: 'moments-results', 'aria-label': t('moments.results') });
         this.list.addEventListener('keydown', (e) => this.onListKey(e));
         this.panel = el('section', { id: 'moments-panel', class: 'moments-panel', 'aria-label': t('moments.panel'), hidden: !this.open },
             el('div', { class: 'toolbar' }, this.input, filters),
             el('p', { id: 'moments-help', class: 'muted small' },
-                t('moments.help')),
+                tn('moments.help')),
             this.status, this.list);
         host.replaceChildren(this.panel);
         this.renderResults();
@@ -239,6 +244,7 @@ export class MomentSearch {
             }
             this.results = null;
             this.error = err.message;
+            this.errorAnswer = err.answer || null;
         }
         this.renderResults();
     }
@@ -248,7 +254,7 @@ export class MomentSearch {
             return;
         }
         if (this.error) {
-            this.status.textContent = this.error;
+            this.status.replaceChildren(...(this.errorAnswer ? serverNodes(this.errorAnswer) : [this.error]));
             this.list.replaceChildren();
             return;
         }
@@ -264,11 +270,11 @@ export class MomentSearch {
             : t(shown < found.total ? 'moments.status.foundFirst' : 'moments.status.found', { count: found.total, recordings, shown });
         this.list.replaceChildren(...found.results.map((r) => el('li', {
             class: 'moment-row', tabindex: '-1', role: 'button', 'data-match': r.match, 'data-kind': r.kind,
-            'aria-label': t('moments.result', { text: serverText(r, 'text'), minute: r.minute, title: r.title }),
+            'aria-label': t('moments.result', { text: serverText(r, 'text'), minute: r.minute, title: serverText(r, 'title') }),
             onclick: () => openMoment(this.app, r),
         }, el('span', { class: 'moment-minute' }, r.minute),
         el('span', { class: 'moment-text' }, serverText(r, 'text')),
-        el('span', { class: 'moment-match muted small' }, [r.title, formatDate(r.created)].filter(Boolean).join(', ')))));
+        el('span', { class: 'moment-match muted small' }, [serverText(r, 'title'), formatDate(r.created)].filter(Boolean).join(', ')))));
         const first = this.list.firstElementChild;
         if (first) {
             first.tabIndex = 0;
@@ -339,7 +345,7 @@ export class MomentSearch {
         }
         for (const r of state.results) {
             list.push({
-                group: t('moments.palette.group'), title: `${r.minute}  ${serverText(r, 'text')}`, keywords, hint: r.title,
+                group: t('moments.palette.group'), title: `${r.minute}  ${serverText(r, 'text')}`, keywords, hint: serverText(r, 'title'),
                 run: () => openMoment(this.app, r),
             });
         }

@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "generator": "ci/make_challenge_teasers.py",
+  "cuju": "0.2.1",
+  "size": [
+    480,
+    270
+  ],
+  "fps": 24,
+  "camera": "broadcast",
+  "search": 40,
+  "challenges": {
+    "empty_goal_close": {
+      "teaser": "empty_goal_close.mp4",
+      "teaser_sha256": "0b75b94f3529209ab869e98ded04f7290dc0939176e627478fa5ede25c09d4ff",
+      "teaser_bytes": 201346,
+      "still": "empty_goal_close.webp",
+      "still_sha256": "3153c526d2521426bd5de10794418adb26e8d57a7b64e745050d2eaa1c1eb903",
+      "still_bytes": 16212,
+      "seconds": 3.4,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 458825655,
+          "search_index": 1,
+          "goal_seconds": 0.8,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 0.0,
+          "end": 0.8
+        },
+        {
+          "policy": "builtin",
+          "seed": 458841493,
+          "search_index": 3,
+          "goal_seconds": 0.9,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 0.0,
+          "end": 0.9
+        },
+        {
+          "policy": "builtin",
+          "seed": 458865250,
+          "search_index": 6,
+          "goal_seconds": 0.8,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 0.0,
+          "end": 0.8
+        },
+        {
+          "policy": "builtin",
+          "seed": 458873169,
+          "search_index": 7,
+          "goal_seconds": 0.9,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 0.0,
+          "end": 0.9
+        }
+      ]
+    },
+    "empty_goal": {
+      "teaser": "empty_goal.mp4",
+      "teaser_sha256": "52c5673f1a4f1e6f3098f94b91f84e106cb75030a4d4db12080904f645717c00",
+      "teaser_bytes": 171860,
+      "still": "empty_goal.webp",
+      "still_sha256": "e030a5bdfeb2b6781d50a2a42c2a7db6ea2ef99a066fbf523440ff89c8e909d1",
+      "still_bytes": 10930,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 115971128,
+          "search_index": 0,
+          "goal_seconds": 6.2,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 2.7,
+          "end": 6.2
+        }
+      ]
+    },
+    "run_to_score": {
+      "teaser": "run_to_score.mp4",
+      "teaser_sha256": "c3cafb417430838b3398f147bbbe7b3526d985b5c774da95394ed9c37c2a9ed1",
+      "teaser_bytes": 168228,
+      "still": "run_to_score.webp",
+      "still_sha256": "c1dbdf7ca15921feb71afd58ee23b784a3fa6b5df210a5120506b1f4f4b393e1",
+      "still_bytes": 11334,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 43213768,
+          "search_index": 1,
+          "goal_seconds": 6.5,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 3.0,
+          "end": 6.5
+        }
+      ]
+    },
+    "run_to_score_with_keeper": {
+      "teaser": "run_to_score_with_keeper.mp4",
+      "teaser_sha256": "d2932ff2d5c2074b96f341bcc8f5f49ffa5a647f01f3b7e723ef37cf5407a34d",
+      "teaser_bytes": 173996,
+      "still": "run_to_score_with_keeper.webp",
+      "still_sha256": "bfa1ac7c38a3c924ac0187f91037623dac2efd55863ec0d90ade8146074441d1",
+      "still_bytes": 11354,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 1519097439,
+          "search_index": 11,
+          "goal_seconds": 7.3,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 3.8,
+          "end": 7.3
+        }
+      ]
+    },
+    "pass_and_shoot_with_keeper": {
+      "teaser": "pass_and_shoot_with_keeper.mp4",
+      "teaser_sha256": "e9bd5117d21c7f77110ce2c705cf1d9e46eb53c892e3f58b4061898479a4fe7c",
+      "teaser_bytes": 147984,
+      "still": "pass_and_shoot_with_keeper.webp",
+      "still_sha256": "101b090176e97030d7c8d776a3ffab12b3a6ed278233c63254ae1f77a60b996b",
+      "still_bytes": 19170,
+      "seconds": 3.1,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 857349382,
+          "search_index": 10,
+          "goal_seconds": 3.1,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 0.0,
+          "end": 3.1
+        }
+      ]
+    },
+    "run_pass_and_shoot_with_keeper": {
+      "teaser": "run_pass_and_shoot_with_keeper.mp4",
+      "teaser_sha256": "0c564ab166cd1b33012fb28461c00774759678c15b57681122b73a05703fd966",
+      "teaser_bytes": 175418,
+      "still": "run_pass_and_shoot_with_keeper.webp",
+      "still_sha256": "9755f11361ea5427bb5028245cbcad5000e09aaa1d5bb8c5e41a1876a3e84765",
+      "still_bytes": 19284,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "scripted",
+          "seed": 1080530190,
+          "search_index": 0,
+          "goal_seconds": 3.8,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 0.3,
+          "end": 3.8
+        }
+      ]
+    },
+    "3_vs_1_with_keeper": {
+      "teaser": "3_vs_1_with_keeper.mp4",
+      "teaser_sha256": "90227ebb22ccfea9379ec0e634f742153c6e7005963bdbf17ee33bd3a33dd452",
+      "teaser_bytes": 164337,
+      "still": "3_vs_1_with_keeper.webp",
+      "still_sha256": "2497aebf542a49996067990ff239e26e839ceabc5745f75a45a5365712380ee7",
+      "still_bytes": 14388,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 1090183867,
+          "search_index": 0,
+          "goal_seconds": 8.9,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 5.4,
+          "end": 8.9
+        }
+      ]
+    },
+    "corner": {
+      "teaser": "corner.mp4",
+      "teaser_sha256": "7566f1974b874b227dac77d14c821483edaa380192e957854cffb0c5f71cec1d",
+      "teaser_bytes": 165282,
+      "still": "corner.webp",
+      "still_sha256": "c86c02846fb6b8937798bfe53a2d1749a48187c4cfe095f81765b3ee0d30bf4c",
+      "still_bytes": 14580,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 20990691,
+          "search_index": 17,
+          "goal_seconds": 3.9,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 0.4,
+          "end": 3.9
+        }
+      ]
+    },
+    "counterattack_easy": {
+      "teaser": "counterattack_easy.mp4",
+      "teaser_sha256": "6cca6526bcc2d354778373229a56bb0d15d3237eec5b926693a75a95f7a523e9",
+      "teaser_bytes": 169987,
+      "still": "counterattack_easy.webp",
+      "still_sha256": "1984bd7566f5e464770dd07ae9c93ab77cbc28bd699b123636bd903599b3db14",
+      "still_bytes": 14166,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 684936386,
+          "search_index": 1,
+          "goal_seconds": 14.5,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 11.0,
+          "end": 14.5
+        }
+      ]
+    },
+    "counterattack_hard": {
+      "teaser": "counterattack_hard.mp4",
+      "teaser_sha256": "51162fdd284780ba27ea0ed75ed5b38ea18a606002329498c97d0d0689038236",
+      "teaser_bytes": 175453,
+      "still": "counterattack_hard.webp",
+      "still_sha256": "747ced2cfac3de068a3334c006924a0e2fd376b6e64a21b31c1e16f425f811ee",
+      "still_bytes": 14238,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 547780759,
+          "search_index": 15,
+          "goal_seconds": 12.1,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 8.6,
+          "end": 12.1
+        }
+      ]
+    },
+    "single_goal_versus_lazy": {
+      "teaser": "single_goal_versus_lazy.mp4",
+      "teaser_sha256": "06de3735a34543cbb916261b8e5937b6473c6adf573244f27a678732604ae479",
+      "teaser_bytes": 173328,
+      "still": "single_goal_versus_lazy.webp",
+      "still_sha256": "29b6c7d4d8da02d719acfaa9eddd09650b3b27fccf8164604494df66af9c0cbc",
+      "still_bytes": 14324,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "builtin",
+          "seed": 486986584,
+          "search_index": 8,
+          "goal_seconds": 15.8,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 12.3,
+          "end": 15.8
+        }
+      ]
+    },
+    "one_on_one": {
+      "teaser": "one_on_one.mp4",
+      "teaser_sha256": "6016dc998bd9757a640c5c8a02e97e2de10713bda837d246ac16fd249166ff5b",
+      "teaser_bytes": 169782,
+      "still": "one_on_one.webp",
+      "still_sha256": "e4927a96a3eaed44174c54984de9cacc95e124df6782190a2439a289de2beec9",
+      "still_bytes": 10764,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "scripted",
+          "seed": 1404202632,
+          "search_index": 0,
+          "goal_seconds": 31.9,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 28.4,
+          "end": 31.9
+        }
+      ]
+    },
+    "one_on_one_hard": {
+      "teaser": "one_on_one_hard.mp4",
+      "teaser_sha256": "9d9b6d23c3e09e65ae865c3c8abb7572df2da2cc9fa637b85472cc427ad1b5b7",
+      "teaser_bytes": 171279,
+      "still": "one_on_one_hard.webp",
+      "still_sha256": "1bf171a022578a46b0b416c435fe539fc970057ff698af4e91b6368d61b4f2e5",
+      "still_bytes": 10794,
+      "seconds": 3.5,
+      "quality": "standard",
+      "still_seconds": 0.25,
+      "attempts": [
+        {
+          "policy": "scripted",
+          "seed": 714400437,
+          "search_index": 35,
+          "goal_seconds": 17.4,
+          "goals": [
+            1,
+            0
+          ],
+          "start": 13.9,
+          "end": 17.4
+        }
+      ]
+    }
+  }
+}

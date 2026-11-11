@@ -8,7 +8,7 @@
 // tries a preset and comes back to Custom finds their own choices again. The rules at the top of
 // the file touch nothing of the page, so they hold the same in a test.
 
-import { t } from '../core/i18n.js';
+import { t, tn } from '../core/i18n.js';
 
 // Each setting of a preset, its key in the page's settings and the box of the settings panel.
 export const PRESET_SETTINGS = [
@@ -107,7 +107,7 @@ export class SettingsPresets {
         this.group.append(...this.buttons);
         const note = document.createElement('p');
         note.className = 'muted small preset-note';
-        note.textContent = t('presets.note');
+        note.replaceChildren(...tn('presets.note'));
         const title = panel.querySelector('.panel-title');
         (title || panel.firstChild).after(this.group, note);
         // A change of any one box makes a mix of its own, which Custom keeps.

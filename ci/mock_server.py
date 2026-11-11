@@ -106,6 +106,7 @@ TYPES = {
     '.png': 'image/png',
     '.svg': 'image/svg+xml',
     '.webmanifest': 'application/manifest+json',
+    '.mp4': 'video/mp4',
 }
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 MAXIMUM_BODY = 110 * 1024 * 1024
@@ -1740,8 +1741,22 @@ CHALLENGES = [
         'goal': goal,
         'played_ability': list(played),
         'seeds': [(zlib.crc32(cid.encode()) + 7919 * i) % 2**31 for i in range(attempts)],
+        'category': category,
+        'difficulty': difficulty,
     }
-    for cid, title, scenario, attempts, measure, targets, limit, goal, played in (
+    for (
+        cid,
+        title,
+        scenario,
+        attempts,
+        measure,
+        targets,
+        limit,
+        goal,
+        played,
+        category,
+        difficulty,
+    ) in (
         (
             'empty_goal_close',
             'Empty goal from close range',
@@ -1752,6 +1767,8 @@ CHALLENGES = [
             3.0,
             'Score into the empty goal within 3 seconds of play in each attempt.',
             (1.0, 0.6),
+            'finishing',
+            'easy',
         ),
         (
             'corner',
@@ -1763,6 +1780,8 @@ CHALLENGES = [
             None,
             'Score from the corner before the ball goes out or the clock runs down.',
             (1.0, 0.6),
+            'set_piece',
+            'hard',
         ),
         (
             'one_on_one',
@@ -1774,6 +1793,8 @@ CHALLENGES = [
             None,
             'Outscore a single opponent over three short matches, goals for minus against.',
             (0.0, 0.0),
+            'duel',
+            'medium',
         ),
     )
 ]

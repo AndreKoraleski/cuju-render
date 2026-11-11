@@ -4,7 +4,8 @@
 // The input settings of the Play page, kept in the browser. The keys of the keyboard, by the
 // physical key so every layout plays the same, the dead zone of a controller's stick, and the
 // device of each side when two people play. Nothing here touches the page, so the rules hold the
-// same in a test.
+// same in a test. The keys keep the codes of KeyboardEvent, such as KeyW, which the keyboard kit
+// draws as keycaps.
 
 export const STORAGE_KEY = 'cuju.input';
 
@@ -132,12 +133,6 @@ export function keyMap(settings) {
         map[settings.keys[binding.id]] = binding.names;
     }
     return map;
-}
-
-// The name of a physical key as its keycap shows it.
-export function keyLabel(code) {
-    const arrows = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓' };
-    return arrows[code] || code.replace(/^Key|^Digit/, '');
 }
 
 // The directions of a stick, each axis past the dead zone, x to the right and y down.

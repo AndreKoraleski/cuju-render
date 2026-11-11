@@ -9,6 +9,13 @@
 // The key `@language` holds the code, the name, the locale of numbers and dates, the direction of
 // the text and the plural categories of the language.
 //
+// A message may mark its words in two ways. Two asterisks on each side, **so**, give strong
+// emphasis, and backticks, `so`, mark code such as a command, a program or a variable, or a
+// shortcut, a chord of key names such as `Ctrl K`, which keys.js draws as keycaps. The marks are
+// read from the message before its values fill it, so a value never adds one. t() gives the text
+// without the marks, for attributes, titles, notifications and canvases, and tn() and tm() give
+// strong, code and kbd elements, built as nodes with text, never as markup.
+//
 // The module loads English and the chosen language before any module that imports it runs, so
 // t() answers at once everywhere, also in the tables that modules build as they load. The server
 // puts the shipped files into the page itself, so they need no request of their own. A message
@@ -37,18 +44,31 @@ const rules = new Map();
 const missingIds = new Set();
 const listeners = new Set();
 
-// The plural rules of a locale, made once.
-function pluralRules(locale) {
-    let r = rules.get(locale);
+// The plural rules of a locale for numbers shown with so many decimals, made once.
+function pluralRules(locale, digits = 0) {
+    const key = `${locale} ${digits}`;
+    let r = rules.get(key);
     if (!r) {
+        const options = digits ? { minimumFractionDigits: digits } : {};
         try {
-            r = new Intl.PluralRules(locale);
+            r = new Intl.PluralRules(locale, options);
         } catch {
-            r = new Intl.PluralRules('en-US');
+            r = new Intl.PluralRules('en-US', options);
         }
-        rules.set(locale, r);
+        rules.set(key, r);
     }
     return r;
+}
+
+// A count given as text with decimals, such as 1.0 or 1,5, as a number and its decimals, since
+// English reads 1 minute but 1.0 minutes. Any other value is a number without decimals.
+const DECIMAL_COUNT = /^\s*(-?\d+)[.,](\d+)\s*$/;
+function countOf(value) {
+    const match = typeof value === 'string' ? DECIMAL_COUNT.exec(value) : null;
+    if (match) {
+        return { count: Number(`${match[1]}.${match[2]}`), digits: match[2].length };
+    }
+    return { count: Number(value), digits: 0 };
 }
 
 // Whether a code names a language file safely, lowercase letters and digits in parts.
@@ -77,7 +97,7 @@ function inlinedFiles() {
 // folder from the server.
 async function readFile(code) {
     if (!validCode(code)) {
-        throw new Error(`no language ${code}`);
+        throw new Error(tOr('language.error.none', `there is no language ${code}`, { code }));
     }
     if (IN_NODE) {
         // Under Node a test may load a copy of the modules alone, so the files of the repository
@@ -87,6 +107,8 @@ async function readFile(code) {
         const places = [new URL(`${code}.json`, BASE)];
         if (typeof process !== 'undefined') {
             places.push(pathToFileURL(`${process.cwd()}/src/cuju/render/web/languages/${code}.json`));
+            // The drafts of other languages, which a page imports, wait in translations/.
+            places.push(pathToFileURL(`${process.cwd()}/translations/${code}.json`));
         }
         let failure;
         for (const place of places) {
@@ -111,7 +133,7 @@ async function readFile(code) {
         res = await get(`/api/languages/${encodeURIComponent(code)}`);
     }
     if (!res || !res.ok) {
-        throw new Error(`no language ${code}`);
+        throw new Error(tOr('language.error.none', `there is no language ${code}`, { code }));
     }
     return res.json();
 }
@@ -119,7 +141,7 @@ async function readFile(code) {
 // Splits a file into its header and its messages, keeping well formed messages alone.
 function parse(data, code) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        throw new Error(`the language ${code} is not a JSON object`);
+        throw new Error(tOr('language.error.notObject', `the language ${code} is not a JSON object`, { code }));
     }
     const head = data['@language'] && typeof data['@language'] === 'object' ? data['@language'] : {};
     const messages = {};
@@ -258,12 +280,52 @@ function pick(message, values, locale) {
     if (typeof message === 'string') {
         return message;
     }
-    const count = Number(values && values.count);
-    if (Number.isFinite(count) && typeof message[`=${count}`] === 'string') {
+    const { count, digits } = countOf(values ? values.count : undefined);
+    if (Number.isFinite(count) && !digits && typeof message[`=${count}`] === 'string') {
         return message[`=${count}`];
     }
-    const category = Number.isFinite(count) ? pluralRules(locale).select(count) : 'other';
+    const category = Number.isFinite(count) ? pluralRules(locale, digits).select(count) : 'other';
     return typeof message[category] === 'string' ? message[category] : message.other;
+}
+
+// The marks of a message, strong emphasis in double asterisks and code in backticks. A mark
+// that does not close is text, as the two asterisks of 2**64 are.
+const MARK = /\*\*(.+?)\*\*|`([^`]+)`/g;
+
+// A text as its parts, each with its kind, text, strong or code, in order.
+export function markParts(text) {
+    const parts = [];
+    let last = 0;
+    for (const match of String(text).matchAll(MARK)) {
+        if (match.index > last) {
+            parts.push({ kind: 'text', text: text.slice(last, match.index) });
+        }
+        parts.push(match[1] !== undefined ? { kind: 'strong', text: match[1] } : { kind: 'code', text: match[2] });
+        last = match.index + match[0].length;
+    }
+    if (last < text.length) {
+        parts.push({ kind: 'text', text: text.slice(last) });
+    }
+    return parts;
+}
+
+// How the page shows code, as text and as a node, which keys.js sets so that a shortcut shows
+// as keycaps. Without it, code shows as it is written, inside a code element.
+let codeKind = {
+    text: (code) => code,
+    node: (code) => {
+        const node = document.createElement('code');
+        node.textContent = code;
+        return node;
+    },
+};
+export function setCodeKind(kind) {
+    codeKind = { ...codeKind, ...kind };
+}
+
+// A text without its marks, the code as codeKind writes it, such as a shortcut in its legends.
+export function plainMarks(text) {
+    return markParts(text).map((part) => (part.kind === 'code' ? codeKind.text(part.text) : part.text)).join('');
 }
 
 function fill(text, values) {
@@ -281,7 +343,9 @@ export function t(id, values) {
         noteMissing(id);
         return id;
     }
-    return fill(pick(found.message, values, found.locale), values);
+    return markParts(pick(found.message, values, found.locale))
+        .map((part) => (part.kind === 'code' ? codeKind.text(fill(part.text, values)) : fill(part.text, values)))
+        .join('');
 }
 
 // The text of a message whose id the server or a table may lack, such as the title of a
@@ -383,7 +447,60 @@ export function tn(id, values = {}) {
         noteMissing(id);
         return [id];
     }
-    return splitNodes(pick(found.message, values, found.locale), values);
+    return markNodes(pick(found.message, values, found.locale), values);
+}
+
+// A message as a fragment of nodes, its marks as strong, code and kbd elements, for a place that
+// takes one node, such as the text of a paragraph.
+export function tm(id, values = {}) {
+    const fragment = document.createDocumentFragment();
+    fragment.append(...tn(id, values).map((part) => (typeof part === 'string' ? document.createTextNode(part) : part)));
+    return fragment;
+}
+
+// The nodes of a text with marks, each mark an element whose text the values fill, and each
+// placeholder whose value is a node the node itself.
+function markNodes(text, values) {
+    const out = [];
+    for (const part of markParts(text)) {
+        if (part.kind === 'text') {
+            out.push(...splitNodes(part.text, values));
+        } else if (part.kind === 'code') {
+            out.push(codeKind.node(fill(part.text, plainValues(values))));
+        } else {
+            const node = document.createElement('strong');
+            node.append(...splitNodes(part.text, values));
+            out.push(node);
+        }
+    }
+    return out;
+}
+
+// The values as text, a node as its text content, for the inside of code.
+function plainValues(values) {
+    const out = {};
+    for (const [key, value] of Object.entries(values || {})) {
+        out[key] = value && typeof value === 'object' && 'textContent' in value ? value.textContent : value;
+    }
+    return out;
+}
+
+// The nodes of a message of the server, with its marks, as serverText reads it in text.
+export function serverNodes(object, field = 'error', allow = null) {
+    if (!object || typeof object !== 'object') {
+        return [plainText(object)];
+    }
+    return labelNodes({ id: object[`${field}_id`], text: object[field], values: object[`${field}_values`] }, allow);
+}
+
+// The nodes of a label of the server, as labelText reads it in text. Its values show as text.
+export function labelNodes(label, allow = null) {
+    const id = label && typeof label === 'object' && typeof label.id === 'string' && !label.kind && (!allow || allow(label.id)) ? label.id : null;
+    if (!id || !lookup(id)) {
+        return [labelText(label, allow)];
+    }
+    const values = label.values && typeof label.values === 'object' ? serverValues(label.values, allow, 1) : undefined;
+    return tn(id, values);
 }
 
 function splitNodes(text, values) {
@@ -409,9 +526,13 @@ function splitNodes(text, values) {
 // The attributes that static markup translates, each read from data-i18n-<attribute>.
 const ATTRIBUTES = ['title', 'aria-label', 'placeholder', 'alt', 'aria-description', 'aria-roledescription', 'label'];
 
+// A symbol of the sprite, an svg of the class icon, which a message of static markup leaves alone.
+const isSymbol = (node) => node.localName === 'svg' && /(^|\s)icon(\s|$)/.test(node.getAttribute('class') || '');
+
 // Translates the static texts under root. An element with data-i18n takes the message as its
-// text, and when it holds elements, they fill the placeholders {0}, {1} and on in their order.
-// Each data-i18n-<attribute> sets that attribute.
+// text, and when it holds elements, they fill the placeholders {0}, {1} and on in their order. A
+// symbol among them fills no placeholder and stays in front of the message. Each
+// data-i18n-<attribute> sets that attribute.
 export function translateDom(root = document) {
     if (!root || !root.querySelectorAll) {
         return;
@@ -424,11 +545,16 @@ export function translateDom(root = document) {
     for (const node of nodes) {
         const id = node.dataset.i18n;
         if (id) {
-            const children = [...node.children];
-            if (children.length) {
+            const symbols = [...node.children].filter(isSymbol);
+            const children = [...node.children].filter((child) => !isSymbol(child));
+            const found = lookup(id);
+            const marked = found && markParts(pick(found.message, {}, found.locale)).some((part) => part.kind !== 'text');
+            if (children.length || symbols.length) {
                 const values = {};
                 children.forEach((child, i) => { values[i] = child; });
-                node.replaceChildren(...tn(id, values));
+                node.replaceChildren(...symbols, ...tn(id, values));
+            } else if (marked) {
+                node.replaceChildren(...tn(id));
             } else {
                 node.textContent = t(id);
             }
@@ -528,7 +654,6 @@ export async function listLanguages() {
     }
     return [
         { code: 'en', name: 'English', source: 'shipped', usable: true },
-        { code: 'pt', name: 'Português (Brasil)', source: 'shipped', usable: true },
     ];
 }
 

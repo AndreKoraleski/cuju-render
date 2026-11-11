@@ -11,7 +11,8 @@
 import * as THREE from 'three';
 import { api } from '../core/api.js';
 import { ChallengesPanel } from './challenges.js';
-import { serverText, t, tn, tOr } from '../core/i18n.js';
+import { serverText, t, tm, tn, tOr } from '../core/i18n.js';
+import { chord, chordName } from '../core/keys.js';
 import { LiveSource } from '../recording/live.js';
 import { el as h } from '../core/menu.js';
 import { icon, symbolOnly } from '../core/icons.js';
@@ -20,7 +21,7 @@ import { SLOW_FPS, offersView2d } from '../watch/flat.js';
 import { summaryTeams, teamName } from '../core/names.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
 import {
-    BINDINGS, DEAD_ZONE, actionName, devicesClash, keyLabel, keyMap, keyProblem,
+    BINDINGS, DEAD_ZONE, actionName, devicesClash, keyMap, keyProblem,
     loadSettings, defaultSettings, saveSettings, stickDirections,
 } from '../core/input-settings.js';
 
@@ -124,9 +125,9 @@ function engineAction(index) {
     return tOr(`play.engineAction.${name.toLowerCase().replace(/[^a-z]+/g, '_')}`, name);
 }
 
-// Two names joined, such as A and B, and more joined in turn.
-function joinAnd(names) {
-    return names.reduce((left, right) => t('play.and', { left, right }));
+// Two nodes joined, such as A and B, and more joined in turn, as one fragment.
+function joinAnd(nodes) {
+    return nodes.reduce((left, right) => tm('play.and', { left, right }));
 }
 
 // Focus that a controller moves shows the ring of keyboard focus.
@@ -134,13 +135,14 @@ function padFocus(el) {
     el.focus({ focusVisible: true });
 }
 
-// The keyboard rows of the current keys. The four arrows share a row while they move.
+// The keyboard rows of the current keys, each key by its code or name, which the keyboard kit
+// draws. The four arrows share a row while they move.
 export function keyboardControls(settings) {
     const arrows = ['left', 'up', 'down', 'right'].every((id) => settings.keys[id] === `Arrow${id[0].toUpperCase()}${id.slice(1)}`);
     const rows = arrows ? [['Arrow keys', t('play.controls.move')]] : [];
     for (const binding of BINDINGS) {
         if (!(arrows && binding.names.length === 1 && ['left', 'right', 'up', 'down'].includes(binding.id))) {
-            rows.push([keyLabel(settings.keys[binding.id]), bindingLabel(binding)]);
+            rows.push([settings.keys[binding.id], bindingLabel(binding)]);
         }
     }
     return rows.concat([['Esc', t('play.controls.pause')], ['H or ?', t('play.controls.help')]]);
@@ -207,7 +209,6 @@ const PAD_COMMON = {
     stick: ['pad-stick', t('play.pad.stick'), 'L', t('play.pad.stick.short')],
     dpad: ['pad-dpad', t('play.pad.dpad'), '', t('play.pad.dpad.short')],
 };
-const ARROWS = [['←', t('play.key.left')], ['↑', t('play.key.up')], ['↓', t('play.key.down')], ['→', t('play.key.right')]];
 
 function padInfo(style, pos) {
     return PAD_COMMON[pos] || (PAD_STYLES[style] || PAD_STYLES.xbox)[pos];
@@ -250,17 +251,17 @@ function saveLayout(id, entry) {
     }
 }
 
-// The keys of a row as keycaps or controller icons, alternatives joined by or.
+// The keys of a row as keycaps of the keyboard kit or controller icons, alternatives joined by or.
 function controlKeys(key, style) {
     if (key === 'Arrow keys') {
-        return h('span', { class: 'keys' }, ARROWS.map(([text, label]) => h('kbd', { 'aria-label': label, title: label }, text)));
+        return h('span', { class: 'keys' }, ['Left', 'Up', 'Down', 'Right'].map((name) => chord(name)));
     }
     const parts = key.split(' or ');
     return h('span', { class: 'keys' }, parts.flatMap((part, i) => {
         const info = style && padInfo(style, part);
         return [
             i ? h('span', { class: 'keys-or' }, t('play.controls.or')) : null,
-            info ? padIcon(style, part) : h('kbd', {}, part),
+            info ? padIcon(style, part) : chord(part),
             info && !info[2] && (part === 'back' || part === 'start') ? h('span', { class: 'pad-name' }, info[3]) : null,
         ];
     }).filter(Boolean));
@@ -470,7 +471,7 @@ export class PlayPage {
         // The offer names the controller that reports its own layout, which its button sets up.
         this.offerPad = null;
         this.offer = h('div', { class: 'pad-offer', role: 'status', hidden: true },
-            h('span', {}, t('play.padOffer.text')),
+            h('span', {}, tn('play.padOffer.text')),
             h('button', { type: 'button', class: 'btn primary', onclick: () => this.openPadSetup(this.offerPad) }, icon('gamepad'), t('play.padSetup.open')),
             h('button', { type: 'button', class: 'btn', ...symbolOnly(t('play.padOffer.later')), onclick: () => { this.offer.hidden = true; } }, icon('close')));
         this.slowText = h('span', {});
@@ -838,7 +839,7 @@ export class PlayPage {
         if (entry.error) {
             lines.push(h('p', { class: 'error-text' }, sentence(serverText(entry))));
         } else if (entry.ending === 'timeout') {
-            lines.push(h('p', { class: 'muted' }, t('play.end.timeout')));
+            lines.push(h('p', { class: 'muted' }, tn('play.end.timeout')));
         }
         if (entry.late) {
             lines.push(h('p', { class: 'muted' }, t('play.end.late', { count: entry.late })));
@@ -894,7 +895,7 @@ export class PlayPage {
                 devices[side] = select.value;
                 if (devicesClash(devices)) {
                     select.value = this.input.devices[side];
-                    this.inputNote.textContent = t('play.input.device.clash');
+                    this.inputNote.replaceChildren(...tn('play.input.device.clash'));
                     return;
                 }
                 this.input.devices = devices;
@@ -927,7 +928,7 @@ export class PlayPage {
         });
         this.inputPanel = h('details', { class: 'input-settings' },
             h('summary', {}, t('play.input.summary')),
-            h('p', { class: 'muted small' }, t('play.input.lead')),
+            h('p', { class: 'muted small' }, tn('play.input.lead')),
             h('table', { class: 'controls-table key-bindings' }, h('tbody', {}, rows)),
             h('div', { class: 'setup-row' },
                 h('label', { class: 'field' }, t('play.input.deadZone'), h('div', { class: 'ability' }, this.deadZone, this.deadZoneShown)),
@@ -950,9 +951,9 @@ export class PlayPage {
         for (const binding of BINDINGS) {
             const button = this.keyButtons[binding.id];
             const code = this.input.keys[binding.id];
-            button.textContent = this.listening === binding.id ? t('play.input.pressKey') : keyLabel(code);
+            button.replaceChildren(this.listening === binding.id ? t('play.input.pressKey') : chord(code));
             button.setAttribute('aria-label', this.listening === binding.id ? t('play.input.bindWaiting', { action: bindingLabel(binding) })
-                : t('play.input.bind', { action: bindingLabel(binding), key: keyLabel(code) }));
+                : t('play.input.bind', { action: bindingLabel(binding), key: chordName(code) }));
             button.setAttribute('aria-pressed', String(this.listening === binding.id));
         }
         this.deadZone.value = String(this.input.deadZone);
@@ -967,7 +968,7 @@ export class PlayPage {
         this.releaseKeys();
         this.keys = keyMap(this.input);
         if (!saveSettings(this.input)) {
-            this.inputNote.textContent = t('play.input.notKept');
+            this.inputNote.replaceChildren(...tn('play.input.notKept'));
         }
         this.showInput();
         this.updateTester(true);
@@ -979,7 +980,7 @@ export class PlayPage {
         }
         this.listening = id;
         if (id) {
-            this.inputNote.textContent = t('play.input.listening');
+            this.inputNote.replaceChildren(...tn('play.input.listening'));
         }
         this.showInput();
     }
@@ -999,12 +1000,12 @@ export class PlayPage {
         }
         const problem = keyProblem(this.input, id, e.code);
         if (problem) {
-            this.inputNote.textContent = t(`play.input.problem.${problem}`);
+            this.inputNote.replaceChildren(...tn(`play.input.problem.${problem}`));
             return;
         }
         this.input.keys = { ...this.input.keys, [id]: e.code };
         this.listening = null;
-        this.inputNote.textContent = t('play.input.bound', { action: bindingLabel(BINDINGS.find((b) => b.id === id)), key: keyLabel(e.code) });
+        this.inputNote.replaceChildren(...tn('play.input.bound', { action: bindingLabel(BINDINGS.find((b) => b.id === id)), key: chord(e.code) }));
         this.saveInput();
     }
 
@@ -1022,9 +1023,13 @@ export class PlayPage {
         const names = (list) => (list.length ? [...new Set(list)].map(inputName).join(', ') : t('play.tester.nothing'));
         const keys = [...this.testerKeys];
         const mapped = keys.flatMap((code) => this.keys[code] || []);
-        const unmapped = keys.filter((code) => !this.keys[code]).map(keyLabel);
+        const unmapped = keys.filter((code) => !this.keys[code]);
         const held = document.activeElement === this.tester ? names(mapped) : t('play.tester.focus');
-        const lines = [unmapped.length ? t('play.tester.keyboardUnused', { held, keys: joinAnd(unmapped) }) : t('play.tester.keyboard', { held })];
+        // The keys that take no action show as keycaps, so the first line stands in the list as
+        // the text it compares by and is drawn apart.
+        const lines = [`${held} ${unmapped.join(' ')}`];
+        const first = () => (unmapped.length ? tn('play.tester.keyboardUnused', { held, keys: joinAnd(unmapped.map((code) => chord(code))) })
+            : [t('play.tester.keyboard', { held })]);
         const list = navigator.getGamepads ? Array.from(navigator.getGamepads() || []) : [];
         for (const pad of list) {
             const device = pad && pad.connected ? this.pads.get(pad.index) : null;
@@ -1040,7 +1045,7 @@ export class PlayPage {
         const text = lines.join('\n');
         if (text !== this.testerText) {
             this.testerText = text;
-            this.testerLines.replaceChildren(...lines.map((line) => h('div', {}, line)));
+            this.testerLines.replaceChildren(...lines.map((line, i) => h('div', {}, ...(i ? [line] : first()))));
         }
     }
 
@@ -1576,7 +1581,7 @@ export class PlayPage {
             const n = this.pads.size;
             const pad = this.activePad();
             this.padNote.replaceChildren(
-                h('p', {}, n ? t('play.pads.connected', { count: n }) : t('play.pads.none')),
+                h('p', {}, n ? tn('play.pads.connected', { count: n }) : tn('play.pads.none')),
                 ...this.padTools(pad));
             this.menuHint.hidden = !n;
         }
@@ -1799,7 +1804,7 @@ export class PlayPage {
             h('p', { class: 'muted small' }, t('play.padSetup.step', { step: s.step + 1, total: SETUP_STEPS.length, style: PAD_STYLES[s.style].name })),
             h('p', { class: 'pad-prompt keys', 'aria-live': 'polite' }, padIcon(s.style, icon), prompt),
             sketch,
-            h('p', { class: 'muted small' }, t('play.padSetup.release')),
+            h('p', { class: 'muted small' }, tn('play.padSetup.release')),
             h('div', { class: 'pad-setup-row' }, button(t('play.padSetup.back'), () => this.setupStep(s.step - 1)), skip, cancel));
         skip.focus();
     }
@@ -1901,7 +1906,7 @@ export class PlayPage {
         }
         this.slowOffered = true;
         const rate = Math.max(1, Math.round(fps));
-        this.slowText.textContent = t('play.slow.text', { count: rate });
+        this.slowText.replaceChildren(...tn('play.slow.text', { count: rate }));
         this.slowOffer.hidden = false;
     }
 

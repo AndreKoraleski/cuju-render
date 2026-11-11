@@ -26,6 +26,7 @@ from cuju.render._export import video_jobs as _video_jobs
 from cuju.render._http import server as _server
 from cuju.render._store import home as _home
 from cuju.render._store import library as _library
+from cuju.render._text import messages as _messages
 
 SAMPLE = Path(_video.__file__).parents[1] / 'samples' / 'sample-5v5.cjr'
 
@@ -225,7 +226,8 @@ def test_missing_tools(monkeypatch, tmp_path):
     monkeypatch.setattr(_video, '_chrome_locations', lambda: [])
     chrome, ffmpeg, missing = _video.tools(_video.Options())
     assert chrome is None and ffmpeg is None
-    assert 'Install Google Chrome or Chromium' in missing[0] and 'Install ffmpeg' in missing[1]
+    assert 'Install Google Chrome or Chromium' in missing[0]['text']
+    assert 'Install ffmpeg' in missing[1]['text']
     # The export needs the browser alone, so a missing ffmpeg never stops it.
     with pytest.raises(_video.VideoError, match='Install Google Chrome or Chromium') as stopped:
         _video.export(SAMPLE, tmp_path / 'out.mp4', _video.Options(end=_video.Moment(1.0)))
@@ -308,7 +310,7 @@ def test_missing_tools_name_what_the_server_takes(render_home, monkeypatch):
     monkeypatch.delenv('CUJU_FFMPEG', raising=False)
     monkeypatch.setattr(_video.shutil, 'which', lambda name: None)
     monkeypatch.setattr(_video, '_chrome_locations', lambda: [])
-    command = ' '.join(_video.tools(_video.Options())[2])
+    command = ' '.join(label['text'] for label in _video.tools(_video.Options())[2])
     assert '--chrome or $CUJU_CHROME' in command and '--ffmpeg or $CUJU_FFMPEG' in command
     status = _video_jobs.availability()
     served = ' '.join(status['missing'])
@@ -316,21 +318,37 @@ def test_missing_tools_name_what_the_server_takes(render_home, monkeypatch):
     # The server needs the browser alone, so ffmpeg is never missing.
     assert '$CUJU_CHROME in the environment of cuju render serve' in served
     assert 'ffmpeg' not in served
+    # The page shows the missing browser by the id of its message, in its own language.
+    assert [label['id'] for label in status['missing_labels']] == ['server.video.missing_chrome']
+    assert [label['text'] for label in status['missing_labels']] == status['missing']
     # The doctor warns of a missing program, which video export alone needs, and still passes.
-    check = next(c for c in _doctor.server_report()['checks'] if c['name'] == 'video export')
+    checks = _doctor.server_report()['checks']
+    check = next(c for c in checks if c['name'] == 'video export')
     assert check['ok'] and check['warning']
+    assert check['detail_id'] == 'server.video.missing_chrome'
+    # Every check names itself and its detail by id as well.
+    for found in checks:
+        assert found['name_id'] in _messages.MESSAGES and found['detail_id'] in _messages.MESSAGES
     lines = _doctor.text({'checks': [check]}).splitlines()
     assert any(line.startswith('  warn  video export, Video export needs') for line in lines)
 
 
-def test_the_server_exports_with_a_browser_alone(monkeypatch, tmp_path):
+def test_the_server_exports_with_a_browser_alone(render_home, monkeypatch, tmp_path):
+    from cuju.render._guide import doctor as _doctor
+
     program = tmp_path / 'chrome-here'
     program.write_text('', encoding='utf-8')
     monkeypatch.setenv('CUJU_CHROME', str(program))
     monkeypatch.delenv('CUJU_FFMPEG', raising=False)
     monkeypatch.setattr(_video.shutil, 'which', lambda name: None)
     assert _video.find_ffmpeg() is None
-    assert _video_jobs.availability() == {'available': True, 'missing': []}
+    assert _video_jobs.availability() == {'available': True, 'missing': [], 'missing_labels': []}
+    # The doctor names the browser it found.
+    checks = _doctor.server_report()['checks']
+    check = next(c for c in checks if c['name'] == 'video export')
+    assert check['ok'] and not check['warning']
+    assert check['detail_id'] == 'server.doctor.video.found'
+    assert check['detail'] == 'a browser is found, chrome-here'
 
 
 def test_file_sizes_read_in_kilobytes_below_a_megabyte():
@@ -504,6 +522,41 @@ def _request(address, path, document=None, method='GET'):
     with urllib.request.urlopen(request, timeout=10) as response:
         body = response.read()
         return response.status, dict(response.headers), body
+
+
+def test_a_request_that_is_no_json_names_its_mistake(render_home):
+    """A body or a parameter that is no JSON, and any other error of the request, answers by id."""
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests(), videos=_video_jobs.VideoJobs())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+
+    def refused(path, data=None, method='GET'):
+        request = urllib.request.Request(address + path, data=data, method=method)
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        assert caught.value.code == 400
+        return json.loads(caught.value.read())
+
+    try:
+        body = refused('/api/matches/sample-5v5/video', b'{"start": 0,', 'POST')
+        assert (body['error_id'], body['error_values']) == (
+            'server.json',
+            {'line': '1', 'column': '13'},
+        )
+        assert refused('/api/matches/sample-5v5/video', b'\xff', 'POST')['error_id'] == (
+            'server.json_text'
+        )
+        assert refused('/api/search?limit=x')['error_id'] == 'server.search.limit'
+        found = refused('/api/search?q=kind:nothing')
+        assert (found['error_id'], found['error_values']) == (
+            'server.search.kind',
+            {'name': "'nothing'"},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def _wait(address, identifier, state):

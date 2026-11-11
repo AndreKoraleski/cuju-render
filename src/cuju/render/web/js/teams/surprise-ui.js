@@ -6,7 +6,7 @@
 // hears the name and the note of each team that a button makes.
 
 import { api } from '../core/api.js';
-import { t, tOr } from '../core/i18n.js';
+import { t, tn, tOr } from '../core/i18n.js';
 import { h } from './library.js';
 import { icon, symbolOnly } from '../core/icons.js';
 import { kitShirt } from '../pages/matches.js';
@@ -108,7 +108,7 @@ export function surprisePanel(editor) {
     });
     const style = styleSelect(state.style);
     const note = h('p', { class: 'surprise-note muted small' }, state.note
-        || t('surprise-ui.intro'));
+        || tn('surprise-ui.intro'));
     const go = () => {
         const result = surprise({ seed: seed.value, style: style.value, format: editor.format });
         choices.set(editor, { seed: seed.value, style: style.value, note: surpriseNote(result) });

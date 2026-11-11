@@ -104,7 +104,8 @@ def check_flat(client, base):
             const suggested = !prompt.hidden && prompt.hasAttribute('data-prompt')
                 && /5 frames a second/.test(prompt.textContent);
             const buttons = [...prompt.querySelectorAll('button')];
-            buttons.find((b) => b.textContent === 'Keep 3D').click();
+            const named = (b) => (b.getAttribute('aria-label') || b.textContent.trim());
+            buttons.find((b) => named(b) === 'Keep 3D').click();
             const declined = prompt.hidden
                 && localStorage.getItem('cuju.view2dDeclined') === 'true';
             cuju.flat.suggested = false;

@@ -302,8 +302,13 @@ def resolve(
         if done:
             newest = max(done, key=lambda entry: float(entry.get('finished') or 0))
             # The recording's own title names the teams as the match did.
+            against = _messages.label(
+                'server.names.against', left=newest.get('left', ''), right=newest.get('right', '')
+            )
             entry = recording(newest['match']) or {
-                'title': f'{newest.get("left", "")} against {newest.get("right", "")}'
+                'title': against['text'],
+                'title_id': against['id'],
+                'title_values': against['values'],
             }
             return _target('match', newest['match'], entry, request=newest['id'])
         return _none('server.feed.no_request')

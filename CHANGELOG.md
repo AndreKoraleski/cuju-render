@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the library carries its `group`, which `GET /api/matches?group=`, `cuju render recordings
     --group` and `cuju.render.recordings` list, and `DELETE /api/groups/ID`,
     `cuju render recordings --delete-group` and `cuju.render.delete_group` move a whole group.
+- Challenge cards that show their challenge. Each card opens with a still of the drill and plays a
+    short silent teaser of it while the pointer rests on the card or the keyboard focus is inside
+    it, one card at a time. Under reduced motion, from the system or the page's setting, only the
+    card's play button starts a teaser. Every challenge has a kind, finishing, dribbling,
+    combination play, set piece, counterattack, breaking through or duel, with its own color and
+    symbol, a difficulty shown as a badge, and the person's medal on its picture. The catalog
+    names each challenge's `category` and `difficulty`, and `ci/make_challenge_teasers.py`
+    makes the teasers and stills with `cuju render video` and lists them in a manifest.
 - Keep attempts as recordings, a setting of the Challenges section, with `--no-recordings` of
     `cuju render challenge` and `keep_recordings=False` of `cuju.render.challenge`, for runs that
     score, rank and earn as before and add nothing to the library.
@@ -63,10 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Play offers Low graphics quality once a visit when its picture draws fewer than 12 frames a
     second, as Watch offers the 2D view.
 - Languages of the page. Every text the page shows comes from a language file, one JSON object of
-    messages with placeholders and plural forms by language, and the page ships English and
-    Brazilian Portuguese. The Language list of the settings panel follows the browser by default,
-    a file dropped into the folder `languages` or imported on the panel adds a language, the
-    address takes `lang`, and a message a language lacks shows in English.
+    messages with placeholders and plural forms by language, and the page ships English. A file
+    dropped into the folder `languages` or imported on the settings panel adds a language, the
+    Language list then shows and follows the browser by default, the address takes `lang`, and a
+    message a language lacks shows in English. A draft in Brazilian Portuguese, with its style
+    guide and glossary, waits in `translations` of the repository and loads the same way.
 - `cuju render language new`, `check`, `list`, `add` and `remove`, with JSON for agents, and
     `/api/languages`, which lists, serves, imports and removes languages.
 - The error answers of the server and the failed requests, games, videos, challenge runs and
@@ -275,7 +284,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     top bar, the menus of Watch, the choices of the Field page and the states of requests,
     tournaments and lessons show a symbol, alone where it reads clearly and beside its words where
     the words are the content. A symbol alone keeps its name from the language files as its
-    accessible name and its tooltip, which shows on hover and on keyboard focus.
+    accessible name and its tooltip, which shows on hover and on keyboard focus. The lists of
+    Watch, Recordings, Matches and the search of moments show a symbol in place of their names,
+    the settings show a symbol beside the words of their choices, and the line of progress and the
+    notes of Export video, Install the app on Help, the card on Home that offers the app and the
+    names of a tournament's entrants that repeat another show the symbols of their states.
+- The page's texts set their key words in bold and their commands, programs, files and variables
+    as code, in English and in Portuguese, and every shortcut the page shows, in Help's tables,
+    the Home page, the command palette, the menus, Play's controls, input settings and tester, the
+    tour, the lessons and the first run tips, is drawn as keycaps, with the symbols of the keys in
+    tooltips. The command palette shows the key of an action that has one, and the shortcuts of
+    the command palette and of copying name Command on a Mac.
 - The renderer is its own package, cuju-render, which `pip install 'cuju[render]'` installs
     into the folder of cuju. `import cuju.render`, `cuju render`, `python -m cuju.render` and
     `CUJU_RENDER` work as they did in cuju 0.2.0, and the renderer uses only the public interface
@@ -358,6 +377,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     background find it from a Python of a virtual environment on Windows. That Python runs the
     server in a process of its own beneath the one started, so the wait for the server never
     matched it and gave up after a minute. The server file now names the call that started it.
+- The page in another language shows in that language the messages of the server that read in
+    English before, the programs that video export lacks and how to install them, the reasons an export
+    stops, the checks of the diagnostic report, the refusals of a moment search, the lines and
+    titles of its results, the problems of a language file, of a challenge attempt, of the
+    settings of a team and of a tournament, a request body that is no JSON, an unexpected error of
+    the server and the reasons a team's presentation worker stops. Commands, programs and
+    variables in these messages show as code, and the instruction to restart the server stands
+    out.
+- Words agree with their numbers in English and Portuguese, on the page, in the server's
+    messages and in the command line, as in 1 recording deleted and 2 recordings deleted, and
+    Portuguese says zero in the plural. A count of the form 2 of 5 names the things counted with
+    the first number, and a count with decimals, such as 1.0 minutes, reads as English and
+    Portuguese write it. The server's messages take plural forms as the language files do.
 - The page starts every time on Windows. The server and the page of a video export queued five
     connections at most, Windows refused the next ones as the page asked for its modules at once,
     and a refused module left the page blank. They queue 128 now, and a page whose module fails

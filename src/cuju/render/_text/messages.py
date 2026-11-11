@@ -11,7 +11,11 @@ as `{scenario}`, as the language files of the page do, and Python fills it the w
 with every value as text, so both read the same.
 
 `MESSAGES` holds every id with its English template, and the part `server` of the language
-files holds the same ids, which `compare` checks.
+files holds the same ids, which `compare` checks. A template whose words agree with a number is
+an object of plural forms, keyed `one` and `other` and by exact counts such as `=0`, as in the
+language files, and the value `count` picks the form. A template may mark words as the language
+files do, **strong** and `code`, which the page shows as such, while `text` reads them without the
+marks, so the command line and English answers read plain text.
 """
 
 from __future__ import annotations
@@ -26,9 +30,13 @@ from cuju.errors import ArgumentError
 # A placeholder of a template, as the page's own runtime, web/js/core/i18n.js, reads it. Any other
 # brace, such as that of `{"colors": [...]}`, is text.
 _PLACEHOLDER = re.compile(r'\{([A-Za-z0-9_]+)\}')
+# The marks of a template, strong emphasis in double asterisks and code in backticks, as the page
+# reads them. A mark that does not close is text.
+_MARK = re.compile(r'\*\*(.+?)\*\*|`([^`]+)`')
 
-MESSAGES: dict[str, str] = {
+MESSAGES: dict[str, str | dict[str, str]] = {
     'server.body_size': 'expected a request body of at most 110 MB',
+    'server.challenges.ability': 'expected the ability {ability}, found {found}',
     'server.challenges.attempt': 'expected an attempt from 0 to {last}, found {attempt}',
     'server.challenges.attempt_recording': (
         'the recording {match} cannot be attempt {attempt}, {reason}'
@@ -38,20 +46,24 @@ MESSAGES: dict[str, str] = {
     'server.challenges.exit': 'the run ended with exit code {code}',
     'server.challenges.exit_detail': 'the run ended with exit code {code}, {detail}',
     'server.challenges.keep_recordings': 'expected keep_recordings as true or false, found {value}',
-    'server.challenges.left_matches': (
-        'expected from 1 to {count} recordings of the attempts played, found {matches}'
-    ),
-    'server.challenges.matches': (
-        'expected the {count} recordings of the attempts in order, found {matches}'
-    ),
+    'server.challenges.left_matches': {
+        'one': 'expected the recording of the attempt played, found {matches}',
+        'other': 'expected from 1 to {count} recordings of the attempts played, found {matches}',
+    },
+    'server.challenges.matches': {
+        'one': 'expected the recording of the attempt, found {matches}',
+        'other': 'expected the {count} recordings of the attempts in order, found {matches}',
+    },
     'server.challenges.name_length': 'expected a name of 1 to {most} characters, found {value}',
     'server.challenges.name_text': 'expected a name as text, found {value}',
     'server.challenges.no_challenge': 'no challenge {identifier}',
+    'server.challenges.no_provenance': 'the recording holds no provenance',
     'server.challenges.no_run': 'no such run',
     'server.challenges.person_fields': (
         'expected person, matches and keep_recordings, found {unknown}'
     ),
     'server.challenges.policy': 'expected a policy function, found {policy}',
+    'server.challenges.provenance': 'expected `{key}` {value} for attempt {attempt}, found {found}',
     'server.challenges.recording': 'expected a recording of the library, found {match}',
     'server.challenges.run_fields': 'expected a person with matches, or a team with attempts',
     'server.challenges.team': 'expected a team of the registry, found {team}',
@@ -93,6 +105,41 @@ MESSAGES: dict[str, str] = {
     'server.clips.unknown_joints': "expected joints of GRF's skeleton, found {joints}",
     'server.clips.version': 'expected a binary glTF file of version 2, found version {version}',
     'server.content_length': 'expected a Content-Length of digits',
+    'server.doctor.check.disk_space': 'disk space',
+    'server.doctor.check.home_folder': 'home folder',
+    'server.doctor.check.page_files': 'page files',
+    'server.doctor.check.samples': 'samples',
+    'server.doctor.check.server_file': 'server file',
+    'server.doctor.check.server_version': 'server version',
+    'server.doctor.check.video_export': 'video export',
+    'server.doctor.check.writing': 'writing',
+    'server.doctor.disk.free': '{size} GB free',
+    'server.doctor.disk.low': '{size} GB free, recordings **may fail** to save',
+    'server.doctor.disk.unknown': 'unknown',
+    'server.doctor.home.exists': '{path} exists',
+    'server.doctor.home.file': 'the home folder is a file',
+    'server.doctor.home.missing': 'the home folder is missing, the server makes it as it starts',
+    'server.doctor.home.readonly': 'the home folder is **not writable**',
+    'server.doctor.home.under': 'the home folder lies under a file',
+    'server.doctor.page.missing': 'the page is missing, **install** `cuju` again',
+    'server.doctor.page.ok': 'the files of the page are in place',
+    'server.doctor.samples': {
+        'one': '{count} sample recording ships with the package',
+        'other': '{count} sample recordings ship with the package',
+    },
+    'server.doctor.server_file.none': 'no server runs',
+    'server.doctor.server_file.running': 'the server of the folder answers',
+    'server.doctor.server_file.stale': (
+        'a stale `server.json` names a server that does not answer, the next start replaces it'
+    ),
+    'server.doctor.server_version': (
+        'the server runs cuju {server}, this command {command}, **restart** the server'
+    ),
+    'server.doctor.video.found': 'a browser is found, `{browser}`',
+    'server.doctor.writing.fail': (
+        'the server **cannot write** its folder, choose another with `--home`'
+    ),
+    'server.doctor.writing.ok': 'the server can write its folder',
     'server.feed.follow.auto': 'a live source while one streams, else the newest recording',
     'server.feed.follow.latest': 'the newest recording of the library',
     'server.feed.follow.live': 'the newest live source',
@@ -136,7 +183,15 @@ MESSAGES: dict[str, str] = {
     'server.game.teams': 'expected two registry teams, left and right, found {teams}',
     'server.game.unknown': 'no such game',
     'server.help.sample_names': 'expected names as a list of samples, found {names}',
+    'server.invalid': 'the server could not take the request, {error}',
+    'server.json': (
+        'expected a request body of JSON, found a mistake at line {line}, column {column}'
+    ),
     'server.json_object': 'expected a JSON object',
+    'server.json_query': (
+        'expected `{name}` as JSON, found a mistake at line {line}, column {column}'
+    ),
+    'server.json_text': 'expected a request body of JSON in UTF-8',
     'server.language.code': (
         'expected a language code of lowercase letters and digits, such as pt or pt-br, '
         'found {code}'
@@ -145,6 +200,44 @@ MESSAGES: dict[str, str] = {
     'server.language.keep': 'the language {code} ships with cuju and stays',
     'server.language.malformed': 'expected well formed messages, found {first}',
     'server.language.none': 'no language {code}',
+    'server.language.problem.caption': (
+        'expected a caption as a text, captions have no plural forms'
+    ),
+    'server.language.problem.categories': (
+        'expected the plural categories of {language}, the file lacks {lacking}'
+    ),
+    'server.language.problem.code': (
+        'expected a code of lowercase letters and digits, such as `pt` or `pt-br`, found {code}'
+    ),
+    'server.language.problem.dir': 'expected `dir` as `ltr` or `rtl`, found {value}',
+    'server.language.problem.document': 'expected a JSON object keyed by message id',
+    'server.language.problem.extra': 'expected the placeholders of English, found {extra}',
+    'server.language.problem.file_code': 'expected the code {code} of the file name, found {found}',
+    'server.language.problem.form_names': (
+        'expected plural categories or exact counts such as `=0`, found {unknown}'
+    ),
+    'server.language.problem.form_texts': 'expected plural forms as texts',
+    'server.language.problem.forms_expected': 'expected plural forms, as the English message has',
+    'server.language.problem.forms_lacking': 'expected the plural forms {lacking} of the language',
+    'server.language.problem.header': (
+        'expected `@language` as an object with code, name, dir and plurals'
+    ),
+    'server.language.problem.id': 'expected an id of letters, digits, _, . and -',
+    'server.language.problem.kind': 'expected a text or an object of plural forms',
+    'server.language.problem.lost': 'expected the placeholders {lost} of English',
+    'server.language.problem.marks': (
+        'expected as many code spans as English, for its commands, names and shortcuts'
+    ),
+    'server.language.problem.name': (
+        'expected the name of the language in itself, such as Português (Brasil)'
+    ),
+    'server.language.problem.other': 'expected the plural category `other` among the plurals',
+    'server.language.problem.plurals': (
+        'expected `plurals` as a list of the categories {categories}, found {value}'
+    ),
+    'server.language.problem.text': 'expected `{key}` as text, found {value}',
+    'server.language.problem.text_expected': 'expected a text, as the English message is',
+    'server.language.problem_at': '{id}, {problem}',
     'server.language.shipped': (
         'the language {code} ships with cuju, name your file with another code, '
         'such as {code}-x-mine'
@@ -213,20 +306,39 @@ MESSAGES: dict[str, str] = {
     'server.play.scenario': 'expected a scenario from the renderer scenario list, found {scenario}',
     'server.policy.action_set': 'expected the v2 action set to hand players to the AI',
     'server.policy.error': 'the policy failed, {reason}',
-    'server.policy.error_action': (
-        'the policy failed, it answered the action {value}, outside its action set of {count} '
-        'actions, 0 to {last}'
-    ),
+    'server.policy.error_action': {
+        'one': (
+            'the policy failed, it answered the action {value}, outside its action set of {count} '
+            'action, 0 to {last}'
+        ),
+        'other': (
+            'the policy failed, it answered the action {value}, outside its action set of {count} '
+            'actions, 0 to {last}'
+        ),
+    },
     'server.policy.failed': 'the policy of {player} failed, {reason}',
-    'server.policy.failed_action': (
-        'the policy of {player} failed, it answered the action {value}, outside its action set '
-        'of {count} actions, 0 to {last}'
-    ),
-    'server.policy.first': (
-        'the policy did not answer its first observation within {seconds} seconds'
-    ),
-    'server.policy.load': 'the policies did not load within {seconds} seconds',
-    'server.policy.silent': 'the policy has not answered for {seconds} seconds',
+    'server.policy.failed_action': {
+        'one': (
+            'the policy of {player} failed, it answered the action {value}, outside its action set '
+            'of {count} action, 0 to {last}'
+        ),
+        'other': (
+            'the policy of {player} failed, it answered the action {value}, outside its action set '
+            'of {count} actions, 0 to {last}'
+        ),
+    },
+    'server.policy.first': {
+        'one': 'the policy did not answer its first observation within {count} second',
+        'other': 'the policy did not answer its first observation within {count} seconds',
+    },
+    'server.policy.load': {
+        'one': 'the policies did not load within {count} second',
+        'other': 'the policies did not load within {count} seconds',
+    },
+    'server.policy.silent': {
+        'one': 'the policy has not answered for {count} second',
+        'other': 'the policy has not answered for {count} seconds',
+    },
     'server.requests.cancelled': 'cancelled',
     'server.requests.exit': 'the match ended with exit code {code}',
     'server.requests.exit_detail': 'the match ended with exit code {code}, {detail}',
@@ -240,7 +352,39 @@ MESSAGES: dict[str, str] = {
     'server.samples.team': 'expected a sample team from {teams}, found {name}',
     'server.samples.unknown': 'expected samples from {every}, found {unknown}',
     'server.scenario': 'expected a shipped scenario, found {scenario}',
+    'server.search.date': 'expected `{key}:` as a date such as 2026-11-10, found {value}',
+    'server.search.filter': 'expected a filter of {filters}, found `{key}:`',
+    'server.search.kind': 'expected a kind of moment such as `goal` or `corner`, found {name}',
+    'server.search.limit': 'expected a limit as a whole number, found {limit}',
+    'server.search.limit_range': 'expected a limit from 1 to {most}, found {limit}',
+    'server.search.limit_text': 'expected `limit:` as a whole number, found {value}',
+    'server.search.minutes': (
+        'expected `{key}:` as minutes of the clock, such as 60, 60:30 or 90s, found {value}'
+    ),
+    'server.search.score': (
+        'expected `score:` as leading, level, trailing or a score such as 2-1, found {value}'
+    ),
+    'server.search.source': (
+        'expected `source:` as requested, game, challenge, recorder, live, tournament or unknown, '
+        'found {value}'
+    ),
+    'server.search.target': 'expected a recording of the library or a `.cjr` file, found {target}',
+    'server.search.unknown_filter': 'expected a filter, found `{key}:`',
     'server.seed': 'expected a seed from 0 to 2**64 - 1, found {value}',
+    'server.sizes.area': (
+        'expected a picture of at most {area} pixels, as 3840 by 2160, found {width} by {height}'
+    ),
+    'server.sizes.even_height': 'expected an even height, found {value}',
+    'server.sizes.even_width': 'expected an even width, found {value}',
+    'server.sizes.graphics': (
+        'expected a scale of the graphics from {lowest} to {highest}, found {value}'
+    ),
+    'server.sizes.height': 'expected a height from {lowest} to {highest}, found {value}',
+    'server.sizes.safe': (
+        'expected a safe area of {modes} or a percentage from 0 to {most}, found {value}'
+    ),
+    'server.sizes.size': 'expected a size such as `1280x720` or one of {presets}, found {value}',
+    'server.sizes.width': 'expected a width from {lowest} to {highest}, found {value}',
     'server.teams.ability': 'expected an ability from 0 to 1, found {value}',
     'server.teams.ability_pair': 'expected a pair of abilities, left and right, found {ability}',
     'server.teams.agent_function': 'expected an agent function in the submission {identifier}',
@@ -256,10 +400,20 @@ MESSAGES: dict[str, str] = {
     'server.teams.archive.tar': 'expected a readable .tar.gz archive, found {error}',
     'server.teams.archive.zip': 'expected a readable .zip archive, found {error}',
     'server.teams.badge': 'expected a badge of at most three characters, found {value}',
-    'server.teams.beside_count': (
-        '{team} cannot play beside a person in {scenario}, which has {available} controllable '
-        'players on that side'
-    ),
+    'server.teams.beside_count': {
+        '=0': (
+            '{team} cannot play beside a person in {scenario}, which has no controllable player on '
+            'that side'
+        ),
+        'one': (
+            '{team} cannot play beside a person in {scenario}, which has {count} controllable '
+            'player on that side'
+        ),
+        'other': (
+            '{team} cannot play beside a person in {scenario}, which has {count} controllable '
+            'players on that side'
+        ),
+    },
     'server.teams.beside_dynamic': 'expected dynamic assignment for {team} beside a person',
     'server.teams.cannot_play': '{team} cannot play {scenario}, {reason}',
     'server.teams.celebration': 'expected the name of a celebration, found {value}',
@@ -268,7 +422,10 @@ MESSAGES: dict[str, str] = {
     'server.teams.color': 'expected {name} as three integers from 0 to 255, found {value}',
     'server.teams.color_pair': 'expected colors as #rrggbb, found {old} and {new}',
     'server.teams.colors': 'expected the colors as a dictionary by model, found {value}',
-    'server.teams.colors_count': 'expected at most {count} colors for {model}',
+    'server.teams.colors_count': {
+        'one': 'expected at most {count} color for {model}',
+        'other': 'expected at most {count} colors for {model}',
+    },
     'server.teams.control.fields': (
         'expected players, assignment, selection, goalkeeper and action_set'
     ),
@@ -297,7 +454,11 @@ MESSAGES: dict[str, str] = {
     'server.teams.control.selection_distinct': 'expected distinct player indices or GRF role names',
     'server.teams.control.selection_empty': 'expected an empty selection for dynamic assignment',
     'server.teams.control.selection_list': 'expected a list of player indices or roles',
-    'server.teams.control.too_few': 'scenario has only {count} controllable players',
+    'server.teams.control.too_few': {
+        '=0': 'scenario has no controllable player',
+        'one': 'scenario has only {count} controllable player',
+        'other': 'scenario has only {count} controllable players',
+    },
     'server.teams.controlled_players': 'expected a number of controlled players, found {players}',
     'server.teams.crowd': 'expected the crowd as {"colors": [...]}, found {value}',
     'server.teams.crowd_colors': 'expected one to four colors of the fans',
@@ -306,6 +467,21 @@ MESSAGES: dict[str, str] = {
         'expected a registered submission to duplicate, found the built-in AI'
     ),
     'server.teams.editor': 'expected the JSON document of the editor, found {error}',
+    'server.teams.field.action_set': 'action set',
+    'server.teams.field.assignment': '`assignment`',
+    'server.teams.field.colors_model': 'the model of the colors',
+    'server.teams.field.fans_color': 'a color of the fans',
+    'server.teams.field.format': 'the format',
+    'server.teams.field.goalkeeper': '`goalkeeper`',
+    'server.teams.field.hair': 'the hair',
+    'server.teams.field.hair_color': 'the hair color',
+    'server.teams.field.image_slot': 'the image slot',
+    'server.teams.field.model': 'the model',
+    'server.teams.field.numbers': 'the numbers',
+    'server.teams.field.pattern': 'the pattern',
+    'server.teams.field.player_model': 'the player model',
+    'server.teams.field.skin': 'the skin',
+    'server.teams.field.sound_slot': 'the sound slot',
     'server.teams.folder.files': 'expected the files that the index of the folder lists',
     'server.teams.folder.index': 'expected the index of a submission folder, found {error}',
     'server.teams.folder.index_list': (
@@ -337,7 +513,10 @@ MESSAGES: dict[str, str] = {
     'server.teams.player': 'expected player {index} as a dictionary, found {value}',
     'server.teams.player_entry': 'expected an entry of a player, found {key}',
     'server.teams.player_name': 'expected a name of at most 24 characters, found {name}',
-    'server.teams.players': 'expected at most {count} player entries, found {value}',
+    'server.teams.players': {
+        'one': 'expected at most {count} player entry, found {value}',
+        'other': 'expected at most {count} player entries, found {value}',
+    },
     'server.teams.scenario_format': 'expected a scenario of {format} for {team}, found {scenario}',
     'server.teams.shirt_number': 'expected a shirt number from 0 to 99, found {number}',
     'server.teams.sound_size': 'expected a sound of at most 2 MB, found {size} bytes',
@@ -364,14 +543,26 @@ MESSAGES: dict[str, str] = {
     'server.teams.unknown_kaggle': 'expected a Kaggle team of the registry, found {identifier}',
     'server.tournament.ability': 'expected an ability from 0 to 1, found {ability}',
     'server.tournament.best_places': 'stage {stage} names best places without a position',
-    'server.tournament.bracket_byes': (
-        'a bracket of {size} with byes needs from {lowest} to {size} entrants, and {count} '
-        'enter {where}'
-    ),
-    'server.tournament.bracket_play_in': (
-        'a bracket of {size} with a play-in round needs from {size} to {highest} entrants, and '
-        '{count} enter {where}'
-    ),
+    'server.tournament.bracket_byes': {
+        'one': (
+            'a bracket of {size} with byes needs from {lowest} to {size} entrants, and {count} '
+            'enters {where}'
+        ),
+        'other': (
+            'a bracket of {size} with byes needs from {lowest} to {size} entrants, and {count} '
+            'enter {where}'
+        ),
+    },
+    'server.tournament.bracket_play_in': {
+        'one': (
+            'a bracket of {size} with a play-in round needs from {size} to {highest} entrants, and '
+            '{count} enters {where}'
+        ),
+        'other': (
+            'a bracket of {size} with a play-in round needs from {size} to {highest} entrants, and '
+            '{count} enter {where}'
+        ),
+    },
     'server.tournament.bracket_power': 'expected a bracket size of {where} that is a power of two',
     'server.tournament.cancel_state': (
         'expected a tournament that runs or stopped, found it {state}'
@@ -391,25 +582,72 @@ MESSAGES: dict[str, str] = {
         'enters with the kind builtin'
     ),
     'server.tournament.entrants': 'expected from 2 to {most} entrants, found {count}',
+    'server.tournament.field.advance': 'the entrants that advance from {where}',
+    'server.tournament.field.best_count': 'the best places of position {position} of {where}',
+    'server.tournament.field.best_position': 'the position of the best places of {where}',
+    'server.tournament.field.bracket': 'the bracket of {where}',
+    'server.tournament.field.bye_points': 'the bye points of {where}',
+    'server.tournament.field.concurrency': 'the matches at once',
+    'server.tournament.field.cycles': 'the cycles of {where}',
+    'server.tournament.field.decider_length': 'the decider length of {where}',
+    'server.tournament.field.draws': 'the draws of {where}',
+    'server.tournament.field.each': 'each of {name}',
+    'server.tournament.field.entrant_kind': 'the kind of entrant {number}',
+    'server.tournament.field.entrant_name': 'an entrant name',
+    'server.tournament.field.final_legs': 'the legs of the final of {where}',
+    'server.tournament.field.forfeit_score': 'the forfeit score',
+    'server.tournament.field.format': 'the format of {where}',
+    'server.tournament.field.grand_final_reset': 'grand final reset',
+    'server.tournament.field.group_size': 'the group size of {where}',
+    'server.tournament.field.groups': 'the number of groups of {where}',
+    'server.tournament.field.ladder_rounds': 'the rounds of the ladder of {where}',
+    'server.tournament.field.laps': 'the laps of {where}',
+    'server.tournament.field.legs': 'the legs of {where}',
+    'server.tournament.field.length': 'the length of {where}',
+    'server.tournament.field.name': 'a name',
+    'server.tournament.field.points_draw': 'the points of a draw',
+    'server.tournament.field.points_loss': 'the points of a loss',
+    'server.tournament.field.points_win': 'the points of a win',
+    'server.tournament.field.pots': 'the pots of {where}',
+    'server.tournament.field.preset_title': 'a preset title',
+    'server.tournament.field.qualifiers': 'the qualifiers of group {group}',
+    'server.tournament.field.replays': 'the replays of {where}',
+    'server.tournament.field.seed': 'the seed',
+    'server.tournament.field.seeding': 'the seeding of {where}',
+    'server.tournament.field.settle': 'the settlements of {where}',
+    'server.tournament.field.swiss_rounds': (
+        'the rounds of the Swiss {where}, which pairs {entrants} entrants without rematches,'
+    ),
+    'server.tournament.field.third_place': 'third place',
+    'server.tournament.field.tiebreakers': 'the tiebreakers of {where}',
+    'server.tournament.field.tournament_seeding': 'the seeding',
     'server.tournament.flag': 'expected {setting} of {where} as true or false',
     'server.tournament.foreign': (
         'stopped, since this install did not write its file, resume it to play its matches'
     ),
-    'server.tournament.group_minimum': (
-        'every group of {where} needs at least 2 entrants, and {count} entrants make groups of '
-        '{sizes}'
-    ),
+    'server.tournament.group_minimum': {
+        'one': (
+            'every group of {where} needs at least 2 entrants, and {count} entrant makes groups of '
+            '{sizes}'
+        ),
+        'other': (
+            'every group of {where} needs at least 2 entrants, and {count} entrants make groups of '
+            '{sizes}'
+        ),
+    },
     'server.tournament.group_sizes': 'expected group sizes as a list of counts in {where}',
-    'server.tournament.group_total': (
-        'the group sizes of {where} hold {total} entrants, and {count} enter it'
-    ),
+    'server.tournament.group_total': {
+        'one': 'the group sizes of {where} hold {total} entrants, and {count} enters it',
+        'other': 'the group sizes of {where} hold {total} entrants, and {count} enter it',
+    },
     'server.tournament.groups_advance': (
         'the groups of {where} send {advance} on, by qualifiers and best places'
     ),
     'server.tournament.groups_few': 'the groups of {where} send fewer than 2 entrants on',
-    'server.tournament.knockout_advance': (
-        'the knockout of {where} stops at {until}, so {until} advance'
-    ),
+    'server.tournament.knockout_advance': {
+        'one': 'the knockout of {where} stops at {count}, so {count} advances',
+        'other': 'the knockout of {where} stops at {count}, so {count} advance',
+    },
     'server.tournament.knockout_stop': (
         'expected the knockout of {where} to stop at a power of two below {size}'
     ),
@@ -469,9 +707,10 @@ MESSAGES: dict[str, str] = {
     ),
     'server.tournament.list': 'expected {name} as a list without repeats, found {value}',
     'server.tournament.match_failed': '{label} failed, {error}',
-    'server.tournament.match_failed_more': (
-        '{label} failed, {error}, and {count} more matches failed'
-    ),
+    'server.tournament.match_failed_more': {
+        'one': '{label} failed, {error}, and {count} more match failed',
+        'other': '{label} failed, {error}, and {count} more matches failed',
+    },
     'server.tournament.match_failed_one_more': '{label} failed, {error}, and 1 more match failed',
     'server.tournament.match_key': 'expected a match of the tournament still to play, found {key}',
     'server.tournament.name_taken': (
@@ -515,12 +754,17 @@ MESSAGES: dict[str, str] = {
     ),
     'server.tournament.rating': 'expected a rating from 0 to 10000, found {rating}',
     'server.tournament.recording': 'expected the recording of a result as text, found {match}',
+    'server.tournament.refused': 'the process that runs it refused the change',
     'server.tournament.result': 'expected a result with a score, found {result}',
     'server.tournament.running': 'expected a running tournament, found it {state}',
     'server.tournament.score': 'expected a score of two counts, found {score}',
     'server.tournament.settings': 'the tournament has unknown settings {settings}',
     'server.tournament.stage_ability': 'expected the ability of {where} from 0 to 1',
-    'server.tournament.stage_entrants': '{where} needs at least 2 entrants, and {count} reach it',
+    'server.tournament.stage_entrants': {
+        '=0': '{where} needs at least 2 entrants, and none reaches it',
+        'one': '{where} needs at least 2 entrants, and {count} reaches it',
+        'other': '{where} needs at least 2 entrants, and {count} reach it',
+    },
     'server.tournament.stage_name': 'expected the name of {where} as text',
     'server.tournament.stage_object': 'expected stage {stage} as an object, found {value}',
     'server.tournament.stage_scenario': (
@@ -536,17 +780,120 @@ MESSAGES: dict[str, str] = {
     'server.tournament.unknown': 'no such tournament',
     'server.tournament.unknown_identifier': 'expected a tournament, found {identifier}',
     'server.tournament.waiting': 'waiting for cuju render tournament run',
+    'server.tournament.where': 'stage {number}',
     'server.tournament.winner': 'expected the winning side as home or away, found {side}',
     'server.trash.unknown': 'no such recording in the Trash',
     'server.tutorial.done': 'expected done as a list of lessons from {known}, found {done}',
     'server.tutorial.lesson': 'expected a lesson from {lessons}, found {identifier}',
     'server.tutorial.unknown': 'expected lessons from {known}, found {unknown}',
+    'server.unexpected': 'the server **failed** unexpectedly, {error}',
     'server.video.annotations': 'expected annotations as true or false, found {annotations}',
+    'server.video.arena': 'expected an arena of {arenas}, found {arena}',
     'server.video.busy': 'an export already runs, wait for it or cancel it',
+    'server.video.camera': 'expected a camera of {cameras}, found {camera}',
+    'server.video.cdp_closed': '`Chrome` closed the debugging connection',
+    'server.video.cdp_method': '`Chrome` could not run {method}, {error}',
+    'server.video.cdp_refused': '`Chrome` refused the debugging connection, {header}',
+    'server.video.cdp_start': '`Chrome` closed the debugging connection at its start',
+    'server.video.chrome_exit': (
+        '`Chrome` stopped at its start with exit code {code}. `Chrome` in some containers needs '
+        '`--no-sandbox`.'
+    ),
+    'server.video.chrome_page': '`Chrome` opened no page',
+    'server.video.chrome_port': '`Chrome` did not open its debugging port within {seconds} s',
+    'server.video.empty_range': (
+        'expected a range that holds frames, the recording runs from 0 to {duration} seconds, '
+        'found {start} to {end}'
+    ),
     'server.video.exit': 'the export ended with exit code {code}',
     'server.video.exit_detail': 'the export ended with exit code {code}, {detail}',
+    'server.video.ffmpeg_exit': '`ffmpeg` failed with exit code {code}, {detail}',
+    'server.video.ffmpeg_stopped': '`ffmpeg` stopped while encoding, {detail}',
     'server.video.fields': 'expected the fields {known}, found {unknown}',
+    'server.video.goal': 'expected a goal number from 1, found {goal}',
+    'server.video.goal_range': {
+        '=0': 'expected a goal, found none in the recording, asked for goal {goal}',
+        'one': 'expected goal 1, the only goal of the recording, found goal {goal}',
+        'other': 'expected a goal from 1 to {count}, found goal {goal}',
+    },
+    'server.video.hour': 'expected an hour from 0 to 24, found {hour}',
     'server.video.length': 'expected at most {most} seconds of video, found {length} seconds',
+    'server.video.max_length': (
+        'expected at most {most} seconds of video, the range from {start} to {end} runs {length} '
+        'seconds, so choose a shorter range or raise the maximum length'
+    ),
+    'server.video.max_megabytes': 'expected a maximum size from 1 to {most} MB, found {value}',
+    'server.video.max_seconds': (
+        'expected a maximum length above 0 and up to {most} seconds, found {value}'
+    ),
+    'server.video.max_size': (
+        'the video reached its **maximum size** of {most} MB, so choose a shorter range or raise '
+        'the maximum size'
+    ),
+    'server.video.missing_both': '{chrome} {ffmpeg}',
+    'server.video.missing_chrome': (
+        'Video export needs `Chrome` or `Chromium`, found neither. Install `Google Chrome` or '
+        '`Chromium`, from https://www.google.com/chrome/ or with the package manager, such as '
+        '`apt install chromium`, or name the program with `$CUJU_CHROME` in the environment of '
+        '`cuju render serve`, then **restart** the server.'
+    ),
+    'server.video.missing_chrome_command': (
+        'Video export needs `Chrome` or `Chromium`, found neither. Install `Google Chrome` or '
+        '`Chromium`, from https://www.google.com/chrome/ or with the package manager, such as '
+        '`apt install chromium`, or name the program with `--chrome` or `$CUJU_CHROME`.'
+    ),
+    'server.video.missing_ffmpeg': (
+        'Video export needs `ffmpeg`, found none. Install `ffmpeg`, from '
+        'https://ffmpeg.org/download.html or with the package manager, such as '
+        '`apt install ffmpeg`, `brew install ffmpeg` or `winget install ffmpeg`, or name the '
+        'program with `$CUJU_FFMPEG` in the environment of `cuju render serve`, then **restart** '
+        'the server.'
+    ),
+    'server.video.missing_ffmpeg_command': (
+        'Video export needs `ffmpeg`, found none. Install `ffmpeg`, from '
+        'https://ffmpeg.org/download.html or with the package manager, such as '
+        '`apt install ffmpeg`, `brew install ffmpeg` or `winget install ffmpeg`, or name the '
+        'program with `--ffmpeg` or `$CUJU_FFMPEG`.'
+    ),
+    'server.video.no_frames': '{path} holds no frames',
+    'server.video.output': 'expected an output file ending in `.mp4` or `.webm`, found {name}',
+    'server.video.output_format': (
+        'expected an output file ending in `{suffix}` for the format {format}, found {name}'
+    ),
+    'server.video.format': 'expected a format of {formats}, found {format}',
+    'server.video.no_h264': (
+        'expected a browser that encodes H.264 for an MP4, found none in {browser}, so use `Google '
+        'Chrome` or `Edge`, or install `ffmpeg`, which then encodes the MP4'
+    ),
+    'server.video.no_h264_webm': (
+        'expected a browser that encodes H.264 for an MP4, found none in {browser}, so use `Google '
+        'Chrome` or `Edge`, ask for WebM with `--format webm`, or install `ffmpeg`, which then '
+        'encodes the MP4'
+    ),
+    'server.video.no_webm': (
+        'expected a browser that encodes VP9 or VP8 for a WebM, found none in {browser}, so update '
+        'it or use `Google Chrome` or `Edge`'
+    ),
+    'server.video.no_encoder': (
+        'expected a browser that encodes video, found none in {browser}, so update it or use '
+        '`Google Chrome` or `Edge`, or install `ffmpeg`, which then encodes an MP4'
+    ),
+    'server.video.host': 'the page of the export did not load within {seconds} s',
+    'server.video.host_errors': 'the page of the export did not load within {seconds} s, {errors}',
+    'server.video.encoder': "the browser's video encoder stopped, {error}",
+    'server.video.codec': (
+        'expected a browser that encodes the format asked for, found none at this size'
+    ),
+    'server.video.lost': 'the browser lost the finished video before it was saved',
+    'server.video.bytes': 'expected {size} bytes of video from the browser, found {found}',
+    'server.video.page_draw': 'the page cannot draw in this `Chrome`, {error}',
+    'server.video.page_failed': 'the page failed, {error}',
+    'server.video.page_ready': 'the page did not open the recording within {seconds} s',
+    'server.video.page_ready_errors': (
+        'the page did not open the recording within {seconds} s, {errors}'
+    ),
+    'server.video.program': 'expected a program at {given}, found none',
+    'server.video.quality': 'expected a quality of {qualities}, found {quality}',
     'server.video.range': 'expected an end after the start, found {start} to {end}',
     'server.video.rate': (
         'expected a frame rate of whole frames a second from 1 to {most}, found {fps}'
@@ -555,8 +902,12 @@ MESSAGES: dict[str, str] = {
     'server.video.scale': 'expected the scale of the graphics as a number, found {graphics}',
     'server.video.score': 'expected score as true or false, found {score}',
     'server.video.seconds': 'expected {name} as seconds from 0, found {value}',
+    'server.video.source': (
+        'expected a `.cjr` file or the identifier of a recording of the library, found {source}'
+    ),
     'server.video.unknown': 'no such video',
     'server.video.unknown_match': 'expected a recording of the library, found {match}',
+    'server.video.unreadable': '{path} is not a readable recording, {error}',
 }
 
 
@@ -568,8 +919,39 @@ def text(message_id: str, /, **values: Any) -> str:
     Raises:
         KeyError: If the id is unknown, or a placeholder of its template has no value.
     """
-    template = MESSAGES[message_id]
+    template = plain(form(MESSAGES[message_id], values.get('count')))
     return _PLACEHOLDER.sub(lambda match: _shown(values[match.group(1)]), template)
+
+
+def plain(template: str) -> str:
+    """Returns a template without its marks, the words of **strong** and `code` as they are."""
+    return _MARK.sub(lambda match: match.group(1) or match.group(2) or '', template)
+
+
+def form(template: str | dict[str, str], count: Any) -> str:
+    """Returns the English form of a template for a count, as the page picks it.
+
+    A plain template is its own form. A plural one takes the form of the exact count, such as
+    `=0`, else `one` for a count of 1 written without decimals, else `other`.
+    """
+    if isinstance(template, str):
+        return template
+    shown = _shown(count).strip() if count is not None else ''
+    if f'={shown}' in template:
+        return template[f'={shown}']
+    return template['one'] if shown == '1' and 'one' in template else template['other']
+
+
+def counted(count: Any, one: str, other: str | None = None) -> str:
+    """Returns a count with its noun in English, as `1 recording` or `2 recordings`.
+
+    Args:
+        count: The number, which reads as one only when it is 1 without decimals.
+        one: The noun for one.
+        other: The noun for any other count, by default `one` with an s.
+    """
+    shown = f'{count:g}' if isinstance(count, float) else str(count)
+    return f'{shown} {one if shown == "1" else (other or one + "s")}'
 
 
 def _shown(value: Any) -> str:
@@ -639,9 +1021,11 @@ def valid_label(value: Any) -> bool:
     )
 
 
-def placeholders(template: str) -> set[str]:
-    """Returns the names of the placeholders of a template."""
-    return set(_PLACEHOLDER.findall(template))
+def placeholders(template: Any) -> set[str]:
+    """Returns the names of the placeholders of a template, of every form of a plural one."""
+    if isinstance(template, dict):
+        return {name for text in template.values() for name in _PLACEHOLDER.findall(str(text))}
+    return set(_PLACEHOLDER.findall(template)) if isinstance(template, str) else set()
 
 
 # The classes that only add the id of a message to another exception, by the module and name
@@ -837,14 +1221,18 @@ def compare(messages: dict[str, Any]) -> list[str]:
     """
     english = messages.get('@language', {}).get('code', 'en') == 'en'
     found = {key: value for key, value in messages.items() if key.startswith('server.')}
-    problems = [f'missing {key}' for key in MESSAGES if key not in found]
+    # A translation may lack messages, which the page then shows in English.
+    problems = [f'missing {key}' for key in MESSAGES if key not in found and english]
     problems += [f'unknown {key}' for key in found if key not in MESSAGES]
     for key, template in MESSAGES.items():
         if key not in found:
             continue
         value = found[key]
-        if not isinstance(value, str):
-            problems.append(f'{key} is not a plain text')
+        plural = isinstance(value, dict) and all(isinstance(text, str) for text in value.values())
+        if not isinstance(value, str) and not plural:
+            problems.append(f'{key} is not a text or an object of plural forms')
+        elif isinstance(template, str) and plural and 'count' not in placeholders(template):
+            problems.append(f'{key} has plural forms, and the registry has no count')
         elif english and value != template:
             problems.append(f'{key} reads {value!r}, the registry {template!r}')
         elif placeholders(value) != placeholders(template):

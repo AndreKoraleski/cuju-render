@@ -51,9 +51,10 @@ SPDX-License-Identifier: Apache-2.0
 }
 
 #palette-list [role="option"] {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 12px;
+    row-gap: 1px;
     padding: 6px 14px;
     border-left: 3px solid transparent;
     cursor: pointer;
@@ -62,6 +63,18 @@ SPDX-License-Identifier: Apache-2.0
 #palette-list [aria-selected="true"] {
     border-left-color: var(--accent);
     background: var(--surface-2);
+}
+
+#palette-list .palette-title,
+#palette-list .palette-group {
+    grid-column: 1;
+}
+
+/* The shortcut of an action, at the right of its two lines. */
+.palette-keys {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
 }
 
 .palette-group,

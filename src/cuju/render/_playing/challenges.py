@@ -59,6 +59,18 @@ _LOGGER = logging.getLogger('cuju')
 STEPS_PER_SECOND = 10
 MEDALS = ('bronze', 'silver', 'gold')
 MEASURES = ('scored', 'within', 'margin')
+# The kinds of challenge, which give each card of the Play page its color and symbol, and how hard
+# a challenge is for a person, from its targets and the defenders it faces.
+CATEGORIES = (
+    'finishing',
+    'dribbling',
+    'combination',
+    'set_piece',
+    'counterattack',
+    'breakthrough',
+    'duel',
+)
+DIFFICULTIES = ('easy', 'medium', 'hard')
 # The leaderboard of a challenge keeps the best run of this many competitors.
 BOARD_SIZE = 100
 # A competitor's name on a leaderboard holds at most this many characters.
@@ -104,7 +116,8 @@ def _academy(
 
 # The catalog. Each goal says what counts, and the targets give the value of a bronze, silver and
 # gold medal. The targets come from runs of the built-in AI and of trivial agents, as the
-# renderer's guide describes under Challenges.
+# renderer's guide describes under Challenges. The category and the difficulty describe the
+# challenge on its card.
 CATALOG: tuple[dict[str, Any], ...] = (
     _academy(
         'empty_goal_close',
@@ -112,6 +125,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'within',
         (3, 4, 5),
         limit=3.0,
+        category='finishing',
+        difficulty='easy',
         goal='Score into the empty goal within 3 seconds of play in each attempt.',
     ),
     _academy(
@@ -120,6 +135,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'within',
         (3, 4, 5),
         limit=8.0,
+        category='finishing',
+        difficulty='easy',
         goal='Run from the middle and score into the empty goal within 8 seconds of play.',
     ),
     _academy(
@@ -128,6 +145,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'within',
         (1, 3, 5),
         limit=6.5,
+        category='dribbling',
+        difficulty='medium',
         goal='Outrun five defenders and score into the empty goal within 6.5 seconds of play.',
     ),
     _academy(
@@ -135,6 +154,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'Run to score past a keeper',
         'scored',
         (1, 3, 5),
+        category='dribbling',
+        difficulty='medium',
         goal='Outrun five defenders and beat the goalkeeper.',
     ),
     _academy(
@@ -142,6 +163,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'Pass and shoot past a keeper',
         'scored',
         (1, 3, 5),
+        category='combination',
+        difficulty='medium',
         goal='Free the unmarked attacker with a pass and score past the goalkeeper.',
     ),
     _academy(
@@ -149,6 +172,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'Run, pass and shoot past a keeper',
         'scored',
         (1, 3, 5),
+        category='combination',
+        difficulty='hard',
         goal='Run with the ball, pass when the defender commits and score past the goalkeeper.',
     ),
     _academy(
@@ -156,6 +181,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'Three against one',
         'scored',
         (1, 3, 5),
+        category='combination',
+        difficulty='medium',
         goal='Combine three attackers against one defender and score past the goalkeeper.',
     ),
     _academy(
@@ -163,6 +190,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'Corner',
         'scored',
         (1, 2, 4),
+        category='set_piece',
+        difficulty='hard',
         goal='Score from the corner before the ball goes out or the clock runs down.',
     ),
     _academy(
@@ -170,6 +199,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'Counterattack',
         'scored',
         (1, 3, 5),
+        category='counterattack',
+        difficulty='medium',
         goal='Finish a counterattack of four attackers against one defender.',
     ),
     _academy(
@@ -177,6 +208,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'Counterattack, hard',
         'scored',
         (1, 2, 4),
+        category='counterattack',
+        difficulty='hard',
         goal='Finish a counterattack of four attackers against two defenders.',
     ),
     _academy(
@@ -185,6 +218,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'within',
         (2, 4, 5),
         limit=30.0,
+        category='breakthrough',
+        difficulty='easy',
         goal='Score against outfield players who stand still, within 30 seconds of play.',
     ),
     {
@@ -195,6 +230,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'attempts': 3,
         'measure': 'margin',
         'targets': [1, 3, 6],
+        'category': 'duel',
+        'difficulty': 'medium',
         'goal': 'Outscore a single opponent over three short matches, goals for minus against.',
     },
     {
@@ -205,6 +242,8 @@ CATALOG: tuple[dict[str, Any], ...] = (
         'attempts': 3,
         'measure': 'margin',
         'targets': [1, 2, 4],
+        'category': 'duel',
+        'difficulty': 'hard',
         'goal': 'Outscore a single opponent at ability 1.0 over three short matches.',
     },
 )
@@ -653,15 +692,18 @@ def _close(first: Any, second: Any) -> bool:
     return _number(first) and _number(second) and abs(first - second) < 1e-3
 
 
-def check_person(challenge: dict[str, Any], index: int, header: dict[str, Any]) -> str | None:
+def check_person(
+    challenge: dict[str, Any], index: int, header: dict[str, Any]
+) -> dict[str, Any] | None:
     """Returns why a recording cannot be a person's attempt `index` of a challenge, or `None`.
 
     A person's attempt is a game of the Play page with a person on the left alone, the built-in AI
-    everywhere else, the challenge's scenario and abilities and the seed of the attempt.
+    everywhere else, the challenge's scenario and abilities and the seed of the attempt. The reason
+    is a label of `_messages.label`, which the page shows in its own language.
     """
     provenance = header.get('provenance')
     if not isinstance(provenance, dict):
-        return 'the recording holds no provenance'
+        return _messages.label('server.challenges.no_provenance')
     expected = {
         'source': 'human_game',
         'scenario': challenge['scenario'],
@@ -673,14 +715,24 @@ def check_person(challenge: dict[str, Any], index: int, header: dict[str, Any]) 
     for key, value in expected.items():
         found = provenance.get(key)
         if found != value:
-            return f'expected {key} {value!r} for attempt {index + 1}, found {found!r}'
+            return _messages.label(
+                'server.challenges.provenance',
+                key=key,
+                value=repr(value),
+                attempt=index + 1,
+                found=repr(found),
+            )
     played = provenance.get('ability')
     if not (
         isinstance(played, list)
         and len(played) == 2
         and all(map(_close, played, challenge['played_ability']))
     ):
-        return f'expected the ability {challenge["played_ability"]!r}, found {played!r}'
+        return _messages.label(
+            'server.challenges.ability',
+            ability=repr(challenge['played_ability']),
+            found=repr(played),
+        )
     return None
 
 
@@ -695,7 +747,7 @@ def score_recording(identifier: str, match: str, attempt: Any) -> dict[str, Any]
     header, frames = _recording_of(match)
     problem = check_person(challenge, index, header)
     result = _attempt_result(challenge, index, match, score_attempt(header, frames))
-    return {'challenge': identifier, 'result': result, 'problem': problem}
+    return {'challenge': identifier, 'result': result, **_messages.named('problem', problem)}
 
 
 def _attempt_index(challenge: dict[str, Any], attempt: Any) -> int:
@@ -1147,7 +1199,7 @@ def _play_attempt(
                 limit = FIRST_CALL_SECONDS if first_call else HANG_SECONDS
                 first_call = False
                 if not runner.wait(limit):
-                    raise PolicyMessageError('server.policy.silent', seconds=f'{limit:g}')
+                    raise PolicyMessageError('server.policy.silent', count=f'{limit:g}')
                 actions = runner.actions(None)
             else:
                 import torch

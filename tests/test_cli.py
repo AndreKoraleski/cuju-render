@@ -261,7 +261,7 @@ def test_language_commands(tmp_path, render_home, capsys):
     ] == [('de', 'home', 1)]
     assert main(['language', 'add', str(tmp_path / 'ru.json')]) == 0
     assert main(['language', 'remove', 'ru']) == 0
-    assert main(['language', 'remove', 'pt']) == 1
+    assert main(['language', 'remove', 'en']) == 1
     assert main(['language', 'new', 'Bad']) == 1
 
 

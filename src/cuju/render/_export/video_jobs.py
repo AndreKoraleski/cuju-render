@@ -151,12 +151,23 @@ def availability() -> dict[str, Any]:
     """Returns whether this machine can export videos, and what is missing when it cannot.
 
     The export needs a browser alone, which encodes the video itself, so ffmpeg is never missing.
+    `missing` holds the English text of the missing browser, and `missing_labels` the same as
+    labels of `_messages.label`, which the page shows in its own language.
     """
     try:
-        missing = [] if _video.find_chrome() else [_video.chrome_missing(server=True)]
+        labels = [] if _video.find_chrome() else [_video.chrome_missing(server=True)]
     except _video.VideoError as error:
-        missing = [str(error)]
-    return {'available': not missing, 'missing': missing}
+        found = _messages.id_fields(error)
+        labels = [
+            _messages.label(found['error_id'], **found['error_values'])
+            if found
+            else {'id': None, 'text': str(error), 'values': {}}
+        ]
+    return {
+        'available': not labels,
+        'missing': [label['text'] for label in labels],
+        'missing_labels': labels,
+    }
 
 
 def _filename(title: str, start: float, end: float) -> str:
@@ -228,7 +239,7 @@ class VideoJobs:
         try:
             facts = _video.recording_facts(path)
         except _video.VideoError as error:
-            raise ArgumentError(str(error)) from error
+            raise _messages.argument_error(error) from error
         start, end = _video.resolve_range(options, facts)
         if end - start > _video.DEFAULT_MAX_SECONDS:
             raise MessageError(
@@ -238,6 +249,10 @@ class VideoJobs:
             )
         status = availability()
         if not status['available']:
+            labels = status.get('missing_labels') or []
+            if labels and all(label.get('id') for label in labels):
+                found = _video.missing_label(labels)
+                raise MessageError(found['id'], **found['values'])
             raise ArgumentError(' '.join(status['missing']))
         with self._lock:
             if self._process is not None and self._process.poll() is None:

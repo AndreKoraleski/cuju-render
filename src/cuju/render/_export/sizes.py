@@ -14,7 +14,7 @@ import math
 import re
 from typing import Any
 
-from cuju.errors import ArgumentError
+from .._text.messages import MessageError
 
 # The named sizes, by the identifier that addresses and commands accept, with width and height.
 PRESETS: dict[str, tuple[int, int]] = {
@@ -71,14 +71,13 @@ def check_size(
     """
     for value, name in ((width, 'width'), (height, 'height')):
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
-            raise ArgumentError(f'expected a {name} from {minimum} to {maximum}, found {value!r}')
+            raise MessageError(
+                f'server.sizes.{name}', lowest=minimum, highest=maximum, value=repr(value)
+            )
         if even and value % 2:
-            raise ArgumentError(f'expected an even {name}, found {value}')
+            raise MessageError(f'server.sizes.even_{name}', value=value)
     if width * height > area:
-        raise ArgumentError(
-            f'expected a picture of at most {area} pixels, as 3840 by 2160, '
-            f'found {width} by {height}'
-        )
+        raise MessageError('server.sizes.area', area=area, width=width, height=height)
     return width, height
 
 
@@ -97,9 +96,7 @@ def parse_size(text: Any, **limits: Any) -> tuple[int, int]:
         return check_size(*PRESETS[value], **limits)
     match = _SIZE.fullmatch(value)
     if not match:
-        raise ArgumentError(
-            f'expected a size such as 1280x720 or one of {", ".join(PRESETS)}, found {text!r}'
-        )
+        raise MessageError('server.sizes.size', presets=', '.join(PRESETS), value=repr(text))
     return check_size(int(match[1]), int(match[2]), **limits)
 
 
@@ -118,9 +115,11 @@ def parse_graphics(text: Any) -> float:
     except (TypeError, ValueError):
         value = math.nan
     if not MIN_GRAPHICS <= value <= MAX_GRAPHICS:
-        raise ArgumentError(
-            f'expected a scale of the graphics from {MIN_GRAPHICS:g} to {MAX_GRAPHICS:g}, '
-            f'found {text!r}'
+        raise MessageError(
+            'server.sizes.graphics',
+            lowest=f'{MIN_GRAPHICS:g}',
+            highest=f'{MAX_GRAPHICS:g}',
+            value=repr(text),
         )
     return value
 
@@ -135,9 +134,11 @@ def parse_safe(text: Any) -> str | float:
     except ValueError:
         percent = math.nan
     if not 0 <= percent <= MAX_SAFE_PERCENT:
-        raise ArgumentError(
-            f'expected a safe area of {", ".join(SAFE_MODES)} or a percentage from 0 to '
-            f'{MAX_SAFE_PERCENT}, found {text!r}'
+        raise MessageError(
+            'server.sizes.safe',
+            modes=', '.join(SAFE_MODES),
+            most=MAX_SAFE_PERCENT,
+            value=repr(text),
         )
     return percent
 

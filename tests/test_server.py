@@ -45,6 +45,7 @@ from support.common import (
     _send,
     _shipped_language,
     _toy_team,
+    _translation,
     _until,
 )
 
@@ -1561,7 +1562,7 @@ def test_page_preview_panel_speaks_the_page_language():
     wanted += [f'status.{k}' for k in ('none', 'starting', 'ready', 'restarting', 'stopped')]
     wanted += [f'status.{k}' for k in ('failed', 'disposed')]
     for code in ('en', 'pt'):
-        messages = json.loads((_server._WEB / 'languages' / f'{code}.json').read_text('utf-8'))
+        messages = _shipped_language(code) if code == 'en' else _translation(code)
         missing = [k for k in wanted if f'presentation.preview.{k}' not in messages]
         assert missing == [], (code, missing)
     assert 'presentation.notice.workerResting' in messages
@@ -1830,9 +1831,9 @@ def test_server_error_answers_carry_message_ids(render_home):
         )
         status, body = refused('/api/requests/r-none', method='DELETE')
         assert (status, body['error'], body['error_id']) == (404, 'no such item', 'server.no_item')
-        # An answer of the form `Kind: message` keeps its text and names the message within.
+        # A limit that is no number names its message.
         status, body = refused('/api/search?limit=x')
-        assert status == 400 and 'error_id' not in body
+        assert (status, body['error_id']) == (400, 'server.search.limit')
         status, body = refused('/api/help/samples', b'{"names": 3}', 'POST')
         assert status == 400 and body == {
             'error': 'expected names as a list of samples, found 3',
@@ -1957,6 +1958,10 @@ def _untranslated_markup(markup):
                 self.stack.append((tag, 'data-i18n' in attributes))
 
         def handle_endtag(self, tag):
+            # A tag that never opened, such as the use of a symbol that closes itself, closes
+            # nothing.
+            if all(name != tag for name, _ in self.stack):
+                return
             while self.stack:
                 if self.stack.pop()[0] == tag:
                     break
@@ -2028,13 +2033,19 @@ def test_language_routes(render_home):
             block = page[start : page.index('</script>', start)]
             assert '<' not in block
             shipped = json.loads(block)
-            assert sorted(shipped) == ['en', 'pt'] and shipped['pt'] == _shipped_language('pt')
+            assert sorted(shipped) == ['en']
         status, body = call('/api/languages')
         assert status == 200
         assert [(e['code'], e['source'], e['usable']) for e in body['languages']] == [
             ('en', 'shipped', True),
-            ('pt', 'shipped', True),
         ]
+        # The Portuguese draft joins through the import, as any language of a person's own.
+        status, body = call('/api/languages', json.dumps(_translation('pt')).encode(), 'POST')
+        assert status == 201 and (body['code'], body['source'], body['usable']) == (
+            'pt',
+            'home',
+            True,
+        )
         assert call('/api/languages/pt')[1]['@language']['locale'] == 'pt-BR'
         status, body = call('/api/languages/xx')
         assert (status, body['error_id'], body['error']) == (
@@ -2066,11 +2077,12 @@ def test_language_routes(render_home):
         bad = dict(own, **{'api.status': 'Resposta {code}'})
         status, body = call('/api/languages', json.dumps(bad).encode(), 'POST')
         assert status == 400 and body['error_id'] == 'server.language.malformed'
-        assert (
-            body['error_values']['first']
-            == 'api.status, expected the placeholders of English, found {code}'
-        )
-        shipped = dict(own, **{'@language': dict(own['@language'], code='pt')})
+        first = body['error_values']['first']
+        assert first['text'] == 'api.status, expected the placeholders of English, found {code}'
+        # The problem travels as a label of its own, which the page shows in its language.
+        assert first['id'] == 'server.language.problem_at'
+        assert first['values']['problem']['id'] == 'server.language.problem.extra'
+        shipped = dict(own, **{'@language': dict(own['@language'], code='en')})
         status, body = call('/api/languages', json.dumps(shipped).encode(), 'POST')
         assert (status, body['error_id']) == (400, 'server.language.shipped')
         assert call('/api/languages', b'{', 'POST')[1]['error_id'] == 'server.language.json'
@@ -2080,7 +2092,7 @@ def test_language_routes(render_home):
         )
         listed = {e['code']: e for e in call('/api/languages')[1]['languages']}
         assert listed['zz']['usable'] is False and listed['zz']['problems']
-        assert call('/api/languages/pt', method='DELETE')[1]['error_id'] == 'server.language.keep'
+        assert call('/api/languages/en', method='DELETE')[1]['error_id'] == 'server.language.keep'
         assert call('/api/languages/pt-x-test', method='DELETE') == (
             200,
             {'code': 'pt-x-test', 'removed': True},

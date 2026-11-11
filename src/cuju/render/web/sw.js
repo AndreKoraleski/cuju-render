@@ -26,7 +26,7 @@ const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]'];
 // The shell of the page, kept as the worker installs.
 const SHELL = [
     '', 'style.css', 'home.css', 'easy.css', 'flat.css', 'js/main.js', 'js/boot.js', 'js/capture.js', 'lessons.json',
-    'languages/en.json', 'languages/pt.json',
+    'languages/en.json',
     'manifest.webmanifest', 'assets/cuju-logo.png', 'assets/icons/cuju-192.png', 'assets/icons/cuju-512.png',
 ];
 // Media that the page streams in ranges, which the cache leaves to the server.

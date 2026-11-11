@@ -16,6 +16,7 @@ from cuju.errors import Error
 from cuju.render._http import launch as _launch
 from cuju.render._http import launchers as _launchers
 from cuju.render._http import window as _window
+from support.common import _install_translation
 
 URL = 'http://127.0.0.1:8780/'
 
@@ -204,6 +205,8 @@ def _folders(tmp_path):
 def test_linux_gets_an_entry_of_the_applications_menu(render_home, tmp_path):
     folders = _folders(tmp_path)
     command = ['/usr/bin/python3', '-m', 'cuju.render', 'app']
+    # A language of the folder, such as the Portuguese draft, names the launcher in its words.
+    _install_translation('pt')
     made = _launchers.install(render_home, 'linux', folders, command)
     entry = folders['applications'] / 'cuju.desktop'
     icon = render_home / 'app' / 'cuju.png'

@@ -289,9 +289,7 @@ class Game:
                 )
                 runner.request()
                 if not runner.wait(first_call_seconds):
-                    raise PolicyMessageError(
-                        'server.policy.first', seconds=f'{first_call_seconds:g}'
-                    )
+                    raise PolicyMessageError('server.policy.first', count=f'{first_call_seconds:g}')
             except BaseException:
                 runner.close()
                 self.batch.close()

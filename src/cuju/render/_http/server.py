@@ -68,6 +68,7 @@ _TYPES = {
     '.png': 'image/png',
     '.svg': 'image/svg+xml',
     '.webmanifest': 'application/manifest+json',
+    '.mp4': 'video/mp4',
 }
 
 
@@ -835,10 +836,27 @@ def _public_seed(seed: Any) -> Any:
     return seed
 
 
+def _loads(data: bytes | str, name: str | None = None) -> Any:
+    """Returns the value of the JSON of a request, its body or the parameter `name`.
+
+    Raises:
+        MessageError: If the text is no JSON, with the line and column of its first mistake.
+    """
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError as error:
+        place = {'line': error.lineno, 'column': error.colno}
+        if name is None:
+            raise MessageError('server.json', **place) from None
+        raise MessageError('server.json_query', name=name, **place) from None
+    except UnicodeDecodeError:
+        raise MessageError('server.json_text') from None
+
+
 def _control(query: dict[str, str]) -> dict[str, Any] | None:
     """Returns uploaded team control, accepting earlier count and goalkeeper queries."""
     if 'control' in query:
-        return json.loads(query['control'])
+        return _loads(query['control'], 'control')
     if 'players' not in query and 'goalkeeper' not in query:
         return None
     players = query.get('players', '1')
@@ -1099,6 +1117,13 @@ def make_handler(
                     'error_id': origin,
                     'error_values': {key: str(value) for key, value in (values or {}).items()},
                 }
+            elif isinstance(origin, BaseException) and not isinstance(origin, Error):
+                # An error of another kind, such as a ValueError of Python, says what went wrong in
+                # its own words, which the page shows inside a message of its language.
+                document = _messages.error_fields(origin, text)
+                if 'error_id' not in document:
+                    frame = 'server.invalid' if status < 500 else 'server.unexpected'
+                    document.update(error_id=frame, error_values={'error': text})
             elif isinstance(origin, BaseException):
                 document = _messages.error_fields(origin, text)
             else:
@@ -1114,7 +1139,7 @@ def make_handler(
             return self.rfile.read(length) if length > 0 else b''
 
         def _document(self) -> dict[str, Any]:
-            document = json.loads(self._body() or b'{}')
+            document = _loads(self._body() or b'{}')
             if not isinstance(document, dict):
                 raise MessageError('server.json_object')
             return document
@@ -1144,6 +1169,8 @@ def make_handler(
                 elif parts == ['api', 'search']:
                     query = self._route()[1]
                     limit = query.get('limit')
+                    if limit and not (limit.isdigit() and len(limit) <= 9):
+                        raise MessageError('server.search.limit', limit=repr(limit))
                     self._json(_search.search(query.get('q', ''), int(limit) if limit else None))
                 elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'moments':
                     self._moments(parts[2], False)
@@ -1330,14 +1357,14 @@ def make_handler(
             parts, query = self._route()
             try:
                 if len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':
-                    joints = json.loads(query.get('joints') or '{}')
+                    joints = _loads(query.get('joints') or '{}', 'joints')
                     self._json(_teams.set_model(parts[2], self._body(), joints))
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'images':
                     self._json(_teams.set_image(parts[2], parts[4], self._body()))
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'sounds':
                     self._json(_teams.set_sound(parts[2], parts[4], self._body()))
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
-                    joints = json.loads(query['joints']) if 'joints' in query else None
+                    joints = _loads(query['joints'], 'joints') if 'joints' in query else None
                     self._json(_clips.set_clip(parts[2], parts[4], self._body(), joints))
                 else:
                     self._refuse(404, 'server.no_resource')

@@ -12,12 +12,16 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's module
-// loads from a copy beside a package file that names it a module.
-const folder = mkdtempSync(join(tmpdir(), 'cuju-firstrun-'));
+// loads from a copy beside a package file that names it a module. The symbols that core/icons.js
+// reads come along in vendor/lucide, beside the folder as in the page.
+const root = mkdtempSync(join(tmpdir(), 'cuju-firstrun-'));
+const folder = join(root, 'js');
 cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/help/firstrun.js', import.meta.url)), join(folder, 'help/firstrun.js'));
 cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/core/i18n.js', import.meta.url)), join(folder, 'core/i18n.js'));
-writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
-process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
+cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/core/icons.js', import.meta.url)), join(folder, 'core/icons.js'));
+cpSync(fileURLToPath(new URL('../../src/cuju/render/web/vendor/lucide', import.meta.url)), join(root, 'vendor', 'lucide'), { recursive: true });
+writeFileSync(join(root, 'package.json'), '{"type": "module"}\n');
+process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 const { HELP_TEXT, TIPS, TIP_SPOTS, chooseSpot, dismissTip, tipFor, tipState } = await import(pathToFileURL(join(folder, 'help/firstrun.js')).href);
 
 test('every page but Help has a short tip, and every control a short line of help', () => {

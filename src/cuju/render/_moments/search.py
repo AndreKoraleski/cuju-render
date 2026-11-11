@@ -22,11 +22,11 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from cuju.errors import ArgumentError
-
 from .._format import recording as _recording
 from .._store import home as _home
 from .._store import library as _library
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from . import captions as _captions
 from . import events as _events
 
@@ -269,7 +269,7 @@ def entry(identifier: str) -> dict[str, Any]:
         ArgumentError: If the library holds no such recording outside the Trash.
     """
     if _library.path_of(identifier) is None:
-        raise ArgumentError(f'expected a recording of the library, found {identifier!r}')
+        raise MessageError('server.library.unknown', identifier=repr(identifier))
     sync()
     with _LOCK:
         return _cache(_home.home())[identifier][1]
@@ -286,8 +286,8 @@ def _terms(query: str) -> list[tuple[bool, str | None, str]]:
         if key is not None:
             key = key.lower()
             if key not in _KEYS:
-                raise ArgumentError(
-                    f'expected a filter of {", ".join(k + ":" for k in _KEYS)}, found {key}:'
+                raise MessageError(
+                    'server.search.filter', filters=', '.join(k + ':' for k in _KEYS), key=key
                 )
         terms.append((bool(negated), key, value))
     return terms
@@ -304,9 +304,7 @@ def _minutes(value: str, key: str) -> float:
             return float(text[:-1]) * 1000
         return float(text.removesuffix('m')) * 60000
     except ValueError:
-        raise ArgumentError(
-            f'expected {key}: as minutes of the clock, such as 60, 60:30 or 90s, found {value!r}'
-        ) from None
+        raise MessageError('server.search.minutes', key=key, value=repr(value)) from None
 
 
 class _Moment:
@@ -341,7 +339,7 @@ def _kind_test(value: str) -> Any:
     tests = []
     for name in names:
         if name not in _WORDS:
-            raise ArgumentError(f'expected a kind of moment such as goal or corner, found {name!r}')
+            raise MessageError('server.search.kind', name=repr(name))
         tests.append(_WORDS[name])
 
     def test(item: _Moment) -> bool:
@@ -388,10 +386,7 @@ def _filter(key: str, value: str) -> Any:
         if text == 'unknown':
             return lambda item: not item.record['provenance'].get('source')
         if text not in _SOURCES:
-            raise ArgumentError(
-                'expected source: as requested, game, challenge, recorder, live, tournament or '
-                f'unknown, found {value!r}'
-            )
+            raise MessageError('server.search.source', value=repr(value))
         wanted = _SOURCES[text]
         return lambda item: item.record['provenance'].get('source') == wanted
     if key == 'tournament':
@@ -414,7 +409,7 @@ def _filter(key: str, value: str) -> Any:
         return lambda item: text == fold(item.record['id']) or text in fold(item.record['title'])
     if key in ('date', 'since', 'until'):
         if not _DATE.fullmatch(text):
-            raise ArgumentError(f'expected {key}: as a date such as 2026-11-10, found {value!r}')
+            raise MessageError('server.search.date', key=key, value=repr(value))
         if key == 'date':
             return lambda item: str(item.record['created'] or '').startswith(text)
         if key == 'since':
@@ -431,10 +426,7 @@ def _filter(key: str, value: str) -> Any:
             wanted = [int(exact.group(1)), int(exact.group(2))]
             return lambda item: item.moment.get('score') == wanted
         if text not in _STATES:
-            raise ArgumentError(
-                'expected score: as leading, level, trailing or a score such as 2-1, '
-                f'found {value!r}'
-            )
+            raise MessageError('server.search.score', value=repr(value))
         state = _STATES[text]
 
         def standing(item: _Moment) -> bool:
@@ -458,7 +450,7 @@ def _filter(key: str, value: str) -> Any:
             return False
 
         return outcome
-    raise ArgumentError(f'expected a filter, found {key}:')
+    raise MessageError('server.search.unknown_filter', key=key)
 
 
 def _text_of(*values: Any) -> str:
@@ -470,9 +462,12 @@ def _record(entry_: dict[str, Any], summary: dict[str, Any], registry: list[Any]
     # An entry of the index or a summary of an older install may hold fields of another type.
     header = entry_['header'] if isinstance(entry_.get('header'), dict) else {}
     teams = header.get('teams') if isinstance(header.get('teams'), list) else []
+    # A title that cuju made, such as that of a sample, travels as a label too.
+    labels = [_recording.label_of(document, 'title') for document in (summary, header)]
     return {
         'id': entry_['id'],
         'title': _text_of(summary.get('title'), header.get('title'), entry_['id']),
+        'title_label': next((found for found in labels if isinstance(found, dict)), None),
         'scenario': _text_of(summary.get('scenario'), header.get('scenario')),
         'created': _text_of(summary.get('created')),
         'provenance': summary.get('provenance') or {},
@@ -488,30 +483,36 @@ def _record(entry_: dict[str, Any], summary: dict[str, Any], registry: list[Any]
 def describe(moment: dict[str, Any], context: dict[str, Any]) -> str:
     """Returns a short plain line of a moment, its caption or, for a pass, a change of
     possession and a kick off, a line of the same table."""
+    return describe_label(moment, context)['text']
+
+
+def describe_label(moment: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Returns the line of `describe` as a label, its message id of the language files, its
+    English text and its values, so the page shows it in its own language."""
     table = _captions.messages()
-    made = _captions.caption(moment, context, table)
+    made = _captions.caption(moment, context, table, labels=True)
     if made is not None:
-        return _captions.format_message(table, *made)
+        return _captions.label(table, *made)
     data = moment.get('data') or {}
     side = moment.get('team')
-    team = _captions._team(table, context, side) if side in (0, 1) else None
+    team = _captions._team(table, context, side, True) if side in (0, 1) else None
     k = moment.get('player')
     known = k is not None and 0 <= k < len(context['players'])
     if moment['kind'] == 'pass' and known:
-        own = _captions._team(table, context, context['players'][k]['team'])
-        player = _captions._player(table, context, k)
+        own = _captions._team(table, context, context['players'][k]['team'], True)
+        player = _captions._player(table, context, k, True)
         identifier = {
             'complete': 'describe.pass.complete',
             'intercepted': 'describe.pass.intercepted',
         }.get(data.get('outcome'), 'describe.pass')
-        return _captions.format_message(table, identifier, {'player': player, 'team': own})
+        return _captions.label(table, identifier, {'player': player, 'team': own})
     if moment['kind'] == 'possession' and team:
-        return _captions.format_message(table, 'describe.possession', {'team': team})
+        return _captions.label(table, 'describe.possession', {'team': team})
     if moment['kind'] == 'restart':
         if data.get('restart') == 'kickoff' and team:
-            return _captions.format_message(table, 'describe.restart.kickoff', {'team': team})
-        return _captions.format_message(table, 'describe.restart', {})
-    return _captions.format_message(table, 'describe.moment', {'kind': moment['kind']})
+            return _captions.label(table, 'describe.restart.kickoff', {'team': team})
+        return _captions.label(table, 'describe.restart', {})
+    return _captions.label(table, 'describe.moment', {'kind': moment['kind']})
 
 
 def _result(item: _Moment) -> dict[str, Any]:
@@ -522,7 +523,7 @@ def _result(item: _Moment) -> dict[str, Any]:
     clock = int(moment.get('clock', 0))
     result = {
         'match': record['id'],
-        'title': record['title'],
+        **_messages.named('title', record['title_label'] or record['title']),
         'scenario': record['scenario'],
         'created': record['created'],
         'source': record['provenance'].get('source'),
@@ -539,7 +540,7 @@ def _result(item: _Moment) -> dict[str, Any]:
         'number': player['number'] if player else None,
         'name': (player['name'] or None) if player else None,
         'score': moment.get('score'),
-        'text': describe(moment, record['context']),
+        **_messages.named('text', describe_label(moment, record['context'])),
         'data': moment.get('data') or {},
         'url': f'#match={record["id"]}&t={seek:g}',
     }
@@ -570,7 +571,7 @@ def search(query: str = '', limit: int | None = None) -> dict[str, Any]:
             try:
                 limit = int(value) if limit is None else limit
             except ValueError:
-                raise ArgumentError(f'expected limit: as a whole number, found {value!r}') from None
+                raise MessageError('server.search.limit_text', value=repr(value)) from None
             continue
         if key is None and fold(value) in _WORDS:
             test = _kind_test(value)
@@ -586,7 +587,7 @@ def search(query: str = '', limit: int | None = None) -> dict[str, Any]:
         tests.append((lambda item, test=test: not test(item)) if negated else test)
     limit = LIMIT if limit is None else limit
     if not 1 <= limit <= MAXIMUM_LIMIT:
-        raise ArgumentError(f'expected a limit from 1 to {MAXIMUM_LIMIT}, found {limit}')
+        raise MessageError('server.search.limit_range', most=MAXIMUM_LIMIT, limit=limit)
     index = sync()
     summaries = {summary['id']: summary for summary in _library.matches()}
     try:
@@ -666,7 +667,7 @@ def _source(target: str | Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         return held['header'], held['moments']
     path = Path(target)
     if not path.is_file():
-        raise ArgumentError(f'expected a recording of the library or a .cjr file, found {target!r}')
+        raise MessageError('server.search.target', target=repr(target))
     document = _recording.read_header(path)
     return document, _events.moments(document, _recording.frames(path), timing=True)
 

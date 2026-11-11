@@ -11,6 +11,7 @@
 
 import { formatNumber, has, t } from '../core/i18n.js';
 import { h } from '../teams/library.js';
+import { icon, symbolOnly } from '../core/icons.js';
 
 export const EVENTS = ['touch', 'pass', 'shot', 'header', 'save', 'slide', 'goal', 'celebration.begin', 'winner.reveal', 'mvp.reveal', 'halftime'];
 const KINDS = ['particles', 'lights', 'localLights', 'shaders', 'voices', 'worklets', 'drawCalls', 'triangles', 'textureBytes', 'geometryBytes', 'audioBytes'];
@@ -73,9 +74,9 @@ export class Preview {
             b.addEventListener('click', () => this.inject(kind));
             return b;
         });
-        const close = h('button', { type: 'button', class: 'bar-btn', 'aria-label': t('presentation.preview.closeLabel') }, t('presentation.preview.close'));
+        const close = h('button', { type: 'button', class: 'bar-btn', ...symbolOnly(t('presentation.preview.closeLabel')) }, icon('close'));
         close.addEventListener('click', () => this.close());
-        const sideButton = h('button', { type: 'button', class: 'bar-btn' }, t('presentation.preview.otherSide'));
+        const sideButton = h('button', { type: 'button', class: 'bar-btn' }, icon('swap'), t('presentation.preview.otherSide'));
         sideButton.addEventListener('click', () => {
             this.side = 1 - this.side;
             this.auto = false;

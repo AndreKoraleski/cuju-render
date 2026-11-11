@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Checks of the languages of the page and the messages of the server."""
 
+import re
+from pathlib import Path
+
 import pytest
 
 from cuju.render._http import server as _server
-from support.common import _shipped_language
+from support.common import _shipped_language, _translation
 
 
 def test_server_messages_match_the_english_file():
@@ -18,30 +21,74 @@ def test_server_messages_match_the_english_file():
 def test_server_messages_have_portuguese_with_the_same_placeholders():
     from cuju.render._text import messages as _messages
 
-    portuguese = _shipped_language('pt')
+    portuguese = _translation('pt')
     assert _messages.compare(portuguese) == []
     for key, template in _messages.MESSAGES.items():
-        assert _messages.placeholders(portuguese[key]) == _messages.placeholders(template), key
+        if key in portuguese:
+            assert _messages.placeholders(portuguese[key]) == _messages.placeholders(template), key
+    # A draft may lack a message, which the page then shows in English.
+    draft = {key: value for key, value in portuguese.items() if key != 'server.body_size'}
+    assert _messages.compare(draft) == []
 
 
-def test_shipped_languages_are_complete_and_well_formed():
+# A message id of the server as Python names it, whole or as the start of an f-string, and one
+# that ends in a period starts the ids of a kind. A file name such as server.json is no id.
+_ID = re.compile(r"""(f?)['"](server\.[A-Za-z0-9_.]*)(\{?)""")
+_FILES = ('.json', '.log')
+
+
+def test_every_server_message_that_the_source_names_is_known():
+    """An id that Python names, in a MessageError, a label or the fields of an answer, is a message
+    of the registry, so the page finds it in both language files with the same placeholders."""
+    from cuju.render._text import messages as _messages
+
+    root = Path(_messages.__file__).parents[1]
+    unknown = []
+    for path in sorted(root.rglob('*.py')):
+        for formatted, found, brace in _ID.findall(path.read_text(encoding='utf-8')):
+            if (formatted and brace) or found.endswith('.'):
+                if not any(key.startswith(found) for key in _messages.MESSAGES):
+                    unknown.append(f'{path.name}: {found}...')
+            elif not found.endswith(_FILES) and found not in _messages.MESSAGES:
+                unknown.append(f'{path.name}: {found}')
+    assert not unknown
+
+
+def test_english_ships_alone_and_the_portuguese_draft_is_well_formed():
     from cuju.render._text import languages as _languages
 
     shipped = sorted(path.stem for path in _languages.SHIPPED.glob('*.json'))
-    assert {'en', 'pt'} <= set(shipped)
-    for code in shipped:
-        report = _languages.check(_shipped_language(code), code)
-        assert report['ok'], (
-            code,
-            report['missing'][:5],
-            report['unused'][:5],
-            report['malformed'][:5],
-        )
-        assert report['code'] == code
-    header = _shipped_language('pt')['@language']
+    assert shipped == ['en']
+    report = _languages.check(_shipped_language('en'), 'en')
+    assert report['ok'] and report['code'] == 'en', report['malformed'][:5]
+    # The draft may lack messages, and each one it has matches English, its placeholders, its
+    # plural forms and its marks.
+    report = _languages.check(_translation('pt'), 'pt')
+    assert not report['unused'] and not report['malformed'], report['malformed'][:5]
+    assert report['code'] == 'pt'
+    header = _translation('pt')['@language']
     assert (header['locale'], header['plurals']) == ('pt-BR', ['one', 'many', 'other'])
     # Portuguese translates nearly every message, the rest are names and symbols.
-    assert len(_languages.check(_shipped_language('pt'), 'pt')['untranslated']) < 100
+    assert len(report['untranslated']) < 100
+
+
+def test_language_check_holds_a_translation_to_the_marks_of_english():
+    from cuju.render._text import languages as _languages
+
+    english = {
+        '@language': {'code': 'en', 'name': 'English', 'plurals': ['one', 'other']},
+        'a.run': 'Run `cuju render serve` **now**',
+    }
+    header = {'code': 'xx', 'name': 'Test', 'plurals': ['other']}
+    good = {'@language': header, 'a.run': 'Rode `cuju render serve` **agora**'}
+    assert _languages.check(good, 'xx', english)['malformed'] == []
+    # Bold words are the translator's choice, so a message may stress other words or none.
+    for text in ('Rode `cuju render serve` agora', '**Rode** `cuju render serve` agora'):
+        fine = {'@language': header, 'a.run': text}
+        assert _languages.check(fine, 'xx', english)['malformed'] == []
+    bad = {'@language': header, 'a.run': 'Rode cuju render serve **agora**'}
+    problems = _languages.check(bad, 'xx', english)['malformed']
+    assert [item['problem_id'] for item in problems] == ['server.language.problem.marks']
 
 
 def test_language_check_names_missing_unused_and_malformed_messages():

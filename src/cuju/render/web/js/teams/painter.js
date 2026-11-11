@@ -9,7 +9,7 @@ import {
 } from '../../vendor/fabric/fabric.min.mjs';
 import { h } from './library.js';
 import { icon, symbolOnly } from '../core/icons.js';
-import { t, tOr } from '../core/i18n.js';
+import { t, tn, tOr } from '../core/i18n.js';
 
 const HISTORY_LIMIT = 60;
 // Every step of the history is a whole document with its pictures, so the steps kept are also
@@ -308,7 +308,7 @@ export class Painter {
                     action('clear', t('painter.clear'), t('painter.clear.title'), () => this.clear()))),
             h('div', { class: 'painter-stage' }, h('div', { class: 'painter-canvas', style: guide }, h('canvas'))),
             o.note ? h('p', { class: 'muted small painter-note' }, o.note) : null,
-            h('p', { class: 'muted small painter-note' }, t('painter.keys')),
+            h('p', { class: 'muted small painter-note' }, tn('painter.keys')),
             h('p', { class: 'painter-status muted small', role: 'status', hidden: true }),
             h('div', { class: 'editor-actions' },
                 h('span', { class: 'spacer' }),

@@ -27,7 +27,7 @@ import { animationLibrary, danceNames, posePlayer } from '../broadcast/celebrate
 import { attachKayKitClips, kaykitLabel, menuClips } from '../players/kaykit.js';
 import { clipMoveLabel, clipMoves, clipsPanel, openClips, previewMove } from './clip-editor.js';
 import { surprisePanel } from './surprise-ui.js';
-import { t } from '../core/i18n.js';
+import { t, tn } from '../core/i18n.js';
 import { teamName } from '../core/names.js';
 
 const LABELS = Object.fromEntries([
@@ -663,7 +663,7 @@ export class TeamEditor {
             h('label', { class: 'field' }, t('editor.identity.badge'), badge),
             h('p', { class: 'muted small' }, this.team.kind === 'builtin'
                 ? t('editor.identity.builtinNote')
-                : t('editor.identity.formatNote')));
+                : tn('editor.identity.formatNote')));
     }
 
     kitSection() {
@@ -686,7 +686,7 @@ export class TeamEditor {
             s[group][part] = c;
         }, { onInput: kitChanged });
         const lockNote = this.grf ? null : h('p', { class: 'note' },
-            t('editor.kit.lockNote', { model: this.modelName(s.model) }));
+            tn('editor.kit.lockNote', { model: this.modelName(s.model) }));
         return h('div', { class: 'sec-body' },
             surprisePanel(this),
             lockNote,
@@ -877,9 +877,9 @@ export class TeamEditor {
     exportSection() {
         return h('div', { class: 'sec-body' },
             h('a', { class: 'btn primary', href: api.exportUrl(this.team.id), download: `${this.team.name || 'team'}.zip`, ...symbolOnly(t('editor.export.button')) }, icon('download')),
-            h('p', { class: 'muted small' }, t('editor.export.note')),
+            h('p', { class: 'muted small' }, tn('editor.export.note')),
             this.team.kind !== 'builtin' ? h('button', { class: 'btn', type: 'button', ...symbolOnly(t('editor.export.duplicate')), onclick: (e) => this.duplicate(e.currentTarget) }, icon('copy')) : null,
-            this.team.kind !== 'builtin' ? h('p', { class: 'muted small' }, t('editor.export.duplicateNote')) : null);
+            this.team.kind !== 'builtin' ? h('p', { class: 'muted small' }, tn('editor.export.duplicateNote')) : null);
     }
 
     // Copies the saved team as a new team of the registry, which then changes on its own.
@@ -949,8 +949,8 @@ export class TeamEditor {
             json,
             guide: kind === 'shirt' ? this.shirtGuide(slot) : null,
             note: kind === 'shirt'
-                ? t('editor.paint.shirtNote')
-                : t('editor.paint.sponsorNote'),
+                ? tn('editor.paint.shirtNote')
+                : tn('editor.paint.sponsorNote'),
             onSave: async (png, doc) => {
                 await api.putImage(team.id, slot, png, 'image/png');
                 await api.putImage(team.id, `${slot}-edit`, doc, 'application/json');
@@ -1042,7 +1042,7 @@ export class TeamEditor {
             const note = this.modelNote;
             parts.push(drop, h('div', { class: 'model-message', 'data-kind': note ? note.kind : 'info' },
                 note ? note.text
-                    : this.model ? t('editor.model.summary', { label: this.model.label, bones: this.model.bones.length, size: formatBytes(this.model.bytes.byteLength) }) : t('editor.model.none')));
+                    : this.model ? t('editor.model.summary', { label: this.model.label, count: this.model.bones.length, size: formatBytes(this.model.bytes.byteLength) }) : t('editor.model.none')));
             if (this.model) {
                 parts.push(h('details', { class: 'joints-box' }, h('summary', {}, t('editor.joints.summary')), this.jointTable()));
             }
@@ -1084,7 +1084,7 @@ export class TeamEditor {
         if (!models.length) {
             box.append(h('p', { class: 'muted small' }, this.style.model === 'custom'
                 ? t('editor.colors.upload')
-                : t('editor.colors.grf')));
+                : tn('editor.colors.grf')));
             return box;
         }
         if (!models.includes(this.colorModel)) {
@@ -1113,7 +1113,7 @@ export class TeamEditor {
         this.showColorModel();
         const pairsOf = () => this.style.colors[key] || (this.style.colors[key] = {});
         const follow = h('input', { type: 'checkbox' });
-        const resetAll = h('button', { type: 'button', class: 'btn small ghost' }, t('editor.colors.resetAll'));
+        const resetAll = h('button', { type: 'button', class: 'btn small ghost' }, icon('reset'), t('editor.colors.resetAll'));
         const tools = h('div', { class: 'row colors-tools' },
             h('label', { class: 'check' }, follow, ` ${t('editor.colors.follow')}`), resetAll);
         // The shirt numbers ride the back of the model, and a team turns them off on a model where
@@ -1132,7 +1132,7 @@ export class TeamEditor {
         tools.append(h('label', { class: 'check' }, numbered, ` ${t('editor.colors.numbers')}`));
         const host = h('div', { class: 'model-colors', role: 'list', 'aria-label': t('editor.colors.listLabel', { model: this.modelName(key) }) },
             h('p', { class: 'muted small' }, t('editor.colors.reading')));
-        box.append(tools, host, h('p', { class: 'muted small' }, t('editor.colors.note')));
+        box.append(tools, host, h('p', { class: 'muted small' }, tn('editor.colors.note')));
         let colors = [];
         const syncTools = () => {
             const roles = colors.filter((c) => c.role);
@@ -1275,7 +1275,7 @@ export class TeamEditor {
         const name = i < 2 ? t('editor.colors.main', { n: i + 1 }) : t('editor.colors.percent', { n: Math.max(1, Math.round(c.weight * 100)) });
         const input = h('input', { type: 'color', value: c.hex });
         const state = h('span', { class: 'color-state small' });
-        const reset = h('button', { type: 'button', class: 'link small' }, t('editor.colors.reset'));
+        const reset = h('button', { type: 'button', class: 'link small', ...symbolOnly(t('editor.colors.reset')) }, icon('reset'));
         const original = h('span', { class: 'orig-chip', style: `background:${c.hex}`, title: t('editor.colors.original', { hex: c.hex }) });
         const row = h('div', { class: `model-color${i < 2 ? ' main' : ''}`, role: 'listitem' },
             h('label', { class: 'swatch' }, input, h('span', {}, name)),
@@ -1298,7 +1298,7 @@ export class TeamEditor {
             state.textContent = text;
             row.dataset.state = custom ? 'custom' : follows ? 'kit' : 'model';
             reset.hidden = own === undefined;
-            reset.textContent = c.role ? t('editor.colors.resetKit') : t('editor.colors.reset');
+            relabel(reset, c.role ? t('editor.colors.resetKit') : t('editor.colors.reset'));
             input.setAttribute('aria-label', t('editor.colors.swatchLabel', { name, state: text, hex: c.hex }));
         };
         input.addEventListener('input', () => {
@@ -1515,7 +1515,7 @@ export class TeamEditor {
             }
         });
         return h('div', { class: 'sec-body' },
-            h('p', { class: 'muted small' }, t('editor.celebrations.note')),
+            h('p', { class: 'muted small' }, tn('editor.celebrations.note')),
             summary, host, clipsPanel(this));
     }
 
@@ -1528,7 +1528,7 @@ export class TeamEditor {
     soundsSection() {
         const rows = SOUND_SLOTS.map((slot) => this.soundRow(slot));
         return h('div', { class: 'sec-body' },
-            h('p', { class: 'muted small' }, t('editor.sounds.note')),
+            h('p', { class: 'muted small' }, tn('editor.sounds.note')),
             h('ul', { class: 'sound-list' }, rows));
     }
 

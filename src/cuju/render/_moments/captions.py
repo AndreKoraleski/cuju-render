@@ -47,8 +47,22 @@ def format_message(table: dict[str, str], identifier: str, params: dict[str, Any
     return _PLACE.sub(value, template)
 
 
+def label(table: dict[str, str], identifier: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Returns a message of the table as a label, its id, its English text and its values.
+
+    The page shows a label in its own language, as it shows the labels of the server's messages,
+    and a value may itself be a label, such as a player inside a caption.
+    """
+    values = {
+        key: value if isinstance(value, dict) else _text(value) for key, value in params.items()
+    }
+    return {'id': identifier, 'text': format_message(table, identifier, values), 'values': values}
+
+
 def _text(value: Any) -> str:
-    """Returns a value as JavaScript turns it into text."""
+    """Returns a value as JavaScript turns it into text, a label as its text."""
+    if isinstance(value, dict) and isinstance(value.get('text'), str):
+        return value['text']
     if isinstance(value, bool):
         return 'true' if value else 'false'
     if isinstance(value, float) and value == int(value):
@@ -114,33 +128,41 @@ def context(header: dict[str, Any], registry: list[dict[str, Any]] | None = None
     return {'teams': names, 'players': players}
 
 
-def _team(table: dict[str, str], context_: dict[str, Any], side: int) -> str:
+def _team(table: dict[str, str], context_: dict[str, Any], side: int, labels: bool = False) -> Any:
     name = context_['teams'][side] if side in (0, 1) else None
-    return name or format_message(
-        table, 'caption.side.left' if side == 0 else 'caption.side.right', {}
-    )
+    made = label if labels else format_message
+    return name or made(table, 'caption.side.left' if side == 0 else 'caption.side.right', {})
 
 
-def _player(table: dict[str, str], context_: dict[str, Any], k: int) -> str:
+def _player(table: dict[str, str], context_: dict[str, Any], k: int, labels: bool = False) -> Any:
     entry = context_['players'][k]
+    made = label if labels else format_message
     if entry['name']:
-        return format_message(
+        return made(
             table, 'caption.player.named', {'number': entry['number'], 'name': entry['name']}
         )
-    return format_message(table, 'caption.player', {'number': entry['number']})
+    return made(table, 'caption.player', {'number': entry['number']})
 
 
 def caption(
-    moment: dict[str, Any], context_: dict[str, Any], table: dict[str, str] | None = None
+    moment: dict[str, Any],
+    context_: dict[str, Any],
+    table: dict[str, str] | None = None,
+    labels: bool = False,
 ) -> tuple[str, dict[str, Any]] | None:
-    """Returns the message id and values of the caption of a moment, or `None` for none."""
+    """Returns the message id and values of the caption of a moment, or `None` for none.
+
+    With `labels`, a player and a side without a name of its own are labels of `label`.
+    """
     table = messages() if table is None else table
     data = moment.get('data') or {}
     k = moment.get('player')
     known = k is not None and 0 <= k < len(context_['players'])
-    player = _player(table, context_, k) if known else None
-    team = _team(table, context_, moment['team']) if moment.get('team') is not None else None
-    of = _team(table, context_, context_['players'][k]['team']) if known else None
+    player = _player(table, context_, k, labels) if known else None
+    team = (
+        _team(table, context_, moment['team'], labels) if moment.get('team') is not None else None
+    )
+    of = _team(table, context_, context_['players'][k]['team'], labels) if known else None
     score = data.get('score')
     score = {'left': score[0], 'right': score[1]} if isinstance(score, list) else {}
     kind = moment['kind']
@@ -187,7 +209,7 @@ def caption(
     if kind == 'fulltime':
         winner = data.get('winner')
         if winner in (0, 1):
-            return 'caption.fulltime.win', {'team': _team(table, context_, winner), **score}
+            return 'caption.fulltime.win', {'team': _team(table, context_, winner, labels), **score}
         return 'caption.fulltime.draw', score
     return None
 

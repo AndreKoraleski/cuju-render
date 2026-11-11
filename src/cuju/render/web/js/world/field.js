@@ -195,7 +195,7 @@ export function validateImport(raw, current) {
     const unknown = Object.keys(raw).filter((k) => !(k in CHECKS));
     if (unknown.length) {
         const names = unknown.slice(0, 4).join(', ');
-        notes.push(unknown.length > 4 ? t('field.import.unknownMore', { names }) : t('field.import.unknown', { names }));
+        notes.push(unknown.length > 4 ? t('field.import.unknownMore', { names }) : t('field.import.unknown', { count: unknown.length, names }));
     }
     return { field: cleanField(merged), notes };
 }

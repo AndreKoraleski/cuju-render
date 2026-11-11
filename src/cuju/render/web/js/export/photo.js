@@ -17,7 +17,7 @@ import {
     guideGeometry, lookById, nextGuide, nextLook, normalizeSettings, photoFileName, readPad,
     resolveResolution, sliderToFocus,
 } from './photo-core.js';
-import { formatNumber, t } from '../core/i18n.js';
+import { formatNumber, t, tn } from '../core/i18n.js';
 import { presetLabel } from './size-fields.js';
 
 // Samples of the depth of field, on a spiral of the golden angle.
@@ -1181,7 +1181,7 @@ export class PhotoMode {
                 button(t('photo.hide'), t('photo.hide.title'), () => this.setHidden(true)),
                 button(t('photo.leave'), t('photo.leave.title'), () => this.close())),
             this.statusLine,
-            el('p', { class: 'photo-keys' }, t('photo.keys')));
+            el('p', { class: 'photo-keys' }, tn('photo.keys')));
         const on = (control, event, read) => control.addEventListener(event, () => {
             try {
                 this.update(read());
@@ -1261,9 +1261,9 @@ export class PhotoMode {
         value(c.aperture, s.aperture);
         show(c.aperture, t('photo.value.percent', { value: Math.round(s.aperture * 100) }));
         value(c.fov, Math.round(s.fov * 2) / 2);
-        show(c.fov, t('photo.value.degrees', { value: Math.round(s.fov) }));
+        show(c.fov, t('photo.value.degrees', { count: Math.round(s.fov) }));
         value(c.roll, Math.round(s.roll * 2) / 2);
-        show(c.roll, t('photo.value.degrees', { value: Math.round(s.roll) }));
+        show(c.roll, t('photo.value.degrees', { count: Math.round(s.roll) }));
         value(c.guide, s.guide);
         const known = typeof s.resolution === 'string' && RESOLUTIONS.some((r) => r.id === s.resolution);
         value(c.resolution, known ? s.resolution : 'custom');

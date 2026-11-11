@@ -22,7 +22,8 @@ cpSync(fileURLToPath(new URL('../../src/cuju/render/web/vendor/lucide', import.m
 writeFileSync(join(root, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 const languages = new URL('../../src/cuju/render/web/languages/', import.meta.url);
-const read = (code) => JSON.parse(readFileSync(new URL(`${code}.json`, languages), 'utf8'));
+// English ships with the page, and the Portuguese draft waits in translations/.
+const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`${code}.json`, languages) : new URL(`../../translations/${code}.json`, import.meta.url), 'utf8'));
 const shipped = { en: read('en'), pt: read('pt') };
 
 // menu.js listens on the window and the document for its menus, which the tests never open.

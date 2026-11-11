@@ -20,7 +20,7 @@ import { Players } from '../players/players.js';
 import { icon, symbolOnly } from '../core/icons.js';
 import { h } from '../teams/library.js';
 import { css } from '../players/kits.js';
-import { formatNumber, t } from '../core/i18n.js';
+import { formatNumber, t, tn } from '../core/i18n.js';
 
 // GRF's goal, the posts at 3.66 meters either side of the center of the goal line and the bar at
 // 2.44 meters.
@@ -1292,7 +1292,7 @@ export class Director {
             this.active.queue = this.active.queue.slice(0, this.active.item + 1).concat(queue);
             const angles = queue.map((q) => ANGLE_NAMES[q.shot].toLowerCase());
             const named = angles.reduce((first, second) => t('show.replay.and', { first, second }));
-            app.hud.toast(t('show.replay.more.one', { angle: named }), 'info', 2200);
+            app.hud.toast(t('show.replay.more.one', { count: angles.length, angle: named }), 'info', 2200);
             return;
         }
         this.recent = { goal, angles: [...shown] };
@@ -1395,7 +1395,7 @@ export class Director {
         }
         app.afterSeek();
         const angle = ANGLE_NAMES[plan.angle] || t('show.sting.replay');
-        app.hud.setReplay(true, a.item < a.queue.length - 1 ? t('show.replay.bar.next', { angle }) : t('show.replay.bar.skip', { angle }));
+        app.hud.setReplay(true, a.item < a.queue.length - 1 ? tn('show.replay.bar.next', { angle }) : tn('show.replay.bar.skip', { angle }));
     }
 
     // The scripted replay angles, from the ball and the scorer at timeline position t.
@@ -1695,7 +1695,7 @@ export class Director {
         const card = h('div', { id: 'lineups', class: 'lineups' },
             h('div', { class: 'post-kicker' }, t('show.lineups.title')),
             h('div', { class: 'ls-sheets' }, sheets),
-            h('div', { class: 'post-hint muted small' }, t('show.lineups.hint')));
+            h('div', { class: 'post-hint muted small' }, tn('show.lineups.hint')));
         card.addEventListener('click', () => this.skip());
         return card;
     }
@@ -1914,7 +1914,7 @@ export function contribution(store, header, facts) {
             award(s, 'Wall', '▣', t('show.award.wall.reason', { count: s.saves }),
                 t('show.award.wall.brief', { count: s.saves }));
         if (s.clean)
-            award(s, 'Clean sheet', '◇', t('show.award.cleansheet.reason', { minutes: fixed(s.minutes, 1) }));
+            award(s, 'Clean sheet', '◇', t('show.award.cleansheet.reason', { count: fixed(s.minutes, 1) }));
         if (s.touches >= 5 && s.touches === max('touches'))
             award(s, 'Engine', '↯', t('show.award.engine.reason', { count: s.touches }),
                 t('show.award.engine.brief', { count: s.touches }));
@@ -2182,7 +2182,7 @@ function chart(report, kind, names, store) {
             ? draw('circle', { cx: x, cy: y, r: 3.5, class: `chart-side-${m.team}` })
             : draw('rect', { x: x - 2.5, y: y - 4.5, width: 5, height: 9, class: m.label === 'Red card' ? 'chart-red' : 'chart-yellow' });
         cards ||= m.label !== 'Goal';
-        tip(node, t('show.chart.mark', { mark: MARK_LABELS[m.label] || m.label, team: names[m.team], minutes: fixed(store.get(m.i).timeMs / 60000, 1) }));
+        tip(node, t('show.chart.mark', { mark: MARK_LABELS[m.label] || m.label, team: names[m.team], count: fixed(store.get(m.i).timeMs / 60000, 1) }));
     }
     if (report.marks.some((m) => m.label === 'Goal')) legend.push(['dot', t('show.chart.legend.goal')]);
     if (cards) legend.push(['card', t('show.chart.legend.card')]);
@@ -2494,7 +2494,7 @@ export class PostMatch {
     showCard(node) {
         this.clearCard();
         this.card = h('div', { class: 'post-card', 'data-prompt': '' }, node,
-            h('div', { class: 'post-hint muted small' }, t('show.post.hint.next')));
+            h('div', { class: 'post-hint muted small' }, tn('show.post.hint.next')));
         this.card.addEventListener('click', () => this.advance());
         document.getElementById('watch').appendChild(this.card);
         release(this.app);
@@ -2585,7 +2585,7 @@ export class PostMatch {
             index, clock: 0, choreo, hero: hero ? hero.k : -1, beaten: beaten != null ? beaten : -1, stage: -1,
             titled: false, titleAt: choreo.titleAt, titleDone: false, frame: store.get(index), winner,
         };
-        this.hint = h('div', { class: 'post-skip', 'data-prompt': '' }, t('show.post.hint.goon'));
+        this.hint = h('div', { class: 'post-skip', 'data-prompt': '' }, tn('show.post.hint.goon'));
         this.hint.addEventListener('click', () => this.advance());
         document.getElementById('watch').appendChild(this.hint);
         release(app);
@@ -3026,7 +3026,7 @@ export class Podium {
             h('div', { class: 'mvp-team' }, info.badge ? `${info.badge}  ` : '', info.teamName),
             row(t('show.column.goals'), s.goals), row(t('show.column.assists'), s.assists), compact ? null : row(t('show.column.touches'), s.touches),
             row(t('show.column.passes'), s.passes ? t('show.stats.of', { done: s.passesCompleted, total: s.passes }) : 0), row(t('show.column.tackles'), s.tackles),
-            s.goalkeeper || s.saves ? row(t('show.column.saves'), s.catches || s.parries ? t('show.mvp.saves', { saves: s.saves, caught: s.catches }) : s.saves) : null,
+            s.goalkeeper || s.saves ? row(t('show.column.saves'), s.catches || s.parries ? t('show.mvp.saves', { saves: s.saves, count: s.catches }) : s.saves) : null,
             s.ownGoals ? row(t('show.column.owngoals'), s.ownGoals) : null);
     }
 

@@ -429,7 +429,17 @@ def _side(value: Any) -> Any:
 # The configuration.
 
 
-def _plain_text(value: Any, name: str, longest: int = 80) -> str:
+def _field(name: str, /, **values: Any) -> dict[str, Any]:
+    """Returns the name of a setting in a message, the label `server.tournament.field.<name>`."""
+    return _messages.label(f'server.tournament.field.{name}', **values)
+
+
+def _where(index: int) -> dict[str, Any]:
+    """Returns the stage of index `index` as it reads in a message, `stage 1` for the first."""
+    return _messages.label('server.tournament.where', number=index + 1)
+
+
+def _plain_text(value: Any, name: Any, longest: int = 80) -> str:
     if not isinstance(value, str):
         raise TournamentMessageError('server.tournament.text', name=name, value=repr(value))
     text = ' '.join(''.join(ch for ch in value if ch.isprintable()).split())
@@ -440,7 +450,7 @@ def _plain_text(value: Any, name: str, longest: int = 80) -> str:
     return text
 
 
-def _choice(value: Any, choices: tuple[str, ...], name: str) -> str:
+def _choice(value: Any, choices: tuple[str, ...], name: Any) -> str:
     if value not in choices:
         raise TournamentMessageError(
             'server.tournament.choice', name=name, choices=', '.join(choices), value=repr(value)
@@ -448,7 +458,7 @@ def _choice(value: Any, choices: tuple[str, ...], name: str) -> str:
     return value
 
 
-def _count(value: Any, name: str, lowest: int, highest: int) -> int:
+def _count(value: Any, name: Any, lowest: int, highest: int) -> int:
     if not _integer(value) or not lowest <= value <= highest:
         raise TournamentMessageError(
             'server.tournament.count', name=name, lowest=lowest, highest=highest, value=repr(value)
@@ -492,7 +502,7 @@ def _given_name(entrant: dict[str, Any]) -> str | None:
     """Returns the name that a person gave an entrant, trimmed, or `None` when it has none."""
     if entrant.get('name') in (None, ''):
         return None
-    return _plain_text(entrant['name'], 'an entrant name', 40)
+    return _plain_text(entrant['name'], _field('entrant_name'), 40)
 
 
 def _entrant_name(entrant: dict[str, Any], team: dict[str, Any] | None) -> Any:
@@ -588,7 +598,7 @@ def check_entrants(
             raise TournamentMessageError(
                 'server.tournament.entrant_fields', entrant=index + 1, fields=sorted(unknown)
             )
-        kind = _choice(raw.get('kind', 'team'), KINDS, f'the kind of entrant {index + 1}')
+        kind = _choice(raw.get('kind', 'team'), KINDS, _field('entrant_kind', number=index + 1))
         entrant: dict[str, Any] = {'kind': kind}
         if kind == 'team':
             team = registry.get(raw.get('team'))
@@ -652,21 +662,21 @@ def _check_points(points: Any) -> dict[str, int]:
     if not isinstance(points, dict) or set(points) != {'win', 'draw', 'loss'}:
         raise TournamentMessageError('server.tournament.points', points=repr(points))
     for name, value in points.items():
-        _count(value, f'the points of a {name}', -100, 100)
+        _count(value, _field(f'points_{name}'), -100, 100)
     return dict(points)
 
 
-def _ordered_names(value: Any, allowed: tuple[str, ...], name: str) -> list[str]:
+def _ordered_names(value: Any, allowed: tuple[str, ...], name: Any) -> list[str]:
     if not isinstance(value, list) or len(set(value)) != len(value):
         raise TournamentMessageError('server.tournament.list', name=name, value=repr(value))
     for item in value:
-        _choice(item, allowed, f'each of {name}')
+        _choice(item, allowed, _field('each', name=name))
     # Lots always come last, so every order ends in a decision.
     return [item for item in value if item != 'lots'] + ['lots']
 
 
 def _group_sizes(stage: dict[str, Any], count: int, index: int, fit: bool) -> list[int]:
-    where = f'stage {index + 1}'
+    where = _where(index)
     if fit and _integer(stage['group_size']):
         stage['group_size'] = min(stage['group_size'], count)
     if stage['group_sizes'] is not None:
@@ -679,9 +689,9 @@ def _group_sizes(stage: dict[str, Any], count: int, index: int, fit: bool) -> li
             )
     else:
         if stage['groups'] is not None:
-            groups = _count(stage['groups'], f'the number of groups of {where}', 1, count)
+            groups = _count(stage['groups'], _field('groups', where=where), 1, count)
         else:
-            size = _count(stage['group_size'], f'the group size of {where}', 2, count)
+            size = _count(stage['group_size'], _field('group_size', where=where), 2, count)
             groups = max(1, round(count / size))
         base, extra = divmod(count, groups)
         sizes = [base + (1 if group < extra else 0) for group in range(groups)]
@@ -699,7 +709,7 @@ def _qualifiers(stage: dict[str, Any], sizes: list[int], index: int) -> list[int
     if not isinstance(value, list) or len(value) != len(sizes):
         raise TournamentMessageError('server.tournament.qualifiers', stage=index + 1)
     for group, (size, qualified) in enumerate(zip(sizes, value, strict=True)):
-        _count(qualified, f'the qualifiers of group {group_name(group)}', 0, size)
+        _count(qualified, _field('qualifiers', group=group_name(group)), 0, size)
     return list(value)
 
 
@@ -709,7 +719,7 @@ def _best(stage: dict[str, Any], sizes: list[int], qualified: list[int], index: 
         if count not in (0, None):
             raise TournamentMessageError('server.tournament.best_places', stage=index + 1)
         return 0
-    _count(position, f'the position of the best places of stage {index + 1}', 1, max(sizes))
+    _count(position, _field('best_position', where=_where(index)), 1, max(sizes))
     eligible = sum(
         1
         for size, group in zip(sizes, qualified, strict=True)
@@ -718,9 +728,7 @@ def _best(stage: dict[str, Any], sizes: list[int], qualified: list[int], index: 
     if count == 'fill':
         total = sum(qualified)
         count = min(eligible, max(0, _next_power(max(total, 2)) - total))
-    return _count(
-        count, f'the best places of position {position} of stage {index + 1}', 0, eligible
-    )
+    return _count(count, _field('best_count', position=position, where=_where(index)), 0, eligible)
 
 
 def _resolve_stage(
@@ -732,8 +740,8 @@ def _resolve_stage(
     Swiss rounds or of entrants that advance beyond what `count` entrants allow comes down to the
     most they allow, so the preset makes a tournament for any number of entrants.
     """
-    where = f'stage {index + 1}'
-    fmt = _choice(stage['format'], FORMATS, f'the format of {where}')
+    where = _where(index)
+    fmt = _choice(stage['format'], FORMATS, _field('format', where=where))
     if not isinstance(stage['name'], str):
         raise TournamentMessageError('server.tournament.stage_name', where=where)
     # A name that the rules or a shipped preset give keeps its label, any other stays as given.
@@ -742,35 +750,33 @@ def _resolve_stage(
     if count < 2:
         raise TournamentMessageError('server.tournament.stage_entrants', where=where, count=count)
     stage['entrants'] = count
-    stage['legs'] = _count(stage['legs'], f'the legs of {where}', 1, MAX_LEGS)
+    stage['legs'] = _count(stage['legs'], _field('legs', where=where), 1, MAX_LEGS)
     if stage['final_legs'] is not None:
-        _count(stage['final_legs'], f'the legs of the final of {where}', 1, MAX_LEGS)
-    stage['settle'] = _ordered_names(stage['settle'], SETTLEMENTS, f'the settlements of {where}')
-    _count(stage['replays'], f'the replays of {where}', 1, 5)
+        _count(stage['final_legs'], _field('final_legs', where=where), 1, MAX_LEGS)
+    stage['settle'] = _ordered_names(stage['settle'], SETTLEMENTS, _field('settle', where=where))
+    _count(stage['replays'], _field('replays', where=where), 1, 5)
     stage['points'] = _check_points(stage['points'])
     stage['tiebreakers'] = _ordered_names(
-        stage['tiebreakers'], TIEBREAKERS, f'the tiebreakers of {where}'
+        stage['tiebreakers'], TIEBREAKERS, _field('tiebreakers', where=where)
     )
-    _choice(stage['seeding'], STAGE_SEEDINGS, f'the seeding of {where}')
+    _choice(stage['seeding'], STAGE_SEEDINGS, _field('seeding', where=where))
     for key in ('length', 'decider_length'):
         if stage[key] is not None:
-            _count(stage[key], f'the {key.replace("_", " ")} of {where}', MIN_LENGTH, MAX_LENGTH)
+            _count(stage[key], _field(key, where=where), MIN_LENGTH, MAX_LENGTH)
     if stage['ability'] is not None and (
         not _number(stage['ability']) or not 0 <= stage['ability'] <= 1
     ):
         raise TournamentMessageError('server.tournament.stage_ability', where=where)
     if stage['draws'] is None:
         stage['draws'] = 'settle' if fmt == 'gauntlet' else 'holder'
-    _choice(stage['draws'], ('holder', 'settle'), f'the draws of {where}')
-    _choice(stage['bye_points'], ('win', 'draw', 'none'), f'the bye points of {where}')
+    _choice(stage['draws'], ('holder', 'settle'), _field('draws', where=where))
+    _choice(stage['bye_points'], ('win', 'draw', 'none'), _field('bye_points', where=where))
     for key in ('third_place', 'grand_final_reset'):
         if not isinstance(stage[key], bool):
-            raise TournamentMessageError(
-                'server.tournament.flag', setting=key.replace('_', ' '), where=where
-            )
+            raise TournamentMessageError('server.tournament.flag', setting=_field(key), where=where)
     advance = None
     if fmt in ('knockout', 'double_elimination'):
-        mode = _choice(stage['bracket'], ('byes', 'play_in'), f'the bracket of {where}')
+        mode = _choice(stage['bracket'], ('byes', 'play_in'), _field('bracket', where=where))
         if fmt == 'double_elimination' and mode != 'byes':
             raise TournamentMessageError('server.tournament.double_byes', where=where)
         size = stage['bracket_size']
@@ -804,10 +810,10 @@ def _resolve_stage(
             advance = until
             if not last and stage['advance'] not in (None, until):
                 raise TournamentMessageError(
-                    'server.tournament.knockout_advance', where=where, until=until
+                    'server.tournament.knockout_advance', where=where, count=until
                 )
     elif fmt in ('league', 'groups'):
-        _count(stage['cycles'], f'the cycles of {where}', 1, 10)
+        _count(stage['cycles'], _field('cycles', where=where), 1, 10)
         if fmt == 'groups':
             sizes = _group_sizes(stage, count, index, fit)
             qualified = _qualifiers(stage, sizes, index)
@@ -833,23 +839,23 @@ def _resolve_stage(
             stage['rounds'] = min(stage['rounds'], most)
         _count(
             stage['rounds'],
-            f'the rounds of the Swiss {where}, which pairs {count} entrants without rematches,',
+            _field('swiss_rounds', where=where, entrants=count),
             1,
             most,
         )
     elif fmt == 'ladder':
         if stage['rounds'] is None:
             stage['rounds'] = count
-        _count(stage['rounds'], f'the rounds of the ladder of {where}', 1, 1000)
+        _count(stage['rounds'], _field('ladder_rounds', where=where), 1, 1000)
     elif fmt == 'king_of_the_hill':
-        _count(stage['laps'], f'the laps of {where}', 1, 10)
+        _count(stage['laps'], _field('laps', where=where), 1, 10)
     if advance is None:
         advance = stage['advance']
         if advance is None:
             advance = count if last else max(2, _previous_power(max(2, count // 2)))
         elif fit and _integer(advance) and advance > count:
             advance = count if last else max(2, _previous_power(count))
-        _count(advance, f'the entrants that advance from {where}', 1 if last else 2, count)
+        _count(advance, _field('advance', where=where), 1 if last else 2, count)
     stage['advance'] = advance
     return stage
 
@@ -858,7 +864,7 @@ def _pots(stage: dict[str, Any], count: int, index: int) -> None:
     pots = stage['pots']
     if pots is None:
         pots = max(stage['group_sizes'])
-    stage['pots'] = _count(pots, f'the pots of stage {index + 1}', 1, count)
+    stage['pots'] = _count(pots, _field('pots', where=_where(index)), 1, count)
 
 
 _FORMAT_TITLES = {
@@ -912,21 +918,23 @@ def check(
     # A tournament without a name takes the label Tournament, which reads in any language.
     result: dict[str, Any] = _messages.named(
         'name',
-        _plain_text(config['name'], 'a name') if 'name' in config else _label('tournament'),
+        _plain_text(config['name'], _field('name')) if 'name' in config else _label('tournament'),
     )
     seed = config.get('seed')
     if seed is None:
         seed = random.SystemRandom().randrange(2**31)
     if isinstance(seed, str) and seed.strip().isdigit():
         seed = int(seed)
-    result['seed'] = _count(seed, 'the seed', 0, 2**63 - 1)
+    result['seed'] = _count(seed, _field('seed'), 0, 2**63 - 1)
     entrants = check_entrants(config.get('entrants'), teams, ratings)
     result['entrants'] = entrants
-    result['seeding'] = _choice(config.get('seeding', 'random'), SEEDINGS, 'the seeding')
+    seeding = _field('tournament_seeding')
+    result['seeding'] = _choice(config.get('seeding', 'random'), SEEDINGS, seeding)
     result['concurrency'] = _count(
-        config.get('concurrency', 1), 'the matches at once', 1, MAX_CONCURRENCY
+        config.get('concurrency', 1), _field('concurrency'), 1, MAX_CONCURRENCY
     )
-    result['forfeit_score'] = _count(config.get('forfeit_score', 3), 'the forfeit score', 1, 10)
+    forfeit = _field('forfeit_score')
+    result['forfeit_score'] = _count(config.get('forfeit_score', 3), forfeit, 1, 10)
     result['preset'] = config.get('preset') if isinstance(config.get('preset'), str) else None
     defaults = config.get('defaults', {})
     if not isinstance(defaults, dict):
@@ -2195,7 +2203,7 @@ def check_preset(preset: Any) -> dict[str, Any]:
     unknown = set(preset) - allowed
     if unknown:
         raise TournamentMessageError('server.tournament.preset_settings', settings=sorted(unknown))
-    result = {'title': _plain_text(preset.get('title'), 'a preset title', 60)}
+    result = {'title': _plain_text(preset.get('title'), _field('preset_title'), 60)}
     description = preset.get('description', '')
     if not isinstance(description, str) or len(description) > 400:
         raise TournamentMessageError('server.tournament.description')

@@ -12,13 +12,16 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
-// load from copies beside a package file that names them modules.
-const folder = mkdtempSync(join(tmpdir(), 'cuju-palette-'));
-for (const name of ['help/palette.js', 'core/names.js', 'core/scenarios.js', 'core/i18n.js']) {
+// load from copies beside a package file that names them modules, with the icons that the
+// keyboard kit draws.
+const root = mkdtempSync(join(tmpdir(), 'cuju-palette-'));
+const folder = join(root, 'js');
+for (const name of ['help/palette.js', 'core/names.js', 'core/scenarios.js', 'core/i18n.js', 'core/keys.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
-writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
-process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
+cpSync(fileURLToPath(new URL('../../src/cuju/render/web/vendor/lucide', import.meta.url)), join(root, 'vendor', 'lucide'), { recursive: true });
+writeFileSync(join(root, 'package.json'), '{"type": "module"}\n');
+process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 const { HELP_TOPICS, LIMIT, fold, languageChoices, matchScore, rankActions } = await import(pathToFileURL(join(folder, 'help/palette.js')).href);
 
 const ACTIONS = [

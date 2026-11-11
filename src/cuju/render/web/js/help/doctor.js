@@ -80,7 +80,7 @@ const CHECKS = {
         ['none', /^no server runs$/],
     ]],
     'video export': ['video_export', [
-        ['found', /^Chrome and ffmpeg are found$/],
+        ['found', /^a browser is found, (?<browser>.+)$/],
     ]],
 };
 

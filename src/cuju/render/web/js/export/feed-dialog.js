@@ -10,7 +10,7 @@
 import { h } from '../teams/library.js';
 import { icon, symbolOnly } from '../core/icons.js';
 import { feedAddress, namedSources } from './feed-params.js';
-import { serverText, t } from '../core/i18n.js';
+import { serverText, t, tn } from '../core/i18n.js';
 import { sizeFields } from './size-fields.js';
 import { VIDEO_CAMERAS } from './video-range.js';
 
@@ -115,7 +115,7 @@ export class FeedDialog {
             h('div', { class: 've-head' },
                 h('h2', { id: 'feed-address-title' }, t('feed.dialog.title')),
                 h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('feed.dialog.close'), title: t('feed.dialog.close.title'), onclick: () => this.close() }, icon('close'))),
-            h('p', { class: 'muted small' }, t('feed.dialog.intro')),
+            h('p', { class: 'muted small' }, tn('feed.dialog.intro')),
             h('div', { class: 've-grid' },
                 field(t('feed.dialog.follows'), this.source),
                 ...this.sizes.fields,
@@ -185,7 +185,7 @@ export class FeedDialog {
         } catch {
             this.output.focus();
             this.output.select();
-            this.note.textContent = t('feed.dialog.copy_by_hand');
+            this.note.replaceChildren(...tn('feed.dialog.copy_by_hand'));
         }
     }
 }

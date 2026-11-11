@@ -8,9 +8,9 @@
 // ready. When neither can export, the dialog says in short what would make it work.
 
 import { ARENA_LABELS } from '../world/arenas.js';
-import { language, serverText, t } from '../core/i18n.js';
+import { labelNodes, language, serverNodes, serverText, t, tn } from '../core/i18n.js';
 import { h } from '../teams/library.js';
-import { icon, labelText, relabel, symbolOnly } from '../core/icons.js';
+import { STATE_ICONS, icon, labelText, relabel, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 import { sizeFields } from './size-fields.js';
 import {
@@ -41,10 +41,29 @@ async function call(method, path, json) {
     if (!res.ok) {
         const error = new Error((value && serverText(value)) || t('video.error.status', { status: res.status }));
         error.status = res.status;
+        // The answer itself, whose message shows with its marks, such as a command as code.
+        error.answer = value && typeof value === 'object' && serverText(value) ? value : null;
         throw error;
     }
     return value;
 }
+
+// The nodes of an error of call, its message with its marks, else its text.
+const errorNodes = (err) => (err.answer ? serverNodes(err.answer) : [err.message]);
+
+// One node of several, for a placeholder of tn.
+function fragment(nodes) {
+    const out = document.createDocumentFragment();
+    out.append(...nodes);
+    return out;
+}
+
+// The symbol of the state of an export before its line of progress, hidden from screen readers,
+// since the words of the line say the same.
+const stateSymbol = (state) => (STATE_ICONS[state] ? [icon(STATE_ICONS[state], 'icon text-symbol')] : []);
+
+// A note of the dialog with its symbol before its words.
+const symbolNote = (symbol, text) => h('p', { class: 'muted small ve-symbol-note' }, icon(symbol, 'icon text-symbol'), text);
 
 const hourText = (hour) => {
     const whole = Math.floor(hour);
@@ -114,7 +133,8 @@ export class VideoExport {
         try {
             status = await call('GET', '/api/video');
         } catch (err) {
-            status = { available: false, missing: [err.status === 404 ? t('video.error.no_export') : err.message] };
+            const label = err.answer ? { id: err.answer.error_id, text: err.message, values: err.answer.error_values } : err.message;
+            status = { available: false, missing: [err.message], missing_labels: [err.status === 404 ? t('video.error.no_export') : label] };
         }
         if (!this.dialog.open) {
             return;
@@ -159,11 +179,11 @@ export class VideoExport {
         if (!status.available) {
             // Neither this browser nor the server can export, so the dialog says briefly what
             // would make either work, and the server's own list waits behind a disclosure.
-            d.append(h('p', {}, t(status.browser && status.browser.reason === 'pictures' ? 'video.browser.pictures' : 'video.browser.none')),
-                h('p', {}, t('video.browser.how')),
+            d.append(h('p', {}, tn(status.browser && status.browser.reason === 'pictures' ? 'video.browser.pictures' : 'video.browser.none')),
+                h('p', {}, tn('video.browser.how')),
                 (status.missing || []).length
-                    ? h('details', { class: 've-missing' }, h('summary', {}, t('video.browser.server_lacks')),
-                        h('ul', {}, status.missing.map((m) => h('li', {}, m))))
+                    ? h('details', { class: 've-missing' }, h('summary', {}, icon('server', 'icon text-symbol'), t('video.browser.server_lacks')),
+                        h('ul', {}, status.missing.map((m, i) => h('li', {}, labelNodes((status.missing_labels && status.missing_labels[i]) || m)))))
                     : null,
                 h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', ...symbolOnly(t('video.close'), t('video.close.title')), onclick: () => this.close() }, icon('close'))));
             return;
@@ -227,7 +247,9 @@ export class VideoExport {
                 // offered for a recording that has them.
                 annotated ? h('label', { class: 'check' }, h('input', { id: 've-annotations', type: 'checkbox' }), t('video.annotations')) : null),
             h('p', { class: 'muted small' }, t('video.look', { arena, hour })),
-            h('p', { class: 'muted small' }, t(status.browser && status.browser.supported ? 'video.browser.note' : 'video.browser.server_note')),
+            status.browser && status.browser.supported
+                ? symbolNote('monitor', t('video.browser.note'))
+                : symbolNote('server', t('video.browser.server_note')),
             this.progress,
             this.status,
             h('div', { class: 've-actions' }, this.exportButton, this.cancelButton, this.download,
@@ -281,7 +303,7 @@ export class VideoExport {
             this.follow(entry);
         } catch (err) {
             this.exportButton.disabled = false;
-            this.status.textContent = err.status === 409 ? `${err.message}.` : t('video.error.start', { error: err.message });
+            this.status.replaceChildren(...stateSymbol('failed'), ...(err.status === 409 ? [...errorNodes(err), '.'] : tn('video.error.start', { error: fragment(errorNodes(err)) })));
         }
     }
 
@@ -346,7 +368,7 @@ export class VideoExport {
         try {
             await call('DELETE', `/api/videos/${encodeURIComponent(this.entry.id)}`);
         } catch (err) {
-            this.status.textContent = err.message;
+            this.status.replaceChildren(...errorNodes(err));
         }
     }
 
@@ -359,7 +381,9 @@ export class VideoExport {
         const running = entry.state === 'running';
         this.progress.hidden = entry.state !== 'running' && entry.state !== 'done';
         this.progress.value = entry.state === 'done' ? 1 : entry.progress || 0;
-        this.status.textContent = progressText(entry);
+        // A failed export names its reason with its marks, such as a program as code.
+        const reason = entry.state === 'failed' && serverText(entry);
+        this.status.replaceChildren(...stateSymbol(entry.state), ...(reason ? tn('video.progress.failed_reason', { error: fragment(serverNodes(entry)) }) : [progressText(entry)]));
         this.exportButton.disabled = running;
         relabel(this.exportButton, entry.state === 'done' ? t('video.export.again') : t('video.export'));
         this.cancelButton.hidden = !running;
@@ -378,7 +402,7 @@ export class VideoExport {
                         this.follow(next);
                     }
                 } catch (err) {
-                    this.status.textContent = err.status === 404 ? t('video.error.gone') : err.message;
+                    this.status.replaceChildren(...(err.status === 404 ? [t('video.error.gone')] : errorNodes(err)));
                     this.exportButton.disabled = false;
                     this.cancelButton.hidden = true;
                 }

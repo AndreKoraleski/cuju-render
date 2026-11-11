@@ -12,7 +12,7 @@
 
 import { NEED_OFFERS, TOUR_KEY, TOUR_STEPS, moveTour, needMet, placeCard, resumeStep, stepAnnouncement, tourState } from './tour-core.js';
 import { openPanel } from '../core/comfort.js';
-import { t } from '../core/i18n.js';
+import { t, tm, tn } from '../core/i18n.js';
 import { icon, reicon, relabel, symbolOnly } from '../core/icons.js';
 
 function h(tag, attributes = {}, ...children) {
@@ -74,7 +74,7 @@ export class GuidedTour {
         this.count, this.title, this.text, this.offer,
         h('div', { class: 'tour-actions' }, this.backButton, this.nextButton, this.tryButton,
             h('button', { type: 'button', class: 'link small', ...symbolOnly(t('tour.leave')), onclick: () => this.leave() }, icon('close'))),
-        h('p', { class: 'muted small tour-keys' }, t('tour.keys')),
+        h('p', { class: 'muted small tour-keys' }, ...tn('tour.keys')),
         this.live);
         this.ring = h('div', { id: 'tour-ring', class: 'tour-ring', 'aria-hidden': 'true', hidden: true });
         (document.getElementById('app') || document.body).append(this.ring, this.card);
@@ -152,7 +152,8 @@ export class GuidedTour {
         this.ring.classList.toggle('still', !!this.app.reducedMotion);
         this.count.textContent = t('tour.count', { index: index + 1, count: this.steps.length });
         this.title.textContent = step.title;
-        this.text.textContent = step.text;
+        // The text shows with its marks, the message tour.step.<id>.text.
+        this.text.replaceChildren(tm(`tour.step.${step.id}.text`));
         this.backButton.disabled = index === 0;
         relabel(this.nextButton, index === this.steps.length - 1 ? t('tour.finish') : t('tour.next'));
         reicon(this.nextButton, index === this.steps.length - 1 ? 'check' : 'next');
@@ -196,7 +197,7 @@ export class GuidedTour {
         this.offer.hidden = !missing;
         if (missing) {
             const offer = NEED_OFFERS[step.needs];
-            this.offerText.textContent = `${offer.text} `;
+            this.offerText.replaceChildren(tm(`tour.need.${step.needs}.text`), ' ');
             this.offerButton.textContent = offer.label;
             this.offerButton.disabled = false;
         }

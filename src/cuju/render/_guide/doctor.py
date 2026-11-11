@@ -39,6 +39,8 @@ from cuju import __version__
 
 from .._http import launch as _launch
 from .._store import home as _home
+from .._text import messages as _messages
+from .._text.messages import counted
 
 # The recent warnings and errors that the server keeps.
 _KEPT = 50
@@ -178,19 +180,21 @@ def _versions() -> dict[str, Any]:
 
 def _home_facts() -> dict[str, Any]:
     folder = _home.home()
-    problems = []
+    # The ids of the messages of the problems, whose English texts the report holds.
+    found = []
     existing = folder
     while not existing.exists() and existing != existing.parent:
         existing = existing.parent
     if folder.exists() and not folder.is_dir():
-        problems.append('the home folder is a file')
+        found.append('server.doctor.home.file')
     elif not folder.exists():
         if existing.exists() and not existing.is_dir():
-            problems.append('the home folder lies under a file')
+            found.append('server.doctor.home.under')
         else:
-            problems.append('the home folder is missing, the server makes it as it starts')
+            found.append('server.doctor.home.missing')
     elif not os.access(folder, os.W_OK | os.X_OK):
-        problems.append('the home folder is not writable')
+        found.append('server.doctor.home.readonly')
+    problems = [_messages.text(message_id) for message_id in found]
     free = None
     try:
         free = shutil.disk_usage(existing if existing.is_dir() else existing.parent).free
@@ -203,6 +207,7 @@ def _home_facts() -> dict[str, Any]:
         'writable': folder.is_dir() and os.access(folder, os.W_OK | os.X_OK),
         'free_bytes': free,
         'problems': problems,
+        'problem_ids': found,
     }
 
 
@@ -273,82 +278,100 @@ def _server_facts() -> dict[str, Any]:
     return {'file': found, 'running': False, 'port': None, 'stale': found}
 
 
+def _scrubbed(label: dict[str, Any]) -> dict[str, Any]:
+    """Returns a label of `_messages.label` with its text and its values scrubbed."""
+    values = {
+        key: _scrubbed(value) if isinstance(value, dict) else scrub(value)
+        for key, value in (label.get('values') or {}).items()
+    }
+    return {**label, 'text': scrub(label['text']), 'values': values}
+
+
+def _check(key: str, ok: bool, detail: dict[str, Any] | str, **more: Any) -> dict[str, Any]:
+    """Returns a check of the report, its name and detail in English and, beside them, by id.
+
+    The name is the message `server.doctor.check.<key>`, and the detail a label of
+    `_messages.label` or, for an error of another kind, its text, so the page shows both in its
+    own language and the text of the command reads the English.
+    """
+    return {
+        **_messages.named('name', _messages.label(f'server.doctor.check.{key}')),
+        'ok': ok,
+        **more,
+        **_messages.named('detail', detail),
+    }
+
+
 def _checks(report: dict[str, Any]) -> list[dict[str, Any]]:
     from .._store import library as _library
 
+    label = _messages.label
     home = report['home']
+    # The checks of the home folder find one problem at most.
+    problems = home.get('problem_ids') or []
+    place = (
+        label(problems[0]) if problems else label('server.doctor.home.exists', path=home['path'])
+    )
     checks = [
-        {
-            'name': 'home folder',
-            'ok': home['exists'] and not home['problems'],
-            'detail': ', '.join(home['problems']) or f'{home["path"]} exists',
-        },
-        {
-            'name': 'writing',
-            'ok': bool(home['writable']),
-            'detail': 'the server can write its folder'
-            if home['writable']
-            else 'the server cannot write its folder, choose another with --home',
-        },
+        _check('home_folder', home['exists'] and not home['problems'], place),
+        _check(
+            'writing',
+            bool(home['writable']),
+            label('server.doctor.writing.ok' if home['writable'] else 'server.doctor.writing.fail'),
+        ),
     ]
     free = home['free_bytes']
-    checks.append(
-        {
-            'name': 'disk space',
-            'ok': free is None or free >= LOW_DISK_BYTES,
-            'detail': 'unknown'
-            if free is None
-            else f'{free / 1024**3:.1f} GB free'
-            + ('' if free >= LOW_DISK_BYTES else ', recordings may fail to save'),
-        }
-    )
+    if free is None:
+        space = label('server.doctor.disk.unknown')
+    else:
+        low = 'free' if free >= LOW_DISK_BYTES else 'low'
+        space = label(f'server.doctor.disk.{low}', size=f'{free / 1024**3:.1f}')
+    checks.append(_check('disk_space', free is None or free >= LOW_DISK_BYTES, space))
     shipped = _library.samples()
     checks.append(
-        {
-            'name': 'samples',
-            'ok': len(shipped) >= 2,
-            'detail': f'{len(shipped)} sample recordings ship with the package',
-        }
+        _check('samples', len(shipped) >= 2, label('server.doctor.samples', count=len(shipped)))
     )
     page = Path(__file__).parents[1] / 'web' / 'index.html'
-    checks.append(
-        {
-            'name': 'page files',
-            'ok': page.is_file(),
-            'detail': 'the files of the page are in place'
-            if page.is_file()
-            else 'the page is missing, install cuju again',
-        }
-    )
+    shown = 'ok' if page.is_file() else 'missing'
+    checks.append(_check('page_files', page.is_file(), label(f'server.doctor.page.{shown}')))
     server = report['server']
+    state = 'stale' if server['stale'] else 'running' if server['running'] else 'none'
     checks.append(
-        {
-            'name': 'server file',
-            'ok': not server['stale'],
-            'detail': 'a stale server.json names a server that does not answer, the next start '
-            'replaces it'
-            if server['stale']
-            else ('the server of the folder answers' if server['running'] else 'no server runs'),
-        }
+        _check('server_file', not server['stale'], label(f'server.doctor.server_file.{state}'))
     )
     try:
+        from .._export import video as _video
         from .._export import video_jobs as _video_jobs
 
         video = _video_jobs.availability()
+        labels = video.get('missing_labels') or []
+        if video['available']:
+            detail = label('server.doctor.video.found', browser=_browser_name(_video.find_chrome()))
+        elif labels and all(found.get('id') for found in labels):
+            detail = _scrubbed(_video.missing_label(labels))
+        else:
+            detail = scrub(' '.join(video['missing']))
         # Video export is optional, so a missing program warns and passes.
-        checks.append(
-            {
-                'name': 'video export',
-                'ok': True,
-                'warning': not video['available'],
-                'detail': 'Chrome and ffmpeg are found'
-                if video['available']
-                else scrub(' '.join(video['missing'])),
-            }
-        )
+        checks.append(_check('video_export', True, detail, warning=not video['available']))
     except Exception as error:
-        checks.append({'name': 'video export', 'ok': True, 'warning': True, 'detail': scrub(error)})
+        checks.append(_check('video_export', True, scrub(error), warning=True))
     return checks
+
+
+def _browser_name(path: str | None) -> str:
+    """Returns the name of the browser at a path, such as Google Chrome, else its file name."""
+    stem = Path(path or '').stem.lower()
+    names = {
+        'chrome': 'Google Chrome',
+        'google chrome': 'Google Chrome',
+        'google-chrome': 'Google Chrome',
+        'google-chrome-stable': 'Google Chrome',
+        'chromium': 'Chromium',
+        'chromium-browser': 'Chromium',
+        'msedge': 'Microsoft Edge',
+        'microsoft edge': 'Microsoft Edge',
+    }
+    return names.get(stem, Path(path or '').name or 'Chrome')
 
 
 def server_report() -> dict[str, Any]:
@@ -410,14 +433,12 @@ def report() -> dict[str, Any]:
             local['errors'] = [*local['errors'], *answer.get('errors', [])]
             versions = answer.get('versions', {})
             if versions.get('cuju') != __version__:
-                local['checks'].append(
-                    {
-                        'name': 'server version',
-                        'ok': False,
-                        'detail': f'the server runs cuju {versions.get("cuju")}, this command '
-                        f'{__version__}, restart the server',
-                    }
+                detail = _messages.label(
+                    'server.doctor.server_version',
+                    server=versions.get('cuju'),
+                    command=__version__,
                 )
+                local['checks'].append(_check('server_version', False, detail))
     return local
 
 
@@ -458,7 +479,7 @@ def text(document: dict[str, Any]) -> str:
     lines.append(f'  free space: {_size(home.get("free_bytes"))}')
     lines += ['', 'Folders']
     for name, entry in document.get('folders', {}).items():
-        lines.append(f'  {name}: {entry["files"]} files, {_size(entry["bytes"])}')
+        lines.append(f'  {name}: {counted(entry["files"], "file")}, {_size(entry["bytes"])}')
     lines += ['', 'Library']
     for name, value in document.get('library', {}).items():
         lines.append(f'  {name.replace("_", " ")}: {value}')

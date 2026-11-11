@@ -81,10 +81,11 @@ export class AppInstall {
         const code = (text) => h('code', {}, text);
         host.replaceChildren(
             h('h2', { id: 'help-install-title' }, t('pwa.title')),
-            h('p', {}, t('pwa.text')),
+            h('p', {}, ...tn('pwa.text')),
             h('div', { class: 'help-row' }, this.installButton, this.updateButton, this.forgetButton),
             this.status,
-            h('p', { id: 'help-install-command' }, tn('pwa.command.text', {
+            // The command that opens cuju in a window of its own shows the symbol of a terminal.
+            h('p', { id: 'help-install-command' }, icon('terminal', 'icon text-symbol'), tn('pwa.command.text', {
                 command: code('cuju render app'), install: code('cuju render app --install'),
             })));
         onInstallChange(() => this.render());
@@ -207,32 +208,39 @@ export class AppInstall {
         this.installButton.hidden = !state.installable || state.standalone;
         this.updateButton.hidden = !state.updateReady;
         this.forgetButton.hidden = !state.registered;
+        // The line opens with the symbol of its state where one reads clearly, a ticked circle for
+        // an installed app, a warning for an error and a terminal for the command.
         let text;
+        let symbol = null;
         if (!this.supported) {
-            text = t('pwa.state.unsupported');
+            text = tn('pwa.state.unsupported');
         } else if (state.error) {
-            text = t('pwa.state.error', { error: state.error });
+            text = tn('pwa.state.error', { error: state.error });
+            symbol = 'warning';
         } else if (state.standalone) {
-            text = t('pwa.state.standalone');
+            text = tn('pwa.state.standalone');
+            symbol = 'done';
         } else if (state.installable) {
-            text = t('pwa.state.installable');
+            text = tn('pwa.state.installable');
         } else if (state.installed) {
-            text = t('pwa.state.installed');
+            text = tn('pwa.state.installed');
+            symbol = 'done';
         } else if (this.route !== 'browser') {
             // Safari names its own menu, and another browser the command that makes the app.
-            text = t(`pwa.route.${this.route}`);
+            text = tn(`pwa.route.${this.route}`);
+            symbol = this.route === 'command' ? 'terminal' : null;
         } else if (state.controlled) {
-            text = t('pwa.state.keptMenu');
+            text = tn('pwa.state.keptMenu');
         } else {
-            text = t('pwa.state.menu');
+            text = tn('pwa.state.menu');
         }
-        // A second sentence follows the first, as its own message.
+        // A second sentence follows the first, as its own message, and each keeps its marks.
         if (state.updateReady) {
-            text += ` ${t('pwa.state.updateReady')}`;
+            text.push(' ', ...tn('pwa.state.updateReady'));
         } else if (state.controlled && (state.standalone || state.installable || state.installed || this.route !== 'browser')) {
-            text += ` ${t('pwa.state.kept')}`;
+            text.push(' ', ...tn('pwa.state.kept'));
         }
-        this.status.textContent = text;
+        this.status.replaceChildren(...(symbol ? [icon(symbol, 'icon text-symbol')] : []), ...text);
     }
 
     // The functions of window.cuju.install.

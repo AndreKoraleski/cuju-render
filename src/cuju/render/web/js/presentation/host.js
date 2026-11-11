@@ -111,11 +111,18 @@ export class ModuleHost {
         return this.status === 'ready';
     }
 
-    setStatus(status, detail = '') {
+    // The detail is the English reason of a failure, and label the same reason as a message of
+    // the language files, presentation.reason.<name>, which the page shows in its language.
+    setStatus(status, detail = '', label = null) {
         this.status = status;
         if (this.options.onStatus) {
-            this.options.onStatus(status, detail);
+            this.options.onStatus(status, detail, label);
         }
+    }
+
+    // Fails with a reason of the language files, its English text first.
+    failWith(name, text, values = {}, final = false) {
+        this.fail(text, final, { id: `presentation.reason.${name}`, text, values });
     }
 
     start() {
@@ -133,7 +140,7 @@ export class ModuleHost {
                 if (!this.disposed) {
                     this.setStatus('ready', 'developer');
                 }
-            }).catch((err) => this.fail(`the module did not load, ${err.message || err}`));
+            }).catch((err) => this.failWith('moduleLoad', `the module did not load, ${err.message || err}`, { error: String(err.message || err) }));
             return;
         }
         const doc = o.document || globalThis.document;
@@ -147,7 +154,12 @@ export class ModuleHost {
         this.frame = frame;
         this.onWindowMessage = (e) => {
             if (e.source === frame.contentWindow && e.data && e.data.instanceId === o.instanceId && e.data.type === 'error') {
-                this.fail(e.data.message);
+                const known = e.data.reason === 'noWorker' || e.data.reason === 'workerFailed';
+                if (known) {
+                    this.failWith(e.data.reason, String(e.data.message), { error: String(e.data.error ?? '') });
+                } else {
+                    this.fail(e.data.message);
+                }
             }
         };
         globalThis.addEventListener('message', this.onWindowMessage);
@@ -172,12 +184,12 @@ export class ModuleHost {
         if (m.type === 'ready') {
             this.sealed = { network: m.network, storage: m.storage };
             if (m.network !== 'blocked' || m.storage !== 'blocked') {
-                this.fail('the sandbox could reach the network or storage, the worker stays off', true);
+                this.failWith('reached', 'the sandbox could reach the network or storage, the worker stays off', {}, true);
                 return;
             }
             this.setStatus('ready', 'sandbox');
         } else if (m.type === 'error') {
-            this.fail(`the worker threw, ${m.message}`);
+            this.failWith('threw', `the worker threw, ${m.message}`, { error: String(m.message) });
         } else if (m.type === 'response') {
             this.answer(m);
         }
@@ -193,7 +205,7 @@ export class ModuleHost {
                     o.bitmap.close();
                 }
             }
-            this.fail(`the worker answered with ${problem}`);
+            this.failWith('answer', `the worker answered with ${problem}`, { problem });
             return;
         }
         let size = 0;
@@ -203,7 +215,7 @@ export class ModuleHost {
             size = Infinity;
         }
         if (size > MAXIMUM_REPLY) {
-            this.fail('the worker answered with too much');
+            this.failWith('tooMuch', 'the worker answered with too much');
             return;
         }
         this.answered += 1;
@@ -224,7 +236,7 @@ export class ModuleHost {
         if (this.status !== 'ready') {
             this.startWait = this.status === 'starting' ? this.startWait + step : 0;
             if (this.status === 'starting' && this.startWait > FIRST_SILENT_MS * 2) {
-                this.fail('the sandbox did not start');
+                this.failWith('noStart', 'the sandbox did not start');
             }
             return false;
         }
@@ -234,7 +246,7 @@ export class ModuleHost {
             if (this.inFlight.waited > limit) {
                 this.inFlight.waits = (this.inFlight.waits || 0) + 1;
                 if (this.inFlight.waits >= SILENT_DRAWINGS) {
-                    this.fail(`the worker stayed silent for ${limit / 1000} s`);
+                    this.failWith('silent', `the worker stayed silent for ${limit / 1000} s`, { seconds: limit / 1000 });
                 }
             }
             return false;
@@ -255,17 +267,17 @@ export class ModuleHost {
             if (!this.disposed && this.inFlight && this.inFlight.frameId === frame.frameId) {
                 this.answer({ ...(out || {}), type: 'response', instanceId: this.options.instanceId, epoch: frame.epoch, sourceFrameId: frame.frameId, ms: performance.now() - start });
             }
-        }).catch((err) => this.fail(`the module threw, ${err.message || err}`));
+        }).catch((err) => this.failWith('moduleThrew', `the module threw, ${err.message || err}`, { error: String(err.message || err) }));
     }
 
-    fail(reason, final = false) {
+    fail(reason, final = false, label = null) {
         if (this.disposed || this.status === 'failed' || this.status === 'restarting') {
             return;
         }
         this.failures.push(reason);
         this.stopSandbox();
         const again = !final && this.restarts < RESTARTS;
-        this.setStatus(again ? 'restarting' : 'failed', reason);
+        this.setStatus(again ? 'restarting' : 'failed', reason, label);
         if (again) {
             this.restarts += 1;
             this.timer = setTimeout(() => {

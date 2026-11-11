@@ -7,7 +7,8 @@
 // toggles the class directly stays in step with the menu.
 
 import { formatDay } from './api.js';
-import { t } from './i18n.js';
+import { t, tn } from './i18n.js';
+import { chord } from './keys.js';
 import { recordingTitle, summaryTeams, teamName } from './names.js';
 import { scenarioName } from './scenarios.js';
 import { icon } from './icons.js';
@@ -277,8 +278,8 @@ function el(tag, attrs = {}, ...children) {
     return node;
 }
 
-// An item of a menu. The options are kbd, a key shown at its right, hint, a second line,
-// checked, true or false for an item of a choice, onSelect, keepOpen, and disabled.
+// An item of a menu. The options are kbd, a shortcut shown at its right as keycaps, hint, a
+// second line, checked, true or false for an item of a choice, onSelect, keepOpen, and disabled.
 export function menuItem(label, options = {}) {
     const { kbd, hint, checked, onSelect, keepOpen, disabled, icon, className } = options;
     const role = checked === undefined ? 'menuitem' : (options.check ? 'menuitemcheckbox' : 'menuitemradio');
@@ -294,7 +295,7 @@ export function menuItem(label, options = {}) {
     },
     icon || null,
     el('span', { class: 'dd-text' }, el('span', { class: 'dd-label' }, label), hint ? el('span', { class: 'dd-hint' }, hint) : null),
-    kbd ? el('kbd', {}, kbd) : null);
+    kbd ? chord(kbd) : null);
     if (onSelect) {
         item.addEventListener('click', (e) => {
             if (!disabled) {
@@ -315,18 +316,23 @@ export function menuNote(text) {
 
 // Turns a select into a dropdown of the same look as the menus. The select stays in the page,
 // hidden, and remains the source of the value, so code that reads or sets its value or listens
-// for its change event goes on working, and the button follows every change.
+// for its change event goes on working, and the button follows every change. A symbol, the name
+// of one or a function of the value that returns one, stands in front of the value in place of
+// the prefix, and the label then shows as the tooltip, while the accessible name keeps the label
+// and the value.
 export function enhanceSelect(select, options = {}) {
     if (select.dataset.enhanced) {
         return select.enhanced;
     }
     select.dataset.enhanced = '1';
     const label = options.label || select.getAttribute('aria-label') || '';
+    const symbol = typeof options.icon === 'function' ? options.icon : (options.icon ? () => options.icon : null);
     const button = el('button', {
         type: 'button',
         class: `dd-select${options.className ? ` ${options.className}` : ''}`,
-        title: select.title || options.title || null,
-    }, options.prefix ? el('span', { class: 'dd-prefix' }, options.prefix) : null,
+        title: select.title || options.title || (symbol ? label : null) || null,
+        'data-symbol': !!symbol,
+    }, symbol ? icon(symbol(select.value) || 'list') : (options.prefix ? el('span', { class: 'dd-prefix' }, options.prefix) : null),
     el('span', { class: 'dd-value' }), el('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
     const panel = el('div', { class: 'dd-list', role: 'menu', 'aria-label': label || null });
     const wrap = el('span', { class: 'dd-wrap' }, button);
@@ -358,6 +364,9 @@ export function enhanceSelect(select, options = {}) {
     const sync = () => {
         const o = select.options[select.selectedIndex];
         button.querySelector('.dd-value').textContent = o ? o.textContent : '';
+        if (symbol) {
+            button.querySelector('svg.icon use')?.setAttribute('href', `#i-${symbol(select.value) || 'list'}`);
+        }
         button.setAttribute('aria-label', label ? t('menu.select.label', { label, value: o ? o.textContent : '' }) : (o ? o.textContent : ''));
         button.disabled = select.disabled;
     };
@@ -498,7 +507,7 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
         const parts = [];
         const open = section(t('menu.match.open'));
         open.body.append(
-            menuItem(t('menu.match.open.file'), { hint: t('menu.match.open.file.hint'), icon: icon('file'), onSelect: () => $('file-input').click() }),
+            menuItem(t('menu.match.open.file'), { hint: tn('menu.match.open.file.hint'), icon: icon('file'), onSelect: () => $('file-input').click() }),
             menuItem(t('menu.match.open.address'), { hint: t('menu.match.open.address.hint'), icon: icon('link'), onSelect: () => setTimeout(() => $('address-input').focus(), 0) }),
             menuItem(t('menu.match.open.recordings'), { icon: icon('archive'), onSelect: () => app.showPage('recordings') }),
             menuItem(t('menu.match.open.new'), { hint: t('menu.match.open.new.hint'), icon: icon('matches'), onSelect: () => app.showPage('matches') }));
@@ -548,7 +557,7 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
                     $('address-input').value = s.id;
                     app.openLive(s.id);
                 },
-            })) : [menuNote(t('menu.match.live.none'))]));
+            })) : [menuNote(tn('menu.match.live.none'))]));
             menus.match.place();
         }).catch((err) => live.body.replaceChildren(menuNote(err.message)));
         api.matches().then((list) => {
@@ -569,7 +578,10 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
         }).catch((err) => recent.body.replaceChildren(menuNote(err.message)));
     };
     menus.match = new Dropdown($('match-menu-btn'), matchMenu, { onOpen: fillMatch });
-    menus.speed = enhanceSelect($('speed'), { label: t('menu.speed'), className: 'speed-select', host: root }).dropdown;
+    // The symbol of the speed takes the tooltip of its label, which names the keys.
+    menus.speed = enhanceSelect($('speed'), {
+        label: t('menu.speed'), title: $('speed').closest('label')?.title || null, className: 'speed-select', host: root, icon: 'speed',
+    }).dropdown;
     return menus;
 }
 

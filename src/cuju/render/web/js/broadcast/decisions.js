@@ -15,7 +15,7 @@ import { HALF_H, HALF_W } from '../world/pitch.js';
 import {
     WIPE, blendPose, clamp, headingOf, headingTo, namedPose, rgb, showPointer, smooth,
 } from './transition.js';
-import { t } from '../core/i18n.js';
+import { t, tn } from '../core/i18n.js';
 
 const STOP = 0.8;
 const FREEZE = 1.9;
@@ -187,7 +187,8 @@ export class Decisions {
         this.thirdName = el('div', 'ct-name', ct);
         this.thirdTeam = el('div', 'ct-team', ct);
         this.thirdMinute = el('div', 'ct-minute', this.third);
-        this.hint = el('button', 'decision-skip', watch, t('decisions.skip'));
+        this.hint = el('button', 'decision-skip', watch);
+        this.hint.replaceChildren(...tn('decisions.skip'));
         this.hint.type = 'button';
         this.hint.addEventListener('click', () => this.tr.skip());
         // A click on the view skips a decision's replay.

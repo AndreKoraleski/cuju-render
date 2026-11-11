@@ -7,7 +7,7 @@
 // settings, every setting of every stage in the advanced editor, and a review of the draw.
 
 import { api } from '../core/api.js';
-import { formatNumber, serverText, t, tOr } from '../core/i18n.js';
+import { formatNumber, serverText, t, tn, tOr } from '../core/i18n.js';
 import { kitShirt } from '../pages/matches.js';
 import { el as h } from '../core/menu.js';
 import { icon, stateBadge, symbolOnly } from '../core/icons.js';
@@ -241,7 +241,7 @@ export class TournamentsPage {
             this.built = false;
             this.root.replaceChildren(h('div', { class: 'page-pad' }, h('div', { class: 'notice error' },
                 h('p', {}, this.error.message),
-                h('p', { class: 'muted' }, t('tournament.offline.hint')),
+                h('p', { class: 'muted' }, tn('tournament.offline.hint')),
                 h('button', { class: 'btn', type: 'button', ...symbolOnly(t('tournament.offline.retry')), onclick: () => this.refresh() }, icon('refresh')))));
             return;
         }
@@ -282,7 +282,7 @@ export class TournamentsPage {
     renderEmpty() {
         this.mainHost.replaceChildren(h('div', { class: 'empty-state' },
             h('p', { class: 'empty-title' }, t('tournament.empty.title')),
-            h('p', { class: 'muted' }, t('tournament.empty.text')),
+            h('p', { class: 'muted' }, tn('tournament.empty.text')),
             h('button', { type: 'button', class: 'btn primary', onclick: () => this.startWizard() }, icon('plus'), t('tournament.new'))));
     }
 
@@ -375,7 +375,7 @@ export class TournamentsPage {
                 : h('button', { type: 'button', class: 'btn primary cup-start', onclick: (e) => this.create(e.currentTarget) }, icon('play'), t('tournament.wizard.start')));
         this.mainHost.replaceChildren(h('div', { class: 'cup-wizard' },
             h('header', { class: 'cup-head' }, h('h2', {}, t('tournament.new')),
-                h('p', { class: 'muted' }, t('tournament.wizard.text'))),
+                h('p', { class: 'muted' }, tn('tournament.wizard.text'))),
             tabs, panel, nav));
     }
 
@@ -449,7 +449,7 @@ export class TournamentsPage {
                 }, icon('trash'), t('tournament.formatStep.delete')));
         });
         return [
-            h('p', { class: 'muted' }, t('tournament.formatStep.intro')),
+            h('p', { class: 'muted' }, tn('tournament.formatStep.intro')),
             h('div', { class: 'cup-presets', role: 'radiogroup', 'aria-label': t('tournament.formatStep.label') }, cards),
         ];
     }
@@ -480,7 +480,7 @@ export class TournamentsPage {
                 entry.name = freeName(team.name, taken);
             }
             if (add(entry) && entry.name) {
-                this.app.hud.toast(t('tournament.entrants.renamed', { team: team.name, name: entry.name }), 'info', 6000);
+                this.app.hud.toast(t('tournament.entrants.renamed', { team: team.name, name: entry.name }), 'info', 6000, 'edit');
                 this.mainHost.querySelector('.cup-entrants > li:last-child .cup-entrant-name input')?.focus();
             }
         };
@@ -494,7 +494,7 @@ export class TournamentsPage {
                         d.entrants.push(taken.has(nameKey(x.name)) ? { kind: 'team', team: x.id, name: freeName(x.name, taken) } : { kind: 'team', team: x.id });
                     }
                     this.renderWizard();
-                } }, t('tournament.entrants.team.addAll'))),
+                } }, icon('plus'), t('tournament.entrants.team.addAll'))),
             h('div', { class: 'cup-adder' }, h('label', { class: 'field' }, t('tournament.entrants.builtin'), ability),
                 h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.entrants.builtin.add')), onclick: () => {
                     const value = Number(ability.value);
@@ -507,7 +507,7 @@ export class TournamentsPage {
                 h('button', { type: 'button', class: 'btn ghost', onclick: () => {
                     [0.2, 0.4, 0.6, 0.8].forEach((v) => d.entrants.push({ kind: 'builtin', ability: v }));
                     this.renderWizard();
-                } }, t('tournament.entrants.builtin.addFour'))),
+                } }, icon('plus'), t('tournament.entrants.builtin.addFour'))),
             h('div', { class: 'cup-adder' }, h('label', { class: 'field' }, t('tournament.entrants.person'), person),
                 h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.entrants.person.add')), onclick: () => {
                     const name = person.value.trim();
@@ -517,7 +517,7 @@ export class TournamentsPage {
                         return;
                     }
                     if (this.takenNames().has(nameKey(name))) {
-                        this.app.hud.toast(t('tournament.entrants.person.taken', { name }), 'error', 6000);
+                        this.app.hud.toast(t('tournament.entrants.person.taken', { name }), 'error', 6000, 'warning');
                         person.focus();
                         return;
                     }
@@ -526,7 +526,7 @@ export class TournamentsPage {
         const rows = d.entrants.map((entry, index) => this.entrantRow(entry, index));
         queueMicrotask(() => this.markNames());
         return [
-            h('p', { class: 'muted' }, t('tournament.entrants.intro', { count: d.entrants.length })),
+            h('p', { class: 'muted' }, tn('tournament.entrants.intro', { count: d.entrants.length })),
             adders,
             d.entrants.length ? h('ol', { class: 'cup-entrants' }, rows) : h('p', { class: 'muted pad' }, t('tournament.entrants.empty')),
         ];
@@ -584,7 +584,7 @@ export class TournamentsPage {
         return h('li', { class: 'cup-entrant' },
             team ? kitShirt(team, 0) : h('span', { class: `cup-kind ${entry.kind}`, 'aria-hidden': 'true' }, entry.kind === 'person' ? t('tournament.entrant.glyph.person') : t('tournament.entrant.glyph.builtin')),
             h('span', { class: 'cup-entrant-kind small muted' }, team ? t('tournament.entrant.teamKind', { kind: KIND_NAMES.team, name: team.name }) : KIND_NAMES[entry.kind]),
-            h('span', { class: 'cup-entrant-name' }, h('label', { class: 'field' }, t('tournament.entrants.name'), name), note), ...extra,
+            h('span', { class: 'cup-entrant-name' }, h('label', { class: 'field' }, h('span', {}, icon('edit', 'icon text-symbol'), t('tournament.entrants.name')), name), note), ...extra,
             h('label', { class: 'field small-field' }, t('tournament.entrant.rating'), rating),
             h('span', { class: 'cup-entrant-actions' },
                 h('button', { type: 'button', class: 'btn small ghost cup-up', ...symbolOnly(t('tournament.entrant.up.label', { number })), disabled: index === 0, onclick: () => move(-1) }, icon('up')),
@@ -653,8 +653,9 @@ export class TournamentsPage {
             } else {
                 input.removeAttribute('aria-invalid');
             }
+            // A name that repeats another shows the symbol of a warning before its reason.
             if (note.textContent !== text) {
-                note.textContent = text;
+                note.replaceChildren(...(text ? [icon('warning', 'icon text-symbol'), text] : []));
             }
         });
     }
@@ -709,14 +710,14 @@ export class TournamentsPage {
                     seed.value = String(crypto.getRandomValues(new Uint32Array(1))[0]);
                     d.seed = seed.value;
                 } }, icon('dice')))),
-            h('p', { class: 'muted small' }, t('tournament.settings.seed.note')),
+            h('p', { class: 'muted small' }, tn('tournament.settings.seed.note')),
             h('label', { class: 'field' }, t('tournament.settings.seeding'), seeding),
             h('div', { class: 'field' }, h('span', {}, t('tournament.settings.scenario')), scenario, h('span', { class: 'muted small' }, scenarioText(defaults.scenario || ''))),
             h('div', { class: 'field' }, h('span', {}, t('tournament.settings.length')), length),
             h('div', { class: 'field' }, h('span', {}, t('tournament.field.ability')), ability),
             h('label', { class: 'field' }, t('tournament.settings.concurrency'), concurrency),
             h('label', { class: 'field' }, t('tournament.settings.forfeit'), forfeit),
-            h('p', { class: 'muted small' }, t('tournament.settings.note')));
+            h('p', { class: 'muted small' }, tn('tournament.settings.note')));
     }
 
     select(options, value, label, onChange) {
@@ -775,7 +776,7 @@ export class TournamentsPage {
             }
         } }, icon('check'));
         return [
-            h('p', { class: 'muted' }, t('tournament.stages.intro')),
+            h('p', { class: 'muted' }, tn('tournament.stages.intro')),
             h('div', { class: 'cup-stages' }, stages),
             h('button', { type: 'button', class: 'btn', disabled: d.stages.length >= 8, ...symbolOnly(t('tournament.stages.add')), onclick: () => {
                 d.stages.push({ format: 'knockout', name: '' });
@@ -940,7 +941,7 @@ export class TournamentsPage {
             // Two entrants that share a name go back to the entrants step, before any check.
             host.setAttribute('aria-busy', 'false');
             host.replaceChildren(h('div', { class: 'notice error', role: 'alert' },
-                h('ul', {}, clashes.map((clash) => h('li', {}, t('tournament.review.nameTaken', { number: clash.index + 1, name: clash.name, other: clash.other + 1 })))),
+                h('ul', { class: 'symbol-list' }, clashes.map((clash) => h('li', {}, icon('warning', 'icon text-symbol'), t('tournament.review.nameTaken', { number: clash.index + 1, name: clash.name, other: clash.other + 1 })))),
                 h('p', { class: 'muted small' }, t('tournament.review.names'))));
         } else {
             this.check(host);
@@ -1011,7 +1012,7 @@ export class TournamentsPage {
         } catch (err) {
             host.setAttribute('aria-busy', 'false');
             host.replaceChildren(h('div', { class: 'notice error', role: 'alert' }, h('p', {}, err.message),
-                h('p', { class: 'muted small' }, t('tournament.review.failed'))));
+                h('p', { class: 'muted small' }, tn('tournament.review.failed'))));
         }
     }
 
@@ -1117,7 +1118,7 @@ export class TournamentsPage {
                 stateBadge(cup.state, STATE_LABELS[cup.state] || cup.state, `state-pill ${cup.state === 'running' ? 'running' : cup.state === 'done' ? 'done' : 'failed'}`),
                 h('span', {}, t('tournament.count.entrants', { count: entrants.length })),
                 h('span', {}, t('tournament.view.seed', { seed: cup.seed })),
-                h('span', {}, t('tournament.view.played', { played: cup.played, count: cup.scheduled })),
+                h('span', {}, t('tournament.view.played', { count: cup.played, total: cup.scheduled })),
                 cup.running ? h('span', {}, t('tournament.view.running', { count: cup.running })) : null),
             cup.state === 'running' ? h('div', { class: 'progress', role: 'progressbar', 'aria-label': t('tournament.view.progress.label'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(share * 100)) },
                 h('div', { class: 'bar', style: `width:${Math.round(share * 100)}%` })) : null,

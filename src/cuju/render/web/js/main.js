@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { onLanguageChange } from './core/i18n.js';
 import { t } from './core/i18n.js';
+import './core/keys.js';
 import { LanguageSettings } from './core/language-ui.js';
 import { api, formatBytes } from './core/api.js';
 import { PlayerTools } from './watch/player-tools.js';

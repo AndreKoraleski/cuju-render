@@ -16,7 +16,7 @@ import { menuHeading, menuItem } from '../core/menu.js';
 import { Painter } from '../teams/painter.js';
 import { ARENAS, ARENA_LABELS, ARENA_NOTES, arenaThumbnail } from '../world/arenas.js';
 import { formatHour } from '../world/sky.js';
-import { formatNumber, t, tOr } from '../core/i18n.js';
+import { formatNumber, t, tn, tOr } from '../core/i18n.js';
 import { icon, symbolOnly } from '../core/icons.js';
 
 // Board pictures are read whole before they are scaled down, so a very large file is refused first.
@@ -273,7 +273,7 @@ export class FieldPage {
                 chips(WEATHERS, f.weather, 'weather', WEATHER_LABELS),
                 f.weather !== 'clear' ? h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.weather.strength')), amount, amountLabel) : null,
                 h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.wind')), wind, windLabel),
-                f.weather === 'snow' ? h('p', { class: 'muted small' }, t('fieldpage.weather.snowNote')) : null),
+                f.weather === 'snow' ? h('p', { class: 'muted small' }, tn('fieldpage.weather.snowNote')) : null),
             section('boards', h('h2', {}, t('fieldpage.boards')),
                 chips(BOARDS, f.boards, 'boards'),
                 f.boards === 'custom' ? boards : h('p', { class: 'muted small' }, f.boards === 'sponsors'
@@ -286,7 +286,7 @@ export class FieldPage {
                     f.crowd === 'custom' ? h('div', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.crowd.shirts')), crowdColors)
                         : h('p', { class: 'muted small' }, t('fieldpage.crowd.teamsNote'))) : null),
             h('p', { class: 'muted small' }, t('fieldpage.exportNote')),
-            h('p', { class: 'muted small' }, t('fieldpage.keys')));
+            h('p', { class: 'muted small' }, tn('fieldpage.keys')));
         // Touching a control flies the preview to what it changes.
         const focusFrom = (e) => {
             const el = e.target && e.target.closest && e.target.closest('[data-focus]');

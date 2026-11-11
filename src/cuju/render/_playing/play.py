@@ -495,7 +495,7 @@ class PolicyRunner:
         """
         job = self._submit(factory)
         if not job.done.wait(timeout):
-            raise PolicyMessageError('server.policy.load', seconds=f'{timeout:g}')
+            raise PolicyMessageError('server.policy.load', count=f'{timeout:g}')
         self.policies = job.result()
 
     def _check(self) -> None:
@@ -508,7 +508,7 @@ class PolicyRunner:
                 job.result()
             return
         if self.hang is not None and time.monotonic() - job.started > self.hang:
-            raise PolicyMessageError('server.policy.silent', seconds=f'{self.hang:g}')
+            raise PolicyMessageError('server.policy.silent', count=f'{self.hang:g}')
 
     def request(self) -> None:
         """Reads the observations of the current step and starts the call of the policies.
