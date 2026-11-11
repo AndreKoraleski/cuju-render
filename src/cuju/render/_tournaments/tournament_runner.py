@@ -782,6 +782,22 @@ class Tournaments:
                 'champion_index': view['champion'],
             }
 
+    def without_spoilers(self, identifier: str, watched: Any) -> dict[str, Any] | None:
+        """Returns a tournament as a person sees it who watched only the matches of `watched`.
+
+        Raises:
+            ArgumentError: If `watched` is no list of match keys.
+        """
+        with self._lock:
+            entry = self.get(identifier)
+            if entry is None:
+                return None
+            results = dict(self._records[identifier]['results'])
+        try:
+            return rules.without_spoilers(entry, results, watched)
+        except rules.TournamentError as error:
+            raise _messages.argument_error(error) from error
+
     # Changes.
 
     def create(self, config: Any, run: bool = True) -> dict[str, Any]:
@@ -1001,6 +1017,9 @@ class Tournaments:
 
         The names are those of the two entrants, home first, as the tournament shows them, so a
         renamed team or a built-in AI at an ability keeps its name on Watch, in feeds and videos.
+        The abilities are those that the tournament gives the built-in AI of each side, home
+        first, from the entrant, the stage or the standard, with `None` for the scenario's own,
+        beside the abilities that played, which the provenance keeps as `ability`.
         """
         stage = record['config']['stages'][match['stage']]
         entrants = record['config']['entrants']
@@ -1014,6 +1033,7 @@ class Tournaments:
             'names': [side['name'] for side in sides],
             # The names again as labels where the rules made them, for the title of the recording.
             'labels': [rules.label_of(side) for side in sides],
+            'ability': list(match['ability']),
         }
 
     def _finish(

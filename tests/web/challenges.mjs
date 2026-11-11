@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Tests of the words of the challenges on the Play page, the value of a run with the seconds its
-// attempts took to score in all, run from the repository root with `node tests/web/challenges.mjs`.
+// attempts took to score in all and the person's name, which a default name of any language leaves
+// unset, run from the repository root with `node tests/web/challenges.mjs`.
 // The page loads as an English page, with the shipped languages in it.
 
 import assert from 'node:assert/strict';
@@ -40,7 +41,7 @@ globalThis.localStorage = { getItem: (key) => (key === 'cuju.language' ? '"en"' 
 globalThis.location = { search: '' };
 Object.defineProperty(globalThis, 'navigator', { value: { languages: ['en-US'], language: 'en-US' }, configurable: true, writable: true });
 globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
-const { runText } = await import(pathToFileURL(join(folder, 'play/challenges.js')).href);
+const { runText, typedName } = await import(pathToFileURL(join(folder, 'play/challenges.js')).href);
 
 const corner = { id: 'corner', measure: 'scored', attempts: 5 };
 const margin = { id: 'one_on_one', measure: 'margin', attempts: 5 };
@@ -65,4 +66,17 @@ test('Portuguese holds every form of the run in its own words', () => {
         }
         assert.ok(typeof shipped.pt[`${id}.none`] === 'string', id);
     }
+});
+
+test('a default name of any language counts as no name, and a typed one stays', () => {
+    const known = new Set(['Player', 'Jogador']);
+    assert.equal(typedName('  Ana  ', known), 'Ana');
+    assert.equal(typedName('Jogador', known), '');
+    assert.equal(typedName(' Player ', known), '');
+    // The page's own default counts as none before the server named the others.
+    assert.equal(typedName('Player', new Set()), '');
+    assert.equal(typedName('Jogador', new Set()), 'Jogador');
+    assert.equal(typedName('', known), '');
+    assert.equal(typedName(null, known), '');
+    assert.equal(typedName('x'.repeat(50), known), 'x'.repeat(40));
 });

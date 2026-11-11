@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Checks the cards of the challenges on the Play page, their pictures, teasers and labels.
 
-ci/page_check.py runs card_checks with the other checks of the page. Run alone, this file starts
-the mock server and Chrome itself and runs these checks with the checks of a challenge's run in
-ci/page_check.py.
+ci/page_check.py runs card_checks and bench_checks with the other checks of the page. Run alone,
+this file starts the mock server and Chrome itself and runs these checks with the checks of a
+challenge's run in ci/page_check.py.
 
 The mock server's catalog holds three challenges of three kinds, and the page reads their stills
 and teasers from the shipped folder of the page. The checks rest the pointer on a card and see its
@@ -245,6 +245,118 @@ def card_checks(client):
     return checks
 
 
+def bench_checks(client):
+    """Checks the medal items of the cards, the board and the end card, and a benchmark of a test
+    team and the built-in AI on one challenge, its progress, its table and its CSV."""
+    checks = _run(
+        client,
+        """
+        cuju.showPage('play');
+        const panel = cuju.play.challenges;
+        // A default name of another language, stored before, gives way to the page's own default.
+        localStorage.setItem('cuju.challengeName', 'Jogador');
+        panel.nameField.value = 'Jogador';
+        panel.namesRead = false;
+        await panel.show();
+        const unnamed = panel.nameField.value === '' && panel.nameField.placeholder === 'Player'
+            && localStorage.getItem('cuju.challengeName') === null
+            && panel.personName() === 'Player';
+        // The person of the run that the checks of page_check.py played.
+        const person = (await cuju.challenges.board('one_on_one'))
+            .find((entry) => entry.kind === 'person');
+        panel.nameField.value = person ? person.name : 'Page check';
+        await panel.show();
+        await wait(() => card('empty_goal_close')
+            && card('empty_goal_close').querySelector('.medal-items'));
+        const items = (id) => [...card(id).querySelectorAll('.medal-item')];
+        const words = items('empty_goal_close').map((li) => li.textContent.trim());
+        const ordered = ['empty_goal_close', 'corner', 'one_on_one'].every((id) =>
+            items(id).map((li) => li.dataset.medal).join() === 'gold,silver,bronze');
+        const listed = card('one_on_one').querySelector('.medal-items')
+            .getAttribute('aria-label') === 'Medals of One on one';
+        const color = (id, medal) => getComputedStyle(card(id)
+            .querySelector(`.medal-item.${medal} > svg`)).color;
+        const metals = new Set(['gold', 'silver', 'bronze'].map((m) => color('corner', m)));
+        const text = getComputedStyle(card('corner')).color;
+        // The person's best run of One on one marks the item of its medal, and the headless run
+        // of the built-in AI marks the item it reached on the line of the run.
+        const mine = panel.find('one_on_one').board.mine;
+        const reached = items('one_on_one').filter((li) => li.classList.contains('reached'));
+        const marked = mine && mine.medal
+            ? reached.length === 1 && reached[0].dataset.medal === mine.medal
+                && /Your best/.test(reached[0].textContent)
+            : reached.length === 0;
+        const job = [...document.querySelectorAll('.challenge-job .medal-item.reached')];
+        const best = marked && !!mine && job.length === 1 && job[0].dataset.medal === 'silver'
+            && /Reached/.test(job[0].textContent)
+            && items('corner').every((li) => !li.classList.contains('reached'));
+        const toggle = card('one_on_one').querySelector('[data-action="board"]');
+        if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+        const marks = await wait(() => card('one_on_one')
+            .querySelectorAll('.challenge-board .medal-mark').length);
+        const all = {
+            words: words.join('|') === 'Gold, a goal within 3 seconds in all 5 attempts'
+                + '|Silver, a goal within 3 seconds in 4 attempts or more'
+                + '|Bronze, a goal within 3 seconds in 3 attempts or more' || words.join('|'),
+            ordered, listed, colored: (metals.size === 3 && !metals.has(text)) || [...metals],
+            best: best || { mine, job: job.map((li) => li.textContent) }, marks: !!marks, unnamed,
+        };
+        toggle.click();
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'Medal items',
+    )
+    checks += _run(
+        client,
+        """
+        const { api } = await import('./js/core/api.js');
+        const panel = cuju.play.challenges;
+        const source = 'def agent(obs):\\n    return [12]\\n';
+        const team = await api.uploadTeam('Bench bot', 'main.py', source, '11v11');
+        try {
+            await panel.show(await api.teams());
+            const view = document.querySelector('.challenge-bench');
+            const box = (name, value) =>
+                view.querySelector(`input[name="${name}"][value="${value}"]`);
+            box('bench-team', 'builtin').checked = true;
+            box('bench-team', team.id).checked = true;
+            const every = view.querySelector('.bench-all');
+            every.checked = false;
+            every.dispatchEvent(new Event('change', { bubbles: true }));
+            box('bench-challenge', 'one_on_one').checked = true;
+            view.querySelector('[data-action="bench"]').click();
+            const done = await wait(() => panel.bench.job && panel.bench.job.state === 'done'
+                && /finished/.test(view.querySelector('.bench-status').textContent), 20000);
+            const rows = [...view.querySelectorAll('.bench-table tbody tr')];
+            const cells = rows.map((row) => row.querySelector('td[data-challenge="one_on_one"]'));
+            const job = panel.bench.job;
+            const csv = cuju.challenges.benchCsv().trim().split('\\n');
+            const all = {
+                done: !!done,
+                chosen: job && job.challenges.join() === 'one_on_one'
+                    && job.teams.join() === `builtin,${team.id}`,
+                rows: rows.map((row) => row.dataset.team).join() === `builtin,${team.id}`,
+                cells: cells.every((cell) => cell && cell.dataset.state === 'done'
+                    && !!cell.querySelector('.medal-mark')),
+                named: !!rows[1] && rows[1].querySelector('th').textContent === 'Bench bot',
+                progress: view.querySelector('.bench-progress').value === 1,
+                csv: (csv.length === 3 && csv[0].startsWith('model,team,one_on_one value')
+                    && csv[2].startsWith(`Bench bot,${team.id},`)) || csv,
+                exports: !view.querySelector('.bench-exports').hidden,
+                board: (await cuju.challenges.board('one_on_one'))
+                    .some((entry) => entry.team === team.id && entry.kind === 'agent'),
+            };
+            return Object.values(all).every((v) => v === true) || all;
+        } finally {
+            await api.deleteTeam(team.id);
+            await panel.show(await api.teams());
+        }
+        """,
+        'Benchmark of a test team',
+    )
+    return checks
+
+
 def main():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import page_check as page
@@ -328,10 +440,11 @@ def main():
                 time.sleep(0.2)
             checks = card_checks(client)
             checks += page.challenge_checks(client)
+            checks += bench_checks(client)
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
             assert not client.evaluate('!!document.pointerLockElement')
             assert not client.errors, client.errors
-            print(f'PASS. {checks} challenge card and run checks. Chrome stayed muted.')
+            print(f'PASS. {checks} challenge, medal and benchmark checks. Chrome stayed muted.')
     except Exception as error:
         detail = json.dumps(client.errors)[:2000] if client else ''
         print(f'FAIL. {checks} checks passed. {error} {detail}', file=sys.stderr)

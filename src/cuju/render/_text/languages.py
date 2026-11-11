@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,55 @@ def _read(path: Path) -> Any:
 def english() -> dict[str, Any]:
     """Returns the shipped English file, the reference of every other."""
     return _read(SHIPPED / 'en.json')
+
+
+# The message of the name a person plays under when they type none.
+_DEFAULT_NAME = 'challenges.name.default'
+# The default names of languages that shipped with the page before, which older runs may hold.
+FORMER_DEFAULT_NAMES = ('Jogador',)
+_DEFAULTS: dict[tuple[tuple[str, int], ...], frozenset[str]] = {}
+# The names are read again at most this often, since a leaderboard asks for them by entry.
+_RECHECK_SECONDS = 2.0
+_CHECKED: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def default_names() -> frozenset[str]:
+    """Returns the default name of a person in every language that the renderer knows.
+
+    A person who types no name plays under the default name of the page's language, so a name
+    among these counts as no name, and the page shows the default of its own language in its
+    place. The names come from English, the languages of the folder and the languages that shipped
+    with the page before, and stay cached until a file of them changes, which the function looks
+    for every two seconds.
+    """
+    place = folder()
+    now = time.monotonic()
+    recent = _CHECKED.get(str(place))
+    if recent is not None and now - recent[0] < _RECHECK_SECONDS:
+        return recent[1]
+    paths = [SHIPPED / 'en.json', *sorted(place.glob('*.json'))]
+    key = []
+    for path in paths:
+        try:
+            key.append((str(path), path.stat().st_mtime_ns))
+        except OSError:
+            continue
+    found = _DEFAULTS.get(tuple(key))
+    if found is None:
+        names = set(FORMER_DEFAULT_NAMES)
+        for path, _ in key:
+            try:
+                value = _read(Path(path)).get(_DEFAULT_NAME)
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(value, str) and value.strip():
+                names.add(value.strip())
+        found = frozenset(names)
+        _DEFAULTS.clear()
+        _DEFAULTS[tuple(key)] = found
+    _CHECKED.clear()
+    _CHECKED[str(place)] = (now, found)
+    return found
 
 
 def placeholders(value: Any) -> set[str]:

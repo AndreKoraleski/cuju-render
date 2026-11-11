@@ -48,6 +48,7 @@ import { Transitions } from './broadcast/transition.js';
 import { Decisions } from './broadcast/decisions.js';
 import { fullMatch } from './recording/episodes.js';
 import { recordingTitle, teamName } from './core/names.js';
+import { hidesOutcome } from './core/spoilers.js';
 import { CommandPalette } from './help/palette.js';
 import { SettingsPresets } from './watch/presets.js';
 import { FirstRun } from './help/firstrun.js';
@@ -605,6 +606,11 @@ class App {
                 this.endReached = true;
                 this.onFrameChange(this.lastIndex, tl.index, true);
                 this.lastIndex = tl.index;
+            }
+            // A recording that plays to its end tells the page, so a tournament watched without
+            // spoilers marks its match watched.
+            if (source.kind === 'match') {
+                document.dispatchEvent(new CustomEvent('cuju:recording-ended', { detail: { id: source.id, provenance: source.header.provenance || null } }));
             }
             if (!this.director.running) {
                 const f = source.store.get(source.store.last);
@@ -2345,7 +2351,8 @@ class App {
             bar.setAttribute('aria-valuenow', String(Math.round((tl.t - tl.first) / tl.sps)));
             bar.setAttribute('aria-valuetext', this.timelineText);
         }
-        const goals = tl.store.goals;
+        // A match of a tournament watched without spoilers keeps its goals off the timeline.
+        const goals = hidesOutcome(this.source.header && this.source.header.provenance) ? [] : tl.store.goals;
         const box = $('timeline-markers');
         if (tl.live && goals.length === this.markerCount && tl.first === this.markerBase) {
             // Live timelines stretch as frames arrive, so their markers slide along.

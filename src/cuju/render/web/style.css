@@ -3763,6 +3763,61 @@ select:not([multiple]) {
     font-size: 14px;
 }
 
+.team-card-random {
+    display: grid;
+    place-items: center;
+    filter: none;
+    color: var(--accent-hover);
+}
+
+.team-card-random .icon {
+    width: 38px;
+    height: 38px;
+}
+
+.draw-pool {
+    margin: 14px 0 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+}
+
+.draw-pool legend {
+    padding: 0 4px;
+    font-size: 14px;
+}
+
+.draw-pool p {
+    margin: 0 0 8px;
+}
+
+.draw-pool-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-bottom: 8px;
+}
+
+.draw-pool .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.req-random .icon,
+.req-drawn .icon {
+    width: 14px;
+    height: 14px;
+}
+
+.req-drawn {
+    display: inline-flex;
+    margin-left: 4px;
+    color: var(--accent-hover);
+    vertical-align: middle;
+}
+
 .play-row {
     display: flex;
     justify-content: center;
@@ -6890,6 +6945,15 @@ dialog.painter .toolbar {
     white-space: normal;
 }
 
+/* The choice between a random draw and a bracket set by hand, above the list of entrants. */
+.cup-draw {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    align-items: center;
+    margin: 4px 0 10px;
+}
+
 .cup-entrants {
     display: flex;
     flex-direction: column;
@@ -6899,7 +6963,7 @@ dialog.painter .toolbar {
 
 .cup-entrant {
     display: grid;
-    grid-template-columns: 28px minmax(100px, 160px) minmax(140px, 1fr) minmax(110px, 160px) minmax(90px, 130px) auto;
+    grid-template-columns: 28px minmax(100px, 160px) minmax(140px, 1fr) minmax(110px, 160px) minmax(80px, 120px) minmax(90px, 130px) auto;
     gap: 8px 12px;
     align-items: end;
     padding: 6px 0;
@@ -7130,6 +7194,27 @@ dialog.painter .toolbar {
     display: flex;
     gap: 6px;
     align-items: center;
+}
+
+/* An entrant's own ability beside its name, where it differs from the standard. */
+.cup-ability {
+    display: inline-flex;
+    gap: 3px;
+    align-items: center;
+    white-space: nowrap;
+}
+
+th .cup-ability {
+    margin-left: 6px;
+    font-weight: 400;
+}
+
+.cup-standard input[type='range'] {
+    width: 180px;
+}
+
+.cup-standard .ability-value {
+    min-width: 9ch;
 }
 
 .cup-side-name.won {
@@ -7618,4 +7703,160 @@ table.grid td.wrap {
     width: 16px;
     height: 16px;
     vertical-align: middle;
+}
+
+/* Watching a tournament without spoilers, its switch, Watch next and the count to watch. */
+.cup-spoilers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    align-items: center;
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+}
+
+.cup-spoilers.on {
+    border-left: 3px solid var(--accent);
+}
+
+.cup-item-spoilers,
+.cup-prediction-score {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+}
+
+/* The next matches as kickoff cards, the final with a card of its own. */
+.cup-up-next {
+    margin: 14px 0;
+}
+
+.cup-kickoffs {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px;
+    padding: 0;
+    list-style: none;
+}
+
+.cup-kickoff {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+}
+
+.cup-kickoff.final,
+.cup-intermission.final {
+    border-color: var(--accent);
+    border-width: 2px;
+}
+
+.cup-kickoff p {
+    margin: 0;
+}
+
+.cup-kickoff-sides,
+.cup-intermission-sides {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    align-items: center;
+}
+
+.cup-kickoff-side {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    font-weight: 600;
+}
+
+.cup-versus {
+    color: var(--muted);
+}
+
+.cup-predict {
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.cup-caught-up {
+    margin: 12px 0;
+}
+
+/* The card between two matches on Watch, which names only who plays next. */
+.cup-intermission {
+    position: absolute;
+    right: 16px;
+    bottom: 96px;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.cup-intermission h2 {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin: 0;
+    font-size: 18px;
+}
+
+.cup-intermission p {
+    margin: 0;
+}
+
+/* The Brackets view, wide and large, with its own zoom, and the list of tournaments set aside. */
+.cup-layout.brackets {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: none;
+}
+
+.cup-layout.brackets .cup-side {
+    display: none;
+}
+
+.cup-brackets-head {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.cup-zoom {
+    gap: 4px;
+    align-items: center;
+}
+
+.cup-big {
+    font-size: 17px;
+}
+
+.cup-big > * {
+    zoom: var(--cup-zoom, 1);
+}
+
+.cup-big .cup-bracket-scroll,
+.cup-big .cup-table-scroll {
+    overflow: auto;
+    max-width: 100%;
+}
+
+@media (max-width: 760px) {
+    .cup-big {
+        font-size: 15px;
+    }
+
+    .cup-intermission {
+        right: 8px;
+        left: 8px;
+        bottom: 80px;
+    }
 }

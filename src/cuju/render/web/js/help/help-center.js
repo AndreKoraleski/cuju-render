@@ -93,7 +93,9 @@ function injectStyle() {
 .lesson-list .lesson-mark, .sample-list .sample-state { font-size: 12px; }
 .lesson-list h3, .sample-list h3 { margin: 0; color: var(--text); font-size: 15px; font-variant: normal; letter-spacing: normal; }
 .lesson-list p, .sample-list p { margin: 0; }
-.tour { position: fixed; z-index: 60; width: min(380px, calc(100vw - 24px)); padding: 14px 16px;
+/* Above the palette's scrim, 80, so a palette that Try it opens leaves the card and its ring
+   undimmed, while the card's placement keeps it clear of the palette box. */
+.tour { position: fixed; z-index: 82; width: min(380px, calc(100vw - 24px)); padding: 14px 16px;
     border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text);
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); transition: left 0.25s ease, top 0.25s ease; }
 .tour[hidden], .tour-ring[hidden], .lesson-panel[hidden] { display: none; }
@@ -106,7 +108,7 @@ function injectStyle() {
 .tour-offer[hidden], .lesson-offer[hidden] { display: none; }
 .tour-actions, .lesson-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .tour-keys { margin: 8px 0 0; }
-.tour-ring { position: fixed; z-index: 59; pointer-events: none; border-radius: 8px;
+.tour-ring { position: fixed; z-index: 81; pointer-events: none; border-radius: 8px;
     border: 3px solid var(--accent); box-shadow: 0 0 0 4px var(--scrim);
     transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease; }
 .tour.still, .tour-ring.still, :root.reduced-motion .tour, :root.reduced-motion .tour-ring { transition: none; }

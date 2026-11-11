@@ -23,6 +23,7 @@ from threading import RLock
 from typing import Any, TypeVar
 
 from .._format import recording as _recording
+from .._text import languages as _languages
 from .._text import messages as _messages
 from .._text.messages import MessageError
 from . import home as _home
@@ -133,9 +134,21 @@ def _group_of(value: Any) -> dict[str, Any] | None:
     if not _home.valid_identifier(value['id']):
         return None
     group: dict[str, Any] = {'id': value['id']}
+    labels = {}
     for field, default in (('title', value['id']), ('competitor', ''), ('result', '')):
         found = _recording.label_of(value, field)
-        group.update(_messages.named(field, found if isinstance(found, (str, dict)) else default))
+        labels[field] = found if isinstance(found, (str, dict)) else default
+    # A person's run under a default name, of any language, shows the default of the page's own.
+    competitor = labels['competitor']
+    if isinstance(competitor, str) and competitor in _languages.default_names():
+        person = _messages.label('server.names.default_person')
+        labels['competitor'] = person
+        title = labels['title']
+        if isinstance(title, dict) and title.get('id') == 'server.names.challenge_run':
+            values = {**(title.get('values') or {}), 'competitor': person}
+            labels['title'] = _messages.label('server.names.challenge_run', **values)
+    for field, found in labels.items():
+        group.update(_messages.named(field, found))
     for field, kinds in _GROUP_FIELDS:
         found = value.get(field)
         whole = isinstance(found, bool) == (kinds == (bool,))

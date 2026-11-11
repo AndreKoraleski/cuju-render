@@ -13,7 +13,8 @@
 
 import { recordingTitle, summaryTeams } from '../core/names.js';
 import { listedScenarios, scenarioName } from '../core/scenarios.js';
-import { language, storedLanguage, t, tOr } from '../core/i18n.js';
+import { language, serverText, storedLanguage, t, tOr } from '../core/i18n.js';
+import { spoilerFree } from '../core/spoilers.js';
 import { chord } from '../core/keys.js';
 
 // The most entries the list shows at once.
@@ -103,7 +104,7 @@ export function languageChoices(languages, shown, chosen = null) {
 // The groups of the list by their English names, each the message palette.group.<key>.
 const GROUPS = {
     Pages: 'pages', Live: 'live', Recordings: 'recordings', Matches: 'matches', Play: 'play',
-    Teams: 'teams', Follow: 'follow', Settings: 'settings', View: 'view', Help: 'help',
+    Teams: 'teams', Tournaments: 'tournaments', Follow: 'follow', Settings: 'settings', View: 'view', Help: 'help',
 };
 
 // The keys of the Watch page that choose a camera, which its actions show.
@@ -169,6 +170,7 @@ export class CommandPalette {
         this.recent = [];
         this.scenarios = [];
         this.challenges = [];
+        this.cups = [];
         this.shown = [];
         this.active = 0;
         this.returnTo = null;
@@ -291,6 +293,10 @@ export class CommandPalette {
             this.recent = (Array.isArray(list) ? list : []).slice().sort((a, b) => when(b) - when(a)).slice(0, 8);
             done();
         }).catch(() => {});
+        import('../play/tournament.js').then((m) => m.tournamentsApi.list()).then((list) => {
+            this.cups = Array.isArray(list) ? list.slice(0, 8) : [];
+            done();
+        }).catch(() => {});
         import('../play/challenges.js').then((m) => m.challengeApi.list()).then((list) => {
             this.challenges = Array.isArray(list) ? list : [];
             done();
@@ -332,6 +338,18 @@ export class CommandPalette {
         for (const m of this.recent) {
             add('Recordings', t('palette.open', { title: recordingTitle(m) || m.id }), () => app.openMatchInWatch(m.id),
                 `${searchWords('palette.words.recording', 'recording match')} ${m.id} ${[...(m.teams || []), ...summaryTeams(m)].join(' ')}`, scenarioName(m.scenario));
+        }
+        // The Brackets view of each recent tournament, and Watch next of one without spoilers.
+        for (const cup of this.cups) {
+            const name = serverText(cup, 'name');
+            add('Tournaments', t('palette.brackets', { name }), () => {
+                app.showPage('tournaments');
+                app.tournaments.openBrackets(cup.id);
+            }, `${searchWords('palette.words.brackets', 'bracket tournament table groups draw big')} ${name}`);
+            if (spoilerFree(cup.id)) {
+                add('Tournaments', t('palette.watchNext', { name }), () => app.tournaments.watchNextOf(cup.id),
+                    `${searchWords('palette.words.watchNext', 'tournament spoilers next match watch')} ${name}`);
+            }
         }
         add('Matches', t('palette.request'), () => {
             app.showPage('matches');

@@ -201,6 +201,134 @@ def tour_checks(client):
     return count
 
 
+def _press(client, key, code):
+    """Presses a key in the page as Chrome's input would, with Enter's text so it clicks."""
+    for kind in ('keyDown', 'keyUp'):
+        event = {'type': kind, 'key': key, 'code': code}
+        if key == 'Enter':
+            event['windowsVirtualKeyCode'] = 13
+            if kind == 'keyDown':
+                event['text'] = '\r'
+        elif key == 'Escape':
+            event['windowsVirtualKeyCode'] = 27
+        client.call('Input.dispatchKeyEvent', event)
+
+
+TRY = """
+    const card = document.getElementById('tour');
+    const tryIt = [...card.querySelectorAll('.tour-actions button')]
+        .find((b) => b.getAttribute('aria-label') === 'Try it');
+    const apart = (a, b) => a.right <= b.left || b.right <= a.left || a.bottom <= b.top
+        || b.bottom <= a.top;
+"""
+
+
+def tour_try_checks(client):
+    """Checks Try it on the menus of Watch and the timeline, the card clear of the open menu and
+    its button, and Esc closing the menu before it leaves the tour."""
+    count = 0
+    for index, menu, button in (
+        (2, 'match-menu', 'match-menu-btn'),
+        (4, 'view-menu', 'view-menu-btn'),
+    ):
+        count += _run(
+            client,
+            TRY
+            + f"""
+            if (!cuju.source) {{
+                await cuju.samples.add(['sample-5v5']);
+                await cuju.openMatch('sample-5v5');
+                cuju.director?.stop(true);
+                cuju.act('pause');
+            }}
+            await cuju.tour.start({index});
+            await wait(() => cuju.tour.state().target);
+            tryIt.focus();
+            const all = {{ step: cuju.tour.state().step === {index}, shown: !tryIt.hidden,
+                focus: document.activeElement === tryIt, page: cuju.page === 'watch' }};
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+            """,
+            f'The tour shows step {index + 1} with Try it',
+        )
+        _press(client, 'Enter', 'Enter')
+        count += _run(
+            client,
+            TRY
+            + f"""
+            const menu = document.getElementById('{menu}');
+            const button = document.getElementById('{button}');
+            const clear = () => menu.classList.contains('open')
+                && apart(card.getBoundingClientRect(), menu.getBoundingClientRect())
+                && apart(card.getBoundingClientRect(), button.getBoundingClientRect());
+            const first = !!(await wait(clear));
+            // The card settles where it moved, and stays clear there.
+            await new Promise((resolve) => setTimeout(resolve, 600));
+            const all = {{ first, settled: clear(), focus: menu.contains(document.activeElement),
+                open: cuju.tour.state().open, side: card.dataset.side }};
+            return (first && all.settled && all.focus && all.open)
+                || JSON.stringify({{ ...all, card: card.getBoundingClientRect(),
+                    menu: menu.getBoundingClientRect(), button: button.getBoundingClientRect() }});
+            """,
+            f'Try it opens {menu} clear of the card',
+        )
+        _press(client, 'Escape', 'Escape')
+        count += _run(
+            client,
+            f"""
+            const menu = document.getElementById('{menu}');
+            const closed = await wait(() => !menu.classList.contains('open'));
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            const all = {{ closed: !!closed, tour: cuju.tour.state().open,
+                focus: document.activeElement === document.getElementById('{button}') }};
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+            """,
+            f'Esc closes {menu} and keeps the tour',
+        )
+        _press(client, 'Escape', 'Escape')
+        count += _run(
+            client,
+            """
+            const left = await wait(() => !cuju.tour.state().open);
+            return !!left || JSON.stringify(cuju.tour.state());
+            """,
+            'The next Esc leaves the tour',
+        )
+    count += _run(
+        client,
+        TRY
+        + """
+        await cuju.tour.start(3);
+        await wait(() => cuju.tour.state().target);
+        tryIt.click();
+        const timeline = document.getElementById('timeline');
+        const live = document.getElementById('tour-live').textContent;
+        const all = { id: cuju.tour.state().id === 'timeline', shown: !tryIt.hidden,
+            focus: document.activeElement === timeline,
+            live: live.startsWith('The timeline has the focus.'), open: cuju.tour.state().open };
+        cuju.tour.leave();
+        return Object.values(all).every(Boolean) || JSON.stringify({ ...all, live });
+        """,
+        'Try it focuses the timeline and says its keys',
+    )
+    count += _run(
+        client,
+        TRY
+        + """
+        // Steps without anything to try, such as Home and Play, show no Try it.
+        await cuju.tour.start(0);
+        await wait(() => cuju.tour.state().target);
+        const home = tryIt.hidden;
+        await cuju.tour.start(5);
+        await wait(() => cuju.tour.state().target);
+        const play = tryIt.hidden;
+        cuju.tour.leave();
+        return (home && play) || JSON.stringify({ home, play });
+        """,
+        'Try it hides where the step has nothing to try',
+    )
+    return count
+
+
 def lesson_checks(client):
     """Checks lessons that the page detects, their progress, the server's copy and the reset.
 
@@ -539,6 +667,7 @@ def help_checks(client, port):
     checks = parts_checks(client)
     checks += sample_checks(client)
     checks += tour_checks(client)
+    checks += tour_try_checks(client)
     checks += lesson_checks(client)
     checks += doctor_checks(client)
     checks += pwa_checks(client, port)

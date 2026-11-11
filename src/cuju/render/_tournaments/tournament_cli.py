@@ -50,7 +50,20 @@ def _config(options: argparse.Namespace) -> dict[str, Any]:
         config = {**base, **config}
     entrants: list[dict[str, Any]] = []
     for kind, value in options.entrants or []:
-        if kind == 'as':
+        if kind == 'ability':
+            # Before the first entrant it is the standard, after an entrant that entrant's own.
+            word = 'standard' if entrants else 'scenario'
+            try:
+                ability = None if value == word else float(value)
+            except ValueError as error:
+                raise ArgumentError(
+                    f'expected --ability with an ability from 0 to 1 or {word}, found {value!r}'
+                ) from error
+            if entrants:
+                entrants[-1]['ability'] = ability
+            else:
+                config['ability'] = ability
+        elif kind == 'as':
             # A team entered again takes a free name, such as Rex 2, unless --as gives one.
             if not entrants:
                 raise ArgumentError(
@@ -108,9 +121,24 @@ def _stage_title(stage: dict[str, Any]) -> str:
     return f'{stage["name"]}, {title[0].lower()}{title[1:]}'
 
 
+def _names(config: dict[str, Any]) -> list[str]:
+    """Returns the name of each entrant, with its ability where it differs from the standard."""
+    names = []
+    for entrant in config['entrants']:
+        shown = rules.shown_ability(entrant, config.get('ability'))
+        names.append(entrant['name'] if shown is None else f'{entrant["name"]} at {shown:.2f}')
+    return names
+
+
+def _ability_line(config: dict[str, Any]) -> str:
+    """Returns the line that names the standard ability of a tournament."""
+    standard = config.get('ability')
+    return 'standard ability ' + ("the scenario's" if standard is None else f'{standard:.2f}')
+
+
 def describe(entry: dict[str, Any]) -> list[str]:
     """Returns the lines that `show` prints, the stages with their tables, results and ranking."""
-    names = [entrant['name'] for entrant in entry['config']['entrants']]
+    names = _names(entry['config'])
     awarded = {
         match['key'] for match in entry['matches'] if (match.get('result') or {}).get('forfeit')
     }
@@ -122,7 +150,8 @@ def describe(entry: dict[str, Any]) -> list[str]:
 
     lines = [
         f'{entry["name"]}  {entry["id"]}  {entry["state"]}  seed {entry["seed"]}',
-        f'{entry["played"]} of {entry["scheduled"]} scheduled matches played',
+        f'{entry["played"]} of {entry["scheduled"]} scheduled matches played, '
+        f'{_ability_line(entry["config"])}',
     ]
     if entry.get('error'):
         lines.append(entry['error'])
@@ -189,7 +218,7 @@ def describe(entry: dict[str, Any]) -> list[str]:
 def preview_lines(preview: dict[str, Any]) -> list[str]:
     """Returns the lines that `check` prints, each stage with its entrants and first draw."""
     config = preview['config']
-    names = [entrant['name'] for entrant in config['entrants']]
+    names = _names(config)
 
     def name(side: Any) -> str:
         if isinstance(side, dict):
@@ -198,7 +227,8 @@ def preview_lines(preview: dict[str, Any]) -> list[str]:
 
     lines = [
         f'{config["name"]}, seed {config["seed"]}, {counted(len(names), "entrant")}, '
-        f'{counted(preview["matches"], "match", "matches")} known before any result'
+        f'{counted(preview["matches"], "match", "matches")} known before any result, '
+        f'{_ability_line(config)}'
     ]
     last = len(config['stages']) - 1
     pairs = zip(config['stages'], preview['stages'], strict=True)
@@ -210,6 +240,8 @@ def preview_lines(preview: dict[str, Any]) -> list[str]:
         parts.append(settings['scenario'])
         if settings['length']:
             parts.append(f'{counted(settings["length"], "step")} a match')
+        if settings.get('ability') is not None:
+            parts.append(f'ability {settings["ability"]:.2f}')
         lines.append(f'{index + 1}. {_stage_title(settings)}, {", ".join(parts)}')
         if settings['format'] == 'groups':
             for table in stage['tables']:

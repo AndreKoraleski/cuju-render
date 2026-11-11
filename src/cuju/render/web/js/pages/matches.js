@@ -11,21 +11,14 @@ import { Dropdown, el as h, enhanceSelect, menuItem } from '../core/menu.js';
 import { icon, stateBadge, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
+import { RANDOM, againOf, drawnParts, hiddenPart, poolTeams, requestOf, scenarioChoices, wasDrawn } from './draw.js';
+
+export { fits } from './draw.js';
 
 const DEFAULT_SCENARIO = '11_vs_11_kaggle';
 const FORMAT_NAMES = { '5v5': t('matches.format.5v5'), '11v11': t('matches.format.11v11') };
 // The list of requested matches shows this many more rows each time Show more is pressed.
 export const REQUEST_PAGE = 50;
-
-// Scenarios a team may play, by its format. The built-in AI plays any.
-export function fits(team, scenario) {
-    if (!team || team.kind === 'builtin' || !team.format) {
-        return true;
-    }
-    if (scenario.startsWith('academy_')) return true;
-    const name = scenario.replace(/^benchmark_full_game_/, '');
-    return team.format === '5v5' ? name.startsWith('5_vs_5') : name.startsWith('11_vs_11');
-}
 
 // A small shirt in a team's kit, its pattern drawn with the same classes as the editor's.
 export function kitShirt(team, side = 0, size = 'small') {
@@ -94,7 +87,12 @@ export class MatchesPage {
         this.requests = [];
         this.seen = new Set();
         this.primed = false;
-        this.state = { left: null, right: 'builtin', scenario: null, seed: '', ability: [null, null] };
+        // A side or the scenario may be Random, which the server draws from the seed, a side from
+        // the teams of the pool, every team but those unticked.
+        this.state = {
+            left: null, right: 'builtin', scenario: null, seed: '', ability: [null, null],
+            unticked: new Set(), sameTeam: false,
+        };
         this.filters = { status: 'all', team: 'all', scenario: 'all', date: 'any', sort: 'newest' };
         this.limit = REQUEST_PAGE;
         this.error = null;
@@ -135,6 +133,9 @@ export class MatchesPage {
     }
 
     teamName(id) {
+        if (id === RANDOM) {
+            return t('matches.team.random');
+        }
         const x = this.team(id);
         return x ? teamName(x) : id;
     }
@@ -149,10 +150,10 @@ export class MatchesPage {
             return;
         }
         const s = this.state;
-        if (!this.team(s.left)) {
+        if (s.left !== RANDOM && !this.team(s.left)) {
             s.left = (this.teams.find((x) => x.kind !== 'builtin') || this.teams[0] || {}).id || null;
         }
-        if (!this.team(s.right)) {
+        if (s.right !== RANDOM && !this.team(s.right)) {
             s.right = (this.teams.find((x) => x.kind === 'builtin') || this.teams[0] || {}).id || null;
         }
         if (!this.built) {
@@ -177,6 +178,7 @@ export class MatchesPage {
             this.state.seed = this.seedInput.value;
         });
         this.clash = h('div', { class: 'clash', role: 'alert', hidden: true });
+        this.pool = this.buildPool();
         this.playButton = h('button', { type: 'button', class: 'btn primary play-btn', onclick: () => this.play() },
             icon('play'), t('matches.setup.play'));
         this.queueHost = h('div', { class: 'queue-list' });
@@ -186,6 +188,7 @@ export class MatchesPage {
                 h('h2', { id: 'setup-title' }, t('matches.setup.title')),
                 h('p', { class: 'muted' }, tn('matches.setup.text'))),
             h('div', { class: 'versus' }, this.sides[0].root, h('div', { class: 'vs', 'aria-hidden': 'true' }, t('matches.versus')), this.sides[1].root),
+            this.pool.root,
             h('div', { class: 'setup-row' },
                 h('label', { class: 'field' }, t('matches.setup.scenario'), this.scenarioSelect),
                 h('label', { class: 'field seed-field' }, t('matches.setup.seed'),
@@ -203,7 +206,50 @@ export class MatchesPage {
 
     // The short text of the chosen scenario under the list.
     describeScenario() {
-        this.scenarioText.textContent = scenarioText(this.state.scenario || '');
+        const sc = this.state.scenario || '';
+        this.scenarioText.textContent = sc === RANDOM ? t('matches.setup.scenario.random.text') : scenarioText(sc);
+    }
+
+    // The pool of the draw, a box to tick for each team that a random side may draw, and whether a
+    // team may meet itself. It shows while a side is Random.
+    buildPool() {
+        const list = h('div', { class: 'draw-pool-list' });
+        const same = h('input', { type: 'checkbox' });
+        same.addEventListener('change', () => {
+            this.state.sameTeam = same.checked;
+        });
+        const root = h('fieldset', { class: 'draw-pool', hidden: true },
+            h('legend', {}, t('matches.draw.title')),
+            h('p', { class: 'muted small' }, tn('matches.draw.text')),
+            list,
+            h('label', { class: 'check' }, same, t('matches.draw.sameTeam')));
+        return { root, list, same, key: '' };
+    }
+
+    // Fills the boxes of the pool when the registry changes, and ticks them as the state says, so
+    // a box keeps its focus while the person ticks it.
+    fillPool() {
+        const pool = this.pool;
+        const key = this.teams.map((x) => `${x.id}|${teamName(x)}`).join('\n');
+        if (key !== pool.key) {
+            pool.key = key;
+            pool.list.replaceChildren(...this.teams.map((x, i) => {
+                const box = h('input', { type: 'checkbox', value: x.id });
+                box.addEventListener('change', () => {
+                    if (box.checked) {
+                        this.state.unticked.delete(x.id);
+                    } else {
+                        this.state.unticked.add(x.id);
+                    }
+                    this.updateSetup();
+                });
+                return h('label', { class: 'check draw-pool-team' }, box, kitShirt(x, i % 2), h('span', {}, teamName(x)));
+            }));
+        }
+        for (const box of pool.list.querySelectorAll('input')) {
+            box.checked = !this.state.unticked.has(box.value);
+        }
+        pool.same.checked = this.state.sameTeam;
     }
 
     // One side of the match, a large card of the chosen team that opens a list of every team.
@@ -214,7 +260,16 @@ export class MatchesPage {
         document.getElementById('app').appendChild(panel);
         const fill = () => {
             const current = side ? this.state.right : this.state.left;
-            panel.replaceChildren(...this.teams.map((x, i) => menuItem(teamName(x), {
+            const random = menuItem(t('matches.team.random'), {
+                checked: current === RANDOM,
+                hint: t('matches.team.random.hint'),
+                icon: icon('dice'),
+                onSelect: () => {
+                    this.state[side ? 'right' : 'left'] = RANDOM;
+                    this.updateSetup();
+                },
+            });
+            panel.replaceChildren(random, ...this.teams.map((x, i) => menuItem(teamName(x), {
                 checked: x.id === current,
                 hint: x.kind === 'builtin' ? t('matches.team.builtin.hint')
                     : FORMAT_NAMES[x.format] ? t('matches.team.submission.hint', { format: FORMAT_NAMES[x.format] }) : t('matches.team.submission'),
@@ -255,9 +310,19 @@ export class MatchesPage {
             return;
         }
         const s = this.state;
+        const pooled = poolTeams(this.teams, s.unticked);
         [s.left, s.right].forEach((id, side) => {
             const x = this.team(id);
             const card = this.sides[side].button;
+            if (id === RANDOM) {
+                card.replaceChildren(
+                    h('span', { class: 'kit-shirt large team-card-random', 'aria-hidden': 'true' }, icon('dice')),
+                    h('span', { class: 'team-card-text' },
+                        h('span', { class: 'team-card-name' }, t('matches.team.random')),
+                        h('span', { class: 'team-card-meta' }, t('matches.team.random.meta', { count: pooled.length }))),
+                    h('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
+                return;
+            }
             if (!x) {
                 card.replaceChildren(h('span', { class: 'team-card-empty' }, t('matches.team.none')));
                 return;
@@ -269,27 +334,30 @@ export class MatchesPage {
                     h('span', { class: 'team-card-meta' }, x.kind === 'builtin' ? t('matches.team.builtin.meta') : t('matches.team.submission.meta', { format: FORMAT_NAMES[x.format] || x.format, control: controlLabel(x.control, x.format) }))),
                 h('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
         });
-        const l = this.team(s.left);
-        const r = this.team(s.right);
+        const random = [s.left, s.right].includes(RANDOM);
+        const l = s.left === RANDOM ? null : this.team(s.left);
+        const r = s.right === RANDOM ? null : this.team(s.right);
+        const chosen = (l || s.left === RANDOM) && (r || s.right === RANDOM);
         const clash = l && r && l.kind !== 'builtin' && r.kind !== 'builtin' && l.format && r.format && l.format !== r.format;
-        let ok = this.scenarios.filter((sc) => fits(l, sc) && fits(r, sc));
+        const { listed, keep } = scenarioChoices(this.scenarios, this.teams, s.unticked, s.left, s.right, s.scenario, DEFAULT_SCENARIO);
         if (clash) {
-            ok = ok.filter((sc) => sc.startsWith('academy_'));
             this.clash.replaceChildren(...tn('matches.setup.clash'));
-        } else if (!l || !r) {
+        } else if (!chosen) {
             this.clash.replaceChildren(t('matches.setup.noTeams'));
         }
-        this.clash.hidden = !clash && !!(l && r);
-        const keep = ok.includes(s.scenario) ? s.scenario
-            : ok.includes(DEFAULT_SCENARIO) ? DEFAULT_SCENARIO
-                : ok.includes('5_vs_5') ? '5_vs_5' : ok[0];
-        this.scenarioSelect.replaceChildren(...(ok.length ? ok : [t('matches.setup.noScenario')]).map((sc) =>
-            h('option', { value: ok.length ? sc : '' }, ok.length ? scenarioName(sc) : sc)));
+        this.clash.hidden = !clash && !!chosen;
+        this.pool.root.hidden = !random;
+        if (random) {
+            this.fillPool();
+        }
+        const name = (sc) => (sc === RANDOM ? t('matches.setup.scenario.random') : scenarioName(sc));
+        this.scenarioSelect.replaceChildren(...(listed.length ? listed : [t('matches.setup.noScenario')]).map((sc) =>
+            h('option', { value: listed.length ? sc : '' }, listed.length ? name(sc) : sc)));
         this.scenarioSelect.value = keep || '';
-        this.scenarioSelect.disabled = !ok.length;
+        this.scenarioSelect.disabled = !listed.length;
         s.scenario = keep || null;
         this.describeScenario();
-        this.playButton.disabled = !ok.length || !l || !r;
+        this.playButton.disabled = !listed.length || !chosen;
     }
 
     drawSeed() {
@@ -307,7 +375,7 @@ export class MatchesPage {
         }
         this.playButton.disabled = true;
         try {
-            await api.requestMatch({ left: s.left, right: s.right, scenario: s.scenario, seed: text === '' ? null : text, ability: s.ability.slice() });
+            await api.requestMatch(requestOf(s, this.teams, text === '' ? null : text));
             this.app.hud.toast(t('matches.toast.queued', { left: this.teamName(s.left), right: this.teamName(s.right) }));
             this.playButton.classList.remove('kicked');
             void this.playButton.offsetWidth;
@@ -467,10 +535,22 @@ export class MatchesPage {
     requestCard(r) {
         const st = stateOf(r);
         const when = requestTime(r);
+        const parts = drawnParts(r);
+        // A part drawn at random shows as Random while the match waits, and as what was drawn,
+        // with a mark, once it starts.
+        const drawnMark = () => h('span', { class: 'req-drawn', title: t('matches.request.drawn') },
+            icon('dice'), h('span', { class: 'sr-only' }, t('matches.request.drawn')));
         const side = (id, i) => {
+            const part = i ? 'right' : 'left';
+            if (hiddenPart(r, part)) {
+                return h('span', { class: 'req-team req-random' }, icon('dice'), h('span', { class: 'req-team-name' }, t('matches.team.random')));
+            }
             const x = this.team(id);
-            return h('span', { class: 'req-team' }, x ? kitShirt(x, i) : null, h('span', { class: 'req-team-name' }, this.teamName(id)));
+            return h('span', { class: 'req-team' }, x ? kitShirt(x, i) : null, h('span', { class: 'req-team-name' }, this.teamName(id)),
+                parts[part] ? drawnMark() : null);
         };
+        const scenario = hiddenPart(r, 'scenario') ? h('span', {}, t('matches.setup.scenario.random'))
+            : h('span', {}, scenarioName(r.scenario), parts.scenario ? drawnMark() : null);
         const actions = [];
         if (st === 'queued' || st === 'running') {
             actions.push(h('button', { type: 'button', class: 'btn small ghost danger', ...symbolOnly(t('matches.request.cancel')), onclick: () => this.cancel(r) }, icon('close')));
@@ -481,16 +561,18 @@ export class MatchesPage {
         }
         if (st !== 'queued' && st !== 'running') {
             // Retry and Repeat queue a new request with the same seed, teams, scenario and ability.
+            // A match drawn at random repeats with a new seed, which draws again.
             const again = st === 'done' ? 'repeat' : 'retry';
-            actions.push(h('button', { type: 'button', class: 'btn small', ...symbolOnly(t(`matches.request.${again}`), t(`matches.request.${again}.title`, { seed: r.seed })),
-                onclick: (event) => this.again(r, event.currentTarget) }, icon(again === 'repeat' ? 'replay' : 'refresh')));
+            const title = wasDrawn(r) ? `matches.request.${again}.draw.title` : `matches.request.${again}.title`;
+            actions.push(h('button', { type: 'button', class: 'btn small', ...symbolOnly(t(`matches.request.${again}`), t(title, { seed: r.seed })),
+                onclick: (event) => this.again(r, event.currentTarget, again === 'repeat') }, icon(again === 'repeat' ? 'replay' : 'refresh')));
         }
         const li = h('li', { class: `req-card state-${st}`, 'data-id': r.id },
             h('div', { class: 'req-main' },
                 h('div', { class: 'req-teams' }, side(r.left, 0), h('span', { class: 'req-vs' }, t('matches.versus')), side(r.right, 1)),
                 h('div', { class: 'req-meta' },
                     stateBadge(st, STATE_LABELS[st] || st),
-                    h('span', {}, scenarioName(r.scenario)),
+                    scenario,
                     r.seed != null ? h('span', {}, t('matches.request.seed', { seed: r.seed })) : null,
                     Array.isArray(r.ability) && r.ability.some((v) => v !== null)
                         ? h('span', {}, t('matches.request.ability', Object.fromEntries(['left', 'right'].map((key, i) => [key, r.ability[i] === null ? t('matches.request.ability.scenario') : abilityText(r.ability[i])]))))
@@ -511,11 +593,13 @@ export class MatchesPage {
         return li;
     }
 
-    async again(r, button) {
+    async again(r, button, repeat = false) {
         button.disabled = true;
         try {
-            await api.requestMatch({ left: r.left, right: r.right, scenario: r.scenario, seed: r.seed, ability: r.ability });
-            this.app.hud.toast(t('matches.toast.queuedSeed', { left: this.teamName(r.left), right: this.teamName(r.right), seed: r.seed }));
+            const spec = againOf(r, repeat);
+            await api.requestMatch(spec);
+            const names = { left: this.teamName(spec.left), right: this.teamName(spec.right) };
+            this.app.hud.toast(spec.seed == null ? t('matches.toast.queued', names) : t('matches.toast.queuedSeed', { ...names, seed: r.seed }));
             this.requests = await api.requests();
             this.renderQueue();
         } catch (err) {

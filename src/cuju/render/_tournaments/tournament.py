@@ -110,6 +110,7 @@ TOURNAMENT_KEYS = (
     'seeding',
     'concurrency',
     'forfeit_score',
+    'ability',
     'defaults',
     'stages',
     'preset',
@@ -195,12 +196,15 @@ def named_from(field: str, holder: dict[str, Any], source: str = 'name') -> dict
 
 # Presets of formats that ship with the renderer. A preset holds everything but the entrants,
 # the seed and the name, and each one adapts to the number of entrants where its format allows.
+# Each draws its first stage at random from the tournament seed, so a new tournament's groups and
+# bracket come out of a fair draw that the same seed repeats. Seeding by hand or by rating stays a
+# choice of the person, and a file of before keeps the seeding it was drawn with.
 PRESETS: dict[str, dict[str, Any]] = {
     'world_cup': {
         'title': 'World Cup',
         'description': 'Groups of four play once each, the best two of each group go on to a '
         'knockout of single matches with a third place match.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'defaults': {'settle': ['decider', 'lots']},
         'stages': [
             {'format': 'groups', 'name': 'Group stage', 'group_size': 4, 'qualifiers': 2},
@@ -211,7 +215,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         'title': 'European Championship',
         'description': 'Groups of four, the best two of each group and enough of the best '
         'third places to fill a knockout bracket.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'defaults': {'settle': ['decider', 'lots']},
         'stages': [
             {
@@ -229,7 +233,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         'title': 'Champions League',
         'description': 'Groups of four play home and away, the best two go on to two legged '
         'ties settled by away goals, with a single match final.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'defaults': {'settle': ['away_goals', 'decider', 'lots']},
         'stages': [
             {
@@ -246,7 +250,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         'title': 'League phase and playoffs',
         'description': 'A Swiss league phase ranks everyone, and the best eight play a '
         'knockout of two legged ties.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'defaults': {'settle': ['away_goals', 'decider', 'lots']},
         'stages': [
             {'format': 'swiss', 'name': 'League phase', 'advance': 8},
@@ -277,7 +281,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         'title': 'Swiss of 16',
         'description': 'Five rounds of the Swiss system, each pairing entrants with the same '
         'score who have not met, ranked by points and Buchholz.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'defaults': {
             'tiebreakers': ['buchholz', 'goal_difference', 'goals_for', 'head_to_head', 'lots']
         },
@@ -287,7 +291,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         'title': 'Double elimination',
         'description': 'A winners and a losers bracket, so an entrant leaves after a second '
         'defeat, with a deciding match when the losers bracket wins the grand final.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'stages': [{'format': 'double_elimination', 'name': 'Double elimination'}],
     },
     'league_and_playoffs': {
@@ -303,7 +307,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         'title': 'Cup with a play-in',
         'description': 'A knockout whose lowest seeds first play a play-in round down to a full '
         'bracket, with a third place match.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'stages': [
             {'format': 'knockout', 'name': 'Cup', 'bracket': 'play_in', 'third_place': True}
         ],
@@ -319,14 +323,14 @@ PRESETS: dict[str, dict[str, Any]] = {
         'title': 'King of the hill',
         'description': 'The top seed starts as king, and every challenger in turn tries to '
         'take the crown, which stays with the king on a draw.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'stages': [{'format': 'king_of_the_hill', 'name': 'King of the hill'}],
     },
     'gauntlet': {
         'title': 'Gauntlet',
         'description': 'The lowest seeds meet first, and the winner climbs to meet each higher '
         'seed in turn, up to the top seed.',
-        'seeding': 'rating',
+        'seeding': 'random',
         'defaults': {'draws': 'settle'},
         'stages': [{'format': 'gauntlet', 'name': 'Gauntlet'}],
     },
@@ -498,6 +502,52 @@ def free_name(base: str, taken: set[str] | list[str], longest: int | None = 40) 
     return name
 
 
+def check_ability(value: Any, message: str, /, **values: Any) -> float | None:
+    """Returns an ability from 0 to 1 to four decimals, or `None` when it is unset.
+
+    Args:
+        value: The ability, a number or `None`.
+        message: The id of the message that refuses any other value, which names it `ability`.
+        values: The other values of that message, such as the number of the entrant.
+    """
+    if value is None:
+        return None
+    if not _number(value) or not 0 <= value <= 1:
+        raise TournamentMessageError(message, ability=repr(value), **values)
+    return round(float(value), 4)
+
+
+def match_ability(
+    entrant: dict[str, Any], stage: dict[str, Any], standard: float | None
+) -> float | None:
+    """Returns the ability that the built-in AI plays with on an entrant's side in a stage.
+
+    The entrant's own ability comes first, then the stage's, then the tournament's standard, and
+    `None` leaves the scenario's own. It steers every player of the side that the built-in AI
+    controls, the whole side of a built-in AI entrant and the teammates of a team or a person.
+    The page's `matchAbility` in `web/js/play/tournament-layout.js` gives the same.
+    """
+    for value in (entrant.get('ability'), stage.get('ability'), standard):
+        if value is not None:
+            return value
+    return None
+
+
+def shown_ability(entrant: dict[str, Any], standard: float | None) -> float | None:
+    """Returns the ability to show beside an entrant's name, or `None` when there is none.
+
+    An entrant shows its own ability where it differs from the tournament's standard, except a
+    built-in AI whose name the rules made, which already holds it, as in Built-in AI 0.80. The
+    page's `shownAbility` gives the same.
+    """
+    own = entrant.get('ability')
+    if own is None or own == standard:
+        return None
+    if entrant.get('kind') == 'builtin' and entrant.get('name_id') is not None:
+        return None
+    return own
+
+
 def _given_name(entrant: dict[str, Any]) -> str | None:
     """Returns the name that a person gave an entrant, trimmed, or `None` when it has none."""
     if entrant.get('name') in (None, ''):
@@ -600,6 +650,8 @@ def check_entrants(
             )
         kind = _choice(raw.get('kind', 'team'), KINDS, _field('entrant_kind', number=index + 1))
         entrant: dict[str, Any] = {'kind': kind}
+        # Every kind may carry an ability, which the built-in AI players of its side play with.
+        ability = check_ability(raw.get('ability'), 'server.tournament.ability', entrant=index + 1)
         if kind == 'team':
             team = registry.get(raw.get('team'))
             if team is None or team.get('kind') == 'builtin':
@@ -609,11 +661,7 @@ def check_entrants(
             entrant.update(team=team['id'], format=team.get('format'), key=team['id'])
         elif kind == 'builtin':
             team = builtin
-            ability = raw.get('ability')
-            if ability is not None and (not _number(ability) or not 0 <= ability <= 1):
-                raise TournamentMessageError('server.tournament.ability', ability=repr(ability))
-            ability = None if ability is None else round(float(ability), 4)
-            entrant.update(team='builtin', format=None, ability=ability)
+            entrant.update(team='builtin', format=None)
             entrant['key'] = f'builtin:{"scenario" if ability is None else f"{ability:.2f}"}'
         else:
             mates = raw.get('teammates', 'builtin')
@@ -621,7 +669,7 @@ def check_entrants(
             if mates != 'builtin' and (team is None or team.get('kind') == 'builtin'):
                 raise TournamentMessageError('server.tournament.teammates', mates=repr(mates))
             entrant.update(team=mates, format=None if mates == 'builtin' else team.get('format'))
-        base = _entrant_name({**raw, 'kind': kind}, team)
+        base = _entrant_name({**raw, 'kind': kind, 'ability': ability}, team)
         if kind == 'person':
             entrant['key'] = f'person:{base}'
         # The name comes once every entrant is known, since a made name avoids every given one.
@@ -639,7 +687,7 @@ def check_entrants(
         entrant['secondary'] = list(
             kit.get('secondary') or (team or {}).get('secondary') or [255, 255, 255]
         )
-        entrant.setdefault('ability', None)
+        entrant['ability'] = ability
         result.append(entrant)
     _name_entrants(result, bases)
     return result
@@ -935,6 +983,8 @@ def check(
     )
     forfeit = _field('forfeit_score')
     result['forfeit_score'] = _count(config.get('forfeit_score', 3), forfeit, 1, 10)
+    # The standard ability of every entrant and stage that sets none, `None` for the scenario's.
+    result['ability'] = check_ability(config.get('ability'), 'server.tournament.standard_ability')
     result['preset'] = config.get('preset') if isinstance(config.get('preset'), str) else None
     defaults = config.get('defaults', {})
     if not isinstance(defaults, dict):
@@ -998,10 +1048,8 @@ class _Run:
         self.entrants = config['entrants']
 
     def ability(self, entrant: int, stage: dict[str, Any]) -> float | None:
-        own = self.entrants[entrant]
-        if own['kind'] == 'builtin' and own['ability'] is not None:
-            return own['ability']
-        return stage['ability']
+        # A file of before holds no standard, which leaves the scenario's as it did.
+        return match_ability(self.entrants[entrant], stage, self.config.get('ability'))
 
     def match(
         self,
@@ -2087,6 +2135,72 @@ def evaluate(config: dict[str, Any], results: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def without_spoilers(
+    entry: dict[str, Any], results: dict[str, Any], watched: Any
+) -> dict[str, Any]:
+    """Returns a tournament as a person sees it who has watched only some of its matches.
+
+    The tournament is evaluated again from the results of the watched matches alone, so its
+    brackets, tables, ranking and champion tell nothing that an unwatched match decided, and a
+    side that such a match decides reads as where it comes from. A played match that waits to be
+    watched keeps its recording in `unseen` and loses its result, and `spoilers` lists the keys of
+    those that can be watched now in the order of the schedule, as Watch next takes them, beside
+    the keys of every played match and the counts of the hidden and the watched ones.
+
+    Args:
+        entry: The tournament in full, as the runner's `get` or the mock server gives it.
+        results: The result of every played match by key.
+        watched: The keys of the matches that the person has watched or revealed.
+
+    Raises:
+        TournamentError: If `watched` is no list of up to 10000 keys.
+    """
+    if (
+        not isinstance(watched, list)
+        or len(watched) > 10000
+        or not all(isinstance(key, str) for key in watched)
+    ):
+        raise TournamentMessageError('server.tournament.watched')
+    seen = set(watched)
+    config = entry['config']
+    view = evaluate(config, {key: value for key, value in results.items() if key in seen})
+    full = {match['key']: match for match in entry['matches']}
+    matches, unseen = [], []
+    for match in view['matches']:
+        shown = dict(full.get(match['key'], {**match, 'state': 'ready'}))
+        result = results.get(match['key'])
+        if result is not None and match['key'] not in seen:
+            shown.update(
+                result=None,
+                state='unseen',
+                unseen={'match': result.get('match'), 'forfeit': bool(result.get('forfeit'))},
+            )
+            unseen.append(match['key'])
+        matches.append(shown)
+    champion = view['champion']
+    return {
+        **entry,
+        # The label of a champion still to watch goes with its text.
+        'champion_id': None,
+        'champion_values': None,
+        **_messages.named(
+            'champion', None if champion is None else label_of(config['entrants'][champion])
+        ),
+        'champion_color': None if champion is None else config['entrants'][champion]['color'],
+        'stages_view': view['stages'],
+        'matches': matches,
+        'ranking': view['ranking'],
+        'champion_index': champion,
+        # The keys of the played matches tell no outcome, and let Reveal all reveal them.
+        'spoilers': {
+            'unseen': unseen,
+            'played': sorted(results),
+            'hidden': sum(1 for key in results if key not in seen),
+            'watched': sum(1 for key in results if key in seen),
+        },
+    }
+
+
 def ready(view: dict[str, Any]) -> list[dict[str, Any]]:
     """Returns the matches of an evaluation that can play now, in the order of the schedule."""
     return [match for match in view['matches'] if match['result'] is None]
@@ -2180,7 +2294,7 @@ def preset_config(name: str, presets: dict[str, dict[str, Any]] | None = None) -
     preset = table[name]
     config = {
         key: copy.deepcopy(preset[key])
-        for key in ('seeding', 'concurrency', 'forfeit_score', 'defaults', 'stages')
+        for key in ('seeding', 'concurrency', 'forfeit_score', 'ability', 'defaults', 'stages')
         if key in preset
     }
     config['preset'] = name
@@ -2197,6 +2311,7 @@ def check_preset(preset: Any) -> dict[str, Any]:
         'seeding',
         'concurrency',
         'forfeit_score',
+        'ability',
         'defaults',
         'stages',
     }
@@ -2214,7 +2329,8 @@ def check_preset(preset: Any) -> dict[str, Any]:
     defaults = preset.get('defaults', {})
     for index, stage in enumerate(stages):
         _merge(stage, defaults if isinstance(defaults, dict) else {}, index)
-    for key in ('seeding', 'concurrency', 'forfeit_score', 'defaults', 'stages'):
+    check_ability(preset.get('ability'), 'server.tournament.standard_ability')
+    for key in ('seeding', 'concurrency', 'forfeit_score', 'ability', 'defaults', 'stages'):
         if key in preset:
             result[key] = copy.deepcopy(preset[key])
     return result

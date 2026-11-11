@@ -40,6 +40,7 @@ from .._moments import search as _search
 from .._packages import presentation as _presentation
 from .._playing import achievements as _achievements
 from .._playing import challenges as _challenges
+from .._playing import draw as _draw
 from .._registry import clips as _clips
 from .._registry import teams as _teams
 from .._store import home as _home
@@ -112,8 +113,10 @@ _REQUEST_FIELDS: dict[str, Any] = {
     'finished': lambda value: value is None or _number(value),
 }
 # The fields that a request of an earlier version lacks, the id and values of the message of its
-# error, which the page shows in its own language, `None` for an error without an id.
+# error, which the page shows in its own language, `None` for an error without an id, and the draw
+# of a request with a side or a scenario drawn at random, `None` for one without.
 _OPTIONAL_REQUEST_FIELDS: dict[str, Any] = {
+    'draw': _draw.valid,
     'error_id': lambda value: value is None or value in _messages.MESSAGES,
     'error_values': lambda value: (
         value is None
@@ -241,24 +244,34 @@ class _Requests:
         scenario: str,
         seed: int | None,
         ability: Any = (None, None),
+        pool: Any = None,
+        same_team: Any = False,
     ) -> dict[str, Any]:
         """Queues a match and returns its entry, with its seed drawn when none is given.
 
+        A side or the scenario may be `random`, and the seed then draws it, from the teams of
+        `pool` or of the whole registry, as `_draw.resolve` describes. The entry names the teams
+        and the scenario drawn, and its `draw` keeps what was random, so a retry draws again.
+
         Raises:
-            ArgumentError: If the scenario, a team, the seed or an ability is invalid.
+            ArgumentError: If the scenario, a team, the seed, an ability or the draw is invalid.
             OSError: If the request cannot be written to the history, and then it is not queued.
         """
-        if scenario not in _scenarios():
+        if scenario not in _scenarios() and scenario != _draw.RANDOM:
             raise MessageError('server.scenario', scenario=repr(scenario))
-        _teams.check_scenario([_teams.entry(left), _teams.entry(right)], scenario)
         ability = list(_teams.check_ability(ability))
         seed = _seed(seed)
+        seed = secrets.randbelow(2**31) if seed is None else seed
+        drawn = _draw.draw_request(left, right, scenario, seed, pool, same_team)
+        if drawn is not None:
+            left, right, scenario = drawn['left'], drawn['right'], drawn['scenario']
+        _teams.check_scenario([_teams.entry(left), _teams.entry(right)], scenario)
         entry = {
             'id': '',
             'left': left,
             'right': right,
             'scenario': scenario,
-            'seed': secrets.randbelow(2**31) if seed is None else seed,
+            'seed': seed,
             'ability': ability,
             'state': 'queued',
             'progress': 0.0,
@@ -269,6 +282,7 @@ class _Requests:
             'finished': None,
             'error_id': None,
             'error_values': None,
+            'draw': None if drawn is None else drawn['draw'],
         }
         with self._lock:
             entry['id'] = self._new_identifier()
@@ -345,6 +359,8 @@ class _Requests:
         for side, value in zip(('left', 'right'), entry['ability'], strict=True):
             if value is not None:
                 command += [f'--{side}-ability', repr(value)]
+        if entry.get('draw') is not None:
+            command += ['--draw', json.dumps(entry['draw'])]
         with self._lock:
             if entry['state'] != 'queued':
                 return
@@ -1252,6 +1268,8 @@ def make_handler(
                     self._json(games.current())
                 elif parts[:2] == ['api', 'tournaments']:
                     self._tournament_get(parts[2:])
+                elif parts[:3] == ['api', 'challenges', 'benches'] and parts[4:] == ['table.csv']:
+                    self._bench_csv(parts[3])
                 elif parts[:2] == ['api', 'challenges']:
                     self._json(*_challenges.get(parts[2:], self._route()[1]))
                 elif parts == ['api', 'achievements']:
@@ -1313,6 +1331,8 @@ def make_handler(
                         str(document.get('scenario', '11_vs_11_kaggle')),
                         _seed(document.get('seed')),
                         document.get('ability', [None, None]),
+                        document.get('pool'),
+                        document.get('same_team', False),
                     )
                     self._json(entry, 201)
                 elif parts == ['api', 'game']:
@@ -1498,6 +1518,13 @@ def make_handler(
                 self._json(_tournament_runner.preview(document.get('config', document)))
             elif len(rest) == 2 and rest[0] == 'presets':
                 self._json(_tournament_runner.save_preset(rest[1], document.get('preset')), 201)
+            elif len(rest) == 2 and rest[1] == 'spoilers':
+                # The tournament as a person sees it who has watched only some of its matches.
+                entry = cups().without_spoilers(rest[0], document.get('watched'))
+                if entry is None:
+                    self._refuse(404, 'server.tournament.unknown')
+                else:
+                    self._json(entry)
             elif len(rest) == 2 and rest[1] in ('cancel', 'resume', 'play', 'forfeit'):
                 identifier, action = rest
                 try:
@@ -1681,6 +1708,23 @@ def make_handler(
             with path.open('rb') as stream:
                 while chunk := stream.read(1 << 20):
                     self.wfile.write(chunk)
+
+        def _bench_csv(self, identifier: str) -> None:
+            """Sends the table of a benchmark as CSV."""
+            from .._playing import bench as _bench
+
+            text = _bench.csv_of(identifier)
+            if text is None:
+                self._refuse(404, 'server.bench.no_bench')
+                return
+            body = text.encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/csv; charset=utf-8')
+            self.send_header('Content-Disposition', f'attachment; filename="{identifier}.csv"')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
 
         def _moments(self, identifier: str, vtt: bool) -> None:
             """Sends the moments of a recording of the library, or its captions as WebVTT."""

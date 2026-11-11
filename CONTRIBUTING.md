@@ -29,14 +29,15 @@ alone. A module imports a sibling under its old name, as in
 
 The layers run from `_text`, `_format` and `_store` at the bottom to `_http` and the root at the
 top. A module imports lower layers at the top of the file and higher ones only inside a function.
-`_moments/events.py`, `_moments/captions.py` and `_http/headers.py` keep no relative imports at
-the top, and `_tournaments/tournament.py` and `_text/messages.py` import only each other and
+`_moments/events.py`, `_moments/captions.py`, `_playing/draw.py` and `_http/headers.py` keep no
+relative imports at the top, and `_tournaments/tournament.py` and `_text/messages.py` import only each other and
 `cuju.errors`, since the mock servers load them from their files alone. `_http/headers.py` holds
 the security headers of every response, so the page checks meet the server's rules of framing,
 and a test holds the mock's headers equal to the server's. Python rules that the page mirrors keep a
 test that holds both sides equal, in `web/js/export/sizes.js`, `web/js/recording/moments.js`,
 `web/js/presentation/catalog.js` and `web/js/play/tournament-layout.js`, whose entrant names
-share their cases with the Python tests in `tests/support/entrant_names.json`.
+and abilities share their cases with the Python tests in `tests/support/entrant_names.json` and
+`tests/support/entrant_abilities.json`.
 
 The page is `web/`. `js/boot.js` is a classic script that runs before every module, and the
 modules sit in folders by concern, from `core/` and `recording/` at the bottom through `world/`,

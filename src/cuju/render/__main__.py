@@ -7,7 +7,8 @@
 source, `cuju render app` opens the page in a window of its own and with `--install` adds it to
 the computer's apps, `cuju render team add FOLDER` registers a Kaggle submission folder,
 `cuju render play` records a match between two registered teams, `cuju render challenge` lists
-the challenges or plays one headless with a team, `cuju render tournament` makes, lists, shows, runs
+the challenges, plays one headless with a team or benchmarks several teams on several challenges,
+`cuju render tournament` makes, lists, shows, runs
 and cancels tournaments, and `cuju render sample` adds the shipped sample matches and the starter
 team again, or brings them back from the Trash. `cuju render recordings` lists the
 library with the group of each challenge run, `cuju render search` finds moments across the
@@ -107,12 +108,27 @@ def main(arguments: list[str] | None = None) -> int:
         '--json', action='store_true', help='print the team, or the list of teams, as JSON'
     )
     match = commands.add_parser('play', help='record a match between two registered teams')
-    match.add_argument('--left', default='builtin', help='a team identifier, or builtin')
-    match.add_argument('--right', default='builtin', help='a team identifier, or builtin')
+    for side in ('left', 'right'):
+        match.add_argument(
+            f'--{side}',
+            default='builtin',
+            help='a team identifier, builtin, or random for a team that the seed draws',
+        )
     match.add_argument(
         '--scenario',
         default='11_vs_11_kaggle',
-        help='a shipped scenario, 11_vs_11_kaggle by default',
+        help='a shipped scenario, 11_vs_11_kaggle by default, or random for one that fits both',
+    )
+    match.add_argument(
+        '--pool',
+        default=None,
+        help='the teams that a random side draws from, as identifiers with commas, every team '
+        'of the registry by default',
+    )
+    match.add_argument(
+        '--same-team',
+        action='store_true',
+        help='let one team draw both sides while another team fits',
     )
     match.add_argument('--seed', type=int, default=None, help='the seed, drawn when absent')
     match.add_argument('--device', default='cpu', help='cpu or cuda, cpu by default')
@@ -126,10 +142,25 @@ def main(arguments: list[str] | None = None) -> int:
     match.add_argument('--json', action='store_true', help='print the saved recording as JSON')
     _tournament_parser(commands)
     challenge = commands.add_parser(
-        'challenge', help='list the challenges, or play one headless with a registered team'
+        'challenge',
+        help='list the challenges, play one headless with a registered team, or benchmark teams',
     )
-    challenge.add_argument('name', help='list, or the challenge to play, such as empty_goal_close')
-    challenge.add_argument('--team', help='a team identifier, or builtin')
+    challenge.add_argument(
+        'name', help='list, run, bench, or the challenge to play, such as empty_goal_close'
+    )
+    challenge.add_argument(
+        'identifier', nargs='?', help='the challenge that run plays, such as empty_goal_close'
+    )
+    challenge.add_argument(
+        '--team',
+        action='append',
+        help='a team identifier, or builtin, given once for a run and once for each model of bench',
+    )
+    challenge.add_argument(
+        '--challenge',
+        action='append',
+        help='a challenge of bench, given once for each, every challenge when absent',
+    )
     challenge.add_argument(
         '--attempts', type=int, default=None, help='fewer attempts than the challenge is practice'
     )
@@ -140,8 +171,19 @@ def main(arguments: list[str] | None = None) -> int:
         help='score the run without keeping its attempts as recordings',
     )
     challenge.add_argument(
-        '--json', action='store_true', help='print the catalog or the result of a run as JSON'
+        '--keep-recordings',
+        action='store_true',
+        help='keep the attempts of bench as recordings, which bench leaves out by default',
     )
+    challenge.add_argument(
+        '--workers', type=int, default=None, help='the runs that bench plays at once, 1 to 8'
+    )
+    challenge.add_argument(
+        '--json',
+        action='store_true',
+        help='print the catalog, the result of a run or the benchmark as JSON',
+    )
+    challenge.add_argument('--csv', action='store_true', help='print the table of bench as CSV')
     listing = commands.add_parser(
         'recordings', help='list the recordings with the group of each challenge run'
     )
@@ -706,11 +748,18 @@ def _tournament_parser(commands: Any) -> None:
     class Entrant(argparse.Action):
         """Keeps the entrants of every kind in the order the command line names them.
 
-        `--as` names the entrant just before it, so a team entered twice reads apart.
+        `--as` names the entrant just before it, so a team entered twice reads apart, and
+        `--ability` gives it an ability of its own, or sets the standard before every entrant.
         """
 
         def __call__(self, parser: Any, namespace: Any, value: Any, flag: Any = None) -> None:
-            kinds = {'--team': 'team', '--builtin': 'builtin', '--person': 'person', '--as': 'as'}
+            kinds = {
+                '--team': 'team',
+                '--builtin': 'builtin',
+                '--person': 'person',
+                '--as': 'as',
+                '--ability': 'ability',
+            }
             kind = kinds[flag]
             entrants = getattr(namespace, 'entrants', None) or []
             entrants.append((kind, value))
@@ -753,6 +802,14 @@ def _tournament_parser(commands: Any) -> None:
         metavar='NAME',
         help='the name of the entrant just before it, such as a team entered twice',
     )
+    cup.add_argument(
+        '--ability',
+        action=Entrant,
+        dest='entrants',
+        metavar='ABILITY',
+        help='before every entrant the standard ability from 0 to 1 or scenario, '
+        'after an entrant its own ability or standard',
+    )
     cup.add_argument('--seeding', choices=('random', 'manual', 'rating'))
     cup.add_argument('--scenario', help='the scenario of every stage')
     cup.add_argument('--length', type=int, help='the steps of every match')
@@ -788,35 +845,56 @@ def _play_match(options: argparse.Namespace) -> int:
     """
     import contextlib
     import json
+    import secrets
 
+    from ._playing import draw as _draw
     from ._playing.play import play
 
+    left, right, scenario, seed = options.left, options.right, options.scenario, options.seed
+    pool = None
+    if options.pool is not None:
+        pool = [item.strip() for item in options.pool.split(',') if item.strip()]
+    if _draw.RANDOM in (left, right, scenario):
+        # The draw follows the seed, so a seed of its own draws the same teams again.
+        seed = secrets.randbelow(2**31) if seed is None else seed
+        drawn = _draw.draw_request(left, right, scenario, seed, pool, options.same_team)
+        left, right, scenario = drawn['left'], drawn['right'], drawn['scenario']
+        draw = drawn['draw']
+    else:
+        draw = None
+    if draw is not None and not options.json:
+        print(f'drew {left} on the left and {right} on the right in {scenario}, seed {seed}')
     progress = None if options.json else _progress_line()
     try:
         with contextlib.redirect_stdout(sys.stderr):
             path = play(
-                options.left,
-                options.right,
-                options.scenario,
-                options.seed,
+                left,
+                right,
+                scenario,
+                seed,
                 None,
                 options.device,
                 (options.left_ability, options.right_ability),
                 progress=progress,
                 policy_errors=True,
+                draw=draw,
             )
     finally:
         if progress is not None:
             print('\r\033[K', end='', file=sys.stderr, flush=True)
     if options.json:
-        print(json.dumps({'match': path.stem, 'path': str(path)}))
+        answer = {'match': path.stem, 'path': str(path)}
+        if draw is not None:
+            answer.update(left=left, right=right, scenario=scenario, seed=seed, draw=draw)
+        print(json.dumps(answer))
     else:
         print(f'saved {path}')
     return 0
 
 
 def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
-    """Lists the challenges, or plays one headless and prints each attempt and the result."""
+    """Lists the challenges, plays one headless and prints each attempt and the result, or plays
+    a benchmark of several teams and prints its table."""
     import contextlib
     import json
 
@@ -834,12 +912,32 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
             attempts = counted(entry['attempts'], 'attempt')
             print(f'{entry["id"]}  {entry["title"]}, {attempts}, {targets}')
             print(f'    {entry["goal"]}')
+            print(f'    {_challenges.medal_text(entry)}')
         return 0
-    if not options.team:
-        parser.error('challenge needs --team, a team identifier or builtin')
+    if options.name == 'bench':
+        from cuju.errors import ArgumentError
+
+        from ._playing import bench as _bench
+
+        if not options.team:
+            parser.error('challenge bench needs --team, once for each team, or builtin')
+        try:
+            return _bench.command(options)
+        except ArgumentError as error:
+            return _failed(error, options.json)
+    identifier = options.name
+    if options.name == 'run':
+        if not options.identifier:
+            parser.error('challenge run needs the challenge to play, such as empty_goal_close')
+        identifier = options.identifier
+    elif options.identifier:
+        parser.error('a challenge plays one challenge, so name it alone or after run')
+    if not options.team or len(options.team) != 1:
+        parser.error('challenge needs one --team, a team identifier or builtin')
+    team = options.team[0]
     from ._playing.play import PolicyError
 
-    spec = _challenges.find(options.name)
+    spec = _challenges.find(identifier)
 
     def show(result: dict) -> None:
         if result['scored']:
@@ -848,6 +946,8 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
                 seconds += f', past the limit of {counted(spec["limit"], "second")}'
         else:
             seconds = 'no goal'
+        if result.get('failed'):
+            seconds = f'the policy failed, {result["error"]}, {seconds}'
         goals = f'{result["goals"][0]} for, {result["goals"][1]} against'
         kept = f'recording {result["match"]}' if result['match'] else 'no recording kept'
         print(
@@ -859,12 +959,13 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
         # What a team prints goes to standard error, so standard output holds the result alone.
         with contextlib.redirect_stdout(sys.stderr if options.json else sys.stdout):
             outcome = _challenges.run(
-                options.name,
-                team=options.team,
+                identifier,
+                team=team,
                 attempts=options.attempts,
                 device=options.device,
                 progress=None if options.json else show,
                 keep_recordings=not options.no_recordings,
+                fail_attempts=True,
             )
     except PolicyError as error:
         return _failed(error, options.json)
@@ -877,6 +978,7 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
         print(f'value {outcome["value"]:g}, no goal scored')
     else:
         print(f'value {outcome["value"]:g}, no attempt counts towards it')
+    print(_challenges.medal_text(spec, None if outcome['practice'] else outcome['value']))
     if outcome['practice']:
         print('practice, fewer attempts than the challenge, so no medal and no leaderboard')
     else:

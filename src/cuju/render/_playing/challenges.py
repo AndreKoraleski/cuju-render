@@ -23,7 +23,8 @@ practice, scored and kept as recordings but off the leaderboard.
 The server hands its routes under `/api/challenges` to `get`, `post` and `delete`, and plays the
 headless runs that the page asks for in a child process each,
 `python -m cuju.render._playing.challenges`, one at a time, which reports one JSON line at a time as
-a requested match does.
+a requested match does. A policy that fails in such a run ends its attempt alone, which counts as
+failed, and the run goes on. The benchmarks of `bench` play their runs in the same child process.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ from .._format import recording as _recording
 from .._registry import teams as _teams
 from .._store import home as _home
 from .._store import library as _library
+from .._text import languages as _languages
 from .._text import messages as _messages
 from .._text.messages import MessageError
 from . import achievements as _achievements
@@ -58,6 +60,8 @@ from . import achievements as _achievements
 _LOGGER = logging.getLogger('cuju')
 STEPS_PER_SECOND = 10
 MEDALS = ('bronze', 'silver', 'gold')
+# The medals from the best down, the order in which a challenge lists them as items.
+MEDAL_ORDER = ('gold', 'silver', 'bronze')
 MEASURES = ('scored', 'within', 'margin')
 # The kinds of challenge, which give each card of the Play page its color and symbol, and how hard
 # a challenge is for a person, from its targets and the defenders it faces.
@@ -273,6 +277,7 @@ def find(identifier: Any) -> dict[str, Any]:
                 'limit': entry.get('limit'),
                 'seeds': seeds(entry['id'], entry['attempts']),
                 'played_ability': _played_ability(entry['scenario'], tuple(entry['ability'])),
+                'medals': medal_items(entry),
             }
     raise MessageError(
         'server.challenges.unknown',
@@ -313,6 +318,50 @@ def medal(challenge: dict[str, Any], value: float) -> str | None:
         if value >= target:
             won = name
     return won
+
+
+def medal_items(challenge: dict[str, Any], value: float | None = None) -> list[dict[str, Any]]:
+    """Returns the medals of a challenge as items, gold, silver and bronze in that order.
+
+    Each item names its medal, the value its target asks for, whether that target asks for a goal
+    in every attempt, and whether `value` reached that medal, so a run or a competitor's best marks
+    the one item of the best medal it won and none when it won no medal.
+
+    Args:
+        challenge: The challenge, as `find` returns it.
+        value: The value of a run or a best run, or `None` to mark no item.
+    """
+    won = None if value is None else medal(challenge, value)
+    targets = dict(zip(MEDALS, challenge['targets'], strict=True))
+    return [
+        {
+            'medal': name,
+            'target': targets[name],
+            'every': challenge['measure'] != 'margin' and targets[name] >= challenge['attempts'],
+            'reached': won == name,
+        }
+        for name in MEDAL_ORDER
+    ]
+
+
+def target_words(challenge: dict[str, Any], item: dict[str, Any]) -> str:
+    """Returns the target of a medal item in plain English, as the command line prints it."""
+    target = item['target']
+    if challenge['measure'] == 'margin':
+        return f'{_messages.counted(target, "goal")} or more ahead'
+    within = '' if challenge['measure'] == 'scored' else f' within {challenge["limit"]:g} seconds'
+    if item['every']:
+        return f'a goal{within} in all {challenge["attempts"]} attempts'
+    return f'a goal{within} in {_messages.counted(target, "attempt")} or more'
+
+
+def medal_text(challenge: dict[str, Any], value: float | None = None) -> str:
+    """Returns the medal items of a challenge in one line, the item that `value` reached marked."""
+    items = [
+        f'{item["medal"]}, {target_words(challenge, item)}{", reached" if item["reached"] else ""}'
+        for item in medal_items(challenge, value)
+    ]
+    return 'medals ' + '; '.join(items)
 
 
 def score_attempt(header: dict[str, Any], frames: list[bytes], side: int = 0) -> dict[str, Any]:
@@ -377,16 +426,28 @@ def score_run(challenge: dict[str, Any], results: list[dict[str, Any]]) -> dict[
 
 
 def _attempt_result(
-    challenge: dict[str, Any], index: int, match: str | None, scored: dict[str, Any]
+    challenge: dict[str, Any],
+    index: int,
+    match: str | None,
+    scored: dict[str, Any],
+    failure: BaseException | None = None,
 ) -> dict[str, Any]:
-    """Returns the stored result of one attempt, its index, seed and recording with its score."""
-    return {
+    """Returns the stored result of one attempt, its index, seed and recording with its score.
+
+    An attempt whose policy failed says so in `failed` and carries the policy's error as `error`,
+    `error_id` and `error_values`, and its score is that of an attempt that ended early.
+    """
+    result = {
         'index': index,
         'seed': challenge['seeds'][index],
         'match': match,
         **scored,
         'counts': _counts(challenge, scored),
+        'failed': failure is not None,
     }
+    if failure is not None:
+        result.update(_messages.entry_fields(failure))
+    return result
 
 
 # Leaderboards.
@@ -500,7 +561,10 @@ def _read_board(identifier: str) -> list[dict[str, Any]]:
         if isinstance(entry, dict) and all(
             key in entry and check(entry[key]) for key, check in _ENTRY_FIELDS.items()
         ):
-            entries.append({key: entry[key] for key in _ENTRY_FIELDS})
+            kept = {key: entry[key] for key in _ENTRY_FIELDS}
+            if isinstance(entry.get('default_name'), bool):
+                kept['default_name'] = entry['default_name']
+            entries.append(kept)
         else:
             skipped += 1
     if skipped:
@@ -508,7 +572,14 @@ def _read_board(identifier: str) -> list[dict[str, Any]]:
             'cuju render skips %d invalid entries of the leaderboard file %s', skipped, path.name
         )
     entries.sort(key=_rank_key)
-    return entries
+    # People under default names of two languages are one competitor, whose best run counts.
+    seen: set[tuple[str, str]] = set()
+    best = []
+    for entry in entries:
+        if _competitor(entry) not in seen:
+            seen.add(_competitor(entry))
+            best.append(entry)
+    return best
 
 
 def _write_board(identifier: str, entries: list[dict[str, Any]]) -> None:
@@ -521,10 +592,27 @@ def _rank_key(entry: dict[str, Any]) -> tuple[float, float, float]:
     return (-entry['value'], entry['seconds'], entry['time'])
 
 
+def default_person(entry: dict[str, Any]) -> bool:
+    """Returns whether an entry is a person's under a default name, by its flag or its name.
+
+    A person who types no name plays under the default name of the page's language, and a new
+    entry says so in `default_name`. An older one names the default of a language that the
+    renderer knows, which counts the same.
+    """
+    if entry.get('kind') != 'person':
+        return False
+    return entry.get('default_name') is True or entry.get('name') in _languages.default_names()
+
+
 def _competitor(entry: dict[str, Any]) -> tuple[str, str]:
-    """Returns who an entry belongs to, a person by name, an agent by team or else by name."""
+    """Returns who an entry belongs to, a person by name, an agent by team or else by name.
+
+    Every person under a default name is the same competitor, whatever the language of the name.
+    """
     if entry['kind'] == 'agent' and entry['team'] is not None:
         return ('team', entry['team'])
+    if default_person(entry):
+        return ('person', '')
     return (entry['kind'], entry['name'])
 
 
@@ -536,10 +624,13 @@ def challenge_value(spec: dict[str, Any]) -> dict[str, Any]:
 def competitor_name(entry: dict[str, Any]) -> dict[str, Any] | str:
     """Returns the name of a competitor as a message value, a label for a name that cuju made.
 
-    The built-in AI under its default name and a policy without a name of its own are labels,
-    which the page shows in its language, and any other name stays the text it is.
+    The built-in AI under its default name, a policy without a name of its own and a person under
+    a default name are labels, which the page shows in its language, and any other name stays the
+    text it is.
     """
     name = entry.get('name')
+    if default_person(entry):
+        return _messages.label('server.names.default_person')
     builtin = _messages.label('server.names.builtin')
     made = entry.get('kind') == 'agent' and entry.get('team') == _teams.BUILTIN
     if made and name == builtin['text']:
@@ -615,7 +706,8 @@ def _summary(identifier: str, person: str | None) -> dict[str, Any]:
         'mine': None,
     }
     if person:
-        mine = next((entry for entry in entries if _competitor(entry) == ('person', person)), None)
+        who = _competitor({'kind': 'person', 'name': person, 'team': None})
+        mine = next((entry for entry in entries if _competitor(entry) == who), None)
         summary['mine'] = None if mine is None else _short(mine)
     return summary
 
@@ -626,9 +718,14 @@ def _short(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def _entry(
-    kind: str, name: str, team: str | None, totals: dict[str, Any], results: list[dict[str, Any]]
+    kind: str,
+    name: str,
+    team: str | None,
+    totals: dict[str, Any],
+    results: list[dict[str, Any]],
+    default_name: bool = False,
 ) -> dict[str, Any]:
-    return {
+    entry = {
         'kind': kind,
         'name': name,
         'team': team,
@@ -637,14 +734,31 @@ def _entry(
         'medal': totals['medal'],
         'attempts': [
             {
-                key: result[key]
-                for key in ('index', 'seed', 'match', 'finished', 'goals', 'scored', 'seconds')
+                **{
+                    key: result[key]
+                    for key in ('index', 'seed', 'match', 'finished', 'goals', 'scored', 'seconds')
+                },
+                'failed': bool(result.get('failed')),
             }
             for result in results
         ],
         'time': time.time(),
         'cuju_version': __version__,
     }
+    if kind == 'person':
+        entry['default_name'] = default_name
+    return entry
+
+
+def _default_flag(value: Any, name: str) -> bool:
+    """Returns whether a person's name is a default one, as the page says or the name shows.
+
+    Raises:
+        ArgumentError: If the flag is no boolean.
+    """
+    if not isinstance(value, bool):
+        raise MessageError('server.challenges.default_name', value=repr(value))
+    return value or name in _languages.default_names()
 
 
 # The name of a policy whose function has no name of its own, such as a lambda.
@@ -761,7 +875,11 @@ def _attempt_index(challenge: dict[str, Any], attempt: Any) -> int:
 
 
 def person_run(
-    identifier: str, person: Any, matches: Any, keep_recordings: Any = True
+    identifier: str,
+    person: Any,
+    matches: Any,
+    keep_recordings: Any = True,
+    default_name: Any = False,
 ) -> dict[str, Any]:
     """Checks, scores and records a person's run, the recordings of its attempts in order.
 
@@ -769,7 +887,9 @@ def person_run(
     `check_person` describes, and each one counts once. An attempt that a person left before its
     first step has no recording, `None`, and counts as missed. The recordings of the run become a
     group, or with `keep_recordings` false leave the library for good once the run is scored, and
-    its attempts then name no recording.
+    its attempts then name no recording. A person who typed no name plays under the default name
+    of the page's language with `default_name` true, and the run's entry keeps that flag, so the
+    page shows the default of its own language wherever the name shows.
 
     Raises:
         ArgumentError: If the name, the number of recordings or any recording does not fit.
@@ -777,6 +897,7 @@ def person_run(
     challenge = find(identifier)
     name = _name(person)
     keep = _keep_flag(keep_recordings)
+    default = _default_flag(default_name, name)
     if not isinstance(matches, list) or len(matches) != challenge['attempts']:
         raise MessageError(
             'server.challenges.matches', count=challenge['attempts'], matches=repr(matches)
@@ -804,25 +925,33 @@ def person_run(
     if not keep:
         results = [{**result, 'match': None} for result in results]
     totals = score_run(challenge, results)
+    entry = _entry('person', name, None, totals, results, default)
     outcome = {
         'challenge': identifier,
         'kind': 'person',
-        'name': name,
+        **_messages.named('name', competitor_name(entry)),
         'team': None,
+        'default_name': default,
         'practice': False,
         'attempts': results,
         **totals,
-        **record(identifier, _entry('person', name, None, totals, results)),
+        'medals': medal_items(challenge, totals['value']),
+        **record(identifier, entry),
     }
     outcome['achievements'] = _achievements_of(
         lambda: _achievements.for_person_run(recordings, outcome)
     )
-    outcome['group'] = _end_person_run(challenge, name, matches, keep, 'done', outcome)
+    shown = competitor_name(entry)
+    outcome['group'] = _end_person_run(challenge, shown, matches, keep, 'done', outcome)
     return outcome
 
 
 def leave_run(
-    identifier: str, person: Any, matches: Any, keep_recordings: Any = True
+    identifier: str,
+    person: Any,
+    matches: Any,
+    keep_recordings: Any = True,
+    default_name: Any = False,
 ) -> dict[str, Any]:
     """Keeps the attempts of a run that a person left as a group, or removes them for good.
 
@@ -834,6 +963,7 @@ def leave_run(
         person: The person's name.
         matches: The recordings of the attempts played, in order, `None` for a missed one.
         keep_recordings: Whether the library keeps them, as a group of a left run.
+        default_name: Whether the person plays under the default name of the page's language.
 
     Returns:
         The challenge, the group or `None`, and the recordings that left the library.
@@ -844,6 +974,7 @@ def leave_run(
     challenge = find(identifier)
     name = _name(person)
     keep = _keep_flag(keep_recordings)
+    default = _default_flag(default_name, name)
     if not isinstance(matches, list) or not 0 < len(matches) <= challenge['attempts']:
         raise MessageError(
             'server.challenges.left_matches', count=challenge['attempts'], matches=repr(matches)
@@ -865,13 +996,14 @@ def leave_run(
                 attempt=index + 1,
                 reason=problem,
             )
-    group = _end_person_run(challenge, name, matches, keep, 'left', None)
+    shown = competitor_name({'kind': 'person', 'name': name, 'default_name': default})
+    group = _end_person_run(challenge, shown, matches, keep, 'left', None)
     return {'challenge': identifier, 'group': group, 'removed': [] if keep else named}
 
 
 def _end_person_run(
     challenge: dict[str, Any],
-    name: str,
+    name: dict[str, Any] | str,
     matches: list[Any],
     keep: bool,
     state: str,
@@ -985,6 +1117,7 @@ def run(
     device: str = 'cpu',
     progress: Callable[[dict[str, Any]], None] | None = None,
     keep_recordings: bool = True,
+    fail_attempts: bool = False,
 ) -> dict[str, Any]:
     """Plays a challenge headless with a team of the registry or a Python policy, and scores it.
 
@@ -1009,17 +1142,22 @@ def run(
         keep_recordings: Whether the library keeps the attempts as recordings. A run without
             them scores, ranks and earns from the same frames, and its attempts name no
             recording.
+        fail_attempts: Whether a policy that fails ends its attempt alone, as the page, the
+            command line and the benchmarks play. The attempt then ends where the policy failed
+            and counts as one that ended early, its goals against and no goals for, it says so in
+            `failed` with the policy's error, and the next attempt loads the policy again. A
+            policy that cannot load fails every attempt left. By default a failing policy raises.
 
     Returns:
-        The run, its value, seconds, medal, rank and best run on the leaderboard, the result and
-        recording of each attempt, the `group` of its recordings or `None`, and the achievements
-        that a team of the registry keeps, none for the built-in AI and for a Python policy, which
-        keep none.
+        The run, its value, seconds, medal, rank and best run on the leaderboard, its medals as
+        `medal_items` gives them, the count of its `failed_attempts`, the result and recording of
+        each attempt, the `group` of its recordings or `None`, and the achievements that a team of
+        the registry keeps, none for the built-in AI and for a Python policy, which keep none.
 
     Raises:
         ArgumentError: If the challenge, the team, the control or the attempts do not fit.
-        PolicyError: If the policy fails, answers with anything but actions, or stops answering.
-            Nothing then reaches the leaderboard.
+        PolicyError: If the policy fails, answers with anything but actions, or stops answering,
+            unless `fail_attempts` is true. Nothing then reaches the leaderboard.
     """
     from cuju.kaggle import AgentRunner
 
@@ -1079,6 +1217,8 @@ def run(
         return policies
 
     runner = PolicyRunner(hang=HANG_SECONDS) if agents else None
+    # The failure of policies that could not load, which every attempt left shares.
+    unloadable: BaseException | None = None
     kind_team = None if side['kind'] == 'policy' else side['id']
     shown = competitor_name({'kind': 'agent', 'name': competitor, 'team': kind_team})
     group = _home.new_identifier('g') if keep else None
@@ -1092,20 +1232,32 @@ def run(
 
     try:
         for index in range(count):
-            match, header, frames = _play_attempt(
-                spec,
-                index,
-                side,
-                competitor,
-                agents,
-                extended,
-                ability,
-                device,
-                runner,
-                factory,
-                keep,
-            )
-            result = _attempt_result(spec, index, match, score_attempt(header, frames))
+            failure = unloadable
+            if failure is not None:
+                match, header, frames = None, {}, []
+            else:
+                match, header, frames, failure = _play_attempt(
+                    spec,
+                    index,
+                    side,
+                    competitor,
+                    agents,
+                    extended,
+                    ability,
+                    device,
+                    runner,
+                    factory,
+                    keep,
+                    fail_attempts,
+                )
+                if failure is not None:
+                    if runner.policies is None:
+                        unloadable = failure
+                    # The next attempt loads the policies again on a thread of their own, since
+                    # a call that never returned may still hold the old one.
+                    runner.close()
+                    runner = PolicyRunner(hang=HANG_SECONDS)
+            result = _attempt_result(spec, index, match, score_attempt(header, frames), failure)
             results.append(result)
             recordings.append((header, frames))
             keep_group('playing')
@@ -1129,6 +1281,8 @@ def run(
         'practice': practice,
         'attempts': results,
         **totals,
+        'medals': medal_items(spec, None if practice else totals['value']),
+        'failed_attempts': sum(result['failed'] for result in results),
     }
     if practice:
         # Practice keeps its value but wins no medal and stays off the board.
@@ -1155,12 +1309,16 @@ def _play_attempt(
     runner: Any,
     factory: Callable[[Any], Any],
     keep: bool = True,
-) -> tuple[str | None, dict[str, Any], list[bytes]]:
-    """Plays one attempt and returns its recording's identifier, header and frames.
+    fail_attempts: bool = False,
+) -> tuple[str | None, dict[str, Any], list[bytes], BaseException | None]:
+    """Plays one attempt and returns its recording's identifier, header, frames and failure.
 
     The recording goes to the library when `keep` is true, and its identifier is `None` otherwise.
+    With `fail_attempts`, a policy that fails ends the attempt where it failed, which keeps the
+    frames played so far and returns the failure, and an attempt that never stepped keeps no
+    recording. The failure is `None` otherwise.
     """
-    from .play import PolicyMessageError
+    from .play import PolicyError, PolicyMessageError
 
     scenario, seed = spec['scenario'], spec['seeds'][index]
     # A test may put a batch of its own in the module's place of `BatchEnvironment`.
@@ -1176,38 +1334,45 @@ def _play_attempt(
         difficulty=None if ability == (None, None) else [ability],
         action_set='v2' if extended else 'default',
     )
+    failure = None
     try:
         reader = _recording.StateReader(int(batch.left_players[0] + batch.right_players[0]))
         batch.reset()
-        first_call = runner is not None and runner.policies is None
-        if runner is not None:
-            if runner.policies is None:
-                runner.load(lambda: factory(batch), LOAD_SECONDS)
-            else:
-                # The same policies play every attempt, and each sees its episode from step 0.
-                runner.policies.batch = batch
-                for player in runner.policies.players:
-                    player.update(calls=0, held={})
         state = batch.get_state(0)
         lineup = reader.lineup(state)
         timing = _recording.scenario_timing(state)
         frames = [reader.frame(state)]
-        done = False
-        while not done:
+        try:
+            first_call = runner is not None and runner.policies is None
             if runner is not None:
-                runner.request()
-                limit = FIRST_CALL_SECONDS if first_call else HANG_SECONDS
-                first_call = False
-                if not runner.wait(limit):
-                    raise PolicyMessageError('server.policy.silent', count=f'{limit:g}')
-                actions = runner.actions(None)
-            else:
-                import torch
+                if runner.policies is None:
+                    runner.load(lambda: factory(batch), LOAD_SECONDS)
+                else:
+                    # The same policies play every attempt, and each sees its episode from step 0.
+                    runner.policies.batch = batch
+                    for player in runner.policies.players:
+                        player.update(calls=0, held={})
+            done = False
+            while not done:
+                if runner is not None:
+                    runner.request()
+                    limit = FIRST_CALL_SECONDS if first_call else HANG_SECONDS
+                    first_call = False
+                    if not runner.wait(limit):
+                        raise PolicyMessageError('server.policy.silent', count=f'{limit:g}')
+                    actions = runner.actions(None)
+                else:
+                    import torch
 
-                actions = torch.zeros((1, 0), dtype=torch.int32)
-            _, _, finished, _ = batch.step(actions)
-            done = bool(finished[0])
-            frames.append(reader.frame(batch.get_state(0), 1 if done else 0))
+                    actions = torch.zeros((1, 0), dtype=torch.int32)
+                _, _, finished, _ = batch.step(actions)
+                done = bool(finished[0])
+                frames.append(reader.frame(batch.get_state(0), 1 if done else 0))
+        except PolicyError as error:
+            if not fail_attempts:
+                raise
+            # The attempt ends here, so its last frame lacks the end of the episode.
+            failure = error
         played = [round(float(value), 4) for value in batch.difficulty[0].tolist()]
     finally:
         batch.close()
@@ -1242,9 +1407,12 @@ def _play_attempt(
         attempt=index + 1,
         competitor=shown,
     )
+    if failure is not None:
+        provenance['failed'] = True
     head = _recording.header(title, scenario, lineup, teams, len(frames), timing, provenance)
-    match = _library.save(head, frames).stem if keep else None
-    return match, json.loads(head[len(_recording.MAGIC) + 4 :]), frames
+    stepped = failure is None or len(frames) > 1
+    match = _library.save(head, frames).stem if keep and stepped else None
+    return match, json.loads(head[len(_recording.MAGIC) + 4 :]), frames, failure
 
 
 # The runs that the page asks for, played one at a time in child processes.
@@ -1342,59 +1510,34 @@ class _Jobs:
                         job.update(_messages.entry_fields(error, _messages.described(error)))
 
     def _play(self, job: dict[str, Any]) -> None:
-        command = [
-            *_home.python_command(),
-            '-m',
-            'cuju.render._playing.challenges',
-            job['challenge'],
-            '--team',
-            job['team'],
-            '--attempts',
-            str(job['attempts']),
-        ]
-        if not job['keep_recordings']:
-            command.append('--no-recordings')
+        command = child_command(
+            job['challenge'], job['team'], job['attempts'], job['keep_recordings']
+        )
         with self._lock:
             if job['state'] != 'queued':
                 return
             job['state'] = 'running'
-            # The child runs in the renderer's folder, as a requested match does.
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                cwd=_home.process_folder(),
-                env=_home.process_environment(),
-            )
-            self._processes[job['id']] = process
-        stderr: collections.deque[str] = collections.deque(maxlen=20)
-        threading.Thread(target=lambda: stderr.extend(process.stderr), daemon=True).start()
-        timer = threading.Timer(_JOB_SECONDS, process.kill)
-        timer.daemon = True
-        timer.start()
+
+        def started(process: subprocess.Popen) -> None:
+            with self._lock:
+                self._processes[job['id']] = process
+                cancelled = job['state'] != 'running'
+            if cancelled:
+                process.kill()
+
+        def report(line: dict[str, Any]) -> None:
+            with self._lock:
+                if isinstance(line.get('attempt'), dict):
+                    job['results'] = [*job['results'], line['attempt']]
+                    job['progress'] = len(job['results']) / job['attempts']
+                if isinstance(line.get('result'), dict):
+                    job['result'] = line['result']
+                if isinstance(line.get('error'), str):
+                    job.update(_messages.report_fields(line))
+
         try:
-            for line in process.stdout:
-                try:
-                    report = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(report, dict):
-                    continue
-                with self._lock:
-                    if isinstance(report.get('attempt'), dict):
-                        job['results'] = [*job['results'], report['attempt']]
-                        job['progress'] = len(job['results']) / job['attempts']
-                    if isinstance(report.get('result'), dict):
-                        job['result'] = report['result']
-                    if isinstance(report.get('error'), str):
-                        job.update(_messages.report_fields(report))
-            code = process.wait()
+            code, tail = play_child(command, report, started)
         finally:
-            timer.cancel()
             with self._lock:
                 self._processes.pop(job['id'], None)
         with self._lock:
@@ -1405,8 +1548,93 @@ class _Jobs:
             else:
                 job['state'] = 'failed'
                 if not job['error']:
-                    tail = ''.join(stderr).strip()
                     job.update(_messages.exit_fields('server.challenges.exit', code, tail))
+
+    def get(self, identifier: str) -> dict[str, Any] | None:
+        """Returns a copy of one run, or `None` for a run that the list no longer holds."""
+        with self._lock:
+            job = next((item for item in self._entries if item['id'] == identifier), None)
+            return None if job is None else dict(job)
+
+
+def child_command(
+    identifier: str,
+    team: str,
+    attempts: int | None = None,
+    keep: bool = True,
+    device: str = 'cpu',
+) -> list[str]:
+    """Returns the command of the child process that plays one headless run of a team."""
+    command = [
+        *_home.python_command(),
+        '-m',
+        'cuju.render._playing.challenges',
+        identifier,
+        '--team',
+        team,
+    ]
+    if attempts is not None:
+        command += ['--attempts', str(attempts)]
+    if device != 'cpu':
+        command += ['--device', device]
+    if not keep:
+        command.append('--no-recordings')
+    return command
+
+
+def play_child(
+    command: list[str],
+    report: Callable[[dict[str, Any]], None],
+    started: Callable[[subprocess.Popen], None] | None = None,
+    seconds: float = _JOB_SECONDS,
+) -> tuple[int, str]:
+    """Plays a headless run in a child process and hands each of its reports to `report`.
+
+    The child runs in the renderer's folder, as a requested match does, and ends after `seconds`.
+    Every run of the page, of a benchmark and of a benchmark on the command line plays this way,
+    so a submission runs in a process of its own and no run sees another.
+
+    Args:
+        command: The command, as `child_command` returns it.
+        report: A function called with each report of the child, a JSON object.
+        started: A function called with the process once it has started, which may end it.
+        seconds: The seconds after which the run ends.
+
+    Returns:
+        The exit code of the child and the last lines it wrote to standard error.
+    """
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        cwd=_home.process_folder(),
+        env=_home.process_environment(),
+    )
+    if started is not None:
+        started(process)
+    stderr: collections.deque[str] = collections.deque(maxlen=20)
+    reader = threading.Thread(target=lambda: stderr.extend(process.stderr), daemon=True)
+    reader.start()
+    timer = threading.Timer(seconds, process.kill)
+    timer.daemon = True
+    timer.start()
+    try:
+        for line in process.stdout:
+            try:
+                parsed = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict):
+                report(parsed)
+        code = process.wait()
+    finally:
+        timer.cancel()
+    reader.join(1.0)
+    return code, ''.join(stderr).strip()
 
 
 _JOBS: _Jobs | None = None
@@ -1426,12 +1654,23 @@ def jobs() -> _Jobs:
 
 
 def get(parts: list[str], query: dict[str, str]) -> tuple[Any, int]:
-    """Answers `GET /api/challenges/...`, the catalog, a board, a score or the runs."""
+    """Answers `GET /api/challenges/...`, the catalog, a board, a score, the runs or benchmarks."""
     if not parts:
         person = query.get('person') or None
         return [{**entry, 'board': _summary(entry['id'], person)} for entry in challenges()], 200
     if parts == ['jobs']:
         return jobs().entries(), 200
+    if parts == ['names']:
+        return {'default_names': sorted(_languages.default_names())}, 200
+    if len(parts) == 2 and parts[0] == 'jobs':
+        job = jobs().get(parts[1])
+        if job is None:
+            return _messages.fields('server.challenges.no_run'), 404
+        return job, 200
+    if parts[0] == 'benches':
+        from . import bench as _bench
+
+        return _bench.get(parts[1:])
     identifier = parts[0]
     if identifier not in {entry['id'] for entry in CATALOG}:
         return _messages.fields('server.challenges.no_challenge', identifier=repr(identifier)), 404
@@ -1446,23 +1685,30 @@ def get(parts: list[str], query: dict[str, str]) -> tuple[Any, int]:
 
 
 def post(parts: list[str], document: dict[str, Any]) -> tuple[Any, int]:
-    """Answers `POST /api/challenges/<id>/runs` and `POST /api/challenges/<id>/leave`.
+    """Answers `POST /api/challenges/<id>/runs`, `POST /api/challenges/<id>/leave` and
+    `POST /api/challenges/benches`.
 
-    A run is a person's run to record or a team's to play, and leave takes the attempts of a run
-    that a person left, to keep as a group or to remove.
+    A run is a person's run to record or a team's to play, leave takes the attempts of a run that
+    a person left, to keep as a group or to remove, and benches starts a benchmark of models.
     """
+    if parts == ['benches']:
+        from . import bench as _bench
+
+        return _bench.post(document)
     if len(parts) != 2 or parts[1] not in ('runs', 'leave'):
         return _messages.fields('server.no_resource'), 404
     if parts[0] not in {entry['id'] for entry in CATALOG}:
         return _messages.fields('server.challenges.no_challenge', identifier=repr(parts[0])), 404
     keep = document.get('keep_recordings', True)
     if 'person' in document or parts[1] == 'leave':
-        unknown = set(document) - {'person', 'matches', 'keep_recordings'}
+        unknown = set(document) - {'person', 'matches', 'keep_recordings', 'default_name'}
         if unknown:
             raise MessageError('server.challenges.person_fields', unknown=repr(sorted(unknown)))
+        default = document.get('default_name', False)
+        person, matches = document.get('person'), document.get('matches')
         if parts[1] == 'leave':
-            return leave_run(parts[0], document.get('person'), document.get('matches'), keep), 200
-        return person_run(parts[0], document['person'], document.get('matches'), keep), 201
+            return leave_run(parts[0], person, matches, keep, default), 200
+        return person_run(parts[0], person, matches, keep, default), 201
     unknown = set(document) - {'team', 'attempts', 'keep_recordings'}
     if unknown or 'team' not in document:
         raise MessageError('server.challenges.run_fields')
@@ -1470,7 +1716,12 @@ def post(parts: list[str], document: dict[str, Any]) -> tuple[Any, int]:
 
 
 def delete(parts: list[str]) -> tuple[Any, int]:
-    """Answers `DELETE /api/challenges/jobs/<job>`, which cancels a run of the page."""
+    """Answers `DELETE /api/challenges/jobs/<job>` and `DELETE /api/challenges/benches/<bench>`,
+    which cancel a run or a benchmark of the page."""
+    if len(parts) == 2 and parts[0] == 'benches':
+        from . import bench as _bench
+
+        return _bench.delete(parts[1])
     if len(parts) == 2 and parts[0] == 'jobs' and jobs().cancel(parts[1]):
         return {'cancelled': parts[1]}, 200
     return _messages.fields('server.challenges.no_run'), 404
@@ -1488,7 +1739,11 @@ def _report(**entries: Any) -> None:
 
 
 def main(arguments: list[str] | None = None) -> None:
-    """Plays the run that the command line names and reports each attempt and the result."""
+    """Plays the run that the command line names and reports each attempt and the result.
+
+    A policy that fails ends its attempt alone, which counts as failed, so the run always ends
+    with a result unless its challenge, team or attempts do not fit.
+    """
     global _reports
     from .play import PolicyError
 
@@ -1511,6 +1766,7 @@ def main(arguments: list[str] | None = None) -> None:
             device=options.device,
             progress=lambda result: _report(attempt=result),
             keep_recordings=not options.no_recordings,
+            fail_attempts=True,
         )
     except PolicyError as error:
         _report(error=str(error), **_messages.id_fields(error))

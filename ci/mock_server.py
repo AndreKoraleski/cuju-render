@@ -23,6 +23,7 @@ Then open http://127.0.0.1:8765/ in a browser.
 
 import argparse
 import contextlib
+import copy
 import functools
 import gzip
 import http.server
@@ -67,6 +68,12 @@ def _load(name, path):
 _headers = _load(
     'cuju_mock_headers',
     Path(__file__).resolve().parents[1] / 'src' / 'cuju' / 'render' / '_http' / 'headers.py',
+)
+# The draw of requested matches, loaded from its file, so the mock draws the teams and scenarios
+# of a seed as the server does.
+_draw = _load(
+    'cuju_mock_draw',
+    Path(__file__).resolve().parents[1] / 'src' / 'cuju' / 'render' / '_playing' / 'draw.py',
 )
 # The sample matches that cuju ships.
 SAMPLES = Path(__file__).resolve().parents[1] / 'src' / 'cuju' / 'render' / 'samples'
@@ -1536,6 +1543,15 @@ def check_scenario(sides, scenario):
             )
 
 
+def fits(team, scenario):
+    """Returns whether a team can play a scenario, as `check_scenario` checks it."""
+    try:
+        check_scenario([team], scenario)
+    except ArgumentError:
+        return False
+    return True
+
+
 class Requests:
     """The queue of requested matches, played one at a time as synthetic matches."""
 
@@ -1545,9 +1561,25 @@ class Requests:
         self.wake = threading.Event()
         threading.Thread(target=self.run, daemon=True).start()
 
-    def add(self, left, right, scenario, seed):
-        if scenario not in SCENARIOS:
+    def add(self, left, right, scenario, seed, pool=None, same_team=False):
+        if scenario not in SCENARIOS and scenario != _draw.RANDOM:
             raise ArgumentError(f'expected a shipped scenario, found {scenario!r}')
+        drawn = None
+        if _draw.RANDOM in (left, right, scenario):
+            # The draw follows the seed, which the mock draws when none is given, as the server.
+            seed = secrets.randbelow(2**31) if seed is None else seed
+            drawn = _draw.resolve(
+                (left, right),
+                scenario,
+                seed,
+                pool,
+                same_team,
+                [team['id'] for team in teams()],
+                SCENARIOS,
+                lambda identifier, name, side: fits(entry(identifier), name),
+                lambda message_id, **values: ArgumentError(f'{message_id} {values}'),
+            )
+            left, right, scenario = drawn['left'], drawn['right'], drawn['scenario']
         check_scenario([entry(left), entry(right)], scenario)
         item = {
             'id': new_identifier('r'),
@@ -1559,6 +1591,7 @@ class Requests:
             'progress': 0.0,
             'match': None,
             'error': None,
+            'draw': None if drawn is None else drawn['draw'],
         }
         with self.lock:
             self.entries_.append(item)
@@ -2026,10 +2059,171 @@ def advance_jobs():
         job.update(state='done', result=result)
 
 
+# Benchmarks, as cuju.render._playing.bench keeps them. The cells play one after another, one
+# attempt every 0.3 seconds, each attempt scoring as a mock run of a team does, and the rows count
+# medals and scores by the rules of bench.table.
+BENCHES = []
+
+
+def bench_rows(job):
+    rows = []
+    for model in job['models']:
+        cells = [cell for cell in job['cells'] if cell['team'] == model['team']]
+        won = [cell['medal'] for cell in cells if cell['state'] == 'done' and cell['medal']]
+        shares = []
+        for cell in cells:
+            gold = find_challenge(cell['challenge'])['targets'][2]
+            done = cell['state'] == 'done'
+            shares.append(min(1.0, max(0.0, cell['value'] / gold)) if done else 0.0)
+        rows.append(
+            {
+                **model,
+                'gold': won.count('gold'),
+                'silver': won.count('silver'),
+                'bronze': won.count('bronze'),
+                'score': round(100 * sum(shares) / len(job['challenges']), 1),
+                'done': sum(cell['state'] == 'done' for cell in cells),
+                'place': None,
+            }
+        )
+
+    def standing(row):
+        return (row['score'], row['gold'], row['silver'], row['bronze'])
+
+    for row in rows:
+        row['place'] = 1 + sum(standing(other) > standing(row) for other in rows)
+    return rows
+
+
+@locked
+def advance_benches():
+    """Moves each mock benchmark on by the time since its start."""
+    for job in BENCHES:
+        if job['state'] not in ('queued', 'running'):
+            continue
+        job['state'] = 'running'
+        steps = int((time.time() - job['created']) / 0.3)
+        for cell in job['cells']:
+            if cell['state'] in ('skipped', 'done'):
+                continue
+            challenge = find_challenge(cell['challenge'])
+            cell['state'] = 'running'
+            while steps > 0 and len(cell['results']) < cell['attempts']:
+                index = len(cell['results'])
+                seconds = round(1.5 + (challenge['seeds'][index] % 20) / 10, 1)
+                scored = {'finished': True, 'goals': [1, 0], 'scored': True, 'seconds': seconds}
+                result = {**attempt_result(challenge, index, None, scored), 'failed': False}
+                cell['results'] = [*cell['results'], result]
+                cell['played'] = len(cell['results'])
+                steps -= 1
+            if len(cell['results']) < cell['attempts']:
+                break
+            totals = run_totals(challenge, cell['results'])
+            board = record_run(
+                challenge['id'], 'agent', cell['name'], cell['team'], totals, cell['results']
+            )
+            cell.update(state='done', rank=board['rank'], **totals)
+        total = sum(cell['attempts'] for cell in job['cells'] if cell['state'] != 'skipped')
+        played = sum(cell['played'] for cell in job['cells'] if cell['state'] != 'skipped')
+        job['progress'] = round(played / total, 4) if total else 1.0
+        job['rows'] = bench_rows(job)
+        if all(cell['state'] in ('done', 'skipped') for cell in job['cells']):
+            job.update(state='done', ended=time.time())
+
+
+def bench_get(parts):
+    advance_benches()
+    if not parts:
+        return [copy.deepcopy(job) for job in reversed(BENCHES)], 200
+    job = next((item for item in BENCHES if len(parts) == 1 and item['id'] == parts[0]), None)
+    if job is None:
+        return {'error': 'no such benchmark'}, 404
+    return copy.deepcopy(job), 200
+
+
+def bench_post(document):
+    unknown = set(document) - {'teams', 'challenges', 'keep_recordings', 'workers'}
+    teams = document.get('teams')
+    if unknown or not isinstance(teams, list) or not teams or len(set(teams)) != len(teams):
+        raise ArgumentError('expected a list of distinct teams of the registry')
+    chosen = document.get('challenges')
+    if chosen is None:
+        chosen = [challenge['id'] for challenge in CHALLENGES]
+    for identifier in chosen:
+        find_challenge(identifier)
+    chosen = [challenge['id'] for challenge in CHALLENGES if challenge['id'] in chosen]
+    models, cells = [], []
+    for identifier in teams:
+        team = entry(str(identifier))
+        model = {'team': team['id'], 'name': team['name']}
+        if 'name_id' in team:
+            model.update(name_id=team['name_id'], name_values=team['name_values'])
+        models.append(model)
+        for challenge in chosen:
+            cells.append(
+                {
+                    'team': team['id'],
+                    'name': team['name'],
+                    'challenge': challenge,
+                    'state': 'queued',
+                    'attempts': find_challenge(challenge)['attempts'],
+                    'played': 0,
+                    'value': None,
+                    'seconds': None,
+                    'medal': None,
+                    'failed_attempts': 0,
+                    'rank': None,
+                    'group': None,
+                    'results': [],
+                    'error': None,
+                    'error_id': None,
+                    'error_values': None,
+                }
+            )
+    job = {
+        'id': new_identifier('b'),
+        'state': 'queued',
+        'teams': [model['team'] for model in models],
+        'challenges': chosen,
+        'models': models,
+        'cells': cells,
+        'keep_recordings': bool(document.get('keep_recordings', False)),
+        'workers': 1,
+        'device': 'cpu',
+        'progress': 0.0,
+        'error': None,
+        'error_id': None,
+        'error_values': None,
+        'created': time.time(),
+        'ended': None,
+    }
+    job['rows'] = bench_rows(job)
+    with LOCK:
+        BENCHES.append(job)
+    return copy.deepcopy(job), 201
+
+
+@locked
+def bench_delete(identifier):
+    job = next((item for item in BENCHES if item['id'] == identifier), None)
+    if job is None or job['state'] not in ('queued', 'running'):
+        return {'error': 'no such benchmark'}, 404
+    job.update(state='failed', error='cancelled', ended=time.time())
+    for cell in job['cells']:
+        if cell['state'] in ('queued', 'running'):
+            cell['state'] = 'cancelled'
+    job['rows'] = bench_rows(job)
+    return {'cancelled': identifier}, 200
+
+
 def challenges_get(parts, query):
     """Answers GET /api/challenges/..., with a status."""
+    if parts[:1] == ['benches']:
+        return bench_get(parts[1:])
     if not parts:
         return challenge_list(query.get('person') or None), 200
+    if parts == ['names']:
+        return {'default_names': ['Jogador', 'Player']}, 200
     if parts == ['jobs']:
         advance_jobs()
         return [dict(job) for job in reversed(JOBS)], 200
@@ -2053,6 +2247,8 @@ def challenges_get(parts, query):
 
 def challenges_post(parts, document):
     """Answers POST /api/challenges/ID/runs, with a status."""
+    if parts == ['benches']:
+        return bench_post(document)
     if len(parts) != 2 or parts[1] not in ('runs', 'leave') or parts[0] not in BOARDS:
         return {'error': 'no such resource'}, 404
     keep = document.get('keep_recordings', True)
@@ -2095,6 +2291,8 @@ def challenges_post(parts, document):
 
 def challenges_delete(parts):
     """Answers DELETE /api/challenges/jobs/ID, with a status."""
+    if len(parts) == 2 and parts[0] == 'benches':
+        return bench_delete(parts[1])
     with LOCK:
         wanted = parts[1] if len(parts) == 2 and parts[0] == 'jobs' else None
         job = next((j for j in JOBS if j['id'] == wanted), None)
@@ -2399,6 +2597,8 @@ def make_handler(requests):
                         str(document.get('right', BUILTIN)),
                         str(document.get('scenario', '11_vs_11_kaggle')),
                         None if seed in (None, '') else int(seed),
+                        document.get('pool'),
+                        document.get('same_team', False),
                     )
                     self._json(item, 201)
                 elif len(parts) == 4 and parts[1] == 'live' and mock_grid.owns(parts[2]):

@@ -674,6 +674,7 @@ competition.
 cuju render team add path/to/submission --name "Rule-based baseline" --format 11v11
 cuju render team list
 cuju render play --left t-20261106-101500-3fa9 --right builtin --seed 7 --right-ability 0.4
+cuju render play --left random --right random --scenario 5_vs_5 --pool t-20261106-101500-3fa9,builtin
 cuju render team export t-20261106-101500-3fa9 --out baseline.zip
 ```
 
@@ -693,8 +694,9 @@ out, and dynamic assignment drops the selection. The option `--json` of `list`, 
 folder and says so. A new team takes the next of eight kits in turn, the one that fewest teams of
 the registry wear, so teams added one after another differ on the pitch.
 
-The command `cuju render challenge` plays a challenge headless with a team, as described under
-Challenges, and `cuju render challenge list` names them all.
+The command `cuju render challenge` plays a challenge headless with a team, or benchmarks several
+teams on several challenges, as described under Challenges, and `cuju render challenge list` names
+them all.
 
 `cuju render play` plays the match in its own process and prints the path of the recording it
 saved, or with `--json` one line of JSON with the recording's identifier `match` and its `path`.
@@ -806,6 +808,43 @@ or the command, also prints the full traceback of a policy's error to standard e
 matches, games and challenges alike. A match that runs past 30 minutes ends, and the page cancels a
 waiting or running match on request.
 
+### Matches drawn at random
+
+A side of a requested match may be drawn at random. On the Matches page the list of each side
+starts with Random team, and on the command line `--left random` or `--right random` stands in for
+a team identifier. When the request is made, the server draws a team for each random side from
+the **pool**, the teams that the person ticks under Pool of the draw on the page or names with
+`--pool` as identifiers separated by commas, and every team of the registry, the built in AI
+among them, when no pool is given. A team takes part in the draw of a side only when it can play
+that side of the scenario, so its format must match the scenario's and its control settings must
+fit the players of that side. In the drill `academy_3_vs_1_with_keeper`, for example, the left
+side holds four controllable players and the right side two, so a team that controls three
+players can be drawn for the left side alone. A random side that no team of the pool can play is
+refused with the message `server.draw.left` or `server.draw.right`, which names the scenario.
+
+Two sides that are drawn, or a drawn side that meets a named team, take different teams whenever
+another team of the pool fits. A pool with a single team that fits plays that team on both sides.
+Let a team meet itself on the page, or `--same-team` on the command line, lets the draw pick one
+team for both sides however many fit, which suits a team that should play against its own copy
+now and then.
+
+The scenario can be drawn too. The scenario list of the page offers Random scenario first
+whenever two or more scenarios fit, and `--scenario random` asks for it on the command line. The
+draw then picks one of the scenarios that the page lists, the full matches, `1_vs_1_easy` and the
+academies, among those where each side has a team that can play it. The six training scenarios and
+GRF's example scenario stay out of the draw. When both the scenario and a side are random, the
+scenario comes first, and the teams then fit it. A request where no listed scenario has a team for
+each side is refused with the message `server.draw.scenario`.
+
+The seed of the request decides the draw, the same seed that the match plays with. A request
+without a seed takes one that the server draws, as always, and the draw then follows it. The same
+seed and the same pool always draw the same teams and scenario, on every computer, so the draw
+of a match is repeatable from its seed. A team added to the registry or removed from it changes the
+draw of a request without a pool, since the pool is then the whole registry at the time of the
+request. `cuju render play` prints the teams, scenario and seed that it drew before the match
+plays, and with `--json` adds `left`, `right`, `scenario`, `seed` and `draw` to its answer. The
+recording keeps the draw in its provenance, beside the teams that played.
+
 ### Teams and matches over HTTP
 
 Scripts and agents reach the registry and the requested matches through the routes of the server,
@@ -825,7 +864,7 @@ which pass the same checks of host and origin as every other route.
 | `GET /api/teams/ID/model`, `images/SLOT`, `sounds/KIND`, `clips/NAME` | none | the file |
 | `DELETE /api/teams/ID/model`, `images/SLOT`, `sounds/KIND`, `clips/NAME` | none | 204 once the file is gone |
 | `GET /api/requests` | none | every requested match with its `state`, `progress`, `match` and `error` |
-| `POST /api/requests` | `{"left": "ID", "right": "builtin", "scenario": "5_vs_5", "seed": 7, "ability": [null, 0.4]}` | the new request, with 201 |
+| `POST /api/requests` | `{"left": "ID", "right": "builtin", "scenario": "5_vs_5", "seed": 7, "ability": [null, 0.4], "pool": null, "same_team": false}` | the new request, with 201 |
 | `DELETE /api/requests/ID` | none | 204 once a waiting or running request is cancelled |
 
 `JOINTS` is the JSON of the bone each of GRF's joints follows, such as `{"body": "Hips"}`, encoded
@@ -841,6 +880,18 @@ like a sound answers 400 with the message `server.teams.sound_damaged`.
 and the fields it leaves out take their defaults. A request goes from `queued` to `running` and then
 to `done`, with the identifier of its recording in `match`, or to `failed`, with the reason in
 `error`. A refused field answers 400 with the reason.
+
+A request draws a side at random when `left` or `right` is `random`, and draws its scenario when
+`scenario` is `random`, as Matches drawn at random describes. `pool` is the list of team
+identifiers that a random side draws from, or `null` for every team of the registry, and
+`same_team`, true or false, lets one team play both sides. The new request answers with the teams
+and the scenario drawn in `left`, `right` and `scenario`, and with `draw`, which names the random
+sides as `sides`, a pair of true or false, whether the `scenario` was drawn, the `pool` and
+`same_team`. A request without anything random has `draw` set to `null`. A pool that is no list of
+identifiers is refused with `server.draw.pool`, a team of the pool outside the registry with
+`server.teams.unknown`, and a `same_team` other than true or false with `server.draw.same_team`.
+To retry a drawn request, a script sends `random` again for each random part, with the same pool,
+`same_team` and seed, and to draw again it leaves the seed out.
 
 ### Multi agent teams
 
@@ -1230,7 +1281,7 @@ The symbols that recur across the pages are these.
 | an arrow up from a line | Import, Upload |
 | two sheets | Copy, Duplicate |
 | a floppy disk | Save |
-| two dice | Draw a seed, Surprise me |
+| two dice | Draw a seed, Surprise me, Random team, drawn at random |
 | a plus | Add |
 | chevrons up and down | Move earlier, Move later |
 | arrows left and right | Back, Next |
@@ -1435,7 +1486,12 @@ which plays at home, and the right team, which plays away. Each card shows the c
 fixed selection, goalkeeper and action set, and has an Ability control. The scenario list offers
 full matches of the team format and academy scenarios, and a short text under it gives the chosen
 scenario's players a side, length, difficulties, the events that end an episode and, for an
-academy, its drill. A seed field takes a whole number or stays empty for a random one. Each
+academy, its drill. Random team, the first entry of each side's list, leaves the side to the draw
+of the seed, and the box Pool of the draw then lists every team of the registry with a box to tick,
+so the draw takes only the teams ticked there, and Let a team meet itself below them. The
+scenario list starts with Random scenario whenever two or more scenarios fit, and holds the
+scenarios that some team of the pool can play on each side. A seed field takes a whole number or
+stays empty for a random one. Each
 requested match checks the actual controllable players and roles on both sides before entering the
 queue. Teams of different formats can meet in academy scenarios when both settings fit.
 Below, the list of requested matches shows each match with its teams, state, scenario, seed and
@@ -1451,6 +1507,13 @@ on a failed, canceled or interrupted match and Repeat on a finished one queue a 
 same teams, scenario, seed and ability. The new request plays the teams as the registry holds them
 at that moment, so a team whose files changed since the first match plays its new files. A seed
 above `2**53 - 1` keeps its exact value on the page and in a retry.
+
+A request with a part drawn at random shows Random team or Random scenario in its place while
+the match waits, and the team or scenario drawn once the match starts, each followed by two dice
+that a screen reader reads as drawn at random. Retry on such a request sends the same random
+parts, pool and seed again, so it draws the same match, and Repeat sends them without the seed,
+so the server draws a new seed and with it a new draw. The tooltips of the two buttons say which
+one keeps the seed.
 
 **Tournaments** makes and follows tournaments of registered teams, the built in AI and people, as
 described under Tournaments.
@@ -2468,6 +2531,31 @@ shorts swapped with its trim, so the two sides look apart on the pitch, in the f
 Its goalkeeper takes a contrasting color too. A policy that fails in such a match is named by the
 entrant whose side failed.
 
+### Abilities
+
+The **ability** of a side, a number from 0 to 1, is how well the built in AI plays the players it
+controls on that side, GRF's team difficulty. It steers every player of a built in AI entrant, and
+it steers the players that a registered team or a person leaves to the built in AI, such as the
+goalkeeper of a team whose agents control the outfield, the players beyond those its agents
+control, or the teammates of a person. So the ability matters for every kind of entrant, and every
+entrant may carry one of its own, which its side plays with in each of its matches.
+
+A tournament may set a **standard ability**, which every entrant and every stage without an ability
+of their own play with. A match gives each side its ability in this order, the strongest first.
+
+1. The entrant's own ability.
+2. The ability of the stage, or of the tournament's `defaults`, which reach every stage.
+3. The tournament's standard ability.
+4. The scenario's own ability, when none of the above is set.
+
+So a league whose standard is 0.8 plays every side at 0.8, a final whose stage sets 1.0 plays its
+sides at 1.0, and an entrant set to 0.3 plays at 0.3 in every stage. Two entrants of one team may
+carry different abilities, as a first team and a weaker reserve side, and they stay two entrants
+with names of their own. The built in AI at an ability keeps its name, such as Built-in AI 0.50,
+and its rating, so a tournament of an earlier version loads and plays as it did. The provenance
+of every match keeps the ability that the tournament gave each side, home first, beside the
+ability that each side played with.
+
 ### Formats
 
 Each stage plays one of eight formats.
@@ -2535,18 +2623,19 @@ the second defeat.
 ### Settings
 
 Every setting below may be set for the whole tournament, as a default of every stage, and again
-for one stage, which overrides the default.
+for one stage, which overrides the default. The standard ability, described under Abilities, is a
+setting of the tournament itself.
 
 | Setting | What it sets |
 | ------- | ------------ |
 | Scenario | Any scenario that every entrant can play, by default the Kaggle match, or five against five when every registered team is five a side. Stages may use different scenarios and formats, such as groups of five against five and a final of eleven against eleven, when every entrant who could reach a stage can play its scenario. |
 | Match length | The steps a match lasts, from 50 to 5000, ten steps a second, or the scenario's own. |
-| Ability | The ability of the built in AI sides, which plays beside a team or a person, and of a built in AI entrant that has no ability of its own. |
+| Ability | The ability of the stage, which every side of the stage whose entrant has no ability of its own plays with, in place of the standard ability. |
 | Legs | The matches of a tie, from 1 to 10, the higher seed playing the last leg at home, and goals adding up across them. The final may have its own count. |
 | Drawn ties | An ordered list of ways to settle a tie that ends level. Away goals count when the legs are even. A replay, up to five, is one more match. A deciding match plays a chosen scenario twice, such as an academy drill, each side attacking from the left once, and adds the goals of both. Lots drawn from the tournament seed always come last and always decide. |
 | Points | The points for a win, a draw and a loss, any whole numbers from minus 100 to 100. |
 | Tiebreakers | An ordered list of what separates entrants level on points, goal difference, goals scored, fewer goals conceded, the matches between them, wins, away goals, fair play from cards, Buchholz, the points of the opponents met, and lots from the seed, which always come last. |
-| Seeding | For the first stage, at random from the seed, by hand in the order of the entrants, or by rating. For a later stage, by the standing of the stage before it, at random or by rating. |
+| Seeding | For the first stage, at random from the seed, the default, by hand in the order of the entrants, or by rating, where equal ratings keep the order of the entrants. For a later stage, by the standing of the stage before it, at random or by rating. |
 | Matches at once | How many matches of agents play at the same time, from 1, the default, to 8. |
 | Forfeit score | The goals by which a match awarded by hand is won, 3 by default. |
 
@@ -2565,6 +2654,19 @@ Every entrant of one team shares the team's rating, and a match between two of t
 is, since the team both wins and loses it. An entrant's rating may also be set by hand, and seeding
 by rating uses the ratings as they stand when the tournament is made.
 
+### The draw
+
+Once the entrants are set, the **draw** places them, the seeds of a knockout's bracket, the pots
+and groups of a group stage and the order of a Swiss, a ladder or a gauntlet. By default the draw
+is random, from the tournament seed, so every entrant has the same chance of any place, and the
+same seed gives the same draw again. Every preset that ships draws this way. A person who wants to
+set the bracket themselves seeds by hand, with Set the bracket by hand on the Entrants step, the
+seeding Manual in Settings, `--seeding manual` on the command line or `"seeding": "manual"` in a
+configuration, and the order of the entrants is then the order of the seeds, the first entrant
+seed 1, who meets the lowest seed in a knockout's first round. Seeding by rating stays a choice
+too, for entrants with ratings from earlier tournaments. A tournament of an earlier version, whose
+preset seeded by rating, keeps the draw it was made with and resumes as it was drawn.
+
 ### Determinism
 
 The same configuration and **tournament seed** give the same draw and the same seed for every
@@ -2576,7 +2678,8 @@ again from the start with the same seed and gives the same result.
 
 ### Presets
 
-A preset holds a tournament's format, its stages, defaults and seeding, without its entrants. Those
+A preset holds a tournament's format, its stages, defaults, seeding and standard ability, without
+its entrants. Every preset that ships draws its first stage at random from the seed. Those
 that ship fit any number of entrants from 2 to 256. While its stages stay as the preset ships them,
 a group size, a best place, a number of Swiss rounds or of entrants that advance comes down to the
 most that the entrants allow, so the Swiss of 16 plays two rounds with three entrants and the
@@ -2610,23 +2713,32 @@ opens the setup on the right, in five steps that are tabs of their own, so any s
 time, and the arrow keys move between them.
 
 1. **Format** offers the presets, those that ship and those of the user.
-2. **Entrants** adds registered teams one at a time or every one at once, the built in AI at an
-    ability, or four of them at rising abilities, and people by name, with the built in AI or a
-    team of dynamic assignment as their teammates. Each entrant may be renamed, given a rating and
-    moved up or down, which is the seeding when it is manual, or removed. A team added again, or
-    any team whose name an entrant already shows, enters under the first free name, such as Rex 2,
-    with its name field focused so the proposal can be changed at once. A name that repeats
+2. **Entrants** has Set the bracket by hand above its list, which turns the random draw into a
+    draw in the order of the list and says which of the two applies, and it adds registered teams
+    one at a time or every one at once, the built in AI at an ability, or four of them at rising
+    abilities, and people by name, with the built in AI or a
+    team of dynamic assignment as their teammates. Each entrant may be renamed, given an ability
+    of its own, given a rating and moved up or down, which is the seeding when it is manual, or
+    removed. A team added again, or any team whose name an entrant already shows, enters under the
+    first free name, such as Rex 2, with its name field focused so the proposal can be changed at
+    once. A name that repeats
     another entrant's is marked beside its field with the entrant it repeats, a person is added
     only under a name of their own, and Review lists every repeated name until each entrant has
-    its own.
+    its own. The Ability field of each row stays empty to follow the standard, which its
+    placeholder names, such as Standard, 0.80.
 3. **Settings** names the tournament, takes its seed or draws one, and sets the seeding, the
-    scenario, match length and ability of every stage, the matches at once and the forfeit score.
-4. **Stages** is the advanced editor. Each stage is a card with every setting that its format
-    reads, the ordered lists of tiebreakers and ways to settle a tie, and buttons to add, move and
-    remove stages. Edit as JSON shows the stages and defaults as JSON to change as text.
-5. **Review** checks the tournament on the server and shows each stage with its entrants, those
-    who advance, its scenario and the draw of its first round or its groups, or the reason it
-    cannot be made. It also saves the format as a preset. Start tournament begins it.
+    scenario and match length of every stage, the standard ability, the matches at once and the
+    forfeit score. The standard ability is a slider with its value beside it, set by its Set box,
+    and with the box clear the value reads as the scenario's own.
+4. **Stages** is the advanced editor. It holds the standard ability too, and each stage is a card
+    with every setting that its format reads, the ordered lists of tiebreakers and ways to settle
+    a tie, and buttons to add, move and remove stages. A stage without an ability of its own reads
+    as following the standard. Edit as JSON shows the standard ability, the stages and defaults as
+    JSON to change as text.
+5. **Review** checks the tournament on the server and shows the standard ability, the entrants
+    with an ability of their own, each stage with its entrants, those who advance, its scenario,
+    its ability and the draw of its first round or its groups, or the reason it cannot be made. It
+    also saves the format as a preset. Start tournament begins it.
 
 An open tournament shows its state, seed and progress, the matches playing now, and buttons to
 cancel it, resume it after a failed match, hold its trophy ceremony, run it again with the same
@@ -2639,7 +2751,10 @@ qualify marked, a caption that names the order of the tiebreakers, and a line fo
 stands above another on equal points that names the tiebreaker that placed it there. **Fixtures and
 results** list every round with its matches, their scores, or their state while none of their
 matches has played, how a tie was decided, the progress of a match that plays, and Watch, which
-opens the recording of each match. The page follows a running
+opens the recording of each match. An entrant whose own ability differs from the standard shows
+it beside its name in the bracket, the tables and the fixtures, such as Ability 0.30 after the
+symbol of the built in AI, and the head of the tournament names its standard ability. A built in AI
+whose name the rules made already holds its ability in its name. The page follows a running
 tournament as it plays and announces a match that waits for a person and the end of a tournament.
 
 A match with a person shows **Play now**, which starts it as a game of the Play page with the
@@ -2671,10 +2786,60 @@ as typed, and so does the name of a registered team. The tournament files keep t
 each name with its message beside it, the command line prints the English text, and a tournament
 of an earlier version shows its names as it saved them.
 
+An open tournament lists **Up next** above its stages, the next matches as kickoff cards, each
+with its stage and label, the two sides with their kits and the state of the match. The matches
+that wait to be watched come first, in the order to watch them, and then those still to play. A
+final, a grand final and its deciding match have a card of their own, marked with the trophy. Each
+card takes a prediction of its result, a win for either side or a draw, which the browser keeps
+and which counts once the match's result shows, so the tournament shows how many predictions came
+right, such as Predictions, 2 of 3 right.
+
 The **trophy ceremony** of a finished tournament opens the last match that the champion played on
 the Watch page at its end, and holds the podium and confetti of the show after a match, with the
 champion's players on the steps in the champion's colors, the champion's name, and the tournament
 won with the runner up beneath it. Close ends it.
+
+### The Brackets view
+
+**Brackets** on an open tournament, or Brackets of a tournament in the command palette, opens its
+brackets, groups and tables in a view of their own, which takes the whole width of the page with
+the list of tournaments set aside and larger type. The stages are tabs as in the tournament, and
+the view follows a running tournament as it plays. Zoom in and Zoom out scale the view from half
+to twice its size, and Actual size returns it, so a bracket reads across a room or fits a small
+window. A bracket or a table wider than the screen scrolls sideways, so the view works on a phone
+too. Back to the tournament returns to the tournament where it was. A tournament without spoilers
+shows in the Brackets view as it does elsewhere, with Watch next beside the zoom.
+
+### Watching without spoilers
+
+A tournament may be watched without spoilers, game by game, as a person follows a competition
+that played while they were away. **Watch without spoilers** on an open tournament turns it on for
+that tournament, and the browser remembers it, with the matches the person has watched, so it
+stays on after a reload and in later visits. While it is on, nothing that tells the outcome of a
+played match that the person has not watched shows. The brackets, tables, fixtures and ranking
+read as if only the watched matches had played, so a side that an unwatched match decides reads
+as where it comes from, such as Winner of Semi-final 1, a table counts the watched matches alone,
+and the champion, the ceremony and the toast of a finished tournament wait. A played match that
+waits shows Played, not watched yet, with Watch and Reveal.
+
+**Watch next** plays the next match to watch on the Watch page, in the order of the schedule, and
+the match counts as watched when its recording plays to its end, and only then does its result show
+in the bracket and the tables. While it plays, the timeline leaves its goals unmarked. At its end a
+card names the next match, who plays it and nothing more, with Play now and Cancel, and a final has
+a card of its own. With **Play the next match by itself** on, the card counts down ten seconds and
+plays the next match, and Cancel, Escape or leaving Watch stops it. **Reveal** shows the result of
+one match without watching it, and **Reveal all** shows every result, after a question in place of
+the button that Escape or the close button answers with no. A match awarded without a recording
+reveals at once. Once every played match is watched, a summary lists the results of the matches
+watched in that visit, what the person missed, with the predictions they got right.
+
+The lists of the page keep the secret too. Home, Recordings, the Trash, the details of a recording,
+the command palette and the search of moments show a recording of an unwatched match without its
+score and teams, under a title that names only its tournament, such as Spring cup, a match not
+watched yet, and the search of moments leaves its moments out. A match that a person plays shows
+when its turn comes, as it must. Turning the switch off shows everything again, and the matches
+watched stay remembered. The page asks the server for the tournament as the person sees it with
+`POST /api/tournaments/ID/spoilers`, whose body names the watched matches by their keys.
 
 ### The command line and the server
 
@@ -2683,6 +2848,8 @@ cuju render tournament new --preset world_cup --name "Office cup" --seed 7 \
     --team t-20261106-101500-3fa9 --builtin 0.3 --builtin 0.8 --person Ana --run
 cuju render tournament new --preset round_robin --team t-20261106-101500-3fa9 \
     --team t-20261106-101500-3fa9 --as "Reds reserves" --builtin 0.5
+cuju render tournament new --preset classic_league --ability 0.8 \
+    --team t-20261106-101500-3fa9 --ability 0.3 --person Ana --builtin any
 cuju render tournament check --config spring.json
 cuju render tournament list --json
 cuju render tournament show cup-20261110-090000-1a2b
@@ -2700,7 +2867,12 @@ whole configuration given to `--config`, with the entrants in the order of the o
 `--builtin`, with an ability or `any`, and `--person`. A team may be named more than once, and
 `--as` after an entrant gives it a name of its own, so the second example enters the team Reds
 as Reds and as Reds reserves. A team named again without `--as` takes the first free number, Reds
-2, which `check` shows before anything is made. The options `--seeding`, `--scenario`,
+2, which `check` shows before anything is made. `--ability` before every entrant sets the standard
+ability, from 0 to 1, or `scenario` to leave it to the scenario, and `--ability` after an entrant
+gives that entrant its own, or `standard` to follow the standard, so the third example plays a
+league at 0.8 where Reds play at 0.3. `check` and `show` print the standard ability in their first
+line, a stage's ability beside its scenario and an entrant's own ability after its name, such as
+Reds at 0.30. The options `--seeding`, `--scenario`,
 `--length`, `--concurrency` and `--rounds`, the rounds of every Swiss or ladder stage, change the
 preset, and rounds beyond what the entrants allow are refused with the most they allow. A
 tournament's identifier starts with `cup-`. A running server plays a new tournament, and `run`
@@ -2740,7 +2912,7 @@ beside the whole `tournament`.
 The server answers `GET /api/tournaments`, `GET /api/tournaments/ID`, `GET
 /api/tournaments/presets`, `GET /api/tournaments/ratings`, `POST /api/tournaments` with a
 configuration, `POST /api/tournaments/check`, which resolves a configuration and returns its draw,
-`POST /api/tournaments/ID/cancel`, `resume`, `play` and `forfeit`, `POST
+`POST /api/tournaments/ID/cancel`, `resume`, `play`, `forfeit` and `spoilers`, `POST
 /api/tournaments/presets/NAME`, and `DELETE` of a tournament or a preset, with the same Host and
 Origin checks as every other route.
 
@@ -2750,6 +2922,7 @@ Origin checks as every other route.
 | `POST /api/tournaments/ID/resume` | `{}` | the summary of the tournament, which plays its failed matches again |
 | `POST /api/tournaments/ID/play` | `{"key": "0/w4-1/1"}`, a match with a person | the game of the Play page that plays it |
 | `POST /api/tournaments/ID/cancel` | `{}` | the whole tournament, cancelled |
+| `POST /api/tournaments/ID/spoilers` | `{"watched": ["0/w4-1/1"]}`, the keys of the watched matches | the whole tournament as evaluated from the watched results alone, each played match that waits with `state` `unseen` and its recording in `unseen`, and `spoilers` with the keys that can be watched now in order as `unseen`, every played key as `played` and the counts `hidden` and `watched` |
 
 A match key comes from the `matches` of `GET /api/tournaments/ID`, each with its `key`, `label`,
 `home` and `away` entrants and `state`, and the summary of a tournament counts its `failed`
@@ -2771,8 +2944,9 @@ out.
   "seed": 7,
   "seeding": "rating",
   "concurrency": 2,
+  "ability": 0.6,
   "entrants": [
-    {"kind": "team", "team": "t-20261106-101500-3fa9", "name": "Reds"},
+    {"kind": "team", "team": "t-20261106-101500-3fa9", "name": "Reds", "ability": 0.9},
     {"kind": "builtin", "ability": 0.3},
     {"kind": "builtin", "ability": 0.8, "rating": 1600},
     {"kind": "person", "name": "Ana"}
@@ -2788,7 +2962,9 @@ out.
 ```
 
 This makes a Swiss stage of two rounds among four entrants, a bye worth a draw, whose best two
-meet in a final of one match, settled by away goals, a deciding match and lots in turn.
+meet in a final of one match, settled by away goals, a deciding match and lots in turn. The players
+that Reds leave to the built in AI play at 0.9, the two built in AI entrants at 0.3 and 0.8, and
+the teammates of Ana at the standard of 0.6.
 
 | Key of the tournament | Value | Default |
 | --------------------- | ----- | ------- |
@@ -2798,6 +2974,7 @@ meet in a final of one match, settled by away goals, a deciding match and lots i
 | `seeding` | `random`, `manual` in the order of the entrants, or `rating` | `random` |
 | `concurrency` | the matches of agents at once, 1 to 8 | `1` |
 | `forfeit_score` | the goals of an awarded match, 1 to 10 | `3` |
+| `ability` | the standard ability from 0 to 1 of every entrant and stage that sets none | null, the scenario's own |
 | `defaults` | stage settings for every stage | `{}` |
 | `stages` | a list of 1 to 8 stages, as the last table describes | |
 | `preset` | the name of a preset, which fills what the configuration leaves out | none |
@@ -2806,7 +2983,7 @@ meet in a final of one match, settled by away goals, a deciding match and lots i
 | ----------------- | ----- |
 | `kind` | `team`, `builtin` or `person`, `team` when absent |
 | `team` | the identifier of a registered team, for a team |
-| `ability` | from 0 to 1, or null for the scenario's own, for the built in AI |
+| `ability` | from 0 to 1, the ability of the built in AI players of the entrant's side, for every kind of entrant, or null to follow the stage and the standard |
 | `name` | the name the tournament shows, up to 40 characters and unique within the tournament without regard to case or spaces, by default the team's name or Built-in AI with its ability, numbered from 2 when another entrant holds it, and required for a person |
 | `teammates` | `builtin` or a registered team of dynamic assignment, for a person |
 | `rating` | a rating from 0 to 10000 that replaces the one of earlier tournaments |
@@ -2817,7 +2994,7 @@ meet in a final of one match, settled by away goals, a deciding match and lots i
 | `name` | all | the format's name | text of up to 60 characters |
 | `scenario` | all | the Kaggle match, or `5_vs_5` for teams of five a side | a scenario of the scenario list |
 | `length` | all | null, the scenario's own | steps from 50 to 5000 |
-| `ability` | all | null, the scenario's own | the built in AI's ability from 0 to 1 |
+| `ability` | all | null, the standard | the ability from 0 to 1 of every side whose entrant sets none |
 | `legs` | all | `1` | the matches of a tie or meeting, 1 to 10 |
 | `final_legs` | `knockout`, `double_elimination` | null, as `legs` | the matches of the final, 1 to 10 |
 | `settle` | `knockout`, `double_elimination`, `ladder`, `king_of_the_hill`, `gauntlet` | `["replay", "lots"]` | an ordered list of `away_goals`, `replay`, `decider` and `lots`, which always comes last |
@@ -2910,6 +3087,16 @@ The targets come from runs of the built in AI on the whole left side and of simp
 at the goal and shoot, so bronze asks for a little better than standing still and gold for a clean
 run.
 
+Every challenge lists its medals as three items, Gold, Silver and Bronze in that order, and each
+item names its medal and its target in plain words and numbers, such as Gold, 6 goals or more
+ahead for One on one, Silver, a goal in 2 attempts or more for Corner, or Gold, a goal within 3
+seconds in all 5 attempts for Empty goal from close range. A target that asks for a goal in every
+attempt says all, and any other says or more, since a value at or above a target wins its medal.
+A run or a competitor's best marks the item of the best medal it won, and no item when it won
+none. The catalog holds the items as `medals`, each with its `medal`, its `target`, `every` for a
+target of every attempt and `reached`, and a run's result holds them with the item it reached
+marked. `cuju render challenge list` prints them under each goal.
+
 Each challenge has a kind, which says what the drill trains, and a difficulty, easy, medium or
 hard, which weighs its targets and the defenders it faces. Finishing asks for a clean shot at an
 empty goal, Dribbling for a run past chasing defenders, Combination play for a pass that frees a
@@ -2923,16 +3110,22 @@ prints them with the rest of each challenge.
 ### On the Play page
 
 The setup card of Play holds a Challenges section under the Play button. A field takes the person's
-name for the leaderboards, which the browser keeps, and each challenge shows its goal, its
-scenario, its targets, the ability of the built in AI on each side, the person's best run with its
-medal and rank, and the leader of its board. Start challenge plays the first attempt as a game of
+name for the leaderboards, which the browser keeps once the person types one. A person who types
+none plays under the default name of the page's language, Player in English, and the page shows
+that default in its own language wherever the name shows, on the leaderboards, in the titles of the
+grouped recordings and on the cards, even for runs saved while the page spoke another language. A
+run keeps the name it was saved with, and a new run under the default says so in `default_name`,
+while an older one counts as the default when its name is the default of a language that the
+server knows. Every person under a default name is one competitor. Each challenge shows its goal, its
+scenario, its medals as items, the ability of the built in AI on each side, the person's best run
+with its medal and rank, and the leader of its board. Start challenge plays the first attempt as a game of
 the challenge's scenario, seed and ability, with Save to Recordings on and the person on the left
 alone. The end card of each attempt shows the attempt's result, which the server scores from the
 saved recording, and offers Next attempt, Watch it and Leave challenge. After the last attempt the
 page sends the run to the server, the person's name and the recordings in order, and the end card
 shows the value with the seconds that its counting attempts took to score in all, the medal, the
-personal best or, for the person's first run, its place on the board, the rank and any
-achievements, with Try again. A run in which no attempt counted shows its value alone. An
+medal items with the one this run reached marked This run, the personal best or, for the person's
+first run, its place on the board, the rank and any achievements, with Try again. A run in which no attempt counted shows its value alone. An
 achievement earned again in a run shows on the first end card that earns it. Leave challenge and
 the Challenges button of the last end card return to the setup with the focus on the challenge
 just played, and each button of a challenge names its challenge for screen readers. A
@@ -2955,8 +3148,9 @@ person on the left alone and the built in AI on both teams, and that each record
 A run that fails a check stays off the board, and the end card names the reason.
 
 Leaderboard opens the board of a challenge below it, with the rank, the competitor marked as a
-person or an agent, the value, the seconds to score, the medal and the date of each best run, and
-the seeds of the attempts. The keyboard and a controller work every control of the section, as they
+person by the symbol of a person or as a model by the symbol of a robot, with its kind, a team or
+a Python policy, the value, the seconds to score, the medal by its symbol in its metal's color and
+its name, and the date of each best run, and the seeds of the attempts. The keyboard and a controller work every control of the section, as they
 work the rest of the setup card.
 
 ### The cards
@@ -2970,6 +3164,14 @@ differ in their color, their symbol and the pattern drawn behind a card whose pi
 and the colors keep the contrast that the Web Content Accessibility Guidelines ask of text at
 level AA in the light and the dark theme. A hard challenge carries a dashed line of its color
 along the foot of its picture.
+
+Under the goal, each card lists its medals as items, each with the symbol of a medal and the
+medal's name in the color of its metal, gold, silver or bronze, and its target. Each metal has a
+color for the dark theme and one for the light theme, and both keep a contrast of 4.5 to 1 or
+more on every surface of their theme, the level AA that the guidelines ask of text, so the color
+adds to the words and never stands for them. The item of the person's best medal carries a check
+and Your best, and a screen reader reads the list by the challenge's name, as Medals of the
+challenge, with each item as its words.
 
 A short teaser of the challenge, three to five seconds of the built in AI or of a simple scripted
 player meeting its goal, plays over the still while the pointer rests on the card or while the
@@ -2999,9 +3201,16 @@ attempts that meet it with `cuju.render.Recorder`, and exports each teaser with 
 ### Agents
 
 Agents play challenges headless, through the same runner that plays a team in a game, which waits
-for each answer, so a run goes as fast as the policy answers. A policy that has not answered for 60
-seconds, 120 seconds for its first answer, ends the run, and so does one that fails or answers with
-anything but actions. Such a run stays off the leaderboard. Each attempt plays in a batch
+for each answer, so a run goes as fast as the policy answers. A policy has 120 seconds to load and
+to give its first answer, and 60 seconds for every later answer. A headless run of the page, of
+the command line or of a benchmark, which the next section describes, treats a policy that fails,
+stops answering or answers with anything but actions as the end of that attempt alone. The attempt
+ends at the step where the policy failed and counts as an attempt that ended early, its goals
+against and no goals for, so a failure never helps. Its result says `failed` with the policy's
+error in `error`, `error_id` and `error_values`, its recording keeps the frames played so far with
+`failed` in its provenance, and the next attempt loads the policy again, so the run goes on to its
+end and reaches the leaderboard. A policy that cannot load at all fails every attempt of the run.
+The result counts its failed attempts in `failed_attempts`. Each attempt plays in a batch
 of one environment with the challenge's seed and abilities and the action set that a requested
 match would choose for the team, and becomes a recording of the library whose provenance names the
 source `challenge`, as described under Recording format. The recordings of a run form one group,
@@ -3026,22 +3235,26 @@ a name of its own keeps the policy apart there too.
 
 From the Play page, the team list and Attempts of the Challenges section and Run headless on a
 challenge start a run on the server, in a process of its own, one at a time. The line above the
-list follows the run attempt by attempt, Cancel run ends it, and the result shows its value, medal
-and rank when it is done.
+list follows the run attempt by attempt with a bar of the attempts played, Cancel run ends it, and
+the result shows its value, medal and rank when it is done, with the medal items and the one the
+run reached marked Reached, and the count of failed attempts when there are any. The run reaches
+the leaderboard under the team's name, marked as a model.
 
-From the command line, `cuju render challenge list` prints the catalog, and a challenge's
-identifier with a team plays it, printing each attempt with its seed, its goal and its recording,
-then the value, the medal, the rank and the personal best. An attempt that scored after the time
+From the command line, `cuju render challenge list` prints the catalog, and
+`cuju render challenge run` with a challenge's identifier and a team plays it, as does the
+identifier alone after `challenge`, printing each attempt with its seed, its goal and its
+recording, and a failed attempt with the policy's error, then the value, the medal, the medal
+items, the rank and the personal best. An attempt that scored after the time
 limit of its challenge says so, and a run whose attempts all fall short says that no attempt
 counts in place of the seconds to score. `--json` prints the catalog, or the whole result of a run
 as `cuju.render.challenge` returns it, once the run has ended.
 
 ```sh
 cuju render challenge list
-cuju render challenge empty_goal_close --team t-20261106-101500-3fa9
+cuju render challenge run empty_goal_close --team t-20261106-101500-3fa9
 cuju render challenge one_on_one --team builtin --attempts 1 --device cpu
-cuju render challenge empty_goal_close --team builtin --attempts 1 --json
-cuju render challenge corner --team builtin --no-recordings
+cuju render challenge run empty_goal_close --team builtin --attempts 1 --json
+cuju render challenge run corner --team builtin --no-recordings
 ```
 
 From Python, `cuju.render.challenge` plays a challenge with a team of the registry or with any
@@ -3049,7 +3262,9 @@ Kaggle style agent function, and returns a plain dictionary of the run. A functi
 of dynamic assignment by default, and `control` takes the control settings of a team in its place.
 `cuju.render.challenges` returns the catalog. A policy that fails, answers with anything but actions
 or stops answering raises `cuju.render.PolicyError`, an `Error` of cuju and a `RuntimeError`, whose
-message names the policy and the reason in one line, with the policy's own error as its cause. The
+message names the policy and the reason in one line, with the policy's own error as its cause.
+`fail_attempts=True` plays as the page and the command line do, so such a policy fails its attempt
+alone and the run goes on. The
 result's `achievements` lists what a team of the registry keeps from the run, and stays empty for
 the built in AI and for a Python policy, which keep none.
 
@@ -3066,6 +3281,77 @@ print(result['value'], result['medal'], result['rank'])
 for attempt in result['attempts']:
     print(attempt['seed'], attempt['seconds'], attempt['match'])
 ```
+
+### Benchmarks of models
+
+A **benchmark** plays one or several models, the registered teams that requested matches and
+tournaments play, on several or all challenges as one job, and compares them in one table. Each
+pair of a model and a challenge plays as a full headless run, exactly as Run headless plays it,
+in a process of its own, with the challenge's scenario, abilities, fixed seeds and scoring. A
+model's value on a challenge therefore compares with a person's value on it, and the same model
+on the same seeds gives the same value, seconds and medal on every machine, as long as its policy
+answers within its time limits and plays the same way on the same observations. Since every run
+has a process of its own, no model's run sees the state of another, such as a module or a global
+variable that a submission leaves behind. A policy that fails ends its attempt alone, as described
+under Agents, and a run that ends without a result, such as one whose process stops, leaves its
+cell failed with the reason, so the job always goes on to the next pair. A model that cannot play
+a challenge, such as a team of several players on the one on one, skips that challenge with the
+reason. Each run of a benchmark reaches the leaderboard of its challenge as any full run does,
+under the team's name and marked as a model, apart from people.
+
+The Challenges section of Play holds Benchmark models under the cards. Its Models list takes one
+or several teams of the registry, GRF's built in AI among them, and its Challenges list takes
+several or all challenges, with All challenges to choose or clear them at once. Keep the attempts
+of the benchmark as recordings, off by default, keeps every attempt in the library as the group of
+its run. Run benchmark starts the job on the server, which plays one benchmark at a time, and a
+bar and a line follow the runs done and the share of the attempts played, while Cancel benchmark
+ends it, so the runs that were left never start. The table of models by challenges fills in as
+each run ends, each cell with the run's value and its medal by symbol and name, the count of failed
+attempts when there are any, or its state and reason, and each row ends with the model's gold,
+silver and bronze medals, its score and its place. Export JSON saves the benchmark as the server
+answers it, and Export CSV saves the table.
+
+The **score** of a model is the mean, over the challenges of the benchmark, of the share of each
+gold target that its value reached, from 0 to 1, times 100 and rounded to one decimal. A value at
+or above the gold target counts 1, a value of 3 on a gold target of 6 counts 0.5, a value at or
+below zero counts 0, and so does a cell that skipped, failed or was cancelled, so a score of 100
+means gold on every challenge. Models place by score, then by their gold, silver and bronze medals
+in that order, and models level on all four share a place. The CSV has one row for each model, in
+the order chosen, with the columns `model`, the team's name, `team`, its identifier, then
+`<challenge> value` and `<challenge> medal` for each challenge, empty for a cell without a result,
+and `gold`, `silver`, `bronze`, `score` with one decimal and `place`. Python's `csv` module and
+the page write it alike, in UTF 8 with a comma between fields and quotes around a field that holds
+a comma, a quote or a line break.
+
+The server plays several runs of a benchmark at once, one for every four logical processors of the
+machine by default, from 1 to 4, which `workers` sets from 1 to 8. Each run waits for its policy's
+answers and plays no faster than they come, so a benchmark goes as fast as the models and the
+processors allow. The server keeps its benchmarks in memory, every waiting or running one and the
+newest 20 that ended.
+
+`cuju render challenge bench` plays a benchmark from the command line, with `--team` once for each
+model and `--challenge` once for each challenge, every challenge when none is named, and
+`--workers`, `--device`, `--keep-recordings` and `--json` or `--csv`. Each run still plays in a
+process of its own, and its end prints a line on standard error. The table goes to standard output,
+each model with its place, score and medals and each of its challenges with its value and medal,
+or the whole benchmark as JSON under `--json`, or the CSV under `--csv`. Ctrl+C ends the runs and
+exits with 130.
+
+```sh
+cuju render challenge bench --team t-20261106-101500-3fa9 --team builtin
+cuju render challenge bench --team t-20261106-101500-3fa9 --challenge corner --challenge one_on_one --json
+cuju render challenge bench --team builtin --challenge empty_goal_close --csv > table.csv
+```
+
+A benchmark of the server or the command line holds `teams`, `challenges` in the order of the
+catalog, `models` with each model's `team` and `name`, `cells` with one entry for each pair,
+`rows` with each model's `gold`, `silver`, `bronze`, `score`, `done` and `place`, `progress` from
+0 to 1, `keep_recordings`, `workers` and `device`, and on the server its `id`, `state`, `created`,
+`ended` and error fields. A cell holds its `team`, `challenge`, `state`, one of `queued`,
+`running`, `done`, `failed`, `skipped` and `cancelled`, its `attempts` and the attempts `played`,
+its `value`, `seconds`, `medal`, `rank`, `failed_attempts` and `group`, the `results` of its
+attempts as a run returns them, and `error`, `error_id` and `error_values` for a cell that failed
+or skipped.
 
 ### Scripts
 
@@ -3084,15 +3370,33 @@ exists once the Play page has opened, as `cuju.showPage('play')` does for a scri
 | `await score(id, match, attempt)` | the result of a recording as an attempt |
 | `await achievements()` | the catalog of achievements, the person's and every team's |
 | `state()` | the person's run so far and the headless runs |
+| `await bench(teams, { challenges, keepRecordings, workers })` | start a benchmark of the teams on the challenges, every one by default, and follow it in Benchmark models |
+| `benchJob()`, `benchTable()` and `benchCsv()` | the benchmark that the section follows, its table of rows and cells, and its CSV |
+| `await benches()` and `await cancelBench()` | the benchmarks of the server, and the end of the one the section follows |
 
 The server's routes are `GET /api/challenges`, with `?person=` for a person's best runs,
 `GET /api/challenges/<id>` for a board, `GET /api/challenges/<id>/score?match=&attempt=` for one
 attempt, `POST /api/challenges/<id>/runs` with `person` and `matches` for a person's run or `team`
 and `attempts` for a headless one, each with `keep_recordings` false for a run without recordings,
 `POST /api/challenges/<id>/leave` with `person`, `matches` and `keep_recordings` for the attempts
-of a run that a person left, `GET /api/challenges/jobs` and
-`DELETE /api/challenges/jobs/<job>`. They pass the same checks of host and origin as every other
-route.
+of a run that a person left, both with `default_name` true for a person who typed no name,
+`GET /api/challenges/names` for the default names of every language that the server knows,
+`GET /api/challenges/jobs`, `GET /api/challenges/jobs/<job>` and `DELETE /api/challenges/jobs/<job>`. The benchmarks have `POST /api/challenges/benches` with
+`teams`, a list of team identifiers, and the optional `challenges`, a list of challenge
+identifiers, `keep_recordings`, false by default, and `workers`, which answers the new benchmark
+with 201, `GET /api/challenges/benches` for every benchmark, newest first,
+`GET /api/challenges/benches/<bench>` for one, `GET /api/challenges/benches/<bench>/table.csv` for
+its table as CSV and `DELETE /api/challenges/benches/<bench>` to cancel it. They pass the same
+checks of host and origin as every other route, and an agent benchmarks its own models with them
+as follows.
+
+```sh
+curl -s -X POST http://127.0.0.1:8780/api/challenges/benches \
+    -H 'Content-Type: application/json' \
+    -d '{"teams": ["t-20261106-101500-3fa9", "builtin"], "challenges": ["corner", "one_on_one"]}'
+curl -s http://127.0.0.1:8780/api/challenges/benches/b-20261111-120000-3fa9
+curl -s http://127.0.0.1:8780/api/challenges/benches/b-20261111-120000-3fa9/table.csv
+```
 
 ## Achievements
 
@@ -3157,16 +3461,28 @@ sentence what the control does and the key that reaches it.
 
 The tour shows as a card beside its control, below it when there is room, above it near the
 bottom of the window, and at its side when the control is taller than the room left. A part of
-the page larger than the window has its ring around the part in view. The card is a dialog that
-leaves the page usable, so the control it points at works while the card shows, the focus and the
-Tab key move freely between the card and the page, and Try it moves the focus to the control
-itself. A control outside the window scrolls to its middle, and scrolls back while the page settles
-for a moment after the step shows. The focus moves to the title of the card at each step, so a
-screen reader hears the title, and then hears the number and the text of the step once. Next and
-Back move through the steps, and so do the Right and Left arrows while the card has the focus.
-Finish on the last step ends the tour. Esc, or Leave the tour, closes it from the card, and from the
-page whenever no menu, palette or dialog is open over it, and the page then says at which step it
-stopped.
+the page larger than the window has its ring around the part in view. The card keeps clear of its
+control and of whatever opens over the page, a menu, a popover, the command palette, a panel or a
+dialog. When the side it would take is covered, it moves to the next side that is clear, and when
+none is, it waits in the corner of the window farthest from them, a little smaller when the room
+there asks for it. It moves as soon as a menu opens or closes, at once under reduced motion. The
+card is a dialog that leaves the page usable, so the control it points at works while the card
+shows, and the focus and the Tab key move freely between the card and the page. A control outside
+the window scrolls to its middle, and scrolls back while the page settles for a moment after the
+step shows. The focus moves to the title of the card at each step, so a screen reader hears the
+title, and then hears the number and the text of the step once. Next and Back move through the
+steps, and so do the Right and Left arrows while the card has the focus. Finish on the last step
+ends the tour. Esc, or Leave the tour, closes it from the card, and from the page whenever no menu,
+palette or dialog is open over it, and the page then says at which step it stopped.
+
+**Try it** shows on the steps whose control has something to try in place. On the command palette,
+the Match and View menus of Watch, New tournament and Settings, it opens what the control opens,
+just as a click on it would, and the focus moves into the palette, the menu or the panel, so the
+arrows, Enter and Esc work there as usual. Esc then closes the menu first, and a second Esc leaves
+the tour. On the timeline, Try it moves the focus to the timeline and says that Left and Right seek
+five seconds, and thirty with Shift. The other steps point at the logo, which leads to the Home
+page the step already shows, at Play, which starts a match, at the team list, whose additions
+upload a folder, and at the headings of Challenges and Help, so their cards leave Try it out.
 
 A step that needs a recording, such as the timeline, offers Open the sample match when nothing
 plays, which adds the five a side sample to the library when it is missing, restores it from the
@@ -4084,8 +4400,9 @@ A requested match adds its resolved `seed`, the `scenario`, the registry identif
 `ability` that played on each side. A game on the Play page adds its seed, scenario, the sides of
 the people as `humans`, the action set and the ability. A match of a tournament adds `tournament`,
 with the identifier and name of the tournament, the name of its stage, the label of the match and
-its key, and the names of its two entrants as the tournament shows them as `names`, home first,
-which also name the teams of the recording, and a match of a set length
+its key, the names of its two entrants as the tournament shows them as `names`, home first,
+which also name the teams of the recording, and the `ability` that the tournament gave each side,
+home first, null for the scenario's own, and a match of a set length
 adds `length`. An agent's attempt of a challenge adds the `challenge`, the index of the `attempt`
 from zero, its seed, the scenario, the `teams` with the registry identifier of the left team or null
 for a Python policy, the `competitor` by name, the `policy` name of a Python policy, the agent
@@ -4301,7 +4618,7 @@ picks the renderer's folder for that command alone.
 | `cuju render doctor` | prints the diagnostic report, with `--json` and `--out`, as [Diagnostic report](#diagnostic-report) describes |
 | `cuju render demo` | streams a live match between the built in AIs to the page, as [Quick start](#quick-start) describes |
 | `cuju render tournament` | makes, checks, lists, shows, runs, cancels, awards, resumes and deletes tournaments and lists ratings, as [Tournaments](#tournaments) describes |
-| `cuju render challenge` | lists the challenges with `list`, or plays one headless with `--team`, `--attempts`, `--device`, `--no-recordings` and `--json`, as [Challenges](#challenges) describes |
+| `cuju render challenge` | lists the challenges with `list`, plays one headless with `run ID` and `--team`, `--attempts`, `--device`, `--no-recordings` and `--json`, or benchmarks teams with `bench`, `--team` for each, `--challenge`, `--workers`, `--keep-recordings`, `--json` and `--csv`, as [Challenges](#challenges) describes |
 | `cuju render recordings` | lists the library with the group of each challenge run, one group with `--group`, the Trash with `--trash`, and moves a group with `--delete-group` or `--restore-group`, with `--json`, as [Recordings](#recordings) describes |
 | `cuju render pack` | checks a presentation package with `check`, writes a new team with `new`, previews a package with `preview` or shows and sets the package of each side with `sides`, as lines or as JSON with `--json`, as [Presentation packages](#presentation-packages) describes |
 | `cuju render search QUERY` | finds moments across the library, with `--limit` and `--json`, as [Searching moments](#searching-moments) describes |

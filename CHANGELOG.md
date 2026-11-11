@@ -126,6 +126,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and live sources. Library summaries carry the same, including for copied recordings.
 - Persistent history of requested matches with resolved seeds and times, and Retry and Repeat on
     the Matches page. A restart of the server marks waiting and playing requests as interrupted.
+- Requested matches drawn at random. Either side of the Matches page, or both, takes Random team,
+    which the server draws from the seed of the request among the teams that can play that side
+    of the scenario, from a pool of ticked teams, and the scenario list offers Random scenario,
+    one that both sides can play. Two drawn sides differ while another team fits, unless Let a team
+    meet itself is ticked. Retry draws the same match again and Repeat draws anew with a new seed,
+    and the list shows the teams and scenario drawn, each with a mark, once the match starts.
+    `cuju render play` takes `--left random`, `--right random`, `--scenario random`, `--pool` and
+    `--same-team`, `POST /api/requests` takes `random`, `pool` and `same_team`, and the recording
+    keeps the draw in its provenance.
 - Favorites, tags and notes on recordings, source and result filters, storage totals and the
     provenance of a recording in Recordings, and a Trash view with Restore and permanent deletion.
     Deleting a recording now moves it to the Trash.
@@ -207,6 +216,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     match of the team against itself, the right side in its away kit with its goalkeeper apart,
     share the team's rating, which their own match leaves as it is, and a failing policy is named
     by the entrant whose side failed. Tournament files of before load and resume as they did.
+- A tournament takes a standard ability, and every entrant, a registered team, a person or the
+    built in AI, takes an ability of its own, which the built in AI players of its side play
+    with, such as the goalkeeper of a team or a person's teammates. An entrant's own ability
+    comes first, then the stage's, then the standard, then the scenario's own. The setup sets
+    the standard with a slider in Settings and in the advanced editor, each entrant's row has an
+    Ability field that follows the standard when empty, and the bracket, tables and fixtures
+    show an entrant's ability where it differs from the standard. `cuju render tournament new`
+    takes `--ability` before every entrant for the standard and after an entrant for its own,
+    the configuration takes `ability` for both, a saved preset keeps the standard, and the
+    provenance of each match keeps the ability that the tournament gave each side. Tournament
+    files of before, sealed ones too, resume with the abilities they had.
+- A new tournament draws at random from its seed, its seeds, groups and bracket, with every preset
+    that ships, so the same seed repeats the draw. Set the bracket by hand on the Entrants step,
+    the seeding Manual, `--seeding manual` or `"seeding": "manual"` seeds in the order of the
+    entrants instead, and seeding by rating stays a choice. Tournaments of before keep the draw
+    they were made with.
+- The Brackets view of a tournament, from Brackets on the tournament or the command palette,
+    shows its brackets, groups and tables across the whole page in larger type, follows the
+    tournament live, zooms from half to twice its size and scrolls sideways on a narrow screen.
+- A tournament may be watched without spoilers, a switch of each tournament that the browser
+    remembers with the matches watched. Its brackets, tables, ranking, champion, ceremony and
+    toasts tell only what the watched matches decided, and Home, Recordings, the Trash, the command
+    palette and the search of moments hide the scores, teams and titles of the unwatched ones.
+    Watch next plays the next match in order and marks it watched at its end, the timeline leaves
+    its goals unmarked, Reveal shows one result on purpose and Reveal all every result after a
+    question. `POST /api/tournaments/ID/spoilers` answers the tournament as the person sees it.
+- A tournament lists Up next, the next matches as kickoff cards with a card of its own for a
+    final, and each card takes a prediction that counts once the result shows. At the end of a
+    match watched without spoilers, a card names only who plays next, and with Play the next match
+    by itself it counts down to it. Once every match is watched, a summary lists what the person
+    missed with the predictions they got right.
 - `cuju.render.show`, which opens the viewer on a batch, a recording file, an identifier or a URL
     from a script, a terminal or a notebook. It reuses the server of the renderer's folder, which
     `server.json` names, or starts one in the background that ends with the process unless asked
@@ -242,6 +282,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     agents. People play them on the Play page, and teams and Python policies play them headless
     from the page, from `cuju render challenge` and from `cuju.render.challenge`, every attempt
     scored from its recording by the same rules.
+- Each challenge lists its medals as items, Gold, Silver and Bronze, each with the medal's symbol
+    in the color of its metal, readable in both themes, and its target in words and numbers, such
+    as Gold, 6 goals or more ahead. The cards mark the item of the person's best run, the end card
+    of a run and the line of a headless run mark the item they reached, and the leaderboard shows
+    each medal by its symbol and name. `cuju render challenge list` prints the items too.
+- A benchmark of models in the Challenges section of Play, which plays one or several registered
+    teams on several or all challenges as one job, each pair as a full headless run in a process
+    of its own on the challenge's fixed seeds, with progress and Cancel benchmark. Its table shows
+    each model's value and medal on every challenge, its medals, a score from 0 to 100, the mean
+    share of the gold targets reached, and its place, and exports as JSON and CSV. Each run
+    reaches the challenge's leaderboard. `cuju render challenge bench --team ID ...` with
+    `--challenge`, `--workers`, `--json` and `--csv`, and the routes under
+    `/api/challenges/benches`, do the same for scripts and agents.
+- `cuju render challenge run ID --team ID`, the same as `cuju render challenge ID --team ID`, and
+    `GET /api/challenges/jobs/<job>` for one headless run.
+- A policy that fails in a headless run of the page, the command line or a benchmark ends its
+    attempt alone, which counts as a failed attempt with the policy's error, and the run goes on
+    and reaches the leaderboard. `fail_attempts=True` of `cuju.render.challenge` plays the same
+    way, and by default a failing policy still raises `PolicyError`.
 - Achievements, such as Hat trick, Straight from the corner, Giant slayer and Academy graduate,
     which people and teams of the registry earn by the same rules from the frames of their games,
     requested matches and challenges, shown on end cards and listed per team and for the person.
@@ -364,6 +423,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the goal and the taker. Pictures of 16 by 9 and wider frame as before.
 
 ### Fixed
+
+- Try it on the guided tour opens what its control opens, the command palette, the Match and
+    View menus, New tournament and Settings, and on the timeline moves the focus there and says
+    the keys that seek. The steps with nothing to try in place leave it out. The tour's card keeps
+    clear of its control and of any menu, palette, panel or dialog open over the page, docking in
+    the farthest corner when no side is clear, and Esc closes an open menu before it leaves the
+    tour.
+- A person who types no name on the Challenges section plays under the default name of the page's
+    language, and the leaderboards, the titles of grouped recordings and the cards show the default
+    of the page's own language, also for runs saved while the page spoke another language, which
+    showed that language's default, such as Jogador, on an English page. The browser keeps a name
+    only once the person types one.
 
 - Text files read and write in UTF-8 on every system. On Windows Python used the code page of
     the system, so a file of the home written on another system read garbled, and a

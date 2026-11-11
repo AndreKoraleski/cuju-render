@@ -6,8 +6,9 @@
 // people and agents face the same episodes, and the server scores each attempt from its recording
 // and keeps one leaderboard per challenge. Achievements, which the server finds in the frames by
 // the same rules for people and teams, show on the end cards and in a list of their own, kept on
-// disk for teams and in the browser for the person. Scripts reach it all through
-// window.cuju.challenges.
+// disk for teams and in the browser for the person. Each challenge lists its medals as items, and
+// the benchmark of bench.js plays registered teams on several challenges as one job. Scripts reach
+// it all through window.cuju.challenges.
 
 import { formatDateTime, formatNumber, serverNodes, serverText, t, tn, tOr } from '../core/i18n.js';
 import { el as h } from '../core/menu.js';
@@ -15,15 +16,19 @@ import { icon, reicon, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 import { scenarioName } from '../core/scenarios.js';
 import { TeaserCards, loadTeasers } from './teasers.js';
+import { medalList, medalMark, medalStyle } from './medals.js';
+import { BenchPanel, benchApi, benchCsv, benchTable } from './bench.js';
 
 const NAME_KEY = 'cuju.challengeName';
+// The default names of a person in every language that the server knows, which count as no name,
+// so a name stored while the page spoke another language gives way to the default of this one.
+let defaultNames = new Set();
 // Whether the attempts of a run stay as recordings, which the browser keeps, true by default.
 const KEEP_KEY = 'cuju.challengeRecordings';
 const EARNED_KEY = 'cuju.achievements';
 // The achievements of a challenge's medals, which a run adds to those of its attempts' games.
 const CHALLENGE_AWARDS = new Set(['podium', 'gold_standard', 'academy_graduate']);
 const MEDAL_NAMES = { bronze: t('challenges.medal.bronze'), silver: t('challenges.medal.silver'), gold: t('challenges.medal.gold') };
-const MEDALS = ['bronze', 'silver', 'gold'];
 // Dates of the leaderboards and achievements, a calendar day in the numbers of the language.
 const DAY = { year: 'numeric', month: 'numeric', day: 'numeric' };
 // A headless run is followed this often while it waits or plays.
@@ -142,6 +147,25 @@ ${categoryStyle()}
     padding: 2px 0; border-radius: 4px; border: 1px solid var(--border); }
 .achievement-list p { margin: 0; }
 .achievement-new { display: flex; flex-direction: column; gap: 2px; }
+.challenge-kind .icon { width: 11px; height: 11px; vertical-align: -1px; margin-right: 3px; }
+.challenge-bench { display: flex; flex-direction: column; gap: 8px; }
+.challenge-bench h3 { margin: 0; }
+.bench-choices { display: flex; flex-wrap: wrap; gap: 10px; }
+.bench-choice { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin: 0; display: flex;
+    flex-direction: column; gap: 2px; min-width: min(100%, 240px); }
+.bench-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bench-status[hidden], .bench-exports[hidden], .bench-progress[hidden] { display: none; }
+.bench-progress { width: min(100%, 220px); }
+.bench-table { overflow-x: auto; }
+.bench-table table { border-collapse: collapse; font-size: 13px; }
+.bench-table caption { text-align: left; font-weight: 600; padding-bottom: 4px; }
+.bench-table th, .bench-table td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.bench-table td.num, .bench-table th.num { text-align: right; }
+.bench-table td { white-space: nowrap; }
+.bench-state { display: inline-flex; align-items: center; gap: 4px; }
+.bench-state .icon { width: 13px; height: 13px; }
+.bench-reason, .bench-failed { display: block; white-space: normal; max-width: 240px; }
+${medalStyle()}
 `;
     document.head.appendChild(style);
 }
@@ -180,13 +204,14 @@ export const challengeApi = {
     list: (person) => call('GET', `/api/challenges${person ? `?person=${enc(person)}` : ''}`),
     board: (id) => call('GET', `/api/challenges/${enc(id)}`),
     score: (id, match, attempt) => call('GET', `/api/challenges/${enc(id)}/score?match=${enc(match)}&attempt=${attempt}`),
-    submit: (id, person, matches, keep = true) => call('POST', `/api/challenges/${enc(id)}/runs`,
-        { person, matches, keep_recordings: keep }),
-    leaveRun: (id, person, matches, keep = true) => call('POST', `/api/challenges/${enc(id)}/leave`,
-        { person, matches, keep_recordings: keep }),
+    submit: (id, person, matches, keep = true, unnamed = false) => call('POST', `/api/challenges/${enc(id)}/runs`,
+        { person, matches, keep_recordings: keep, ...(unnamed ? { default_name: true } : {}) }),
+    leaveRun: (id, person, matches, keep = true, unnamed = false) => call('POST', `/api/challenges/${enc(id)}/leave`,
+        { person, matches, keep_recordings: keep, ...(unnamed ? { default_name: true } : {}) }),
     runTeam: (id, team, attempts = null, keep = true) => call('POST', `/api/challenges/${enc(id)}/runs`,
         { team, ...(attempts == null ? {} : { attempts }), ...(keep ? {} : { keep_recordings: false }) }),
     jobs: () => call('GET', '/api/challenges/jobs'),
+    names: () => call('GET', '/api/challenges/names'),
     cancel: (job) => call('DELETE', `/api/challenges/jobs/${enc(job)}`),
     achievements: () => call('GET', '/api/achievements'),
 };
@@ -223,17 +248,30 @@ export function addEarned(ids) {
     return fresh;
 }
 
+// The name that a person typed, trimmed to 40 characters, or the empty text for none, which a
+// default name of any language known, the page's own among them, counts as.
+export function typedName(value, defaults = defaultNames) {
+    const name = typeof value === 'string' ? value.trim().slice(0, 40) : '';
+    return name && !defaults.has(name) && name !== t('challenges.name.default') ? name : '';
+}
+
 function readName() {
     try {
-        return localStorage.getItem(NAME_KEY) || '';
+        return typedName(localStorage.getItem(NAME_KEY) || '');
     } catch {
         return '';
     }
 }
 
+// Keeps a name that the person typed, and forgets the stored one for no name or a default one.
 function writeName(name) {
+    const typed = typedName(name);
     try {
-        localStorage.setItem(NAME_KEY, name);
+        if (typed) {
+            localStorage.setItem(NAME_KEY, typed);
+        } else {
+            localStorage.removeItem(NAME_KEY);
+        }
     } catch {
         // A browser that keeps no site data asks for the name on every visit.
     }
@@ -278,11 +316,6 @@ export function valueText(challenge, value) {
     return t('challenges.value.attempts', { value: num(value), attempts: num(challenge.attempts) });
 }
 
-export function targetsText(challenge) {
-    const [bronze, silver, gold] = MEDALS.map((m, i) => valueText(challenge, challenge.targets[i]));
-    return t('challenges.targets', { bronze, silver, gold });
-}
-
 function medalBadge(medal, text = null) {
     return medal ? h('span', { class: `challenge-medal ${medal}` }, text || MEDAL_NAMES[medal]) : null;
 }
@@ -301,6 +334,10 @@ export function runText(challenge, run, id, values = {}) {
 // One attempt's result in words.
 export function attemptText(challenge, result) {
     const values = { for: num(result.goals[0]), against: num(result.goals[1]), count: result.seconds, seconds: num(result.seconds), limit: num(challenge.limit) };
+    if (result.failed) {
+        const reason = result.error ? serverText(result, 'error') : t('challenges.job.noResult');
+        return t('challenges.attempt.failed', { ...values, reason });
+    }
     if (!result.match && !result.finished) {
         return t('challenges.attempt.missed');
     }
@@ -323,12 +360,13 @@ function abilityText(challenge) {
 }
 
 // A person, a team of the registry, or a Python policy, which a board ranks by its name alone, so a
-// policy that shares a team's name stays apart from the team.
+// policy that shares a team's name stays apart from the team. A person carries the symbol of a
+// person, and a team or a policy the symbol of a model.
 function competitorKind(entry) {
     if (entry.kind === 'person') {
-        return t('challenges.board.person');
+        return [icon('user'), t('challenges.board.person')];
     }
-    return entry.team ? t('challenges.board.team') : t('challenges.board.policy');
+    return [icon('robot'), entry.team ? t('challenges.board.team') : t('challenges.board.policy')];
 }
 
 export class ChallengesPanel {
@@ -345,6 +383,7 @@ export class ChallengesPanel {
         // The teasers of the cards, which play under full motion alone unless asked for.
         this.teaserFiles = {};
         this.teasers = new TeaserCards({ reduced: () => this.motionReduced() });
+        this.bench = new BenchPanel(this, { title: challengeTitle, value: valueText });
         // Scripts and agents reach the challenges through the page object.
         this.app.challenges = this.script();
     }
@@ -352,8 +391,8 @@ export class ChallengesPanel {
     // The section, built once for the setup view of Play.
     element() {
         injectChallengeStyle();
-        this.nameField = h('input', { type: 'text', maxlength: '40', value: readName() || t('challenges.name.default'), 'aria-label': t('challenges.name.label'), class: 'challenge-name' });
-        this.nameField.addEventListener('change', () => writeName(this.personName()));
+        this.nameField = h('input', { type: 'text', maxlength: '40', value: readName(), placeholder: t('challenges.name.default'), 'aria-label': t('challenges.name.label'), class: 'challenge-name' });
+        this.nameField.addEventListener('change', () => writeName(this.nameField.value));
         this.keepBox = h('input', { type: 'checkbox', checked: readKeep(), class: 'challenge-keep', 'aria-describedby': 'challenge-keep-hint' });
         this.keepBox.addEventListener('change', () => writeKeep(this.keepBox.checked));
         this.teamSelect = h('select', { 'aria-label': t('challenges.team'), class: 'challenge-team' });
@@ -373,7 +412,7 @@ export class ChallengesPanel {
                 h('label', { class: 'field' }, t('challenges.attempts'), this.attemptSelect)),
             h('label', { class: 'check' }, this.keepBox, t('challenges.keep')),
             h('p', { class: 'muted small', id: 'challenge-keep-hint' }, tn('challenges.keep.hint')),
-            this.banner, this.jobLine, this.note, this.list, this.achievementsPart());
+            this.banner, this.jobLine, this.note, this.list, this.bench.element(), this.achievementsPart());
         return this.root;
     }
 
@@ -465,9 +504,32 @@ export class ChallengesPanel {
         return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     }
 
+    // The person's name on the leaderboards, the one typed or else the default of the language.
     personName() {
-        const name = (this.nameField ? this.nameField.value : readName()).trim().slice(0, 40);
-        return name || t('challenges.name.default');
+        return this.typed() || t('challenges.name.default');
+    }
+
+    typed() {
+        return this.nameField ? typedName(this.nameField.value) : readName();
+    }
+
+    // The default names that the server knows, read once, after which a default name in the field
+    // gives way to the default of this language.
+    async loadNames() {
+        if (this.namesRead) {
+            return;
+        }
+        try {
+            const answer = await challengeApi.names();
+            defaultNames = new Set(Array.isArray(answer && answer.default_names) ? answer.default_names : []);
+            this.namesRead = true;
+        } catch {
+            // The next show asks again, and the page's own default counts meanwhile.
+        }
+        if (this.nameField && !this.typed()) {
+            this.nameField.value = '';
+            writeName('');
+        }
     }
 
     find(id) {
@@ -479,6 +541,7 @@ export class ChallengesPanel {
         if (teams) {
             this.teams = teams;
         }
+        await this.loadNames();
         try {
             this.catalog = await challengeApi.list(this.personName());
             this.note.textContent = '';
@@ -489,6 +552,7 @@ export class ChallengesPanel {
         this.teaserFiles = await loadTeasers();
         this.renderTeams();
         this.render();
+        this.bench.renderChoices();
         this.renderAchievements();
         this.renderBanner();
         this.followJobs();
@@ -549,7 +613,8 @@ export class ChallengesPanel {
             h('h3', { id: heading }, title),
             this.media(c, title, kind, difficulty, mine && mine.medal),
             h('p', {}, challengeGoal(c)),
-            h('p', { class: 'muted small' }, t('challenges.item.plays', { scenario: scenarioName(c.scenario), count: c.attempts, targets: targetsText(c) })),
+            h('p', { class: 'muted small' }, t('challenges.item.scenario', { scenario: scenarioName(c.scenario), count: c.attempts })),
+            medalList(c, mine ? mine.value : null, t('challenges.medals.best'), t('challenges.medals.label', { title })),
             h('p', { class: 'muted small' }, abilityText(c)),
             h('p', { class: 'small' }, best),
             h('p', { class: 'muted small' }, leaders),
@@ -713,7 +778,7 @@ export class ChallengesPanel {
             h('td', {}, teamName(e), ' ', h('span', { class: `challenge-kind ${e.kind}` }, competitorKind(e))),
             h('td', { class: 'num' }, valueText(c, e.value)),
             h('td', { class: 'num' }, t('challenges.board.seconds', { seconds: num(e.seconds) })),
-            h('td', {}, e.medal ? MEDAL_NAMES[e.medal] : t('challenges.board.noMedal')),
+            h('td', {}, medalMark(e.medal, t('challenges.board.noMedal'))),
             h('td', {}, formatDateTime(e.time * 1000, DAY))));
         board.replaceChildren(h('table', {}, h('caption', { class: 'sr-only' }, t('challenges.board.label', { title: challengeTitle(c) })),
             h('thead', {}, h('tr', {}, h('th', { class: 'num', scope: 'col' }, t('challenges.board.rank')), h('th', { scope: 'col' }, t('challenges.board.competitor')),
@@ -732,9 +797,10 @@ export class ChallengesPanel {
         if (!challenge) {
             throw new Error(`No challenge ${id}.`);
         }
-        writeName(this.personName());
         this.abandon(this.run);
-        this.run = { id, challenge, index: 0, matches: [], results: [], name: this.personName(), outcome: null, keep: this.keepRecordings() };
+        this.run = {
+            id, challenge, index: 0, matches: [], results: [], name: this.personName(), unnamed: !this.typed(), outcome: null, keep: this.keepRecordings(),
+        };
         await this.attempt();
         return this.state();
     }
@@ -787,7 +853,7 @@ export class ChallengesPanel {
         if (!run || run.outcome || !run.matches.some(Boolean)) {
             return;
         }
-        challengeApi.leaveRun(run.id, run.name, run.matches.slice(), run.keep !== false)
+        challengeApi.leaveRun(run.id, run.name, run.matches.slice(), run.keep !== false, !!run.unnamed)
             .catch((err) => this.app.hud && this.app.hud.toast(err.message, 'error'));
     }
 
@@ -867,7 +933,7 @@ export class ChallengesPanel {
         const c = run.challenge;
         host.append(h('p', { class: 'muted' }, t('challenges.run.sending')));
         try {
-            const outcome = await challengeApi.submit(run.id, run.name, run.matches.slice(0, c.attempts), run.keep !== false);
+            const outcome = await challengeApi.submit(run.id, run.name, run.matches.slice(0, c.attempts), run.keep !== false, !!run.unnamed);
             run.outcome = outcome;
             host.lastChild.remove();
             host.append(...this.outcomeLines(c, outcome));
@@ -899,8 +965,9 @@ export class ChallengesPanel {
     outcomeLines(c, outcome) {
         const lines = [
             h('p', { class: 'play-score' }, runText(c, outcome, 'challenges.outcome.value')),
-            // The medal shows once, as a badge that says its name.
+            // The medal shows as a badge that says its name, and the items mark the one it reached.
             h('p', {}, outcome.medal ? medalBadge(outcome.medal, t('challenges.outcome.medal', { medal: MEDAL_NAMES[outcome.medal] })) : t('challenges.outcome.noMedal')),
+            medalList(c, outcome.practice ? null : outcome.value, t('challenges.medals.run'), t('challenges.medals.label', { title: challengeTitle(c) })),
         ];
         if (outcome.practice) {
             lines.push(h('p', { class: 'muted' }, tn('challenges.outcome.practice')));
@@ -990,9 +1057,16 @@ export class ChallengesPanel {
             text = t('challenges.job.stopped', { name: teamName(job), title, reason: job.error ? serverText(job, 'error') : t('challenges.job.noResult') });
         }
         const live = job.state === 'queued' || job.state === 'running';
+        const known = this.find(job.challenge);
+        const failed = job.state === 'done' && job.result && job.result.failed_attempts
+            ? h('span', { class: 'muted' }, t('challenges.job.failedAttempts', { count: job.result.failed_attempts })) : null;
+        const medals = job.state === 'done' && job.result && known
+            ? medalList(known, job.result.practice ? null : job.result.value, t('challenges.medals.reached'), t('challenges.medals.label', { title })) : null;
         this.jobLine.hidden = false;
         this.jobLine.replaceChildren(...[h('span', { class: job.state === 'failed' ? 'error-text' : '' }, text),
-            live ? h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.job.cancel')), onclick: () => this.cancelJob(job.id) }, icon('stop')) : null].filter(Boolean));
+            live ? h('progress', { class: 'bench-progress', max: '1', value: String(Number(job.progress) || 0), 'aria-label': t('challenges.job.progress') }) : null,
+            live ? h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.job.cancel')), onclick: () => this.cancelJob(job.id) }, icon('stop')) : null,
+            failed, medals].filter(Boolean));
     }
 
     async cancelJob(id) {
@@ -1025,9 +1099,9 @@ export class ChallengesPanel {
                     self.app.showPage('play');
                 }
                 if (name) {
-                    writeName(String(name).trim().slice(0, 40));
+                    writeName(String(name));
                     if (self.nameField) {
-                        self.nameField.value = name;
+                        self.nameField.value = typedName(String(name));
                     }
                 }
                 return self.start(id);
@@ -1044,7 +1118,15 @@ export class ChallengesPanel {
                 return { catalog: data.catalog, person: readEarned(), teams: data.teams };
             },
             state: () => self.state(),
+            // The benchmark of models, one job of several teams on several challenges.
+            bench: (teams, { challenges = null, keepRecordings = false, workers = null } = {}) => self.bench.start(teams, challenges, keepRecordings, workers),
+            benches: () => benchApi.list(),
+            benchJob: () => self.bench.job,
+            cancelBench: () => self.bench.cancel(),
+            benchTable: (job = self.bench.job) => (job ? benchTable(job) : null),
+            benchCsv: (job = self.bench.job) => (job ? benchCsv(job) : ''),
             api: challengeApi,
+            benchApi,
         };
     }
 }

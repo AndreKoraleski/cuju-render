@@ -1,0 +1,562 @@
+[
+ {
+  "challenge": {
+   "id": "empty_goal_close",
+   "measure": "within",
+   "attempts": 5,
+   "targets": [
+    3,
+    4,
+    5
+   ],
+   "limit": 3.0
+  },
+  "value": null,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 5,
+    "every": true,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 4,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 3,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, a goal within 3 seconds in all 5 attempts; silver, a goal within 3 seconds in 4 attempts or more; bronze, a goal within 3 seconds in 3 attempts or more"
+ },
+ {
+  "challenge": {
+   "id": "empty_goal_close",
+   "measure": "within",
+   "attempts": 5,
+   "targets": [
+    3,
+    4,
+    5
+   ],
+   "limit": 3.0
+  },
+  "value": 0,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 5,
+    "every": true,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 4,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 3,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, a goal within 3 seconds in all 5 attempts; silver, a goal within 3 seconds in 4 attempts or more; bronze, a goal within 3 seconds in 3 attempts or more"
+ },
+ {
+  "challenge": {
+   "id": "empty_goal_close",
+   "measure": "within",
+   "attempts": 5,
+   "targets": [
+    3,
+    4,
+    5
+   ],
+   "limit": 3.0
+  },
+  "value": 3,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 5,
+    "every": true,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 4,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 3,
+    "every": false,
+    "reached": true
+   }
+  ],
+  "text": "medals gold, a goal within 3 seconds in all 5 attempts; silver, a goal within 3 seconds in 4 attempts or more; bronze, a goal within 3 seconds in 3 attempts or more, reached"
+ },
+ {
+  "challenge": {
+   "id": "empty_goal_close",
+   "measure": "within",
+   "attempts": 5,
+   "targets": [
+    3,
+    4,
+    5
+   ],
+   "limit": 3.0
+  },
+  "value": 4,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 5,
+    "every": true,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 4,
+    "every": false,
+    "reached": true
+   },
+   {
+    "medal": "bronze",
+    "target": 3,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, a goal within 3 seconds in all 5 attempts; silver, a goal within 3 seconds in 4 attempts or more, reached; bronze, a goal within 3 seconds in 3 attempts or more"
+ },
+ {
+  "challenge": {
+   "id": "empty_goal_close",
+   "measure": "within",
+   "attempts": 5,
+   "targets": [
+    3,
+    4,
+    5
+   ],
+   "limit": 3.0
+  },
+  "value": 5,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 5,
+    "every": true,
+    "reached": true
+   },
+   {
+    "medal": "silver",
+    "target": 4,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 3,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, a goal within 3 seconds in all 5 attempts, reached; silver, a goal within 3 seconds in 4 attempts or more; bronze, a goal within 3 seconds in 3 attempts or more"
+ },
+ {
+  "challenge": {
+   "id": "corner",
+   "measure": "scored",
+   "attempts": 5,
+   "targets": [
+    1,
+    2,
+    4
+   ],
+   "limit": null
+  },
+  "value": 1,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 4,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 2,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": true
+   }
+  ],
+  "text": "medals gold, a goal in 4 attempts or more; silver, a goal in 2 attempts or more; bronze, a goal in 1 attempt or more, reached"
+ },
+ {
+  "challenge": {
+   "id": "corner",
+   "measure": "scored",
+   "attempts": 5,
+   "targets": [
+    1,
+    2,
+    4
+   ],
+   "limit": null
+  },
+  "value": 2,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 4,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 2,
+    "every": false,
+    "reached": true
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, a goal in 4 attempts or more; silver, a goal in 2 attempts or more, reached; bronze, a goal in 1 attempt or more"
+ },
+ {
+  "challenge": {
+   "id": "corner",
+   "measure": "scored",
+   "attempts": 5,
+   "targets": [
+    1,
+    2,
+    4
+   ],
+   "limit": null
+  },
+  "value": 3,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 4,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 2,
+    "every": false,
+    "reached": true
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, a goal in 4 attempts or more; silver, a goal in 2 attempts or more, reached; bronze, a goal in 1 attempt or more"
+ },
+ {
+  "challenge": {
+   "id": "corner",
+   "measure": "scored",
+   "attempts": 5,
+   "targets": [
+    1,
+    2,
+    4
+   ],
+   "limit": null
+  },
+  "value": 4,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 4,
+    "every": false,
+    "reached": true
+   },
+   {
+    "medal": "silver",
+    "target": 2,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, a goal in 4 attempts or more, reached; silver, a goal in 2 attempts or more; bronze, a goal in 1 attempt or more"
+ },
+ {
+  "challenge": {
+   "id": "one_on_one",
+   "measure": "margin",
+   "attempts": 3,
+   "targets": [
+    1,
+    3,
+    6
+   ],
+   "limit": null
+  },
+  "value": -2,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 6,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 3,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, 6 goals or more ahead; silver, 3 goals or more ahead; bronze, 1 goal or more ahead"
+ },
+ {
+  "challenge": {
+   "id": "one_on_one",
+   "measure": "margin",
+   "attempts": 3,
+   "targets": [
+    1,
+    3,
+    6
+   ],
+   "limit": null
+  },
+  "value": 0,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 6,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 3,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, 6 goals or more ahead; silver, 3 goals or more ahead; bronze, 1 goal or more ahead"
+ },
+ {
+  "challenge": {
+   "id": "one_on_one",
+   "measure": "margin",
+   "attempts": 3,
+   "targets": [
+    1,
+    3,
+    6
+   ],
+   "limit": null
+  },
+  "value": 1,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 6,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 3,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": true
+   }
+  ],
+  "text": "medals gold, 6 goals or more ahead; silver, 3 goals or more ahead; bronze, 1 goal or more ahead, reached"
+ },
+ {
+  "challenge": {
+   "id": "one_on_one",
+   "measure": "margin",
+   "attempts": 3,
+   "targets": [
+    1,
+    3,
+    6
+   ],
+   "limit": null
+  },
+  "value": 5,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 6,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 3,
+    "every": false,
+    "reached": true
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, 6 goals or more ahead; silver, 3 goals or more ahead, reached; bronze, 1 goal or more ahead"
+ },
+ {
+  "challenge": {
+   "id": "one_on_one",
+   "measure": "margin",
+   "attempts": 3,
+   "targets": [
+    1,
+    3,
+    6
+   ],
+   "limit": null
+  },
+  "value": 6,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 6,
+    "every": false,
+    "reached": true
+   },
+   {
+    "medal": "silver",
+    "target": 3,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, 6 goals or more ahead, reached; silver, 3 goals or more ahead; bronze, 1 goal or more ahead"
+ },
+ {
+  "challenge": {
+   "id": "one_on_one",
+   "measure": "margin",
+   "attempts": 3,
+   "targets": [
+    1,
+    3,
+    6
+   ],
+   "limit": null
+  },
+  "value": 9,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 6,
+    "every": false,
+    "reached": true
+   },
+   {
+    "medal": "silver",
+    "target": 3,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": false
+   }
+  ],
+  "text": "medals gold, 6 goals or more ahead, reached; silver, 3 goals or more ahead; bronze, 1 goal or more ahead"
+ },
+ {
+  "challenge": {
+   "id": "run_to_score",
+   "measure": "within",
+   "attempts": 5,
+   "targets": [
+    1,
+    3,
+    5
+   ],
+   "limit": 6.5
+  },
+  "value": 2,
+  "items": [
+   {
+    "medal": "gold",
+    "target": 5,
+    "every": true,
+    "reached": false
+   },
+   {
+    "medal": "silver",
+    "target": 3,
+    "every": false,
+    "reached": false
+   },
+   {
+    "medal": "bronze",
+    "target": 1,
+    "every": false,
+    "reached": true
+   }
+  ],
+  "text": "medals gold, a goal within 6.5 seconds in all 5 attempts; silver, a goal within 6.5 seconds in 3 attempts or more; bronze, a goal within 6.5 seconds in 1 attempt or more, reached"
+ }
+]

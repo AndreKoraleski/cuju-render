@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // keyboard kit draws.
 const root = mkdtempSync(join(tmpdir(), 'cuju-palette-'));
 const folder = join(root, 'js');
-for (const name of ['help/palette.js', 'core/names.js', 'core/scenarios.js', 'core/i18n.js', 'core/keys.js']) {
+for (const name of ['help/palette.js', 'core/names.js', 'core/scenarios.js', 'core/i18n.js', 'core/keys.js', 'core/spoilers.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
 cpSync(fileURLToPath(new URL('../../src/cuju/render/web/vendor/lucide', import.meta.url)), join(root, 'vendor', 'lucide'), { recursive: true });

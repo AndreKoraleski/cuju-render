@@ -1,0 +1,23 @@
+{
+  "match": [
+    [{"kind": "team", "ability": 0.2}, {"ability": 0.5}, 0.8, 0.2],
+    [{"kind": "team", "ability": null}, {"ability": 0.5}, 0.8, 0.5],
+    [{"kind": "team", "ability": null}, {"ability": null}, 0.8, 0.8],
+    [{"kind": "person", "ability": null}, {"ability": null}, null, null],
+    [{"kind": "person", "ability": 0.0}, {"ability": 1.0}, 0.5, 0.0],
+    [{"kind": "builtin", "ability": null}, {"ability": 0.0}, 1.0, 0.0],
+    [{"kind": "builtin", "ability": 0.3}, {"ability": null}, null, 0.3],
+    [{"kind": "builtin"}, {}, 0.65, 0.65]
+  ],
+  "shown": [
+    [{"kind": "team", "name": "Reds", "ability": 0.2}, 0.8, 0.2],
+    [{"kind": "team", "name": "Reds", "ability": 0.8}, 0.8, null],
+    [{"kind": "team", "name": "Reds", "ability": null}, 0.8, null],
+    [{"kind": "team", "name": "Reds", "ability": 0.5}, null, 0.5],
+    [{"kind": "person", "name": "Ana", "ability": 0.0}, 0.5, 0.0],
+    [{"kind": "person", "name": "Ana", "ability": 0.0}, null, 0.0],
+    [{"kind": "builtin", "name": "Built-in AI 0.30", "name_id": "server.tournament.label.builtin_ability", "ability": 0.3}, 0.8, null],
+    [{"kind": "builtin", "name": "Rex", "ability": 0.3}, 0.8, 0.3],
+    [{"kind": "builtin", "name": "Rex", "ability": 0.3}, 0.3, null]
+  ]
+}

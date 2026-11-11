@@ -264,6 +264,10 @@ class MockTournaments:
                 elif record['state'] == 'stopped' and self._playable(record, view):
                     record.update(state='running', error=None)
                 return 200, self._full(record)
+            if action == 'spoilers':
+                self._advance(record)
+                full = self._full(record)
+                return 200, rules.without_spoilers(full, record['results'], document.get('watched'))
             if action == 'play':
                 return 400, {'error': 'the matches of people play on the real server'}
             return 404, {'error': 'no such resource'}

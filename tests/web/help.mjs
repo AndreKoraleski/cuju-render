@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -88,6 +88,80 @@ test('the card goes below its target, above it near the bottom, and stays in the
     assert.equal(filled.side, 'over');
     const narrow = tour.placeCard(null, { width: 360, height: 200 }, { width: 320, height: 500 });
     assert.equal(narrow.left, 12);
+});
+
+// Whether two boxes share some area, the card given by its place and size.
+const covers = (spot, card, box) => spot.left < box.right && box.left < spot.left + card.width
+    && spot.top < box.bottom && box.top < spot.top + card.height;
+
+test('the card keeps clear of the menus and panels open over the page, side by side', () => {
+    const view = { width: 800, height: 600 };
+    const card = { width: 360, height: 200 };
+    const middle = { left: 300, top: 250, right: 340, bottom: 280 };
+    assert.deepEqual(tour.placeCard(middle, card, view, []), { left: 140, top: 292, side: 'below' });
+    // A menu that opens below its button sends the card above it.
+    const below = { left: 300, top: 284, right: 560, bottom: 500 };
+    assert.deepEqual(tour.placeCard(middle, card, view, [below]), { left: 140, top: 38, side: 'above' });
+    // A button near the top with a narrow menu under it has the card at its right, or at its left
+    // near the right edge.
+    const leftButton = { left: 20, top: 20, right: 60, bottom: 50 };
+    const leftMenu = { left: 20, top: 54, right: 60, bottom: 400 };
+    assert.deepEqual(tour.placeCard(leftButton, card, view, [leftMenu]), { left: 72, top: 20, side: 'right' });
+    const rightButton = { left: 740, top: 20, right: 780, bottom: 50 };
+    const rightMenu = { left: 740, top: 54, right: 780, bottom: 400 };
+    assert.deepEqual(tour.placeCard(rightButton, card, view, [rightMenu]), { left: 368, top: 20, side: 'left' });
+    // A wide menu leaves no side clear, so the card docks in the corner farthest from it.
+    const wideMenu = { left: 20, top: 54, right: 400, bottom: 300 };
+    const docked = tour.placeCard(leftButton, card, view, [wideMenu]);
+    assert.deepEqual(docked, { left: 428, top: 388, width: 360, height: 200, side: 'dock' });
+    for (const box of [leftButton, wideMenu]) {
+        assert.ok(!covers(docked, docked, box));
+    }
+    // A panel across the middle of the window leaves only short corners, so the card docks smaller,
+    // inside its margins.
+    const band = { left: 0, top: 150, right: 800, bottom: 450 };
+    const smaller = tour.placeCard(leftButton, card, view, [band]);
+    assert.deepEqual(smaller, { left: 428, top: 12, width: 360, height: 126, side: 'dock' });
+    assert.ok(!covers(smaller, smaller, band) && !covers(smaller, smaller, leftButton));
+    assert.ok(smaller.left >= 12 && smaller.top >= 12 && smaller.left + smaller.width <= 788 && smaller.top + smaller.height <= 588);
+    // Without a target the card leaves the bottom of the window to a panel that lies there.
+    const low = { left: 120, top: 350, right: 680, bottom: 590 };
+    assert.deepEqual(tour.placeCard(null, card, view, [low]), { left: 12, top: 12, width: 360, height: 200, side: 'dock' });
+    assert.equal(tour.placeCard(null, card, view, [{ left: 0, top: 0, right: 100, bottom: 100 }]).side, 'none');
+});
+
+// The text of the page, its index.html and the modules of js, where the targets of the tour live.
+const html = readFileSync(new URL('index.html', web), 'utf8');
+const modules = readdirSync(fileURLToPath(new URL('js', web)), { recursive: true })
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => readFileSync(join(fileURLToPath(new URL('js', web)), name), 'utf8'))
+    .join('\n');
+const english = JSON.parse(readFileSync(new URL('languages/en.json', web), 'utf8'));
+
+test('each step of the tour names what Try it does, on a target the page has', () => {
+    const opens = [];
+    for (const step of tour.TOUR_STEPS) {
+        assert.ok(step.tryIt === null || tour.TRY_KINDS.includes(step.tryIt), step.id);
+        if (step.tryIt === 'open') {
+            opens.push(step.id);
+        }
+        if (step.tryIt === 'focus') {
+            assert.ok(typeof english[`tour.try.${step.id}`] === 'string', step.id);
+            assert.ok(plain(english[`tour.try.${step.id}`].replace(/`[^`]*`/g, 'key')), step.id);
+        }
+        // Each id and class of the selector is in index.html or in a module that builds the page.
+        for (const [, mark, name] of step.target.matchAll(/([#.])([\w-]+)/g)) {
+            const quoted = new RegExp(`['"\`][^'"\`]*\\b${name}\\b[^'"\`]*['"\`]`);
+            const found = mark === '#'
+                ? html.includes(`id="${name}"`) || modules.includes(`id: '${name}'`)
+                : quoted.test(html) || quoted.test(modules);
+            assert.ok(found, `${step.id} ${mark}${name}`);
+        }
+    }
+    // Try it opens the palette, the menus, the settings and the wizard, and starts no match.
+    assert.deepEqual(opens, ['palette', 'match', 'view', 'tournaments', 'settings']);
+    assert.equal(tour.TOUR_STEPS.find((step) => step.id === 'play').tryIt, null);
+    assert.equal(tour.TOUR_STEPS.find((step) => step.id === 'timeline').tryIt, 'focus');
 });
 
 test('the catalog of lessons holds the eight lessons of the task, each with agent steps', () => {

@@ -2017,3 +2017,391 @@ def test_files_of_before_load_and_resume_as_before(render_home):
         assert [e['name'] for e in done['config']['entrants']][:2] == ['Bot', 'Bot 2']
         assert done['champion']
     again.close()
+
+
+# The abilities of the entrants, the stages and the tournament's standard.
+
+
+def _abilities(config):
+    """Returns the abilities of every first stage match by its sides' names, home first."""
+    names = [e['name'] for e in config['entrants']]
+    view = rules.evaluate(config, {})
+    return {(names[m['home']], names[m['away']]): m['ability'] for m in view['matches']}
+
+
+def test_an_entrant_then_the_stage_then_the_standard_then_the_scenario_set_the_ability():
+    entrants = [
+        {'kind': 'team', 'team': 'reds', 'ability': 0.2},
+        {'kind': 'team', 'team': 'blues'},
+        {'kind': 'builtin'},
+        {'kind': 'person', 'name': 'Ana', 'ability': 0.0},
+    ]
+    stage = {'format': 'league', 'scenario': '11_vs_11_kaggle'}
+    base = {'seed': 2, 'entrants': entrants, 'stages': [stage]}
+    config = rules.check({**base, 'ability': 0.8}, _TEAMS, _fits)
+    assert config['ability'] == 0.8
+    assert [e['ability'] for e in config['entrants']] == [0.2, None, None, 0.0]
+    # Every kind keeps its name and key, and a built-in AI without an ability stays as it was.
+    assert [e['key'] for e in config['entrants']] == [
+        'reds',
+        'blues',
+        'builtin:scenario',
+        'person:Ana',
+    ]
+    own = {'Reds': 0.2, 'Blues': 0.8, 'Built-in AI': 0.8, 'Ana': 0.0}
+    for (home, away), ability in _abilities(config).items():
+        assert ability == [own[home], own[away]]
+    # A stage's ability comes before the standard, and an entrant's own before both.
+    config = rules.check(
+        {**base, 'ability': 0.8, 'stages': [{**stage, 'ability': 0.5}]}, _TEAMS, _fits
+    )
+    own = {'Reds': 0.2, 'Blues': 0.5, 'Built-in AI': 0.5, 'Ana': 0.0}
+    for (home, away), ability in _abilities(config).items():
+        assert ability == [own[home], own[away]]
+    # Without a standard or a stage's ability the scenario's own plays, as `None`.
+    config = rules.check(base, _TEAMS, _fits)
+    assert config['ability'] is None
+    own = {'Reds': 0.2, 'Blues': None, 'Built-in AI': None, 'Ana': 0.0}
+    for (home, away), ability in _abilities(config).items():
+        assert ability == [own[home], own[away]]
+    for wrong in (1.5, -0.1, 'high', True):
+        with pytest.raises(rules.TournamentError, match='expected the standard ability from 0'):
+            rules.check({**base, 'ability': wrong}, _TEAMS)
+        with pytest.raises(rules.TournamentError, match='ability of entrant 2 from 0 to 1'):
+            rules.check(
+                {**base, 'entrants': [entrants[0], {**entrants[1], 'ability': wrong}]}, _TEAMS
+            )
+
+
+def test_two_entrants_of_one_team_play_at_their_own_abilities():
+    config = rules.check(
+        {
+            'seed': 5,
+            'ability': 0.4,
+            'entrants': [
+                {'kind': 'team', 'team': 'reds', 'ability': 0.9},
+                {'kind': 'team', 'team': 'reds', 'ability': 0.1},
+            ],
+            'stages': [{'format': 'league', 'scenario': '11_vs_11_kaggle'}],
+        },
+        _TEAMS,
+        _fits,
+    )
+    assert [e['name'] for e in config['entrants']] == ['Reds', 'Reds 2']
+    assert [e['key'] for e in config['entrants']] == ['reds', 'reds']
+    assert _abilities(config) in (
+        {('Reds', 'Reds 2'): [0.9, 0.1]},
+        {('Reds 2', 'Reds'): [0.1, 0.9]},
+    )
+
+
+def test_entrant_abilities_agree_with_the_page():
+    """The page's matchAbility and shownAbility hold the same cases, in tests/web/tournament.mjs."""
+    from pathlib import Path
+
+    path = Path(__file__).parent / 'support' / 'entrant_abilities.json'
+    cases = json.loads(path.read_text(encoding='utf-8'))
+    for entrant, stage, standard, ability in cases['match']:
+        assert rules.match_ability(entrant, stage, standard) == ability
+    for entrant, standard, ability in cases['shown']:
+        assert rules.shown_ability(entrant, standard) == ability
+    # A built-in AI whose name the rules made holds its ability in its name already.
+    config = rules.check(
+        {
+            'seed': 1,
+            'ability': 0.5,
+            'entrants': [
+                {'kind': 'builtin', 'ability': 0.3},
+                {'kind': 'team', 'team': 'reds', 'ability': 0.3},
+            ],
+            'stages': [{'format': 'league', 'scenario': '11_vs_11_kaggle'}],
+        },
+        _TEAMS,
+    )
+    assert [rules.shown_ability(e, config['ability']) for e in config['entrants']] == [None, 0.3]
+
+
+def test_a_preset_keeps_its_standard_ability():
+    preset = rules.check_preset(
+        {'title': 'Strong cup', 'ability': 0.9, 'stages': [{'format': 'knockout'}]}
+    )
+    assert preset['ability'] == 0.9
+    config = rules.preset_config('mine', {'mine': preset})
+    assert config['ability'] == 0.9
+    with pytest.raises(rules.TournamentError, match='standard ability'):
+        rules.check_preset({'title': 'x', 'ability': 2, 'stages': [{'format': 'knockout'}]})
+
+
+def test_files_without_a_standard_ability_resume_with_the_abilities_they_had(render_home):
+    """A sealed file of before, without a standard, plays every match at the abilities it had."""
+    calls = []
+
+    def player(match, teams, provenance, progress):
+        calls.append((match['key'], list(match['ability']), provenance['ability']))
+        return {'score': [1, 0], 'cards': [[0, 0], [0, 0]], 'match': None}
+
+    cups = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    config = _builtin_config(4)
+    config['entrants'] = [
+        {'kind': 'builtin', 'ability': 0.3},
+        {'kind': 'builtin'},
+        {'kind': 'builtin', 'ability': 0.9},
+        {'kind': 'person', 'name': 'Ana'},
+    ]
+    config['stages'][0]['ability'] = 0.6
+    entry = cups.create(config, run=False)
+    cups.close()
+    path = runner.folder() / f'{entry["id"]}.json'
+    stored = json.loads(path.read_text(encoding='utf-8'))
+    stored.pop('seal')
+    # A file of before holds no standard, and its entrants keep the keys they were rated by.
+    del stored['config']['ability']
+    runner._write_record(path, stored)
+    again = runner.Tournaments(player=player, start=False, interval=0.01)
+    loaded = again.get(entry['id'])
+    assert loaded['state'] == 'stopped' and 'ability' not in loaded['config']
+    assert [e['key'] for e in loaded['config']['entrants']] == [
+        'builtin:0.30',
+        'builtin:scenario',
+        'builtin:0.90',
+        'person:Ana',
+    ]
+    abilities = {m['key']: m['ability'] for m in loaded['matches']}
+    names = [e['name'] for e in loaded['config']['entrants']]
+    own = {names[0]: 0.3, names[1]: 0.6, names[2]: 0.9, names[3]: 0.6}
+    for match in loaded['matches']:
+        assert match['ability'] == [own[names[match['home']]], own[names[match['away']]]]
+    again.resume(entry['id'])
+    again.tick()
+    assert _wait(lambda: calls)
+    again.close()
+    key, ability, provenance = calls[0]
+    assert ability == abilities[key] == provenance
+
+
+def test_each_side_of_a_real_match_plays_its_entrant_ability(render_home, tmp_path):
+    """A registered team leaves players to the built-in AI, which plays at the entrant's ability."""
+    team = _rex(tmp_path)
+    cups = runner.Tournaments(start=False, interval=0.1)
+    config = _builtin_config(2, seeding='manual', ability=0.7)
+    config['entrants'] = [
+        {'kind': 'team', 'team': team['id'], 'ability': 0.2},
+        {'kind': 'builtin'},
+    ]
+    config['stages'] = [{'format': 'league', 'scenario': '5_vs_5', 'length': 50, 'cycles': 2}]
+    entry = cups.create(config)
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    done = cups.get(entry['id'])
+    cups.close()
+    matches = [m for m in done['matches'] if m['result']['match']]
+    assert len(matches) == 2
+    homes = set()
+    for match in matches:
+        header = _recording.read_header(_library.path_of(match['result']['match']))
+        provenance = header['provenance']
+        rex = 0 if match['home'] == 0 else 1
+        expected = [0.2, 0.7] if rex == 0 else [0.7, 0.2]
+        homes.add(rex)
+        # The tournament asks for each side's ability, and the engine plays it on that side.
+        assert match['ability'] == expected
+        assert provenance['tournament']['ability'] == expected
+        assert provenance['ability'] == expected
+        assert [t['ability'] for t in header['teams']] == expected
+    # Over home and away, Rex played its ability from both sides of the pitch.
+    assert homes == {0, 1}
+
+
+def test_the_command_line_sets_the_standard_and_entrant_abilities(render_home, tmp_path, capsys):
+    from cuju.render.__main__ import main
+
+    team = _rex(tmp_path)
+    shape = ['--preset', 'round_robin', '--scenario', '5_vs_5', '--seed', '3']
+    entrants = ['--team', team['id'], '--ability', '0.25', '--team', team['id'], '--builtin', 'any']
+    assert main(['tournament', 'check', *shape, '--ability', '0.8', *entrants, '--json']) == 0
+    config = json.loads(capsys.readouterr().out)['config']
+    assert config['ability'] == 0.8
+    assert [e['ability'] for e in config['entrants']] == [0.25, None, None]
+    assert main(['tournament', 'check', *shape, '--ability', '0.8', *entrants]) == 0
+    printed = capsys.readouterr().out
+    assert printed.splitlines()[0].endswith(', standard ability 0.80')
+    # After an entrant, standard leaves it to the standard, and scenario unsets the standard.
+    follow = ['--team', team['id'], '--ability', 'standard', '--builtin', '0.4', '--ability', '0.6']
+    assert main(['tournament', 'check', *shape, '--ability', 'scenario', *follow, '--json']) == 0
+    config = json.loads(capsys.readouterr().out)['config']
+    assert config['ability'] is None
+    assert [e['ability'] for e in config['entrants']] == [None, 0.6]
+    assert config['entrants'][1]['key'] == 'builtin:0.60'
+    for arguments, message in (
+        (
+            ['--ability', 'strong', *entrants],
+            'expected --ability with an ability from 0 to 1 or scenario',
+        ),
+        (
+            [*entrants, '--ability', 'strong'],
+            'expected --ability with an ability from 0 to 1 or standard',
+        ),
+        (['--ability', '2', *entrants], 'expected the standard ability from 0 to 1'),
+        ([*entrants, '--ability', '-1'], 'expected the ability of entrant 3 from 0 to 1'),
+    ):
+        assert main(['tournament', 'new', *shape, *arguments]) == 1
+        error = capsys.readouterr().err
+        assert error.startswith(f'cuju render: {message}') and error.count('\n') == 1, error
+
+
+def test_a_configuration_file_takes_both_abilities(render_home, tmp_path, capsys):
+    from cuju.render.__main__ import main
+
+    team = _rex(tmp_path)
+    path = tmp_path / 'cup.json'
+    path.write_text(
+        json.dumps(
+            {
+                'name': 'Ability cup',
+                'seed': 4,
+                'ability': 0.35,
+                'entrants': [
+                    {'kind': 'team', 'team': team['id'], 'ability': 0.9},
+                    {'kind': 'person', 'name': 'Ana', 'ability': 0.1},
+                    {'kind': 'builtin'},
+                ],
+                'stages': [{'format': 'league', 'scenario': '5_vs_5'}],
+            }
+        ),
+        encoding='utf-8',
+    )
+    assert main(['tournament', 'new', '--config', str(path), '--json']) == 0
+    identifier = json.loads(capsys.readouterr().out)['id']
+    stored = json.loads((runner.folder() / f'{identifier}.json').read_text(encoding='utf-8'))
+    assert stored['config']['ability'] == 0.35
+    assert [e['ability'] for e in stored['config']['entrants']] == [0.9, 0.1, None]
+    assert main(['tournament', 'show', identifier]) == 0
+    shown = capsys.readouterr().out
+    assert 'Rex at 0.90' in shown and 'Ana at 0.10' in shown and 'standard ability 0.35' in shown
+
+
+# The draw of a new tournament.
+
+
+def _first_round(seed, preset='quick_cup', count=8, **options):
+    config = rules.check(
+        {**rules.preset_config(preset), 'seed': seed, 'entrants': _builtins(count), **options},
+        _TEAMS,
+    )
+    stage = rules.evaluate(config, {})['stages'][0]
+    if stage['tables'] and stage['format'] == 'groups':
+        return [tuple(row['entrant'] for row in table['rows']) for table in stage['tables']]
+    return [(fixture['home'], fixture['away']) for fixture in stage['rounds'][0]['fixtures']]
+
+
+def test_a_new_tournament_draws_at_random_from_its_seed():
+    assert {preset['seeding'] for preset in rules.PRESETS.values()} == {'random'}
+    for preset in ('quick_cup', 'world_cup', 'double_elimination', 'swiss_16'):
+        draws = {tuple(_first_round(seed, preset)) for seed in range(8)}
+        assert len(draws) > 1, preset
+        # The same seed draws the same again.
+        assert _first_round(5, preset) == _first_round(5, preset)
+    # By hand, the order of the entrants is the order of the seeds, seed 1 against the last.
+    assert _first_round(5, seeding='manual')[0] == (0, 7)
+    assert {tuple(_first_round(seed, seeding='manual')) for seed in range(4)} == {
+        tuple(_first_round(0, seeding='manual'))
+    }
+
+
+def test_a_file_seeded_by_rating_keeps_its_draw(render_home):
+    """A tournament of a preset that seeded by rating resumes with the draw it was made with."""
+    cups = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    entry = cups.create({**_builtin_config(8), 'seeding': 'rating'}, run=False)
+    before = cups.get(entry['id'])
+    cups.close()
+    # Equal ratings keep the order of the entrants, as they always did.
+    first = [(f['home'], f['away']) for f in before['stages_view'][0]['rounds'][0]['fixtures']]
+    assert first == [(0, 7), (3, 4), (1, 6), (2, 5)]
+    again = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    after = again.get(entry['id'])
+    assert after['config']['seeding'] == 'rating'
+    assert after['stages_view'] == before['stages_view']
+    assert again.resume(entry['id'])['state'] == 'running'
+    assert again.run(entry['id'], report=lambda line: None) == 'done'
+    again.close()
+
+
+def test_the_command_line_draws_at_random_unless_seeded_by_hand(render_home, capsys):
+    from cuju.render.__main__ import main
+
+    four = ['--builtin', '0.1', '--builtin', '0.2', '--builtin', '0.3', '--builtin', '0.4']
+    for options, seeding in (([], 'random'), (['--seeding', 'manual'], 'manual')):
+        arguments = ['tournament', 'check', '--preset', 'world_cup', '--seed', '2', *four]
+        assert main([*arguments, *options, '--json']) == 0
+        assert json.loads(capsys.readouterr().out)['config']['seeding'] == seeding
+
+
+# Watching a tournament without spoilers.
+
+
+def test_a_tournament_without_spoilers_tells_only_what_was_watched(render_home):
+    from cuju.errors import ArgumentError
+
+    cups = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    entry = cups.create({**_builtin_config(4), 'seeding': 'manual'})
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    full = cups.get(entry['id'])
+    assert full['champion_index'] is not None
+    semis = [m['key'] for m in full['matches'] if m['key'].startswith('0/w4-')]
+    final = next(m['key'] for m in full['matches'] if m['key'] not in semis)
+    # Nothing watched, nothing told, the semi-finals wait in order and the final has no sides.
+    hidden = cups.without_spoilers(entry['id'], [])
+    assert hidden['champion'] is None and hidden['champion_index'] is None
+    assert hidden['ranking'] is None
+    assert hidden['spoilers']['unseen'] == semis
+    assert hidden['spoilers']['hidden'] == 3 and hidden['spoilers']['watched'] == 0
+    assert sorted(hidden['spoilers']['played']) == sorted([*semis, final])
+    for match in hidden['matches']:
+        assert match['state'] == 'unseen' and match['result'] is None
+        assert set(match['unseen']) == {'match', 'forfeit'}
+    assert final not in {m['key'] for m in hidden['matches']}
+    rounds = hidden['stages_view'][0]['rounds']
+    assert all(f['score'] is None and f['winner'] is None for f in rounds[0]['fixtures'])
+    assert all(
+        isinstance(side, dict) for side in (rounds[1]['fixtures'][0][s] for s in ('home', 'away'))
+    )
+    # One semi-final watched tells its winner, who stands in the final, and nothing else.
+    one = cups.without_spoilers(entry['id'], [semis[0]])
+    first = one['stages_view'][0]['rounds'][0]['fixtures'][0]
+    assert first['winner'] == full['stages_view'][0]['rounds'][0]['fixtures'][0]['winner']
+    assert one['spoilers']['unseen'] == [semis[1]]
+    assert one['stages_view'][0]['rounds'][1]['fixtures'][0]['home'] == first['winner']
+    # Every match watched, the tournament reads as it is.
+    every = cups.without_spoilers(entry['id'], [*semis, final])
+    assert every['champion'] == full['champion'] and every['ranking'] == full['ranking']
+    assert every['spoilers']['unseen'] == [] and every['spoilers']['hidden'] == 0
+    assert every['stages_view'] == full['stages_view']
+    with pytest.raises(ArgumentError, match='watched matches as a list'):
+        cups.without_spoilers(entry['id'], 'all')
+    assert cups.without_spoilers('cup-none', []) is None
+    cups.close()
+
+
+def test_the_server_answers_a_tournament_without_spoilers(render_home):
+    import http.server
+
+    cups = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    entry = cups.create(_builtin_config(4))
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    server = http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests(), None, cups)
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+    path = f'/api/tournaments/{entry["id"]}/spoilers'
+    try:
+        status, hidden = _request(address, 'POST', path, {'watched': []})
+        assert status == 200 and hidden['champion'] is None
+        assert len(hidden['spoilers']['unseen']) == 2
+        status, refused = _request(address, 'POST', path, {'watched': 7})
+        assert status == 400 and refused['error_id'] == 'server.tournament.watched'
+        status, _ = _request(address, 'POST', '/api/tournaments/cup-none/spoilers', {'watched': []})
+        assert status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+        cups.close()

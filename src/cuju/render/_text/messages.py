@@ -35,6 +35,13 @@ _PLACEHOLDER = re.compile(r'\{([A-Za-z0-9_]+)\}')
 _MARK = re.compile(r'\*\*(.+?)\*\*|`([^`]+)`')
 
 MESSAGES: dict[str, str | dict[str, str]] = {
+    'server.bench.challenges': 'expected a list of distinct challenges, found {challenges}',
+    'server.bench.fields': (
+        'expected teams, challenges, keep_recordings and workers, found {unknown}'
+    ),
+    'server.bench.no_bench': 'no such benchmark',
+    'server.bench.teams': 'expected a list of distinct teams of the registry, found {teams}',
+    'server.bench.workers': 'expected from 1 to {most} runs at once, found {workers}',
     'server.body_size': 'expected a request body of at most 110 MB',
     'server.challenges.ability': 'expected the ability {ability}, found {found}',
     'server.challenges.attempt': 'expected an attempt from 0 to {last}, found {attempt}',
@@ -42,6 +49,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'the recording {match} cannot be attempt {attempt}, {reason}'
     ),
     'server.challenges.attempts': 'expected from 1 to {most} attempts, found {attempts}',
+    'server.challenges.default_name': 'expected default_name as true or false, found {value}',
     'server.challenges.distinct': 'expected a distinct recording for each attempt',
     'server.challenges.exit': 'the run ended with exit code {code}',
     'server.challenges.exit_detail': 'the run ended with exit code {code}, {detail}',
@@ -60,7 +68,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.challenges.no_provenance': 'the recording holds no provenance',
     'server.challenges.no_run': 'no such run',
     'server.challenges.person_fields': (
-        'expected person, matches and keep_recordings, found {unknown}'
+        'expected person, matches, keep_recordings and default_name, found {unknown}'
     ),
     'server.challenges.policy': 'expected a policy function, found {policy}',
     'server.challenges.provenance': 'expected `{key}` {value} for attempt {attempt}, found {found}',
@@ -140,6 +148,17 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'the server **cannot write** its folder, choose another with `--home`'
     ),
     'server.doctor.writing.ok': 'the server can write its folder',
+    'server.draw.left': (
+        'expected a team of the pool that can play the left side of {scenario}, found none'
+    ),
+    'server.draw.pool': 'expected the pool as a list of teams of the registry, found {pool}',
+    'server.draw.right': (
+        'expected a team of the pool that can play the right side of {scenario}, found none'
+    ),
+    'server.draw.same_team': 'expected same_team as true or false, found {value}',
+    'server.draw.scenario': (
+        'expected a scenario that a team of the pool can play on each side, found none'
+    ),
     'server.feed.follow.auto': 'a live source while one streams, else the newest recording',
     'server.feed.follow.latest': 'the newest recording of the library',
     'server.feed.follow.live': 'the newest live source',
@@ -271,6 +290,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.names.builtin': "GRF's built-in AI",
     'server.names.challenge_attempt': '{challenge}, attempt {attempt}, {competitor}',
     'server.names.challenge_run': '{challenge}, {competitor}',
+    'server.names.default_person': 'Player',
     'server.names.demo': 'Demo, the built-in AI against itself',
     'server.names.left': 'Left',
     'server.names.live': '{scenario}, environment {environment}, process {process}',
@@ -541,7 +561,9 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.teams.submission.unpack': 'expected a submission whose files unpack, found {error}',
     'server.teams.unknown': 'expected a team of the registry, found {identifier}',
     'server.teams.unknown_kaggle': 'expected a Kaggle team of the registry, found {identifier}',
-    'server.tournament.ability': 'expected an ability from 0 to 1, found {ability}',
+    'server.tournament.ability': (
+        'expected the ability of entrant {entrant} from 0 to 1, found {ability}'
+    ),
     'server.tournament.best_places': 'stage {stage} names best places without a position',
     'server.tournament.bracket_byes': {
         'one': (
@@ -772,6 +794,9 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     ),
     'server.tournament.stage_settings': 'stage {stage} has unknown settings {settings}',
     'server.tournament.stages': 'expected from 1 to {most} stages',
+    'server.tournament.standard_ability': (
+        'expected the standard ability from 0 to 1, found {ability}'
+    ),
     'server.tournament.stopped': 'expected a stopped tournament, found it {state}',
     'server.tournament.swiss': 'no Swiss pairing without a rematch exists for this round',
     'server.tournament.teammates': 'expected registered teammates, found {mates}',
@@ -780,6 +805,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.unknown': 'no such tournament',
     'server.tournament.unknown_identifier': 'expected a tournament, found {identifier}',
     'server.tournament.waiting': 'waiting for cuju render tournament run',
+    'server.tournament.watched': 'expected the watched matches as a list of up to 10000 keys',
     'server.tournament.where': 'stage {number}',
     'server.tournament.winner': 'expected the winning side as home or away, found {side}',
     'server.trash.unknown': 'no such recording in the Trash',

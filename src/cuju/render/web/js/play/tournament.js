@@ -14,9 +14,13 @@ import { icon, stateBadge, symbolOnly } from '../core/icons.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
 import {
     DECIDED_NAMES, FORMAT_NAMES, NAME_LONGEST, SECTION_NAMES, SETTLE_NAMES, STATE_NAMES, TIEBREAK_NAMES,
-    bracketLayout, entrantName, fixtureMatches, fixtureState, formatsText, freeName, isBracket, nameKey,
-    progressShare, sections, sideName, stageNameText, stageText, tiebreakText,
+    bracketLayout, entrantName, fixtureMatches, fixtureState, formatsText, freeName, isBracket, isFinal, nameKey,
+    progressShare, sections, shownAbility, sideName, stageNameText, stageText, tiebreakText, upNext,
 } from './tournament-layout.js';
+import {
+    autoplay, markWatched, noteRecordings, predict, prediction, predictionScore, setAutoplay, setSpoilerFree,
+    spoilerFree, watchedKeys,
+} from '../core/spoilers.js';
 
 const FORMATS = Object.keys(FORMAT_NAMES);
 const TIEBREAKERS = Object.keys(TIEBREAK_NAMES);
@@ -39,6 +43,28 @@ function presetDescription(name, preset) {
 // An ability in the numbers of the language, with two decimals.
 function abilityText(value) {
     return formatNumber(Number(value), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// The ability beside an entrant's name where it differs from the standard, or null, with the
+// symbol of the built-in AI before it, since the ability steers the players the built-in AI controls.
+function abilityBadge(entrant, standard) {
+    const own = shownAbility(entrant, standard);
+    if (own === null) {
+        return null;
+    }
+    return h('span', { class: 'cup-ability small muted', title: t('tournament.entrant.shownAbility.title') },
+        icon('robot', 'icon text-symbol'), t('tournament.entrant.shownAbility', { ability: abilityText(own) }));
+}
+
+// The words of an entrant's own ability for a label that a screen reader reads, or an empty text.
+function abilityWords(entrant, standard) {
+    const own = shownAbility(entrant, standard);
+    return own === null ? '' : t('tournament.entrant.shownAbility', { ability: abilityText(own) });
+}
+
+// The standard ability of a tournament in words, its value or the scenario's own.
+function standardText(standard) {
+    return standard === null || standard === undefined ? t('tournament.view.ability.scenario') : t('tournament.view.ability', { ability: abilityText(standard) });
 }
 
 // A request to the server, which throws an error with the server's reason.
@@ -77,6 +103,8 @@ export const tournamentsApi = {
     presets: () => call('GET', '/api/tournaments/presets'),
     ratings: () => call('GET', '/api/tournaments/ratings'),
     check: (config) => call('POST', '/api/tournaments/check', { config }),
+    // A tournament as a person sees it who has watched only the matches of `watched`.
+    spoilers: (id, watched) => call('POST', `/api/tournaments/${encodeURIComponent(id)}/spoilers`, { watched }),
     create: (config) => call('POST', '/api/tournaments', { config }),
     action: (id, action, body = {}) => call('POST', `/api/tournaments/${encodeURIComponent(id)}/${action}`, body),
     remove: (id) => call('DELETE', `/api/tournaments/${encodeURIComponent(id)}`),
@@ -164,7 +192,7 @@ const STAGE_DEFAULTS = {
 
 function newDraft() {
     return {
-        name: '', seed: '', seeding: 'random', concurrency: 1, forfeit_score: 3, preset: null,
+        name: '', seed: '', seeding: 'random', concurrency: 1, forfeit_score: 3, ability: null, preset: null,
         defaults: {}, stages: [{ format: 'knockout', name: 'Cup' }], entrants: [],
     };
 }
@@ -191,6 +219,14 @@ export class TournamentsPage {
         // The award that waits for its confirmation, by where it shows, its match and its side.
         this.awarding = null;
         this.primed = false;
+        // The match that plays on Watch for a tournament without spoilers, the matches watched
+        // in this visit by tournament, the zoom of the Brackets view and the card between matches.
+        this.watching = null;
+        this.session = {};
+        this.zoom = 1;
+        this.intermission = null;
+        this.revealing = false;
+        document.addEventListener('cuju:recording-ended', (e) => this.recordingEnded(e.detail || {}));
         setInterval(() => this.poll(), 1500);
     }
 
@@ -219,7 +255,7 @@ export class TournamentsPage {
             this.error = err;
         }
         this.render();
-        if (this.mode === 'view' && this.openId) {
+        if ((this.mode === 'view' || this.mode === 'brackets') && this.openId) {
             await this.load(this.openId);
         }
     }
@@ -263,16 +299,18 @@ export class TournamentsPage {
         }
         this.listHost.replaceChildren(...this.list.map((cup) => {
             const share = progressShare(cup);
+            const shown = cup.id === this.openId && (this.mode === 'view' || this.mode === 'brackets');
             const button = h('button', {
-                type: 'button', class: `cup-item${cup.id === this.openId && this.mode === 'view' ? ' active' : ''}`,
-                'aria-current': cup.id === this.openId && this.mode === 'view' ? 'true' : 'false',
+                type: 'button', class: `cup-item${shown ? ' active' : ''}`,
+                'aria-current': shown ? 'true' : 'false',
                 onclick: () => this.open(cup.id),
             },
             h('span', { class: 'cup-item-name' }, serverText(cup, 'name')),
             h('span', { class: 'cup-item-meta' },
                 stateBadge(cup.state, STATE_LABELS[cup.state] || cup.state, `state-pill ${cup.state === 'running' ? 'running' : cup.state === 'done' ? 'done' : 'failed'}`),
                 t('tournament.list.meta', { count: cup.entrants, formats: formatsText(cup.stages) })),
-            cup.champion ? h('span', { class: 'cup-item-champion' }, t('tournament.list.champion', { name: serverText(cup, 'champion') })) : null,
+            cup.champion && !spoilerFree(cup.id) ? h('span', { class: 'cup-item-champion' }, t('tournament.list.champion', { name: serverText(cup, 'champion') })) : null,
+            spoilerFree(cup.id) ? h('span', { class: 'cup-item-spoilers small muted' }, icon('eye', 'icon text-symbol'), t('tournament.spoilers.listed')) : null,
             cup.people_waiting ? h('span', { class: 'cup-item-people' }, t('tournament.list.people', { count: cup.people_waiting })) : null,
             cup.state === 'running' ? h('span', { class: 'progress', 'aria-hidden': 'true' }, h('span', { class: 'bar', style: `width:${Math.round(share * 100)}%` })) : null);
             return h('li', {}, button);
@@ -290,6 +328,7 @@ export class TournamentsPage {
 
     startWizard(config = null) {
         this.mode = 'wizard';
+        this.root.querySelector('.cup-layout')?.classList.remove('brackets');
         this.openId = null;
         this.step = config ? 1 : 0;
         this.draft = config ? this.draftFrom(config) : newDraft();
@@ -318,7 +357,7 @@ export class TournamentsPage {
 
     draftFrom(config) {
         const draft = newDraft();
-        for (const key of ['name', 'seeding', 'concurrency', 'forfeit_score', 'preset']) {
+        for (const key of ['name', 'seeding', 'concurrency', 'forfeit_score', 'ability', 'preset']) {
             if (config[key] !== undefined) {
                 draft[key] = config[key];
             }
@@ -338,12 +377,10 @@ export class TournamentsPage {
             return own;
         });
         draft.entrants = (config.entrants || []).map((e) => {
-            const entry = { kind: e.kind, name: e.name_id ? undefined : e.name };
+            const entry = { kind: e.kind, name: e.name_id ? undefined : e.name, ability: e.ability ?? null };
             if (e.kind === 'team') {
                 entry.team = e.team;
-            } else if (e.kind === 'builtin') {
-                entry.ability = e.ability;
-            } else {
+            } else if (e.kind === 'person') {
                 entry.teammates = e.team || 'builtin';
             }
             if (e.rated) {
@@ -418,6 +455,9 @@ export class TournamentsPage {
             draft.stages = clone(preset.stages);
             if (preset.concurrency) {
                 draft.concurrency = preset.concurrency;
+            }
+            if ('ability' in preset) {
+                draft.ability = preset.ability ?? null;
             }
             if (!draft.name || Object.entries(this.presets).some(([key, p]) => presetTitle(key, p) === draft.name)) {
                 draft.name = presetTitle(name, preset);
@@ -525,8 +565,22 @@ export class TournamentsPage {
                 } }, icon('plus'))));
         const rows = d.entrants.map((entry, index) => this.entrantRow(entry, index));
         queueMicrotask(() => this.markNames());
+        // The draw is random from the tournament seed, unless the person sets the bracket by hand,
+        // which seeds the entrants in the order of this list, the first as seed 1.
+        const manual = h('input', { type: 'checkbox', class: 'cup-manual', checked: d.seeding === 'manual' });
+        const drawNote = h('span', { class: 'muted small cup-draw-note', id: 'cup-draw-note' });
+        const showDraw = () => {
+            drawNote.textContent = t(d.seeding === 'manual' ? 'tournament.entrants.draw.manual' : d.seeding === 'rating' ? 'tournament.entrants.draw.rating' : 'tournament.entrants.draw.random');
+        };
+        manual.setAttribute('aria-describedby', 'cup-draw-note');
+        manual.addEventListener('change', () => {
+            d.seeding = manual.checked ? 'manual' : 'random';
+            showDraw();
+        });
+        showDraw();
         return [
             h('p', { class: 'muted' }, tn('tournament.entrants.intro', { count: d.entrants.length })),
+            h('div', { class: 'cup-draw' }, h('label', { class: 'check' }, manual, t('tournament.entrants.draw.byHand')), drawNote),
             adders,
             d.entrants.length ? h('ol', { class: 'cup-entrants' }, rows) : h('p', { class: 'muted pad' }, t('tournament.entrants.empty')),
         ];
@@ -554,13 +608,19 @@ export class TournamentsPage {
             entry.rating = rating.value === '' ? undefined : Number(rating.value);
         });
         const extra = [];
-        if (entry.kind === 'builtin') {
-            const ability = h('input', { type: 'number', min: '0', max: '1', step: '0.05', value: entry.ability ?? '', placeholder: t('tournament.entrant.ability.placeholder'), 'aria-label': t('tournament.entrant.ability.label', { number }) });
-            ability.addEventListener('input', () => {
-                entry.ability = ability.value === '' ? null : Number(ability.value);
-            });
-            extra.push(h('label', { class: 'field small-field' }, t('tournament.entrant.ability'), ability));
-        } else if (entry.kind === 'person') {
+        // Every entrant may carry an ability, which the built-in AI players of its side play with.
+        // Left empty, it follows the stage's or the standard, which the placeholder names.
+        const followed = d.ability === null || d.ability === undefined ? t('tournament.entrant.ability.placeholder')
+            : t('tournament.entrant.ability.standard', { ability: abilityText(d.ability) });
+        const ability = h('input', {
+            type: 'number', class: 'cup-entrant-ability', min: '0', max: '1', step: '0.05', value: entry.ability ?? '', placeholder: followed,
+            title: t('tournament.entrant.ability.title'), 'aria-label': t('tournament.entrant.ability.label', { number }),
+        });
+        ability.addEventListener('input', () => {
+            entry.ability = ability.value === '' ? null : Number(ability.value);
+        });
+        const abilityField = h('label', { class: 'field small-field' }, t('tournament.entrant.ability'), ability);
+        if (entry.kind === 'person') {
             const dynamic = this.teams.filter((x) => x.kind !== 'builtin' && x.control && x.control.assignment === 'dynamic');
             const mates = h('select', { 'aria-label': t('tournament.entrant.teammates.label', { number }) },
                 h('option', { value: 'builtin' }, t('tournament.entrant.builtin')), dynamic.map((x) => h('option', { value: x.id }, x.name)));
@@ -572,6 +632,7 @@ export class TournamentsPage {
         } else {
             extra.push(h('span', { class: 'cup-entrant-extra', 'aria-hidden': 'true' }));
         }
+        extra.push(abilityField);
         const move = (by) => {
             const to = index + by;
             if (to < 0 || to >= d.entrants.length) {
@@ -696,13 +757,6 @@ export class TournamentsPage {
                 defaults.length = v;
             }
         });
-        const ability = this.optionalNumber({ key: 'ability', min: 0, max: 1, step: 0.05, initial: 0.5, off: OFF_SCENARIO, label: t('tournament.field.ability') }, defaults.ability ?? null, (v) => {
-            if (v === null) {
-                delete defaults.ability;
-            } else {
-                defaults.ability = v;
-            }
-        });
         return h('div', { class: 'cup-form' },
             h('label', { class: 'field' }, t('tournament.settings.name'), name),
             h('label', { class: 'field' }, t('tournament.settings.seed'),
@@ -714,7 +768,7 @@ export class TournamentsPage {
             h('label', { class: 'field' }, t('tournament.settings.seeding'), seeding),
             h('div', { class: 'field' }, h('span', {}, t('tournament.settings.scenario')), scenario, h('span', { class: 'muted small' }, scenarioText(defaults.scenario || ''))),
             h('div', { class: 'field' }, h('span', {}, t('tournament.settings.length')), length),
-            h('div', { class: 'field' }, h('span', {}, t('tournament.field.ability')), ability),
+            this.standardControl(),
             h('label', { class: 'field' }, t('tournament.settings.concurrency'), concurrency),
             h('label', { class: 'field' }, t('tournament.settings.forfeit'), forfeit),
             h('p', { class: 'muted small' }, tn('tournament.settings.note')));
@@ -734,6 +788,33 @@ export class TournamentsPage {
         }
         const select = this.select(options, value ?? '', label, (v) => onChange(v === '' ? null : v));
         return select;
+    }
+
+    // The standard ability of the tournament, which every entrant and stage that sets none plays
+    // with, a slider with its value beside it and a box that sets it. Left clear, the scenario's
+    // own ability plays, as the value beside the slider says.
+    standardControl() {
+        const d = this.draft;
+        const label = t('tournament.settings.ability');
+        const on = d.ability !== null && d.ability !== undefined;
+        const box = h('input', { type: 'checkbox', class: 'cup-standard-set', checked: on, 'aria-label': t('tournament.optional.set.label', { label: label.toLowerCase() }) });
+        const range = h('input', { type: 'range', class: 'cup-standard-range', min: '0', max: '1', step: '0.05', value: String(on ? d.ability : 0.5), disabled: !on, 'aria-label': label });
+        const shown = h('output', { class: 'ability-value' });
+        const show = () => {
+            shown.textContent = box.checked ? abilityText(d.ability) : OFF_SCENARIO;
+            range.setAttribute('aria-valuetext', shown.textContent);
+        };
+        const sync = () => {
+            range.disabled = !box.checked;
+            d.ability = box.checked ? Math.round(Number(range.value) * 10000) / 10000 : null;
+            show();
+        };
+        box.addEventListener('change', sync);
+        range.addEventListener('input', sync);
+        show();
+        return h('div', { class: 'field cup-standard' }, h('span', {}, label),
+            h('span', { class: 'cup-optional ability' }, h('label', { class: 'check' }, box, t('tournament.optional.set')), range, shown),
+            h('span', { class: 'muted small' }, t('tournament.settings.ability.help')));
     }
 
     // A number that may be left to its default, a box that turns it on and the number itself.
@@ -759,7 +840,7 @@ export class TournamentsPage {
         const d = this.draft;
         const stages = d.stages.map((stage, index) => this.stageCard(stage, index));
         const json = h('textarea', { class: 'cup-json', rows: '14', spellcheck: 'false', 'aria-label': t('tournament.json.label') },
-            JSON.stringify({ defaults: d.defaults, stages: d.stages }, null, 2));
+            JSON.stringify({ ability: d.ability ?? null, defaults: d.defaults, stages: d.stages }, null, 2));
         const applied = h('p', { class: 'muted small', role: 'status' });
         const apply = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.json.apply')), onclick: () => {
             try {
@@ -769,6 +850,7 @@ export class TournamentsPage {
                 }
                 d.stages = value.stages;
                 d.defaults = value.defaults || {};
+                d.ability = value.ability ?? null;
                 this.renderWizard();
                 this.app.hud.toast(t('tournament.json.applied'));
             } catch (err) {
@@ -777,6 +859,7 @@ export class TournamentsPage {
         } }, icon('check'));
         return [
             h('p', { class: 'muted' }, tn('tournament.stages.intro')),
+            h('div', { class: 'cup-form' }, this.standardControl()),
             h('div', { class: 'cup-stages' }, stages),
             h('button', { type: 'button', class: 'btn', disabled: d.stages.length >= 8, ...symbolOnly(t('tournament.stages.add')), onclick: () => {
                 d.stages.push({ format: 'knockout', name: '' });
@@ -840,7 +923,10 @@ export class TournamentsPage {
             control = h('input', { type: 'number', min: String(field.min), max: String(field.max), step: '1', value: String(value), 'aria-label': label });
             control.addEventListener('input', () => set(Number(control.value)));
         } else if (field.type === 'optional') {
-            control = this.optionalNumber({ ...field, label }, value, set);
+            // A stage that sets no ability follows the standard, where the tournament has one.
+            const standard = field.key === 'ability' ? this.draft.ability : null;
+            const off = standard === null || standard === undefined ? field.off : t('tournament.off.standard', { ability: abilityText(standard) });
+            control = this.optionalNumber({ ...field, label, off }, value, set);
         } else if (field.type === 'check') {
             control = h('input', { type: 'checkbox', checked: !!value, 'aria-label': label });
             control.addEventListener('change', () => set(control.checked));
@@ -956,13 +1042,10 @@ export class TournamentsPage {
             forfeit_score: d.forfeit_score, defaults: d.defaults, stages: d.stages,
             entrants: d.entrants.map((e) => {
                 const entry = { kind: e.kind };
-                for (const key of ['team', 'name', 'rating', 'teammates']) {
+                for (const key of ['team', 'name', 'rating', 'teammates', 'ability']) {
                     if (e[key] !== undefined && e[key] !== null && e[key] !== '') {
                         entry[key] = e[key];
                     }
-                }
-                if (e.kind === 'builtin') {
-                    entry.ability = e.ability ?? null;
                 }
                 return entry;
             }),
@@ -977,6 +1060,9 @@ export class TournamentsPage {
         if (d.preset) {
             config.preset = d.preset;
         }
+        if (d.ability !== null && d.ability !== undefined) {
+            config.ability = d.ability;
+        }
         return config;
     }
 
@@ -985,10 +1071,15 @@ export class TournamentsPage {
             const preview = await tournamentsApi.check(this.config());
             host.setAttribute('aria-busy', 'false');
             const entrants = preview.config.entrants;
+            const standard = preview.config.ability ?? null;
             const parts = [h('p', {}, t('tournament.review.summary', {
                 entrants: t('tournament.count.entrants', { count: entrants.length }), seed: preview.config.seed,
                 matches: t('tournament.review.matches', { count: preview.matches }),
-            }))];
+            })), h('p', { class: 'muted small cup-review-ability' }, standardText(standard))];
+            const own = entrants.filter((e) => shownAbility(e, standard) !== null);
+            if (own.length) {
+                parts.push(h('ul', { class: 'cup-review-abilities small' }, own.map((e) => h('li', {}, entrantName(e), ' ', abilityBadge(e, standard)))));
+            }
             this.draft.seed = String(preview.config.seed);
             preview.stages.forEach((stage, index) => {
                 const settings = preview.config.stages[index];
@@ -998,6 +1089,7 @@ export class TournamentsPage {
                         stageText(settings), t('tournament.count.entrants', { count: settings.entrants }),
                         index < preview.stages.length - 1 ? t('tournament.review.advance', { count: settings.advance }) : null,
                         scenarioName(settings.scenario), settings.length ? t('tournament.count.steps', { count: settings.length }) : null,
+                        settings.ability != null ? t('tournament.stage.ability', { ability: abilityText(settings.ability) }) : null,
                     ].filter(Boolean).join(', ')),
                     stage.tables && stage.tables.length && settings.format === 'groups'
                         ? h('div', { class: 'cup-review-groups' }, stage.tables.map((table) => h('div', {},
@@ -1021,7 +1113,7 @@ export class TournamentsPage {
         try {
             const saved = await tournamentsApi.savePreset(name, {
                 title: title || d.name || name, description: '', seeding: d.seeding, concurrency: d.concurrency,
-                forfeit_score: d.forfeit_score, defaults: d.defaults, stages: d.stages,
+                forfeit_score: d.forfeit_score, ability: d.ability ?? null, defaults: d.defaults, stages: d.stages,
             });
             this.presets[name] = saved;
             this.app.hud.toast(t('tournament.review.saved', { title: saved.title }));
@@ -1052,6 +1144,7 @@ export class TournamentsPage {
 
     async open(id) {
         this.mode = 'view';
+        this.root.querySelector('.cup-layout')?.classList.remove('brackets');
         this.openId = id;
         this.awarding = null;
         this.stageTab = null;
@@ -1064,7 +1157,7 @@ export class TournamentsPage {
 
     async load(id) {
         try {
-            const entry = await tournamentsApi.get(id);
+            const entry = await this.fetchCup(id);
             if (this.openId !== id) {
                 return;
             }
@@ -1082,11 +1175,33 @@ export class TournamentsPage {
         }
     }
 
+    // A tournament in full, or as the person sees it who watches it without spoilers, whose
+    // unwatched recordings the lists of the page then leave out.
+    async fetchCup(id) {
+        if (!spoilerFree(id)) {
+            return tournamentsApi.get(id);
+        }
+        const entry = await tournamentsApi.spoilers(id, watchedKeys(id));
+        const recordings = {};
+        for (const m of entry.matches || []) {
+            if (m.unseen && m.unseen.match) {
+                recordings[m.key] = m.unseen.match;
+            }
+        }
+        noteRecordings(id, recordings);
+        return entry;
+    }
+
     renderView() {
         const cup = this.current;
+        if (cup && this.mode === 'brackets') {
+            this.renderBrackets();
+            return;
+        }
         if (!cup || this.mode !== 'view') {
             return;
         }
+        this.root.querySelector('.cup-layout')?.classList.remove('brackets');
         const entrants = cup.config.entrants;
         this.matchMap = new Map(cup.matches.map((m) => [m.key, m]));
         if (this.stageTab === null || this.stageTab >= cup.stages_view.length) {
@@ -1101,9 +1216,11 @@ export class TournamentsPage {
         if (cup.state === 'stopped') {
             actions.push(h('button', { type: 'button', class: 'btn primary', 'data-focus': 'act-resume', ...symbolOnly(t('tournament.view.resume')), onclick: () => this.act('resume', t('tournament.view.resumed')) }, icon('play')));
         }
-        if (cup.state === 'done') {
+        // Without spoilers, the ceremony waits until the person has watched the champion win.
+        if (cup.state === 'done' && cup.champion_index !== null && cup.champion_index !== undefined) {
             actions.push(h('button', { type: 'button', class: 'btn primary', 'data-focus': 'act-ceremony', ...symbolOnly(t('tournament.view.ceremony')), onclick: () => this.ceremony() }, icon('trophy')));
         }
+        actions.push(h('button', { type: 'button', class: 'btn ghost', 'data-focus': 'act-brackets', onclick: () => this.openBrackets(cup.id) }, icon('grid'), t('tournament.brackets.open')));
         actions.push(h('button', { type: 'button', class: 'btn ghost', ...symbolOnly(t('tournament.view.again')), onclick: () => {
             const config = clone(cup.config);
             this.startWizard(config);
@@ -1118,6 +1235,7 @@ export class TournamentsPage {
                 stateBadge(cup.state, STATE_LABELS[cup.state] || cup.state, `state-pill ${cup.state === 'running' ? 'running' : cup.state === 'done' ? 'done' : 'failed'}`),
                 h('span', {}, t('tournament.count.entrants', { count: entrants.length })),
                 h('span', {}, t('tournament.view.seed', { seed: cup.seed })),
+                h('span', { class: 'cup-view-ability' }, standardText(cup.config.ability ?? null)),
                 h('span', {}, t('tournament.view.played', { count: cup.played, total: cup.scheduled })),
                 cup.running ? h('span', {}, t('tournament.view.running', { count: cup.running })) : null),
             cup.state === 'running' ? h('div', { class: 'progress', role: 'progressbar', 'aria-label': t('tournament.view.progress.label'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(share * 100)) },
@@ -1126,7 +1244,8 @@ export class TournamentsPage {
             cup.error ? h('div', { class: 'notice error', role: 'alert' }, h('p', {}, serverText(cup, 'error')), this.failedAwards(cup)) : null,
             cup.persistence_error ? h('div', { class: 'notice error' }, h('p', {}, serverText(cup, 'persistence_error'))) : null,
             cup.owner ? h('p', { class: 'muted small' }, t('tournament.view.owner', { owner: cup.owner })) : null,
-            h('div', { class: 'row cup-actions' }, actions));
+            h('div', { class: 'row cup-actions' }, actions),
+            this.spoilerBar(cup));
         const open = ['running', 'stopped'].includes(cup.state);
         const people = open ? cup.matches.filter((m) => ['person', 'playing'].includes(m.state)) : [];
         const peopleBox = people.length ? h('section', { class: 'cup-people', 'aria-labelledby': 'cup-people-title' },
@@ -1167,7 +1286,7 @@ export class TournamentsPage {
         const focusKey = focused ? (focused.id || focused.dataset.focus || null) : null;
         const byId = focusKey && focused.id === focusKey;
         const scroll = this.mainHost.scrollTop;
-        this.mainHost.replaceChildren(h('div', { class: 'cup-view' }, head, peopleBox, tabs, panel, ranking));
+        this.mainHost.replaceChildren(h('div', { class: 'cup-view' }, head, this.caughtUp(cup), peopleBox, this.upNextBox(cup), tabs, panel, ranking));
         this.mainHost.scrollTop = scroll;
         if (focusKey) {
             (byId ? document.getElementById(focusKey) : this.mainHost.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`))?.focus();
@@ -1242,6 +1361,7 @@ export class TournamentsPage {
         const entrants = this.current.config.entrants;
         const parts = [h('p', { class: 'muted small' }, [
             stageText(settings), scenarioName(settings.scenario), settings.length ? t('tournament.count.steps', { count: settings.length }) : null,
+            settings.ability != null ? t('tournament.stage.ability', { ability: abilityText(settings.ability) }) : null,
             stage.state === 'waiting' ? t('tournament.stage.waiting') : null,
         ].filter(Boolean).join(', '))];
         if (stage.state === 'waiting') {
@@ -1306,6 +1426,9 @@ export class TournamentsPage {
         const matches = fixtureMatches(f, this.matchMap);
         // Two entrants of one team meet with the away side in its away kit, as in the match.
         const same = typeof f.home === 'number' && typeof f.away === 'number' && entrants[f.home].team === entrants[f.away].team;
+        const standard = cup.config.ability ?? null;
+        // A side's name for a screen reader, with its own ability where it differs from the standard.
+        const spokenSide = (value) => [sideName(value, entrants), typeof value === 'number' ? abilityWords(entrants[value], standard) : ''].filter(Boolean).join(', ');
         const side = (value, index) => {
             const known = typeof value === 'number';
             const won = f.winner !== null && f.winner !== undefined && f.winner === value && known;
@@ -1315,11 +1438,13 @@ export class TournamentsPage {
             return h('span', { class: `cup-side-name${won ? ' won' : ''}${known ? '' : ' unknown'}` },
                 known && team ? kitShirt(away ? awayTeam(team) : team, index) : known ? h('span', { class: 'cup-dot', style: `background: rgb(${dot.join(',')})`, 'aria-hidden': 'true' }) : null,
                 h('span', {}, sideName(value, entrants)),
+                known ? abilityBadge(entrants[value], standard) : null,
                 f.score ? h('b', { class: 'cup-goals' }, String(f.score[index])) : null);
         };
         const running = matches.find((m) => m.state === 'running');
         const decided = f.decided_by && DECIDED_NAMES[f.decided_by] ? DECIDED_NAMES[f.decided_by] : '';
         const watch = matches.filter((m) => m.result && m.result.match);
+        const unseen = matches.filter((m) => m.state === 'unseen');
         // A failed match waits for an award to either side, or a retry by Resume.
         const failed = matches.find((m) => m.state === 'failed');
         const label = f.label ? serverText(f, 'label') : '';
@@ -1327,7 +1452,7 @@ export class TournamentsPage {
         const extra = [f.replay ? t('tournament.fixture.replay', { left: f.replay[0], right: f.replay[1] }) : null,
             f.decider ? t('tournament.fixture.decider', { left: f.decider[0], right: f.decider[1] }) : null];
         const winner = typeof f.winner === 'number' && f.state === 'done' ? t('tournament.fixture.wonBy', { name: sideName(f.winner, entrants) }) : null;
-        const spoken = [label, t('tournament.fixture.versus', { home: sideName(f.home, entrants), away: sideName(f.away, entrants) }),
+        const spoken = [label, t('tournament.fixture.versus', { home: spokenSide(f.home), away: spokenSide(f.away) }),
             f.score ? t('tournament.fixture.score', { left: f.score[0], right: f.score[1] }) : null, ...extra, winner, decided, state !== 'done' ? STATE_NAMES[state] || state : null];
         return h('div', { class: `cup-fixture state-${state}`, 'aria-label': spoken.filter(Boolean).join(', ') },
             compact && label && f.label !== round ? h('span', { class: 'cup-fixture-label small muted' }, label) : null,
@@ -1343,6 +1468,7 @@ export class TournamentsPage {
                 ...symbolOnly(t('tournament.watch.label', { label: serverText(m, 'label'), home: entrantName(entrants[m.home]), away: entrantName(entrants[m.away]) })),
                 onclick: () => this.app.openMatchInWatch(m.result.match),
             }, icon('watch'), watch.length > 1 ? formatNumber(i + 1) : null))) : null,
+            unseen.length ? h('span', { class: 'cup-unseen row' }, unseen.map((m) => this.unseenButtons(m))) : null,
             failed ? h('span', { class: 'row' }, this.forfeitButton(failed, 'home'), this.forfeitButton(failed, 'away')) : null,
             matches.some((m) => m.state === 'person') ? h('button', { type: 'button', class: 'btn small primary', 'data-focus': `play-${f.id}`, disabled: cup.state !== 'running', ...symbolOnly(t('tournament.play')), onclick: () => this.playMatch(matches.find((m) => m.state === 'person')) }, icon('play')) : null);
     }
@@ -1374,7 +1500,7 @@ export class TournamentsPage {
                 cells.push(row.titles);
             }
             return h('tr', { class: qualified && stage.index < this.current.config.stages.length - 1 ? 'qualified' : '' },
-                cells.map((value, i) => (i === 1 ? h('th', { scope: 'row' }, String(value), row.best ? h('span', { class: 'muted small' }, t('tournament.table.best')) : null) : h('td', {}, String(value)))));
+                cells.map((value, i) => (i === 1 ? h('th', { scope: 'row' }, String(value), abilityBadge(entrants[row.entrant], this.current.config.ability ?? null), row.best ? h('span', { class: 'muted small' }, t('tournament.table.best')) : null) : h('td', {}, String(value)))));
         });
         const ordered = settings.tiebreakers.map((name) => TIEBREAK_NAMES[name]).join(COMMA_THEN);
         const name = serverText(table, 'name');
@@ -1476,6 +1602,384 @@ export class TournamentsPage {
         });
     }
 
+    // Watching without spoilers.
+
+    // The switch of a tournament without spoilers and, while it is on, Watch next, the count of
+    // the matches to watch, Reveal all, the autoplay of the next match and the predictions.
+    spoilerBar(cup) {
+        const on = spoilerFree(cup.id);
+        const box = h('input', { type: 'checkbox', class: 'cup-spoiler-switch', role: 'switch', checked: on, 'aria-describedby': 'cup-spoiler-note' });
+        box.addEventListener('change', async () => {
+            setSpoilerFree(cup.id, box.checked);
+            this.revealing = false;
+            this.renderList();
+            await this.load(cup.id);
+            this.mainHost.querySelector('.cup-spoiler-switch')?.focus();
+        });
+        const parts = [h('label', { class: 'check' }, box, t('tournament.spoilers.switch'))];
+        const spoilers = cup.spoilers || null;
+        if (!on || !spoilers) {
+            parts.push(h('span', { class: 'muted small', id: 'cup-spoiler-note' }, t('tournament.spoilers.note')));
+            return h('div', { class: 'cup-spoilers', role: 'group', 'aria-label': t('tournament.spoilers.label') }, parts);
+        }
+        const next = spoilers.unseen.length ? this.matchMap.get(spoilers.unseen[0]) : null;
+        parts.push(h('span', { class: 'small', id: 'cup-spoiler-note', role: 'status' },
+            spoilers.hidden ? t('tournament.spoilers.hidden', { count: spoilers.hidden }) : t('tournament.spoilers.none')));
+        if (next) {
+            parts.push(h('button', { type: 'button', class: 'btn primary cup-watch-next', 'data-focus': 'watch-next', onclick: () => this.watchMatch(cup.id, next) }, icon('watch'), t('tournament.spoilers.next')));
+        }
+        const auto = h('input', { type: 'checkbox', class: 'cup-autoplay', checked: autoplay(cup.id) });
+        auto.addEventListener('change', () => setAutoplay(cup.id, auto.checked));
+        parts.push(h('label', { class: 'check small' }, auto, t('tournament.spoilers.autoplay')));
+        if (spoilers.hidden) {
+            parts.push(this.revealAllButton(cup));
+        }
+        const score = predictionScore(cup.id, cup.matches);
+        if (score.scored) {
+            parts.push(h('span', { class: 'small cup-prediction-score' }, icon('star', 'icon text-symbol'), t('tournament.predictions.score', { right: score.right, total: score.scored })));
+        }
+        return h('div', { class: 'cup-spoilers on', role: 'group', 'aria-label': t('tournament.spoilers.label') }, parts);
+    }
+
+    // Reveal all, which asks first in place of the button, as an award does.
+    revealAllButton(cup) {
+        if (!this.revealing) {
+            return h('button', { type: 'button', class: 'btn small ghost', 'data-focus': 'reveal-all', onclick: () => {
+                this.revealing = true;
+                this.renderView();
+                this.mainHost.querySelector('[data-focus="reveal-no"]')?.focus();
+            } }, icon('eye'), t('tournament.spoilers.revealAll'));
+        }
+        const cancel = () => {
+            this.revealing = false;
+            this.renderView();
+            this.mainHost.querySelector('[data-focus="reveal-all"]')?.focus();
+        };
+        const question = t('tournament.spoilers.revealAll.confirm', { count: cup.spoilers.hidden });
+        return h('span', {
+            class: 'cup-confirm', role: 'group', 'aria-label': question,
+            onkeydown: (e) => {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancel();
+                }
+            },
+        }, h('span', { class: 'small' }, question),
+        h('button', { type: 'button', class: 'btn small primary', 'data-focus': 'reveal-yes', onclick: async () => {
+            this.revealing = false;
+            markWatched(cup.id, ...(cup.spoilers.played || []));
+            await this.load(cup.id);
+            this.app.hud.toast(t('tournament.spoilers.revealed.all'));
+            this.mainHost.querySelector('.cup-spoiler-switch')?.focus();
+        } }, icon('eye'), t('tournament.spoilers.revealAll.yes')),
+        h('button', { type: 'button', class: 'btn small ghost', 'data-focus': 'reveal-no', ...symbolOnly(t('tournament.forfeit.no')), onclick: cancel }, icon('close')));
+    }
+
+    // Watch and Reveal for a played match that the person has not watched yet.
+    unseenButtons(match) {
+        const cup = this.current;
+        const entrants = cup.config.entrants;
+        const names = { label: serverText(match, 'label'), home: entrantName(entrants[match.home]), away: entrantName(entrants[match.away]) };
+        return [
+            match.unseen && match.unseen.match ? h('button', {
+                type: 'button', class: 'btn small primary', 'data-focus': `unseen-watch-${match.key}`,
+                ...symbolOnly(t('tournament.spoilers.watch.label', names)),
+                onclick: () => this.watchMatch(cup.id, match),
+            }, icon('watch')) : null,
+            h('button', {
+                type: 'button', class: 'btn small ghost', 'data-focus': `unseen-reveal-${match.key}`,
+                ...symbolOnly(t('tournament.spoilers.reveal.label', names)),
+                onclick: () => this.reveal(cup.id, match.key),
+            }, icon('eye')),
+        ];
+    }
+
+    // Watch next of a tournament from anywhere, as the palette offers it.
+    async watchNextOf(id) {
+        let entry;
+        try {
+            entry = await this.fetchCup(id);
+        } catch (err) {
+            this.app.hud.toast(err.message, 'error');
+            return;
+        }
+        const key = entry.spoilers && entry.spoilers.unseen[0];
+        const next = key ? entry.matches.find((m) => m.key === key) : null;
+        if (next) {
+            this.watchMatch(id, next);
+        } else {
+            this.app.hud.toast(t('tournament.spoilers.caughtUp.toast', { name: serverText(entry, 'name') }), 'info', 6000);
+        }
+    }
+
+    // Marks a match watched on purpose and shows its result.
+    async reveal(id, key) {
+        markWatched(id, key);
+        (this.session[id] = this.session[id] || []).push(key);
+        await this.load(id);
+        this.app.hud.toast(t('tournament.spoilers.revealed'));
+    }
+
+    // Plays a match that waits to be watched on Watch, which marks it watched at its end. A match
+    // awarded without a recording reveals at once.
+    watchMatch(id, match) {
+        this.closeIntermission();
+        if (!match || !match.unseen) {
+            return;
+        }
+        if (!match.unseen.match) {
+            this.reveal(id, match.key);
+            return;
+        }
+        this.watching = { id, key: match.key, recording: match.unseen.match };
+        this.app.openMatchInWatch(match.unseen.match);
+    }
+
+    // A recording that played to its end marks its match watched, when it is the one that Watch
+    // next opened or a match of a tournament without spoilers, and shows the card of what follows.
+    async recordingEnded(detail) {
+        const cup = detail.provenance && detail.provenance.tournament;
+        let id = null;
+        let key = null;
+        if (this.watching && detail.id === this.watching.recording) {
+            ({ id, key } = this.watching);
+        } else if (cup && typeof cup.id === 'string' && typeof cup.key === 'string' && spoilerFree(cup.id)) {
+            ({ id, key } = cup);
+        }
+        this.watching = null;
+        if (!id || !spoilerFree(id) || watchedKeys(id).includes(key)) {
+            return;
+        }
+        markWatched(id, key);
+        (this.session[id] = this.session[id] || []).push(key);
+        let entry;
+        try {
+            entry = await this.fetchCup(id);
+        } catch {
+            return;
+        }
+        if (this.openId === id) {
+            this.current = entry;
+            this.renderView();
+        }
+        const next = entry.spoilers && entry.spoilers.unseen.length
+            ? entry.matches.find((m) => m.key === entry.spoilers.unseen[0]) : null;
+        if (next) {
+            this.showIntermission(entry, next, autoplay(id));
+        } else if (entry.spoilers && !entry.spoilers.hidden) {
+            this.app.hud.toast(t('tournament.spoilers.caughtUp.toast', { name: serverText(entry, 'name') }), 'info', 6000);
+        }
+    }
+
+    // The card between two matches on Watch, which names only who plays next, the final with a
+    // card of its own, and with autoplay counts down to it. Play now, Escape and Cancel answer it.
+    showIntermission(entry, next, counting) {
+        this.closeIntermission();
+        const host = document.getElementById('page-watch');
+        if (!host || this.app.page !== 'watch') {
+            return;
+        }
+        if (typeof this.app.releasePointer === 'function') {
+            this.app.releasePointer();
+        }
+        const entrants = entry.config.entrants;
+        const final = isFinal(next);
+        const id = entry.id;
+        const left = h('span', { class: 'cup-count small', role: 'status' });
+        let seconds = 10;
+        const tick = () => {
+            left.textContent = counting ? t('tournament.intermission.count', { count: seconds }) : '';
+        };
+        const play = h('button', { type: 'button', class: 'btn primary', onclick: () => this.watchMatch(id, next) }, icon('play'), t('tournament.intermission.play'));
+        const card = h('section', {
+            class: `cup-intermission${final ? ' final' : ''}`, 'aria-labelledby': 'cup-intermission-title',
+            onkeydown: (e) => {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.closeIntermission();
+                }
+            },
+        },
+        h('h2', { id: 'cup-intermission-title' }, final ? icon('trophy', 'icon text-symbol') : null,
+            final ? t('tournament.intermission.final') : t('tournament.intermission.next')),
+        h('p', { class: 'cup-intermission-stage small muted' }, `${serverText(entry, 'name')}, ${serverText(next, 'label')}`),
+        h('p', { class: 'cup-intermission-sides' },
+            this.kickoffSide(entrants[next.home], 0), h('span', { class: 'cup-versus' }, t('tournament.intermission.versus')), this.kickoffSide(entrants[next.away], 1)),
+        left,
+        h('div', { class: 'row' }, play,
+            h('button', { type: 'button', class: 'btn ghost', onclick: () => this.closeIntermission() }, icon('close'), t('tournament.intermission.cancel'))));
+        tick();
+        host.append(card);
+        this.intermission = { card, timer: null };
+        if (counting) {
+            this.intermission.timer = setInterval(() => {
+                // A person who left Watch keeps the next match from starting there.
+                if (this.app.page !== 'watch') {
+                    this.closeIntermission();
+                    return;
+                }
+                seconds -= 1;
+                tick();
+                if (seconds <= 0) {
+                    this.watchMatch(id, next);
+                }
+            }, 1000);
+        }
+        play.focus({ preventScroll: true });
+    }
+
+    closeIntermission() {
+        if (!this.intermission) {
+            return;
+        }
+        clearInterval(this.intermission.timer);
+        this.intermission.card.remove();
+        this.intermission = null;
+    }
+
+    // A side of a kickoff card, the kit of its team or a mark of its color, and its name.
+    kickoffSide(entrant, index) {
+        const team = entrant ? this.teams.find((x) => x.id === entrant.team) : null;
+        return h('span', { class: 'cup-kickoff-side' },
+            team ? kitShirt(team, index) : entrant ? h('span', { class: 'cup-dot', style: `background: rgb(${(entrant.color || [128, 128, 128]).join(',')})`, 'aria-hidden': 'true' }) : null,
+            h('span', {}, entrantName(entrant)));
+    }
+
+    // The next matches of the tournament as kickoff cards, those to watch first, each naming who
+    // plays, the final with a card of its own, and the prediction of its result.
+    upNextBox(cup) {
+        const next = upNext(cup, 4);
+        if (!next.length) {
+            return null;
+        }
+        const entrants = cup.config.entrants;
+        const cards = next.map((m) => {
+            const final = isFinal(m);
+            const pick = prediction(cup.id, m.key);
+            const choose = (side, words) => h('button', {
+                type: 'button', class: `btn small${pick === side ? ' primary' : ' ghost'}`, 'aria-pressed': pick === side ? 'true' : 'false',
+                'data-focus': `predict-${m.key}-${side}`,
+                onclick: () => {
+                    predict(cup.id, m.key, pick === side ? null : side);
+                    this.renderView();
+                },
+            }, words);
+            return h('li', { class: `cup-kickoff${final ? ' final' : ''}` },
+                h('p', { class: 'cup-kickoff-label small muted' }, final ? icon('trophy', 'icon text-symbol') : null,
+                    final ? t('tournament.upNext.final', { label: serverText(m, 'label') }) : serverText(m, 'label')),
+                h('p', { class: 'cup-kickoff-sides' }, this.kickoffSide(entrants[m.home], 0), h('span', { class: 'cup-versus' }, t('tournament.intermission.versus')), this.kickoffSide(entrants[m.away], 1)),
+                h('p', { class: 'small muted' }, STATE_NAMES[m.state] || ''),
+                h('div', { class: 'cup-predict row', role: 'group', 'aria-label': t('tournament.predictions.label', { label: serverText(m, 'label') }) },
+                    choose('home', entrantName(entrants[m.home])), choose('draw', t('tournament.predictions.draw')), choose('away', entrantName(entrants[m.away]))),
+                m.state === 'unseen' ? h('span', { class: 'row' }, this.unseenButtons(m)) : null);
+        });
+        return h('section', { class: 'cup-up-next', 'aria-labelledby': 'cup-up-next-title' },
+            h('h3', { id: 'cup-up-next-title' }, t('tournament.upNext.title')),
+            h('ol', { class: 'cup-kickoffs' }, cards));
+    }
+
+    // Once the person has watched every played match, the results of those watched in this visit,
+    // what they missed, with the predictions they got right.
+    caughtUp(cup) {
+        const watchedNow = this.session[cup.id] || [];
+        if (!spoilerFree(cup.id) || !cup.spoilers || cup.spoilers.hidden || !watchedNow.length) {
+            return null;
+        }
+        const entrants = cup.config.entrants;
+        const results = watchedNow.map((key) => this.matchMap.get(key)).filter((m) => m && m.result && Array.isArray(m.result.score));
+        const score = predictionScore(cup.id, results);
+        return h('section', { class: 'cup-caught-up notice', 'aria-labelledby': 'cup-caught-up-title' },
+            h('h3', { id: 'cup-caught-up-title' }, icon('done', 'icon text-symbol'), t('tournament.caughtUp.title')),
+            h('ul', {}, results.map((m) => h('li', {}, t('tournament.caughtUp.result', {
+                label: serverText(m, 'label'), home: entrantName(entrants[m.home]), away: entrantName(entrants[m.away]), left: m.result.score[0], right: m.result.score[1],
+            })))),
+            score.scored ? h('p', { class: 'small' }, t('tournament.predictions.score', { right: score.right, total: score.scored })) : null,
+            h('button', { type: 'button', class: 'btn small ghost', 'data-focus': 'caught-up-close', onclick: () => {
+                delete this.session[cup.id];
+                this.renderView();
+            } }, icon('close'), t('tournament.caughtUp.close')));
+    }
+
+    // The Brackets view.
+
+    // Opens the brackets, groups and tables of a tournament large, in a view of their own.
+    async openBrackets(id) {
+        this.mode = 'brackets';
+        this.openId = id;
+        this.stageTab = null;
+        this.renderList();
+        await this.load(id);
+        this.mainHost.querySelector('h2')?.focus();
+    }
+
+    closeBrackets() {
+        this.mode = 'view';
+        this.root.querySelector('.cup-layout')?.classList.remove('brackets');
+        this.renderList();
+        this.renderView();
+        this.mainHost.querySelector('[data-focus="act-brackets"]')?.focus();
+    }
+
+    renderBrackets() {
+        const cup = this.current;
+        this.matchMap = new Map(cup.matches.map((m) => [m.key, m]));
+        if (this.stageTab === null || this.stageTab >= cup.stages_view.length) {
+            const playing = cup.stages_view.findIndex((s) => s.state !== 'done');
+            this.stageTab = playing >= 0 ? playing : cup.stages_view.length - 1;
+        }
+        this.root.querySelector('.cup-layout')?.classList.add('brackets');
+        const zoomTo = (value) => {
+            this.zoom = Math.max(0.5, Math.min(2, Math.round(value * 10) / 10));
+            this.renderView();
+        };
+        const tabs = h('div', { class: 'cup-tabs', role: 'tablist', 'aria-label': t('tournament.view.stages.label') }, cup.stages_view.map((stage, index) => h('button', {
+            type: 'button', role: 'tab', id: `cup-tab-${index}`, 'aria-selected': index === this.stageTab ? 'true' : 'false',
+            tabindex: index === this.stageTab ? '0' : '-1', class: `cup-tab${index === this.stageTab ? ' active' : ''}`, 'aria-controls': 'cup-stage-panel',
+            onclick: () => {
+                this.stageTab = index;
+                this.renderView();
+                document.getElementById(`cup-tab-${index}`)?.focus();
+            },
+            onkeydown: (e) => {
+                const by = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+                if (by) {
+                    e.preventDefault();
+                    this.stageTab = (index + by + cup.stages_view.length) % cup.stages_view.length;
+                    this.renderView();
+                    document.getElementById(`cup-tab-${this.stageTab}`)?.focus();
+                }
+            },
+        }, serverText(stage, 'name'))));
+        const stage = cup.stages_view[this.stageTab];
+        const zoom = h('div', { class: 'cup-zoom row', role: 'group', 'aria-label': t('tournament.brackets.zoom.label') },
+            h('button', { type: 'button', class: 'btn small ghost', 'data-focus': 'zoom-out', disabled: this.zoom <= 0.5, ...symbolOnly(t('tournament.brackets.zoom.out')), onclick: () => zoomTo(this.zoom - 0.1) }, icon('minus')),
+            h('output', { class: 'small', 'aria-live': 'polite' }, t('tournament.brackets.zoom.value', { percent: Math.round(this.zoom * 100) })),
+            h('button', { type: 'button', class: 'btn small ghost', 'data-focus': 'zoom-in', disabled: this.zoom >= 2, ...symbolOnly(t('tournament.brackets.zoom.in')), onclick: () => zoomTo(this.zoom + 0.1) }, icon('plus')),
+            h('button', { type: 'button', class: 'btn small ghost', 'data-focus': 'zoom-reset', ...symbolOnly(t('tournament.brackets.zoom.reset')), onclick: () => zoomTo(1) }, icon('reset')));
+        const head = h('header', { class: 'cup-head cup-brackets-head' },
+            h('h2', { tabindex: '-1' }, t('tournament.brackets.title', { name: serverText(cup, 'name') })),
+            h('div', { class: 'row' },
+                h('button', { type: 'button', class: 'btn ghost', 'data-focus': 'brackets-back', onclick: () => this.closeBrackets() }, icon('back'), t('tournament.brackets.back')),
+                zoom,
+                spoilerFree(cup.id) && cup.spoilers && cup.spoilers.unseen.length
+                    ? h('button', { type: 'button', class: 'btn primary cup-watch-next', 'data-focus': 'watch-next', onclick: () => this.watchMatch(cup.id, this.matchMap.get(cup.spoilers.unseen[0])) }, icon('watch'), t('tournament.spoilers.next'))
+                    : null),
+            spoilerFree(cup.id) ? h('p', { class: 'muted small' }, icon('eye', 'icon text-symbol'), t('tournament.spoilers.listed')) : null);
+        const panel = h('div', { class: 'cup-stage-view cup-big', id: 'cup-stage-panel', role: 'tabpanel', 'aria-labelledby': `cup-tab-${this.stageTab}`, style: `--cup-zoom: ${this.zoom}` },
+            this.stageView(stage, cup.config.stages[this.stageTab]));
+        const focused = document.activeElement && this.mainHost.contains(document.activeElement) ? document.activeElement : null;
+        const focusKey = focused ? (focused.id || focused.dataset.focus || null) : null;
+        const byId = focusKey && focused.id === focusKey;
+        const scroll = this.mainHost.scrollTop;
+        this.mainHost.replaceChildren(h('div', { class: 'cup-view cup-brackets' }, head, tabs, panel));
+        this.mainHost.scrollTop = scroll;
+        if (focusKey) {
+            (byId ? document.getElementById(focusKey) : this.mainHost.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`))?.focus();
+        }
+    }
+
     // Live progress, and a notice when a match of a person is ready.
     async poll() {
         if (document.hidden || document.body.classList.contains('offline')) {
@@ -1506,7 +2010,7 @@ export class TournamentsPage {
                 this.app.hud.toast(t(this.visible ? 'tournament.toast.person' : 'tournament.toast.person.away', { name: serverText(cup, 'name') }), 'info', 6000);
             }
             const old = this.list.find((x) => x.id === cup.id);
-            if (old && old.state !== 'done' && cup.state === 'done') {
+            if (old && old.state !== 'done' && cup.state === 'done' && !spoilerFree(cup.id)) {
                 this.app.hud.toast(t('tournament.toast.won', { name: serverText(cup, 'name'), champion: serverText(cup, 'champion') }), 'info', 7000);
             }
         }
@@ -1518,7 +2022,7 @@ export class TournamentsPage {
         if (changed) {
             this.renderList();
         }
-        if (this.mode === 'view' && this.openId) {
+        if ((this.mode === 'view' || this.mode === 'brackets') && this.openId) {
             const summary = list.find((cup) => cup.id === this.openId);
             if (summary && (changed || summary.running) && !this.mainHost.contains(document.activeElement?.closest('input, select, textarea'))) {
                 await this.load(this.openId);

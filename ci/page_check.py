@@ -455,6 +455,99 @@ def library_checks(client):
     return 2
 
 
+def draw_checks(client):
+    """Requests a match with both sides Random from the page, and sees the teams that it drew."""
+    result = client.evaluate("""
+        (async () => {
+            const { api } = await import('./js/core/api.js');
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const source = 'def agent(obs):\\n    return [0]\\n';
+            const made = [];
+            for (const name of ['Draw Alpha', 'Draw Bravo']) {
+                made.push(await api.uploadTeam(name, 'main.py', source, '5v5'));
+            }
+            const page = cuju.matches;
+            cuju.showPage('matches');
+            await page.refresh();
+            for (let i = 0; i < 100 && !page.built; i++) {
+                await wait(50);
+            }
+            // Each side opens its list and picks Random, its first item.
+            for (const side of page.sides) {
+                side.button.click();
+                await wait(50);
+                const item = side.dropdown.panel.querySelector('.dd-item');
+                const named = item.textContent.includes('Random team');
+                item.click();
+                await wait(50);
+                if (!named) {
+                    return 'Random is not the first item';
+                }
+            }
+            const pool = page.pool.root;
+            const shown = !pool.hidden;
+            // Only the two new teams stay in the pool.
+            for (const box of pool.querySelectorAll('.draw-pool-list input')) {
+                if (!made.some((x) => x.id === box.value) && box.checked) {
+                    box.click();
+                }
+            }
+            const cards = page.sides.map((side) => side.button.textContent);
+            const randomCards = cards.every((text) => text.includes('Random team')
+                && text.includes('Drawn from 2 teams of the pool'));
+            const options = [...page.scenarioSelect.options].map((o) => o.value);
+            const randomScenario = options[0] === 'random';
+            page.scenarioSelect.value = '5_vs_5';
+            page.scenarioSelect.dispatchEvent(new Event('change'));
+            const before = new Set(page.requests.map((r) => r.id));
+            page.playButton.click();
+            let entry = null;
+            for (let i = 0; i < 200; i++) {
+                await wait(100);
+                const items = await api.requests();
+                entry = items.find((r) => !before.has(r.id));
+                if (entry && entry.state !== 'queued') {
+                    break;
+                }
+            }
+            if (!entry) {
+                return 'no request was made';
+            }
+            page.requests = await api.requests();
+            page.renderQueue();
+            const card = page.queueHost.querySelector(`.req-card[data-id="${entry.id}"]`);
+            const names = [...card.querySelectorAll('.req-team-name')].map((x) => x.textContent);
+            const marks = card.querySelectorAll('.req-team .req-drawn').length;
+            const drawn = names.length === 2 && names[0] !== names[1]
+                && names.every((name) => name === 'Draw Alpha' || name === 'Draw Bravo');
+            const kept = JSON.stringify(entry.draw.sides) === '[true,true]'
+                && entry.draw.pool.length === 2 && entry.scenario === '5_vs_5';
+            // A drawn side shows as Random while its match waits.
+            const waiting = page.requestCard({ ...entry, state: 'queued' }).textContent
+                .includes('Random team');
+            for (let i = 0; i < 100; i++) {
+                const item = (await api.requests()).find((r) => r.id === entry.id);
+                if (item.state !== 'queued' && item.state !== 'running') {
+                    break;
+                }
+                await wait(100);
+            }
+            for (const team of made) {
+                await api.deleteTeam(team.id);
+            }
+            page.state.left = 'builtin';
+            page.state.right = 'builtin';
+            page.state.unticked.clear();
+            await page.refresh();
+            const all = { shown, randomCards, randomScenario, drawn, marks: marks === 2, kept,
+                waiting };
+            return Object.values(all).every(Boolean) || JSON.stringify({ ...all, names, cards });
+        })()
+    """)
+    assert result is True, f'Requested match drawn at random {result}'
+    return 1
+
+
 def tournament_checks(client):
     """Checks the tournament wizard, its refusal of an impossible setup, the bracket and tables."""
     result = client.evaluate("""
@@ -686,7 +779,210 @@ def tournament_checks(client):
         })()
     """)
     assert result is True, f'A team entered twice {result}'
-    return 4
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const until = async (test, ms = 8000) => {
+                for (let t = 0; t < ms; t += 50) {
+                    if (test()) {
+                        return true;
+                    }
+                    await wait(50);
+                }
+                return false;
+            };
+            const page = cuju.tournaments;
+            const main = () => page.mainHost;
+            const button = (text) => [...main().querySelectorAll('button')]
+                .find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === text);
+            const team = await fetch('/api/teams?name=Able%20FC&filename=main.py&format=11v11', {
+                method: 'POST', body: 'def agent(obs):\\n    return [0]\\n',
+            }).then((r) => r.json());
+            page.startWizard();
+            await until(() => main().querySelector('[data-preset="quick_cup"]'));
+            main().querySelector('[data-preset="quick_cup"]').click();
+            await until(() => page.teams.some((x) => x.id === team.id));
+            page.goStep(1);
+            main().querySelector('.cup-adder select').value = team.id;
+            button('Add team').click();
+            button('Add four of rising ability').click();
+            // The draw is random by default, and Set the bracket by hand seeds in list order.
+            const box = () => main().querySelector('.cup-manual');
+            const note = () => main().querySelector('.cup-draw-note').textContent;
+            const random = page.draft.seeding === 'random' && !box().checked
+                && /random from the tournament seed/.test(note());
+            box().click();
+            const byHand = page.draft.seeding === 'manual' && /Seed 1 is the first/.test(note());
+            box().click();
+            const back = page.draft.seeding === 'random';
+            // The team's row takes an ability of its own, which follows the standard when empty.
+            const own = main().querySelector('.cup-entrants > li .cup-entrant-ability');
+            const follows = own.value === '' && own.placeholder === 'Standard';
+            own.value = '0.3';
+            own.dispatchEvent(new Event('input', { bubbles: true }));
+            // The settings set the standard with a slider, its value shown beside it.
+            page.goStep(2);
+            const set = main().querySelector('.cup-standard-set');
+            const range = main().querySelector('.cup-standard-range');
+            const unset = !set.checked && range.disabled
+                && main().querySelector('.cup-standard output').textContent
+                    === "The scenario's own";
+            set.click();
+            range.value = '0.75';
+            range.dispatchEvent(new Event('input', { bubbles: true }));
+            const shown = main().querySelector('.cup-standard output').textContent === '0.75';
+            // The advanced editor shows the same standard, and the rows name it as followed.
+            page.goStep(3);
+            const editor = main().querySelector('.cup-standard-set').checked
+                && main().querySelector('.cup-standard-range').value === '0.75'
+                && JSON.parse(main().querySelector('.cup-json').value).ability === 0.75;
+            page.goStep(1);
+            const rows = [...main().querySelectorAll('.cup-entrant-ability')];
+            const named = rows[0].value === '0.3' && rows[1].placeholder === 'Standard, 0.75';
+            page.goStep(4);
+            const reviewed = await until(
+                () => main().querySelectorAll('.cup-review-stage').length === 1);
+            const review = main().querySelector('.cup-review-ability').textContent
+                === 'Standard ability 0.75'
+                && /Able FC/.test(main().querySelector('.cup-review-abilities').textContent);
+            main().querySelector('.cup-start').click();
+            const done = await until(() => page.mode === 'view' && page.current
+                && page.current.state === 'done'
+                && main().querySelector('.cup-bracket .cup-fixture'), 20000);
+            const cup = await fetch(`/api/tournaments/${page.current.id}`).then((r) => r.json());
+            const config = cup.config.ability === 0.75 && cup.config.entrants[0].ability === 0.3
+                && cup.config.entrants.slice(1).map((e) => e.ability).join() === '0.2,0.4,0.6,0.8';
+            const played = cup.matches.filter((m) => m.home === 0 || m.away === 0);
+            const sides = played.length > 0
+                && played.every((m) => m.ability[m.home === 0 ? 0 : 1] === 0.3);
+            const badge = [...main().querySelectorAll('.cup-bracket .cup-side-name')]
+                .some((s) => /Able FC/.test(s.textContent)
+                    && s.querySelector('.cup-ability')?.textContent === 'Ability 0.30');
+            const meta = main().querySelector('.cup-view-ability').textContent
+                === 'Standard ability 0.75';
+            await fetch(`/api/tournaments/${cup.id}`, { method: 'DELETE' });
+            await fetch(`/api/teams/${team.id}`, { method: 'DELETE' });
+            page.mode = 'empty';
+            page.openId = null;
+            await page.refresh();
+            const drawn = cup.config.seeding === 'random';
+            const all = { random, byHand, back, follows, unset, shown, editor, named,
+                reviewed: !!reviewed, review, done: !!done, config, sides, badge, meta, drawn };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'The draw, the standard and an entrant ability {result}'
+    result = client.evaluate(r"""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const until = async (test, ms = 8000) => {
+                for (let t = 0; t < ms; t += 50) {
+                    if (test()) {
+                        return true;
+                    }
+                    await wait(50);
+                }
+                return false;
+            };
+            const page = cuju.tournaments;
+            const main = () => page.mainHost;
+            const spoilers = await import('./js/core/spoilers.js');
+            const { api } = await import('./js/core/api.js');
+            const config = {
+                name: 'Quiet cup', seed: 8, seeding: 'manual',
+                entrants: [0.2, 0.4, 0.6, 0.8].map((ability) => ({ kind: 'builtin', ability })),
+                stages: [{ format: 'knockout', settle: ['lots'] }],
+            };
+            const made = await fetch('/api/tournaments', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config }),
+            }).then((r) => r.json());
+            cuju.showPage('tournaments');
+            await page.refresh();
+            await page.open(made.id);
+            await until(() => page.current && page.current.state === 'done');
+            const full = !!main().querySelector('.cup-champion')
+                && main().querySelectorAll('.cup-goals').length === 6;
+            // Without spoilers, nothing that a played match decided shows.
+            main().querySelector('.cup-spoiler-switch').click();
+            const masked = await until(() => page.current && page.current.spoilers
+                && main().querySelector('.cup-watch-next'));
+            const noChampion = !main().querySelector('.cup-champion')
+                && !page.root.querySelector('.cup-item.active .cup-item-champion')
+                && !!page.root.querySelector('.cup-item.active .cup-item-spoilers')
+                && !main().querySelector('[data-focus="act-ceremony"]');
+            const noScores = !main().querySelector('.cup-goals');
+            const unseen = main().querySelectorAll('.cup-fixture.state-unseen').length === 2
+                && page.current.spoilers.unseen.length === 2;
+            const recording = page.current.matches[0].unseen.match;
+            const listed = (await api.matches()).find((m) => m.id === recording);
+            const lists = !!listed && listed.score === null && listed.spoiler === true
+                && listed.teams.length === 0;
+            // Watch next plays the first semi-final, and its end marks it watched.
+            const first = page.current.spoilers.unseen[0];
+            main().querySelector('.cup-watch-next').click();
+            const opened = await until(() => cuju.page === 'watch' && cuju.source
+                && cuju.source.id === recording, 15000);
+            cuju.timeline.pause();
+            document.dispatchEvent(new CustomEvent('cuju:recording-ended',
+                { detail: { id: recording, provenance: cuju.source.header.provenance || null } }));
+            const card = await until(() => document.querySelector('#page-watch .cup-intermission'));
+            const marked = spoilers.watchedKeys(made.id).includes(first);
+            const box = () => document.querySelector('.cup-intermission');
+            const named = !!card && /Next match/.test(box().querySelector('h2').textContent)
+                && !/\d+ to \d+/.test(box().textContent);
+            const focused = !!card && box().contains(document.activeElement);
+            document.activeElement.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            const closed = !box();
+            cuju.showPage('tournaments');
+            await page.open(made.id);
+            const shown = main().querySelectorAll('.cup-goals').length === 2
+                && page.current.spoilers.unseen.length === 1;
+            // Reveal shows one result on purpose, and the final comes up next with its own card.
+            main().querySelector('[data-focus^="unseen-reveal-"]').click();
+            const final = await until(() => main().querySelector('.cup-kickoff.final'));
+            main().querySelector('.cup-kickoff.final .cup-predict button').click();
+            await until(() => main().querySelector('.cup-kickoff.final [aria-pressed="true"]'));
+            // Reveal all asks first, Escape keeps the results hidden, and Reveal shows them.
+            main().querySelector('[data-focus="reveal-all"]').click();
+            const asked = !!main().querySelector('.cup-spoilers .cup-confirm');
+            document.activeElement.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            const kept = !main().querySelector('.cup-confirm')
+                && !main().querySelector('.cup-champion');
+            main().querySelector('[data-focus="reveal-all"]').click();
+            main().querySelector('[data-focus="reveal-yes"]').click();
+            const revealed = await until(() => main().querySelector('.cup-champion')
+                && page.current.spoilers.hidden === 0);
+            const score = main().querySelector('.cup-prediction-score');
+            const scored = /Predictions, \d of 1 right/.test(score ? score.textContent : '');
+            const unhidden = (await api.matches()).find((m) => m.id === recording);
+            const back = !!unhidden && Array.isArray(unhidden.score);
+            // The Brackets view shows the stage large, zooms and goes back.
+            main().querySelector('[data-focus="act-brackets"]').click();
+            const big = await until(() => page.mode === 'brackets'
+                && main().querySelector('.cup-big .cup-bracket .cup-fixture'));
+            const wide = page.root.querySelector('.cup-layout').classList.contains('brackets');
+            main().querySelector('[data-focus="zoom-in"]').click();
+            const zoomed = /--cup-zoom: 1.1/
+                .test(main().querySelector('.cup-big').getAttribute('style'));
+            main().querySelector('[data-focus="brackets-back"]').click();
+            const left = page.mode === 'view' && !page.root.querySelector('.cup-layout.brackets');
+            spoilers.setSpoilerFree(made.id, false);
+            await fetch(`/api/tournaments/${made.id}`, { method: 'DELETE' });
+            page.mode = 'empty';
+            page.openId = null;
+            await page.refresh();
+            const all = { full, masked, noChampion, noScores, unseen, lists, opened: !!opened,
+                card: !!card, marked,
+                named, focused, closed, shown, final: !!final, asked, kept, revealed: !!revealed,
+                scored, back, big: !!big, wide, zoomed, left };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'A tournament without spoilers and its Brackets view {result}'
+    return 6
 
 
 def tournament_play_checks(client, debug, port):
@@ -3812,6 +4108,7 @@ def main():
             checks += photo_checks(client)
             checks += page_challenges.card_checks(client)
             checks += challenge_checks(client)
+            checks += page_challenges.bench_checks(client)
             checks += page_help.help_checks(client, port)
             checks += page_a11y.a11y_checks(client)
             checks += page_search.check_search(client)
@@ -3819,6 +4116,7 @@ def main():
             checks += page_export.export_checks(client)
             checks += page_feed.check_feed(client, f'http://127.0.0.1:{port}/', debug, CDP)
             checks += page_language.check_languages(client)
+            checks += draw_checks(client)
             checks += hash_checks(client)
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
             assert not client.evaluate('!!document.pointerLockElement')

@@ -217,6 +217,17 @@ test('Entrant names compare and number as the server\'s rules do', () => {
     assert.equal(layout.NAME_LONGEST, 40);
 });
 
+test('Abilities follow the entrant, the stage and the standard as the server\'s rules do', () => {
+    // The same cases hold the server's match_ability and shown_ability, in tests/test_tournament.py.
+    const cases = JSON.parse(readFileSync(new URL('../support/entrant_abilities.json', import.meta.url), 'utf8'));
+    for (const [entrant, stage, standard, ability] of cases.match) {
+        assert.equal(layout.matchAbility(entrant, stage, standard), ability, JSON.stringify([entrant, stage, standard]));
+    }
+    for (const [entrant, standard, ability] of cases.shown) {
+        assert.equal(layout.shownAbility(entrant, standard), ability, JSON.stringify([entrant, standard]));
+    }
+});
+
 test('A team that plays itself keeps its keepers apart', async () => {
     const kits = await import(pathToFileURL(join(folder, 'players/kits.js')).href);
     const team = { id: 'rex', style: { kit: { primary: [200, 20, 20], secondary: [250, 250, 250] }, goalkeeper: { primary: [20, 200, 20] } } };

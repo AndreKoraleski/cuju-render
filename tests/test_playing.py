@@ -575,6 +575,73 @@ def test_challenge_person_run_checks_each_recording(render_home):
     ]
 
 
+def test_challenge_default_names_show_the_default_of_the_page(render_home):
+    """A person who typed no name shows as the default of the page's language, in new entries by
+    their flag and in old ones by the default names of the languages."""
+    from cuju.render._playing import challenges as _challenges
+    from cuju.render._text import languages as _languages
+    from cuju.render._text import messages as _messages
+
+    assert {'Player', 'Jogador'} <= _languages.default_names()
+    challenge = _challenges.find('one_on_one')
+    first = _person_recording(challenge, 0, _challenge_frames(goal_at=12, length=30))
+    outcome = _challenges.person_run('one_on_one', 'Player', [first, None, None], default_name=True)
+    assert outcome['default_name'] and outcome['name_id'] == 'server.names.default_person'
+    entry = _challenges.board('one_on_one')[0]
+    assert entry['default_name'] is True and entry['name'] == 'Player'
+    assert entry['name_id'] == 'server.names.default_person'
+    group = next(item for item in _library.matches() if item['id'] == first)['group']
+    assert group['competitor_id'] == 'server.names.default_person'
+    assert group['title_values']['competitor']['id'] == 'server.names.default_person'
+    with pytest.raises(cuju.errors.ArgumentError, match='default_name'):
+        _challenges.person_run('one_on_one', 'Player', [None, None, None], default_name='yes')
+    # A run saved under the Portuguese default before the flag keeps its name on disk and shows the
+    # label, and the default names of two languages are one competitor.
+    old = _challenges._entry('person', 'Jogador', None, outcome, outcome['attempts'])
+    old.pop('default_name')
+    old['value'] = 3
+    _challenges._write_board('one_on_one', [old, _challenges._read_board('one_on_one')[0]])
+    stored = json.loads((render_home / 'challenges' / 'one_on_one.json').read_text('utf-8'))
+    assert [item['name'] for item in stored['entries']] == ['Jogador', 'Player']
+    # The label carries the English default as its text, and the page shows its own.
+    board = _challenges.board('one_on_one')
+    assert [(item['name'], item['name_id'], item['value']) for item in board] == [
+        ('Player', 'server.names.default_person', 3)
+    ]
+    assert _challenges._summary('one_on_one', 'Player')['mine']['value'] == 3
+    corner = _challenges.find('corner')
+    match = _person_recording(corner, 0, _challenge_frames(goal_at=12, length=30))
+    title = _messages.label(
+        'server.names.challenge_run',
+        challenge=_challenges.challenge_value(corner),
+        competitor='Jogador',
+    )
+    _library.set_group(
+        {
+            'id': 'g-20261101-101010-abcd',
+            'kind': 'challenge',
+            'challenge': 'corner',
+            **_messages.named('title', title),
+            'competitor': 'Jogador',
+            'result': 'left after 1 of 5',
+            'state': 'left',
+            'attempts': 5,
+        },
+        {match: 0},
+    )
+    summary = json.loads((render_home / 'matches' / f'{match}.json').read_text('utf-8'))
+    assert summary['group']['competitor'] == 'Jogador' and 'competitor_id' not in summary['group']
+    shown = next(item for item in _library.matches() if item['id'] == match)['group']
+    assert shown['competitor_id'] == 'server.names.default_person'
+    assert shown['title_values']['competitor']['id'] == 'server.names.default_person'
+    # A name that a person typed stays theirs.
+    second = _person_recording(challenge, 0, _challenge_frames(goal_at=12, length=30))
+    typed = _challenges.person_run('one_on_one', 'Ana', [second, None, None])
+    assert typed['name'] == 'Ana' and 'name_id' not in typed and not typed['default_name']
+    group = next(item for item in _library.matches() if item['id'] == second)['group']
+    assert group['competitor'] == 'Ana' and 'competitor_id' not in group
+
+
 def test_challenge_headless_run_with_a_registered_team(render_home, tmp_path, monkeypatch):
     from cuju.render._playing import challenges as _challenges
 

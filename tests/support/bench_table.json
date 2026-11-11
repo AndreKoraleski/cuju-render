@@ -1,0 +1,164 @@
+{
+ "document": {
+  "challenges": [
+   "empty_goal_close",
+   "one_on_one"
+  ],
+  "models": [
+   {
+    "team": "t-20261111-120000-aaaa",
+    "name": "Striker, \"the bold\""
+   },
+   {
+    "team": "builtin",
+    "name": "GRF's built-in AI",
+    "name_id": "server.names.builtin",
+    "name_values": {}
+   },
+   {
+    "team": "t-20261111-120000-bbbb",
+    "name": "Idle"
+   }
+  ],
+  "cells": [
+   {
+    "team": "t-20261111-120000-aaaa",
+    "challenge": "empty_goal_close",
+    "state": "done",
+    "attempts": 5,
+    "played": 5,
+    "value": 5,
+    "seconds": null,
+    "medal": "gold",
+    "failed_attempts": 0,
+    "rank": null,
+    "group": null,
+    "results": [],
+    "error": null,
+    "error_id": null,
+    "error_values": null
+   },
+   {
+    "team": "t-20261111-120000-aaaa",
+    "challenge": "one_on_one",
+    "state": "done",
+    "attempts": 3,
+    "played": 3,
+    "value": 3,
+    "seconds": null,
+    "medal": "silver",
+    "failed_attempts": 1,
+    "rank": null,
+    "group": null,
+    "results": [],
+    "error": null,
+    "error_id": null,
+    "error_values": null
+   },
+   {
+    "team": "builtin",
+    "challenge": "empty_goal_close",
+    "state": "done",
+    "attempts": 5,
+    "played": 5,
+    "value": 4,
+    "seconds": null,
+    "medal": "silver",
+    "failed_attempts": 0,
+    "rank": null,
+    "group": null,
+    "results": [],
+    "error": null,
+    "error_id": null,
+    "error_values": null
+   },
+   {
+    "team": "builtin",
+    "challenge": "one_on_one",
+    "state": "done",
+    "attempts": 3,
+    "played": 3,
+    "value": 4,
+    "seconds": null,
+    "medal": "silver",
+    "failed_attempts": 0,
+    "rank": null,
+    "group": null,
+    "results": [],
+    "error": null,
+    "error_id": null,
+    "error_values": null
+   },
+   {
+    "team": "t-20261111-120000-bbbb",
+    "challenge": "empty_goal_close",
+    "state": "failed",
+    "attempts": 5,
+    "played": 0,
+    "value": null,
+    "seconds": null,
+    "medal": null,
+    "failed_attempts": 0,
+    "rank": null,
+    "group": null,
+    "results": [],
+    "error": null,
+    "error_id": null,
+    "error_values": null
+   },
+   {
+    "team": "t-20261111-120000-bbbb",
+    "challenge": "one_on_one",
+    "state": "skipped",
+    "attempts": 3,
+    "played": 0,
+    "value": null,
+    "seconds": null,
+    "medal": null,
+    "failed_attempts": 0,
+    "rank": null,
+    "group": null,
+    "results": [],
+    "error": null,
+    "error_id": null,
+    "error_values": null
+   }
+  ],
+  "rows": [
+   {
+    "team": "t-20261111-120000-aaaa",
+    "name": "Striker, \"the bold\"",
+    "gold": 1,
+    "silver": 1,
+    "bronze": 0,
+    "score": 75.0,
+    "done": 2,
+    "place": 1
+   },
+   {
+    "team": "builtin",
+    "name": "GRF's built-in AI",
+    "name_id": "server.names.builtin",
+    "name_values": {},
+    "gold": 0,
+    "silver": 2,
+    "bronze": 0,
+    "score": 73.3,
+    "done": 2,
+    "place": 2
+   },
+   {
+    "team": "t-20261111-120000-bbbb",
+    "name": "Idle",
+    "gold": 0,
+    "silver": 0,
+    "bronze": 0,
+    "score": 0.0,
+    "done": 0,
+    "place": 3
+   }
+  ],
+  "progress": 1.0
+ },
+ "csv": "model,team,empty_goal_close value,empty_goal_close medal,one_on_one value,one_on_one medal,gold,silver,bronze,score,place\n\"Striker, \"\"the bold\"\"\",t-20261111-120000-aaaa,5,gold,3,silver,1,1,0,75.0,1\nGRF's built-in AI,builtin,4,silver,4,silver,0,2,0,73.3,2\nIdle,t-20261111-120000-bbbb,,,,,0,0,0,0.0,3\n"
+}

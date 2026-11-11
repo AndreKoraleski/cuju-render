@@ -6,12 +6,16 @@
 // aria-modal false, so menu.js leaves the focus and the Tab key free and a person can try each
 // control while it shows. Next and Back move through the steps, the arrow keys too while
 // the card has the focus, and Esc or Leave the tour closes it, keeping the step for the next start.
-// The focus moves to the title of each step and the text is read out. A step that needs a
-// recording or a team offers to add a sample first. Under reduced motion the ring and the card
-// move at once. Scripts reach it as window.cuju.tour.
+// Try it opens what the control of the step opens, by a click as a person would make it, or
+// moves the focus to a control used by keys and says its keys. The card keeps clear of its
+// target and of every menu, palette, panel or dialog open over the page, and moves as soon as
+// one opens or closes. While one of them is open, Esc closes it first and leaves the tour only
+// the next time. The focus moves to the title of each step and the text is read out. A step that
+// needs a recording or a team offers to add a sample first. Under reduced motion the ring and the
+// card move at once. Scripts reach it as window.cuju.tour.
 
 import { NEED_OFFERS, TOUR_KEY, TOUR_STEPS, moveTour, needMet, placeCard, resumeStep, stepAnnouncement, tourState } from './tour-core.js';
-import { openPanel } from '../core/comfort.js';
+import { POINTER_PANELS } from '../core/comfort.js';
 import { t, tm, tn } from '../core/i18n.js';
 import { icon, reicon, relabel, symbolOnly } from '../core/icons.js';
 
@@ -45,6 +49,11 @@ const inView = (box, view) => (box.top >= 0 || box.height > view.height) && (box
 
 const shown = (node) => !!node && node.isConnected && node.getClientRects().length > 0 && !node.closest('[hidden]');
 
+// The elements whose opening or closing moves the card, the parts of POINTER_PANELS that float
+// over the page and the command palette.
+const OVERLAYS = '.dd-panel, #palette, dialog, details, [role="dialog"], [role="alertdialog"], [role="menu"], '
+    + '#team-editor, #lineups, .post-card, #victory, #spotlight, [data-prompt]';
+
 export class GuidedTour {
     // helpers holds facts(), what the page holds, and ensure(need), which adds the sample a step
     // needs and resolves once it is there.
@@ -65,7 +74,7 @@ export class GuidedTour {
         this.offer = h('div', { class: 'tour-offer', hidden: true }, this.offerText, this.offerButton);
         this.backButton = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tour.back')), onclick: () => this.back() }, icon('back'));
         this.nextButton = h('button', { type: 'button', class: 'btn primary', ...symbolOnly(t('tour.next')), onclick: () => this.next() }, icon('next'));
-        this.tryButton = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tour.try')), onclick: () => this.focusTarget() }, icon('cursor'));
+        this.tryButton = h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tour.try')), onclick: () => this.tryIt() }, icon('cursor'));
         // The focus on the title reads the title, and the live region reads the count and the
         // text once, so the card names no description that a screen reader would read again.
         this.card = h('div', {
@@ -91,14 +100,13 @@ export class GuidedTour {
             }
         });
         // Esc leaves the tour from the card, or from the page when nothing else is open over it,
-        // before the keys of the page see it.
+        // before the keys of the page see it. A menu, the palette or a panel open over the page
+        // keeps its Esc, which closes it, so the next Esc leaves the tour.
         window.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape' || !this.isOpen || e.defaultPrevented) {
                 return;
             }
-            const inside = this.card.contains(document.activeElement);
-            const other = openPanel();
-            if (inside || ((!other || other === this.card) && !document.querySelector('#palette:not([hidden])'))) {
+            if (this.card.contains(document.activeElement) || !this.otherOpen()) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 this.leave();
@@ -107,6 +115,57 @@ export class GuidedTour {
         this.place = () => this.position();
         window.addEventListener('resize', this.place);
         window.addEventListener('scroll', this.place, true);
+        // A menu, the palette or a panel that opens or closes moves the card at once, in the
+        // next frame, rather than at the next beat of the timer.
+        this.observer = new MutationObserver((records) => {
+            if (this.isOpen && !this.frame && records.some((record) => this.overlayChanged(record.target))) {
+                this.frame = requestAnimationFrame(() => {
+                    this.frame = 0;
+                    this.position();
+                });
+            }
+        });
+    }
+
+    // Whether a change of an element may open or close something over the page.
+    overlayChanged(node) {
+        return node instanceof Element && node !== this.ring && !this.card.contains(node) && node.matches(OVERLAYS);
+    }
+
+    // The elements open over the page that show, other than the card, as POINTER_PANELS names
+    // them, and the command palette.
+    openOver() {
+        const nodes = [...document.querySelectorAll(POINTER_PANELS), ...document.querySelectorAll('#palette:not([hidden])')];
+        return nodes.filter((node) => node !== this.card && !this.card.contains(node) && shown(node));
+    }
+
+    // Whether anything other than the card is open over the page.
+    otherOpen() {
+        return this.openOver().length > 0;
+    }
+
+    // The boxes of the menus, popovers, panels, dialogs and the palette open over the page, which
+    // the card keeps clear of. A button that shows as expanded is left to its panel, the palette
+    // counts by its box rather than its scrim, and a layer that covers the whole window counts
+    // not at all, since no place of the card could clear it.
+    openBoxes(view) {
+        const boxes = [];
+        for (const found of this.openOver()) {
+            const node = found.id === 'palette' ? found.querySelector('.palette-box') : found;
+            if (!node || node.matches('button') || node.contains(this.card)) {
+                continue;
+            }
+            const style = getComputedStyle(node);
+            if (style.position !== 'fixed' && style.position !== 'absolute' && !node.matches('dialog[open]')) {
+                continue;
+            }
+            const box = node.getBoundingClientRect();
+            if (box.width < 1 || box.height < 1 || (box.width >= 0.9 * view.width && box.height >= 0.9 * view.height)) {
+                continue;
+            }
+            boxes.push({ left: box.left, top: box.top, right: box.right, bottom: box.bottom });
+        }
+        return boxes;
     }
 
     get isOpen() {
@@ -141,6 +200,7 @@ export class GuidedTour {
     async show(index) {
         const token = ++this.token;
         const step = this.steps[index];
+        this.closeTried();
         this.index = index;
         this.state = { step: index, done: false, started: true };
         this.save();
@@ -148,6 +208,10 @@ export class GuidedTour {
             this.app.showPage(step.page);
         }
         this.card.hidden = false;
+        this.observer.observe(document.getElementById('app') || document.body, {
+            subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'open'],
+        });
+        this.tryButton.hidden = true;
         this.card.classList.toggle('still', !!this.app.reducedMotion);
         this.ring.classList.toggle('still', !!this.app.reducedMotion);
         this.count.textContent = t('tour.count', { index: index + 1, count: this.steps.length });
@@ -183,7 +247,7 @@ export class GuidedTour {
             // position scrolls it back into view for a moment.
             this.settleUntil = performance.now() + SETTLE_MS;
         }
-        this.tryButton.hidden = !found;
+        this.tryButton.hidden = !found || !step.tryIt;
         this.live.textContent = stepAnnouncement(step, index, this.steps.length, !!found);
         this.position();
         clearInterval(this.timer);
@@ -251,21 +315,67 @@ export class GuidedTour {
         } else {
             this.ring.hidden = true;
         }
+        // The card is measured at its own size, and a docked card is made smaller after.
+        this.card.style.maxWidth = '';
+        this.card.style.maxHeight = '';
+        this.card.style.overflowY = '';
         const box = this.card.getBoundingClientRect();
+        const card = { width: box.width || 360, height: box.height || 200 };
         const spot = placeCard(target && target.width > 0 ? {
-            left: target.left, top: target.top - 4, width: target.width, height: target.height, bottom: target.bottom + 4,
-        } : null, { width: box.width || 360, height: box.height || 200 }, view);
+            left: target.left - 4, top: target.top - 4, right: target.right + 4, bottom: target.bottom + 4,
+        } : null, card, view, this.openBoxes(view));
         this.card.style.left = `${spot.left}px`;
         this.card.style.top = `${spot.top}px`;
+        if (spot.width < card.width) {
+            this.card.style.maxWidth = `${spot.width}px`;
+        }
+        if (spot.height < card.height) {
+            this.card.style.maxHeight = `${spot.height}px`;
+            this.card.style.overflowY = 'auto';
+        }
         this.card.dataset.side = spot.side;
     }
 
-    focusTarget() {
-        if (shown(this.target)) {
-            if (!this.target.matches('button, a[href], input, select, textarea, [tabindex]')) {
-                this.target.tabIndex = -1;
+    // Try it, as the step names it. Open clicks the control as a person would, so menu.js, the
+    // palette and the page open what they open as usual and put the focus where they put it, and
+    // leaves an open control open. Focus moves the focus to the control and says its keys.
+    tryIt() {
+        const step = this.steps[this.index];
+        const target = this.target;
+        if (!step || !step.tryIt || !shown(target)) {
+            return;
+        }
+        if (step.tryIt === 'open') {
+            const open = target.getAttribute('aria-expanded') === 'true'
+                || (target.id === 'open-palette' && this.app.palette && this.app.palette.isOpen);
+            if (!open) {
+                target.focus({ preventScroll: true });
+                this.tried = target;
+                target.click();
             }
-            this.target.focus();
+        } else if (step.tryIt === 'focus') {
+            target.focus({ preventScroll: true });
+            this.live.textContent = t(`tour.try.${step.id}`);
+        }
+        this.position();
+    }
+
+    // Closes the menu or the palette that Try it opened, when it is still open as the step changes
+    // or the tour closes.
+    closeTried() {
+        const tried = this.tried;
+        this.tried = null;
+        if (!tried) {
+            return;
+        }
+        if (tried.id === 'open-palette' && this.app.palette && this.app.palette.isOpen) {
+            this.app.palette.close(false);
+            return;
+        }
+        for (const menu of Object.values(this.app.menus || {})) {
+            if (menu && menu.button === tried && menu.isOpen) {
+                menu.close(false);
+            }
         }
     }
 
@@ -291,6 +401,10 @@ export class GuidedTour {
         this.token++;
         this.settleUntil = 0;
         clearInterval(this.timer);
+        this.observer.disconnect();
+        cancelAnimationFrame(this.frame);
+        this.frame = 0;
+        this.closeTried();
         this.card.hidden = true;
         this.ring.hidden = true;
         this.target = null;

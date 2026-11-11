@@ -7,6 +7,7 @@
 // their terms to it. A result opens Watch a few seconds before its moment.
 
 import { formatDate } from '../core/api.js';
+import { hiddenRecording } from '../core/spoilers.js';
 import { serverNodes, serverText, t, tn } from '../core/i18n.js';
 import { enhanceSelect } from '../core/menu.js';
 import { icon } from '../core/icons.js';
@@ -52,6 +53,10 @@ async function fetchSearch(query, limit, signal = undefined) {
         // The answer itself, whose message shows with its marks, such as a filter as code.
         error.answer = body.error ? body : null;
         throw error;
+    }
+    // A moment of an unwatched match of a tournament without spoilers stays out of the hits.
+    if (body && Array.isArray(body.results)) {
+        body.results = body.results.filter((hit) => !hiddenRecording(hit.match));
     }
     return body;
 }

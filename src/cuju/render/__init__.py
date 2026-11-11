@@ -507,6 +507,7 @@ def challenge(
     device: str = 'cpu',
     progress: Any = None,
     keep_recordings: bool = True,
+    fail_attempts: bool = False,
 ) -> dict[str, Any]:
     """Plays a challenge headless with a team of the registry or a Python policy, and scores it.
 
@@ -529,19 +530,35 @@ def challenge(
         progress: A function called with the result of each attempt as it ends.
         keep_recordings: Whether the library keeps the attempts as recordings. A run with false
             scores, ranks and earns exactly as one that keeps them, and adds nothing to the library.
+        fail_attempts: Whether a policy that fails ends its attempt alone, which then counts as a
+            failed attempt with the policy's error, while the run goes on, as the page, the command
+            line and the benchmarks play.
 
     Returns:
         A plain dictionary of the run, its `value`, `seconds`, `medal`, `rank`, `personal_best`,
-        whether it was `practice`, the result and recording of each of its `attempts`, `None` for
-        a run without recordings, and the `group` of its recordings or `None`.
+        whether it was `practice`, its `medals` as items, its count of `failed_attempts`, the
+        result and recording of each of its `attempts`, `None` for a run without recordings, and
+        the `group` of its recordings or `None`.
 
     Raises:
         ArgumentError: If the challenge, the team, the control or the attempts do not fit.
-        PolicyError: If the policy fails, answers with anything but actions, or stops answering.
+        PolicyError: If the policy fails, answers with anything but actions, or stops answering,
+            unless `fail_attempts` is true.
     """
     from ._playing.challenges import run
 
-    return run(challenge, team, policy, name, control, attempts, device, progress, keep_recordings)
+    return run(
+        challenge,
+        team,
+        policy,
+        name,
+        control,
+        attempts,
+        device,
+        progress,
+        keep_recordings,
+        fail_attempts,
+    )
 
 
 def challenges() -> list[dict[str, Any]]:

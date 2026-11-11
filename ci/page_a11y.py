@@ -48,7 +48,7 @@ def a11y_checks(client):
         client,
         """
         localStorage.removeItem('cuju.tour');
-        await cuju.tour.start(0);
+        await cuju.tour.start(9);
         await wait(() => cuju.tour.state().target);
         const card = document.getElementById('tour');
         window.__tryIt = [...card.querySelectorAll('.tour-actions button')]
@@ -65,14 +65,28 @@ def a11y_checks(client):
     count += _run(
         client,
         """
-        const home = document.getElementById('home-btn');
-        const moved = await wait(() => document.activeElement === home, 20);
-        cuju.tour.leave();
+        // Try it on the Settings step opens the panel, and the focus moves into it.
+        const panel = document.getElementById('settings');
+        const moved = await wait(() => panel.classList.contains('open')
+            && panel.contains(document.activeElement), 20);
         delete window.__tryIt;
-        return !!moved || JSON.stringify({ focus: document.activeElement.id
-            || document.activeElement.textContent });
+        return !!moved || JSON.stringify({ open: panel.classList.contains('open'),
+            focus: document.activeElement.id || document.activeElement.textContent });
         """,
-        'Try it moves the focus to the control',
+        'Try it opens the control and moves the focus into it',
+    )
+    _key(client, 'Escape', 'Escape')
+    count += _run(
+        client,
+        """
+        const panel = document.getElementById('settings');
+        const closed = await wait(() => !panel.classList.contains('open'), 20);
+        const all = { closed: !!closed, tour: cuju.tour.state().open,
+            focus: document.activeElement === document.getElementById('open-settings') };
+        cuju.tour.leave();
+        return Object.values(all).every(Boolean) || JSON.stringify(all);
+        """,
+        'Esc closes what Try it opened and keeps the tour',
     )
     # The timeline says its value as a slider does.
     count += _run(

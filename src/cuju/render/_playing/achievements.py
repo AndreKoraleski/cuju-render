@@ -321,6 +321,9 @@ def for_agent_run(
             header, frames = _recording.read_header(path), list(_recording.frames(path))
         else:
             header, frames = recordings[index]
+        if not frames:
+            # An attempt whose policy could not load played nothing to read.
+            continue
         for identifier in detect(header, frames, 0):
             earned.setdefault(identifier, result['match'])
     medals = _medals('agent', outcome['name'], outcome['team']) if not outcome['practice'] else {}

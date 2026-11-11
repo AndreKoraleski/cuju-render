@@ -143,6 +143,7 @@ def play(
     tournament: dict[str, Any] | None = None,
     progress: Callable[[float], None] | None = None,
     policy_errors: bool = False,
+    draw: dict[str, Any] | None = None,
 ) -> Path:
     """Plays a match between two teams of the registry, saves it and returns the recording.
 
@@ -165,6 +166,8 @@ def play(
             steps, or `None`.
         policy_errors: Whether a submission that fails raises `PolicyError`, which names the team
             and the reason in one line, in place of the submission's own error.
+        draw: What a request drew at random, as `draw.resolve` returns it under `draw`, which the
+            provenance keeps, or `None`.
 
     Returns:
         The path of the recording in the renderer's folder.
@@ -270,6 +273,8 @@ def play(
     }
     if length is not None:
         provenance['length'] = int(length)
+    if draw is not None:
+        provenance['draw'] = draw
     if tournament is not None:
         provenance['tournament'] = tournament
     head = _recording.header(title, scenario, lineup, teams, len(frames), timing, provenance)
@@ -624,6 +629,7 @@ def main(arguments: list[str] | None = None) -> None:
     parser.add_argument('--right-ability', type=float, default=None)
     parser.add_argument('--length', type=int, default=None)
     parser.add_argument('--tournament', type=json.loads, default=None)
+    parser.add_argument('--draw', type=json.loads, default=None)
     options = parser.parse_args(arguments)
     # The reports keep a copy of standard output, and everything else written there, by Python or
     # by native code, goes to standard error.
@@ -645,6 +651,7 @@ def main(arguments: list[str] | None = None) -> None:
             lambda share: _report(progress=share),
             # A tournament's failure names the team that failed, a requested match's stays.
             policy_errors=options.tournament is not None,
+            draw=options.draw,
         )
     except PolicyError as error:
         _report(error=str(error), **_messages.id_fields(error))

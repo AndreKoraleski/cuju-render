@@ -85,6 +85,32 @@ export function entrantName(entrant) {
     return entrant ? serverText(entrant, 'name') : '';
 }
 
+// The ability that the built-in AI plays with on an entrant's side in a stage, the entrant's own,
+// else the stage's, else the tournament's standard, and null for the scenario's own, as
+// `match_ability` of the server's rules gives it.
+export function matchAbility(entrant, stage, standard) {
+    for (const value of [entrant && entrant.ability, stage && stage.ability, standard]) {
+        if (value !== null && value !== undefined) {
+            return value;
+        }
+    }
+    return null;
+}
+
+// The ability that shows beside an entrant's name, its own where it differs from the standard,
+// or null, and null too for a built-in AI whose made name already holds it, as `shown_ability`
+// of the server's rules gives it.
+export function shownAbility(entrant, standard) {
+    const own = entrant ? entrant.ability : null;
+    if (own === null || own === undefined || own === (standard ?? null)) {
+        return null;
+    }
+    if (entrant.kind === 'builtin' && entrant.name_id !== null && entrant.name_id !== undefined) {
+        return null;
+    }
+    return own;
+}
+
 // The longest name that a person gives an entrant, as the server takes it.
 export const NAME_LONGEST = 40;
 
@@ -246,7 +272,7 @@ export function fixtureState(fixture, matches) {
         return 'waiting';
     }
     const states = fixtureMatches(fixture, matches).map((m) => m.state);
-    for (const state of ['running', 'playing', 'failed', 'person', 'ready']) {
+    for (const state of ['running', 'playing', 'failed', 'person', 'unseen', 'ready']) {
         if (states.includes(state)) {
             return state;
         }
@@ -262,4 +288,33 @@ export const STATE_NAMES = {
     failed: t('tournament.fixtureState.failed'),
     person: t('tournament.fixtureState.person'),
     ready: t('tournament.fixtureState.ready'),
+    unseen: t('tournament.fixtureState.unseen'),
 };
+
+// The labels of the matches that end a tournament or a bracket, which a card announces as such.
+const FINAL_LABELS = ['server.tournament.label.final', 'server.tournament.label.grand_final', 'server.tournament.label.grand_final_reset'];
+
+// Whether a match is a final, a leg of one or a grand final, by the label that the rules gave it.
+export function isFinal(match) {
+    let label = match ? { id: match.label_id, values: match.label_values } : null;
+    for (let depth = 0; label && depth < 4; depth++) {
+        if (FINAL_LABELS.includes(label.id)) {
+            return true;
+        }
+        label = label.values && typeof label.values.match === 'object' ? label.values.match : null;
+    }
+    return false;
+}
+
+// The matches that come next for a person, those played and waiting to be watched first, in the
+// order to watch them, then those still to play, at most `count`.
+export function upNext(entry, count = 4) {
+    if (!entry || !Array.isArray(entry.matches)) {
+        return [];
+    }
+    const unseen = (entry.spoilers && entry.spoilers.unseen) || [];
+    const byKey = new Map(entry.matches.map((m) => [m.key, m]));
+    const watch = unseen.map((key) => byKey.get(key)).filter(Boolean);
+    const play = entry.matches.filter((m) => !m.result && m.state !== 'unseen' && typeof m.home === 'number' && typeof m.away === 'number');
+    return [...watch, ...play].slice(0, count);
+}
