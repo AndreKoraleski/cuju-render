@@ -3,10 +3,11 @@
 
 """Text captions of the events of a recording, and their WebVTT file.
 
-A caption is a message id of the table `web/captions.json` with its values, such as `caption.goal`
-with the player, the team and the score, so a translation replaces the table alone. The page shows
-the same cues on Watch and Play by the same rules, in `web/js/recording/captions.js`, and a test
-holds the wording and timing of both to each other.
+A caption is a message id of the language files, such as `caption.goal` with the player, the team
+and the score. The server writes its captions from the English file `web/languages/en.json`, and the
+page shows them in the language it shows. The page shows the same cues on Watch and Play by the same
+rules, in `web/js/recording/captions.js`, and a test holds the wording and timing of both to each
+other.
 """
 
 from __future__ import annotations
@@ -21,15 +22,16 @@ from typing import Any
 # Seconds a cue stays at most and at least, as the page keeps them.
 CUE_SECONDS = 4.0
 MIN_CUE_SECONDS = 1.5
-TABLE = Path(__file__).parents[1] / 'web' / 'captions.json'
+TABLE = Path(__file__).parents[1] / 'web' / 'languages' / 'en.json'
 _RESTARTS = ('corner', 'free_kick', 'penalty', 'throw_in', 'goal_kick')
 _PLACE = re.compile(r'\{([A-Za-z]+)\}')
 
 
 @functools.cache
 def messages() -> dict[str, str]:
-    """Returns the table of caption messages by id."""
-    return dict(json.loads(TABLE.read_text(encoding='utf-8'))['messages'])
+    """Returns the English caption messages by id, those of `caption.` and `describe.`."""
+    table = json.loads(TABLE.read_text(encoding='utf-8'))
+    return {key: value for key, value in table.items() if key.startswith(('caption.', 'describe.'))}
 
 
 def format_message(table: dict[str, str], identifier: str, params: dict[str, Any]) -> str:
@@ -228,6 +230,20 @@ def vtt_time(seconds: float) -> str:
     return f'{hours:02d}:{minutes:02d}:{whole:02d}.{ms:03d}'
 
 
+# The line breaks that would end a cue or start another, which the text of a cue shows as a space.
+_BREAKS = re.compile('[\r\n\u2028\u2029]+')
+
+
+def cue_text(text: str) -> str:
+    """Returns the text of a cue as a WebVTT file holds it, on one line and without markup.
+
+    A team or player name may hold a line break, an arrow or a tag, which the file then shows as
+    text, so a name never adds a cue or styles one.
+    """
+    text = _BREAKS.sub(' ', text)
+    return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
 def to_vtt(found: list[dict[str, Any]]) -> str:
     """Returns cues as the text of a WebVTT file."""
     lines = ['WEBVTT', '']
@@ -235,7 +251,7 @@ def to_vtt(found: list[dict[str, Any]]) -> str:
         lines += [
             str(index + 1),
             f'{vtt_time(cue["start"])} --> {vtt_time(cue["end"])}',
-            cue['text'],
+            cue_text(cue['text']),
             '',
         ]
     return '\n'.join(lines)

@@ -581,6 +581,8 @@ export class Effects {
             if (!team) {
                 continue;
             }
+            // What each team's effects cost counts against its own budget.
+            const started = performance.now();
             const pkg = team.pkg;
             const scale = (p.app.view.renderer.domElement.height || 800) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
             team.particles = 0;
@@ -618,6 +620,7 @@ export class Effects {
             }
             this.stepDecals(team, now);
             this.stepLights(team, now, governor);
+            team.spent = performance.now() - started;
         }
     }
 

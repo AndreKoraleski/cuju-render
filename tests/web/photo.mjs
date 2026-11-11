@@ -189,3 +189,26 @@ test('a controller flies past its dead zone and presses once', () => {
     assert.deepEqual(readPad(null).pressed, []);
     assert.deepEqual(readPad({ axes: [], buttons: [1, 0, 0, 0, 1] }).pressed, ['save', 'previousLook']);
 });
+
+test('a script that sets a number out of range learns its mistake', () => {
+    const s = normalizeSettings({}, null);
+    const strict = { strict: true };
+    assert.throws(() => normalizeSettings(s, { vignette: 2 }, strict), /vignette is a number from 0 to 1, not 2/);
+    assert.throws(() => normalizeSettings(s, { roll: -91 }, strict), /roll is a number from -90 to 90/);
+    assert.throws(() => normalizeSettings(s, { focus: 9999 }, strict), /focus is 'auto' or a distance/);
+    assert.equal(normalizeSettings(s, { vignette: 1, focus: FOCUS_MAX }, strict).vignette, 1);
+    // The keys and the controller step past an end and stay at it.
+    assert.equal(normalizeSettings(s, { vignette: 2 }).vignette, 1);
+    const message = (() => {
+        try {
+            resolveResolution('huge', 1, 1);
+        } catch (err) {
+            return err.message;
+        }
+        return '';
+    })();
+    assert.equal(message.split('window').length, 2, message);
+    for (const name of ['vertical', 'square', '1080p', '4k']) {
+        assert.ok(message.includes(name), message);
+    }
+});

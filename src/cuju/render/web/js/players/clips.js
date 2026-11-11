@@ -16,6 +16,7 @@ import { Rig, fileBoneNames, guessJoints, parseModel } from './players.js';
 import {
     FPS, MAX_SECONDS, REST_BODY_HEIGHT, forgetUploads, hasUpload, nodeClip, registerUpload,
 } from './retarget.js';
+import { t } from '../core/i18n.js';
 
 export const MAX_CLIP_BYTES = 10 * 1024 * 1024;
 export const MAX_TEAM_CLIP_BYTES = 40 * 1024 * 1024;
@@ -54,12 +55,12 @@ export function uploadMoveLabel(team, value) {
 // of its skinned bones and the mapping guessed from them, or throws an error to show.
 export async function readClip(buffer) {
     if (buffer.byteLength > MAX_CLIP_BYTES) {
-        throw new Error(`This clip is ${Math.ceil(buffer.byteLength / 1048576)} MB, the limit is 10 MB.`);
+        throw new Error(t('clips.tooLarge', { size: Math.ceil(buffer.byteLength / 1048576) }));
     }
     const gltf = await parseModel(buffer);
     const bones = fileBoneNames(gltf);
     if (!gltf.animations || !gltf.animations.length) {
-        throw new Error('This file holds no animation. Export it with its animations, as described in the Help.');
+        throw new Error(t('clips.noAnimation'));
     }
     return { gltf, bones, guess: guessJoints(bones) };
 }
@@ -96,8 +97,8 @@ export function retargetAnimation(gltf, animation, joints, rig = new Rig(gltf.sc
     const samples = [];
     try {
         for (let i = 0; i < count; i++) {
-            const t = count > 1 ? (i / (count - 1)) * duration : 0;
-            action.time = Math.max(0, Math.min(t, (animation.duration || 0) - 1e-4));
+            const time = count > 1 ? (i / (count - 1)) * duration : 0;
+            action.time = Math.max(0, Math.min(time, (animation.duration || 0) - 1e-4));
             mixer.update(0);
             instance.root.updateMatrixWorld(true);
             const bones = new Array(14).fill(null);
@@ -200,7 +201,7 @@ export async function loadTeamClips(team) {
                 const rig = new Rig(gltf.scene, joints, {});
                 gltf.animations.forEach((animation, i) => {
                     try {
-                        const label = (clip.animations && clip.animations[i]) || animation.name || `Animation ${i + 1}`;
+                        const label = (clip.animations && clip.animations[i]) || animation.name || t('clips.animation', { n: i + 1 });
                         made.push([`${PREFIX}${clip.name}.${i} ${tag}`, retargetAnimation(gltf, animation, joints, rig), label]);
                     } catch (err) {
                         console.warn('clip animation left out', clip.name, i, err);

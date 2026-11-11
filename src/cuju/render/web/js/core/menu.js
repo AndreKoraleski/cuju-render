@@ -7,7 +7,9 @@
 // toggles the class directly stays in step with the menu.
 
 import { formatDay } from './api.js';
-import { scenarioName, titleText } from './scenarios.js';
+import { t } from './i18n.js';
+import { recordingTitle, summaryTeams, teamName } from './names.js';
+import { scenarioName } from './scenarios.js';
 
 const ITEM = '[role^="menuitem"]:not([disabled]):not([aria-disabled="true"])';
 const open = new Set();
@@ -353,7 +355,7 @@ export function enhanceSelect(select, options = {}) {
     const sync = () => {
         const o = select.options[select.selectedIndex];
         button.querySelector('.dd-value').textContent = o ? o.textContent : '';
-        button.setAttribute('aria-label', label ? `${label}, ${o ? o.textContent : ''}` : (o ? o.textContent : ''));
+        button.setAttribute('aria-label', label ? t('menu.select.label', { label, value: o ? o.textContent : '' }) : (o ? o.textContent : ''));
         button.disabled = select.disabled;
     };
     // The value setter of this select also updates the button, as code sets it directly.
@@ -385,6 +387,11 @@ export function icon(name, className = 'icon') {
 
 export { el };
 
+// The teams of a recording as the page reads them, each against the next.
+function against(teams) {
+    return teams.length ? teams.reduce((left, right) => t('menu.match.recent.against', { left, right })) : '';
+}
+
 // The menus of the top bar and the Watch page, the pages on a narrow screen, settings, help, the
 // View and Match menus and the speed. Returns the dropdowns by name.
 export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
@@ -415,22 +422,22 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
         // The picture alone, as on television, and fullscreen, each a toggle of the view.
         if ($('view-screen')) {
             $('view-screen').replaceChildren(
-                menuItem('Broadcast mode', {
-                    hint: 'Only the picture and its graphics, as on television',
+                menuItem(t('menu.view.broadcast'), {
+                    hint: t('menu.view.broadcast.hint'),
                     checked: !!app.tvMode, check: true, kbd: 'T', onSelect: () => app.setTvMode(!app.tvMode),
                 }),
-                menuItem('Fullscreen', { checked: !!document.fullscreenElement, check: true, kbd: 'F', onSelect: () => app.toggleFullscreen() }),
-                ...(app.feedDialog ? [menuItem('Copy feed address', {
-                    hint: 'The address of a clean feed for OBS and other streaming programs',
+                menuItem(t('menu.view.fullscreen'), { checked: !!document.fullscreenElement, check: true, kbd: 'F', onSelect: () => app.toggleFullscreen() }),
+                ...(app.feedDialog ? [menuItem(t('menu.view.feed'), {
+                    hint: t('menu.view.feed.hint'),
                     onSelect: () => setTimeout(() => app.feedDialog.open(), 0),
                 })] : []));
         }
         if ($('view-drawing') && app.flat) {
             $('view-drawing').replaceChildren(...app.flat.menuItems(menuItem), ...(app.grid ? app.grid.menuItems(menuItem) : []));
         }
-        radio($('view-quality'), [['low', 'Low, for older laptops'], ['medium', 'Medium'], ['high', 'High, shadows and effects']],
+        radio($('view-quality'), [['low', t('menu.view.quality.low')], ['medium', t('menu.view.quality.medium')], ['high', t('menu.view.quality.high')]],
             app.settings.quality, (q) => app.setQuality(q));
-        radio($('view-theme'), [['system', 'Follow the system'], ['dark', 'Dark'], ['light', 'Light']],
+        radio($('view-theme'), [['system', t('menu.view.theme.system')], ['dark', t('menu.view.theme.dark')], ['light', t('menu.view.theme.light')]],
             app.settings.theme, (t) => {
                 const sel = $('theme');
                 sel.value = t;
@@ -445,7 +452,7 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
         const header = app.source.header;
         const p = header.players[k];
         const roster = app.styles && app.styles[p.team] && app.styles[p.team].players ? app.styles[p.team].players[p.index] : null;
-        const name = roster && roster.name ? roster.name : (p.goalkeeper ? 'Goalkeeper' : `Player ${p.index + 1}`);
+        const name = roster && roster.name ? roster.name : (p.goalkeeper ? t('menu.player.goalkeeper') : t('menu.player.numbered', { number: p.index + 1 }));
         const number = roster ? roster.number : (p.goalkeeper ? 1 : p.index + 1);
         return { name, number };
     };
@@ -453,7 +460,7 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
         const tl = app.timeline;
         const store = tl.store;
         if (!store.goals.length) {
-            body.append(menuNote(tl.live ? 'No goals yet.' : 'No goals in this match.'));
+            body.append(menuNote(tl.live ? t('menu.match.goals.noneYet') : t('menu.match.goals.none')));
         }
         for (const g of store.goals) {
             const f = store.get(g.index);
@@ -470,8 +477,9 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
             } catch {
                 who = null;
             }
-            body.append(menuItem(`${minute != null ? `${minute}'  ` : ''}${who ? who.name : 'Goal'}`, {
-                hint: [team.name, who ? `number ${who.number}` : null, own ? 'own goal' : null].filter(Boolean).join(', ') || null,
+            const what = who ? who.name : t('menu.match.goal');
+            body.append(menuItem(minute != null ? t('menu.match.goal.minute', { minute, name: what }) : what, {
+                hint: [teamName(team), who ? t('menu.match.goal.number', { number: who.number }) : null, own ? t('menu.match.goal.own') : null].filter(Boolean).join(', ') || null,
                 icon: el('span', { class: `goal-mark team-${g.team}`, 'aria-hidden': 'true' }),
                 onSelect: () => {
                     if (app.timeline !== tl) {
@@ -489,21 +497,21 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
     };
     const fillMatch = () => {
         const parts = [];
-        const open = section('Open');
+        const open = section(t('menu.match.open'));
         open.body.append(
-            menuItem('Open a recording file', { hint: 'A .cjr file from this computer, or drop one on the page', onSelect: () => $('file-input').click() }),
-            menuItem('Type an address', { hint: 'A live source or recording id', onSelect: () => setTimeout(() => $('address-input').focus(), 0) }),
-            menuItem('Browse the recordings', { onSelect: () => app.showPage('recordings') }),
-            menuItem('Play a new match', { hint: 'Two teams, played on this computer', onSelect: () => app.showPage('matches') }));
+            menuItem(t('menu.match.open.file'), { hint: t('menu.match.open.file.hint'), onSelect: () => $('file-input').click() }),
+            menuItem(t('menu.match.open.address'), { hint: t('menu.match.open.address.hint'), onSelect: () => setTimeout(() => $('address-input').focus(), 0) }),
+            menuItem(t('menu.match.open.recordings'), { onSelect: () => app.showPage('recordings') }),
+            menuItem(t('menu.match.open.new'), { hint: t('menu.match.open.new.hint'), onSelect: () => app.showPage('matches') }));
         parts.push(open.head, open.body);
         if (app.timeline && app.source) {
-            const goals = section('Goals');
+            const goals = section(t('menu.match.goals'));
             goalItems(goals.body);
             parts.push(goals.head, goals.body);
             if (app.source.kind !== 'live' && app.timeline.store.size > 1) {
-                const stats = section('This match');
-                stats.body.append(menuItem('Match statistics', {
-                    hint: 'Awards, grades and charts, Close returns here',
+                const stats = section(t('menu.match.this'));
+                stats.body.append(menuItem(t('menu.match.stats'), {
+                    hint: t('menu.match.stats.hint'),
                     onSelect: () => {
                         if (app.page !== 'watch') {
                             app.showPage('watch');
@@ -512,53 +520,57 @@ export function bindTopMenus(app, { CAMERA_MODES, api, scorerAt }) {
                     },
                 }));
                 if (app.captions) {
-                    stats.body.append(menuItem('Save captions', {
-                        hint: 'The captions of the events as a WebVTT file',
+                    stats.body.append(menuItem(t('menu.match.captions'), {
+                        hint: t('menu.match.captions.hint'),
                         onSelect: () => app.captions.download(),
                     }));
                 }
                 if (app.moments && app.source.kind === 'match' && app.source.id) {
                     const id = app.source.id;
-                    stats.body.append(menuItem('Moments of this match', {
-                        hint: 'Goals, shots, cards and more, on the Recordings page',
+                    stats.body.append(menuItem(t('menu.match.moments'), {
+                        hint: t('menu.match.moments.hint'),
                         onSelect: () => app.moments.show(`match:${id}`),
                     }));
                 }
                 parts.push(stats.head, stats.body);
             }
         }
-        const live = section('Live now');
-        live.body.append(menuNote('Looking for live sources'));
-        const recent = section('Recent recordings');
-        recent.body.append(menuNote('Loading'));
+        const live = section(t('menu.match.live'));
+        live.body.append(menuNote(t('menu.match.live.looking')));
+        const recent = section(t('menu.match.recent'));
+        recent.body.append(menuNote(t('menu.match.recent.loading')));
         parts.push(live.head, live.body, recent.head, recent.body);
         matchMenu.replaceChildren(...parts);
         api.live().then((list) => {
-            live.body.replaceChildren(...(list.length ? list.map((s) => menuItem(titleText(s.title, s.scenario) || s.id, {
-                hint: [scenarioName(s.scenario), s.environment != null ? `environment ${s.environment}` : null].filter(Boolean).join(', '),
+            live.body.replaceChildren(...(list.length ? list.map((s) => menuItem(recordingTitle(s) || s.id, {
+                hint: [scenarioName(s.scenario), s.environment != null ? t('menu.match.live.environment', { environment: s.environment }) : null].filter(Boolean).join(', '),
                 icon: el('span', { class: 'live-dot', 'aria-hidden': 'true' }),
                 onSelect: () => {
                     $('address-input').value = s.id;
                     app.openLive(s.id);
                 },
-            })) : [menuNote('No live sources. A script run with CUJU_RENDER=on streams one.')]));
+            })) : [menuNote(t('menu.match.live.none'))]));
             menus.match.place();
         }).catch((err) => live.body.replaceChildren(menuNote(err.message)));
         api.matches().then((list) => {
             const when = (m) => (typeof m.created === 'number' ? m.created * 1000 : Date.parse(m.created) || 0);
             const top = list.slice().sort((a, b) => when(b) - when(a)).slice(0, 6);
-            recent.body.replaceChildren(...(top.length ? top.map((m) => menuItem(titleText(m.title, m.scenario) || m.id, {
+            recent.body.replaceChildren(...(top.length ? top.map((m) => {
+                const title = recordingTitle(m) || m.id;
+                const teams = summaryTeams(m);
+                return menuItem(title, {
                 // The title usually names the teams already, the hint adds what it does not say.
-                hint: [(m.teams || []).every((t) => (m.title || '').includes(t)) ? null : (m.teams || []).join(' against '),
-                    m.score ? `${m.score[0]} to ${m.score[1]}` : null, scenarioName(m.scenario), formatDay(m.created)].filter(Boolean).join(', '),
+                hint: [teams.every((team) => title.includes(team)) ? null : against(teams),
+                    m.score ? t('menu.match.recent.score', { left: m.score[0], right: m.score[1] }) : null, scenarioName(m.scenario), formatDay(m.created)].filter(Boolean).join(', '),
                 checked: app.source && app.source.kind === 'match' ? app.source.id === m.id : undefined,
                 onSelect: () => app.openMatchInWatch(m.id),
-            })) : [menuNote('No recordings yet.')]));
+                });
+            }) : [menuNote(t('menu.match.recent.none'))]));
             menus.match.place();
         }).catch((err) => recent.body.replaceChildren(menuNote(err.message)));
     };
     menus.match = new Dropdown($('match-menu-btn'), matchMenu, { onOpen: fillMatch });
-    menus.speed = enhanceSelect($('speed'), { label: 'Speed', className: 'speed-select', host: root }).dropdown;
+    menus.speed = enhanceSelect($('speed'), { label: t('menu.speed'), className: 'speed-select', host: root }).dropdown;
     return menus;
 }
 
@@ -569,27 +581,45 @@ const focusables = (root) => [...root.querySelectorAll(controls)].filter((node) 
     node.tabIndex >= 0 && visible(node));
 const panels = new Map();
 
+// A dialog that leaves the page usable, such as the card of the guided tour, says so with
+// aria-modal="false" or a data-nonmodal attribute, and keeps neither the focus nor the Tab key.
+export function nonModal(node) {
+    return node.getAttribute('aria-modal') === 'false' || node.hasAttribute('data-nonmodal');
+}
+
 function activePanel() {
     return [...panels.keys()].filter(visible).at(-1);
 }
 
 function update() {
+    const opened = [];
     for (const node of document.querySelectorAll('[role="dialog"], dialog')) {
+        if (!panels.has(node) && nonModal(node)) {
+            continue;
+        }
         const shown = visible(node) && (node.tagName === 'DIALOG' ? node.open :
             node.classList.contains('dd-panel') ? node.classList.contains('open') : !node.hidden);
         if (shown && !panels.has(node)) {
-            panels.set(node, document.activeElement);
-            node.setAttribute('aria-modal', 'true');
-            node.tabIndex = -1;
-            if (!node.contains(document.activeElement)) {
-                (focusables(node)[0] || node).focus();
-            }
+            opened.push(node);
         } else if (!shown && panels.has(node)) {
             const opener = panels.get(node);
             panels.delete(node);
-            if (opener && opener.isConnected && visible(opener)) {
+            // The opener takes the focus back only while nothing else holds it, so a dialog that
+            // opened meanwhile keeps the focus it took.
+            const active = document.activeElement;
+            const elsewhere = active && active !== document.body && !node.contains(active);
+            if (!elsewhere && opener && opener.isConnected && visible(opener)) {
                 opener.focus();
             }
+        }
+    }
+    // Dialogs that open take the focus after those that closed gave it back.
+    for (const node of opened) {
+        panels.set(node, document.activeElement);
+        node.setAttribute('aria-modal', 'true');
+        node.tabIndex = -1;
+        if (!node.contains(document.activeElement)) {
+            (focusables(node)[0] || node).focus();
         }
     }
     for (const node of document.querySelectorAll('.post-card, .post-skip, #lineups')) {
@@ -597,7 +627,7 @@ function update() {
             node.dataset.keyboardAction = 'true';
             node.tabIndex = 0;
             node.setAttribute('role', 'button');
-            node.setAttribute('aria-label', 'Continue, Escape finishes');
+            node.setAttribute('aria-label', t('menu.continue'));
             node.addEventListener('keydown', (e) => {
                 if (e.target === node && (e.key === 'Enter' || e.key === ' ')) {
                     e.preventDefault();
@@ -614,11 +644,11 @@ function update() {
         text.className = 'color-value';
         text.value = color.value;
         text.maxLength = 7;
-        text.setAttribute('aria-label', `${color.getAttribute('aria-label') || color.title ||
-            color.closest('label')?.textContent.trim() || 'Color'}, hex value`);
+        text.setAttribute('aria-label', t('menu.color.hex', { label: color.getAttribute('aria-label') || color.title ||
+            color.closest('label')?.textContent.trim() || t('menu.color') }));
         text.addEventListener('change', () => {
             const valid = /^#[0-9a-f]{6}$/i.test(text.value);
-            text.setCustomValidity(valid ? '' : 'Use a hash and six hex digits');
+            text.setCustomValidity(valid ? '' : t('menu.color.invalid'));
             if (valid) {
                 color.value = text.value;
                 color.dispatchEvent(new Event('input', { bubbles: true }));
@@ -649,7 +679,7 @@ function update() {
     }
     for (const node of document.querySelectorAll('#stage, #field-preview')) {
         node.tabIndex = 0;
-        node.setAttribute('aria-label', 'Picture, camera and playback keyboard controls');
+        node.setAttribute('aria-label', t('menu.picture'));
     }
 }
 
@@ -686,7 +716,8 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keydown', (e) => {
     if (!e.defaultPrevented && e.key === 'Escape' && !activePanel() &&
         e.target.closest('#team-editor') && !e.target.matches('select')) {
-        document.querySelector('#team-editor [aria-label="Close the editor"]')?.click();
+        // The close button of the editor's head, found by its place, as its label follows the language.
+        document.querySelector('#team-editor .editor-head > button.icon-btn')?.click();
         e.preventDefault();
     }
     if (e.defaultPrevented || !e.target.matches('.folder, .chip-btn, .arena-card')) {
@@ -699,6 +730,26 @@ document.addEventListener('keydown', (e) => {
         ['ArrowRight', 'ArrowDown'].includes(e.key) ? items[(i + 1) % items.length] :
         ['ArrowLeft', 'ArrowUp'].includes(e.key) ? items[(i + items.length - 1) % items.length] : null;
     if (next) {
+        e.preventDefault();
+        e.stopPropagation();
+        next.focus();
+    }
+});
+
+// The buttons of a menu of Play, the pause menu and the end card, stand in a column, so the
+// arrows, Home and End move between them as they move through any other menu.
+document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || !(e.target instanceof Element)
+        || !e.target.matches('.play-menu .play-panel button')) {
+        return;
+    }
+    const panel = e.target.closest('.play-panel');
+    const items = [...panel.querySelectorAll('button')].filter((node) => !node.disabled && visible(node));
+    const i = items.indexOf(e.target);
+    const next = e.key === 'Home' ? items[0] : e.key === 'End' ? items.at(-1) :
+        ['ArrowDown', 'ArrowRight'].includes(e.key) ? items[(i + 1) % items.length] :
+        ['ArrowUp', 'ArrowLeft'].includes(e.key) ? items[(i + items.length - 1) % items.length] : null;
+    if (next && i >= 0) {
         e.preventDefault();
         e.stopPropagation();
         next.focus();

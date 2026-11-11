@@ -28,12 +28,15 @@ SPDX-License-Identifier: Apache-2.0
         }
     }
     </script>
+    <!-- The server fills this block with the shipped languages, so the page starts without asking for them. -->
+    <script type="application/json" id="cuju-languages"></script>
+    <script src="js/boot.js"></script>
     <script src="js/capture.js"></script>
     <script type="module" src="js/feed-boot.js"></script>
     <script type="module" src="js/main.js"></script>
 </head>
 <body>
-<a class="skip-link" href="#pages">Skip to main content</a>
+<a class="skip-link" href="#pages" data-i18n="html.skip">Skip to main content</a>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
     <symbol id="i-reverse" viewBox="0 0 24 24"><path d="M16 5v14L5 12z"/></symbol>
@@ -53,87 +56,87 @@ SPDX-License-Identifier: Apache-2.0
 <div id="app" class="no-source" data-page="home">
     <header id="topbar">
         <!-- The logo is the way to the Home page. -->
-        <button id="home-btn" class="brand active" type="button" data-page="home" aria-label="Home" aria-current="page" title="Home"><img class="logo" src="assets/cuju-logo.png" alt="" width="28" height="28"></button>
-        <nav class="menu" aria-label="Pages">
-            <button data-page="watch">Watch</button>
-            <button data-page="play">Play</button>
-            <button data-page="recordings">Recordings</button>
-            <button data-page="matches">Matches</button>
-            <button data-page="tournaments">Tournaments</button>
-            <button data-page="teams">Teams</button>
-            <button data-page="field">Field</button>
-            <button id="open-help" data-page="help">Help</button>
+        <button id="home-btn" class="brand active" type="button" data-page="home" aria-label="Home" aria-current="page" title="Home" data-i18n-aria-label="html.nav.home" data-i18n-title="html.nav.home"><img class="logo" src="assets/cuju-logo.png" alt="" width="28" height="28"></button>
+        <nav class="menu" aria-label="Pages" data-i18n-aria-label="html.nav.pages">
+            <button data-page="watch" data-i18n="html.nav.watch">Watch</button>
+            <button data-page="play" data-i18n="html.nav.play">Play</button>
+            <button data-page="recordings" data-i18n="html.nav.recordings">Recordings</button>
+            <button data-page="matches" data-i18n="html.nav.matches">Matches</button>
+            <button data-page="tournaments" data-i18n="html.nav.tournaments">Tournaments</button>
+            <button data-page="teams" data-i18n="html.nav.teams">Teams</button>
+            <button data-page="field" data-i18n="html.nav.field">Field</button>
+            <button id="open-help" data-page="help" data-i18n="html.nav.help">Help</button>
         </nav>
         <!-- On a narrow screen the pages fold into one dropdown. -->
         <div class="page-switch">
-            <button id="page-menu-btn" type="button" aria-label="Pages"><span id="page-menu-label">Home</span><span class="dd-caret" aria-hidden="true"></span></button>
-            <div id="page-menu" role="menu" aria-label="Pages">
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="home"><span class="dd-text"><span class="dd-label">Home</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="watch"><span class="dd-text"><span class="dd-label">Watch</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="play"><span class="dd-text"><span class="dd-label">Play</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="recordings"><span class="dd-text"><span class="dd-label">Recordings</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="matches"><span class="dd-text"><span class="dd-label">Matches</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="tournaments"><span class="dd-text"><span class="dd-label">Tournaments</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="teams"><span class="dd-text"><span class="dd-label">Teams</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="field"><span class="dd-text"><span class="dd-label">Field</span></span></button>
-                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="help"><span class="dd-text"><span class="dd-label">Help</span></span></button>
+            <button id="page-menu-btn" type="button" aria-label="Pages" data-i18n-aria-label="html.nav.pages"><span id="page-menu-label" data-i18n="html.nav.home">Home</span><span class="dd-caret" aria-hidden="true"></span></button>
+            <div id="page-menu" role="menu" aria-label="Pages" data-i18n-aria-label="html.nav.pages">
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="home"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.home">Home</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="watch"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.watch">Watch</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="play"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.play">Play</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="recordings"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.recordings">Recordings</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="matches"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.matches">Matches</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="tournaments"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.tournaments">Tournaments</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="teams"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.teams">Teams</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="field"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.field">Field</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="help"><span class="dd-text"><span class="dd-label" data-i18n="html.nav.help">Help</span></span></button>
             </div>
         </div>
         <div class="top-actions">
-            <button id="open-palette" class="icon-btn" title="Commands (Ctrl K)" aria-label="Commands" aria-keyshortcuts="Control+K"><svg class="icon"><use href="#i-search"/></svg></button>
-            <button id="open-settings" class="icon-btn" title="Settings" aria-label="Settings"><svg class="icon"><use href="#i-settings"/></svg></button>
-            <button id="fullscreen" class="icon-btn" title="Fullscreen (F)" aria-label="Fullscreen"><svg class="icon"><use href="#i-fullscreen"/></svg></button>
+            <button id="open-palette" class="icon-btn" title="Commands (Ctrl K)" aria-label="Commands" data-i18n-title="html.top.palette.title" data-i18n-aria-label="html.top.palette" aria-keyshortcuts="Control+K"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
+            <button id="open-settings" class="icon-btn" title="Settings" aria-label="Settings" data-i18n-title="html.top.settings" data-i18n-aria-label="html.top.settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg></button>
+            <button id="fullscreen" class="icon-btn" title="Fullscreen (F)" aria-label="Fullscreen" data-i18n-title="html.top.fullscreen.title" data-i18n-aria-label="html.top.fullscreen"><svg class="icon" aria-hidden="true"><use href="#i-fullscreen"/></svg></button>
         </div>
     </header>
 
-    <main id="pages" tabindex="-1" aria-label="Main content">
+    <main id="pages" tabindex="-1" aria-label="Main content" data-i18n-aria-label="html.main">
         <section id="page-home" class="page"></section>
 
         <section id="page-watch" class="page" hidden>
             <div id="watch">
-                <div id="stage" aria-label="Match view"></div>
+                <div id="stage" aria-label="Match view" data-i18n-aria-label="html.watch.stage"></div>
 
                 <div id="watch-bar">
-                    <button id="match-menu-btn" class="bar-btn" type="button" title="Open a match, a live source or a goal"><span class="bar-label">Match</span><span id="live-count" class="live-dot" hidden></span><span class="dd-caret" aria-hidden="true"></span></button>
+                    <button id="match-menu-btn" class="bar-btn" type="button" title="Open a match, a live source or a goal" data-i18n-title="html.watch.bar.match.title"><span class="bar-label" data-i18n="html.watch.bar.match">Match</span><span id="live-count" class="live-dot" hidden></span><span class="dd-caret" aria-hidden="true"></span></button>
                     <form id="address" autocomplete="off">
-                        <input id="address-input" type="text" spellcheck="false" placeholder="Live source or recording id, then Enter" aria-label="Source address">
-                        <button class="btn" type="submit">Open</button>
+                        <input id="address-input" type="text" spellcheck="false" placeholder="Live source or recording id, then Enter" aria-label="Source address" data-i18n-placeholder="html.watch.address.placeholder" data-i18n-aria-label="html.watch.address">
+                        <button class="btn" type="submit" data-i18n="html.watch.address.open">Open</button>
                     </form>
-                    <button id="view-menu-btn" class="bar-btn" type="button" title="Camera, time of day, quality and theme"><span class="bar-label">View</span><span class="dd-caret" aria-hidden="true"></span></button>
-                    <button id="video-export-btn" class="bar-btn" type="button" title="Export a range of the recording as a video file"><span class="bar-label">Export video</span></button>
+                    <button id="view-menu-btn" class="bar-btn" type="button" title="Camera, time of day, quality and theme" data-i18n-title="html.watch.bar.view.title"><span class="bar-label" data-i18n="html.watch.bar.view">View</span><span class="dd-caret" aria-hidden="true"></span></button>
+                    <button id="video-export-btn" class="bar-btn" type="button" title="Export a range of the recording as a video file" data-i18n-title="html.watch.bar.export.title"><span class="bar-label" data-i18n="html.watch.bar.export">Export video</span></button>
                 </div>
 
                 <div id="hud" aria-live="polite">
                     <div id="scoreboard" hidden>
-                        <span class="team left"><i class="chip"></i><b class="badge" hidden></b><span class="name">Left</span></span>
+                        <span class="team left"><i class="chip"></i><b class="badge" hidden></b><span class="name" data-i18n="html.watch.scoreboard.left">Left</span></span>
                         <span class="scores"><span id="score-left">0</span><span id="score-right">0</span></span>
-                        <span class="team right"><span class="name">Right</span><b class="badge" hidden></b><i class="chip"></i></span>
-                        <span id="clock">00:00</span>
+                        <span class="team right"><span class="name" data-i18n="html.watch.scoreboard.right">Right</span><b class="badge" hidden></b><i class="chip"></i></span>
+                        <span id="clock" role="timer" aria-live="off">00:00</span>
                     </div>
                     <div id="mode-banner"></div>
                     <div id="goal-banner">
-                        <div class="goal-head"><i class="goal-chip"></i><span class="goal-title">Goal</span><span id="goal-team"></span><span id="goal-score" hidden></span></div>
+                        <div class="goal-head"><i class="goal-chip"></i><span class="goal-title" data-i18n="html.watch.goal.title">Goal</span><span id="goal-team"></span><span id="goal-score" hidden></span></div>
                         <div class="goal-who"><span id="goal-number" hidden></span><span id="goal-scorer" hidden></span><span id="goal-minute" hidden></span></div>
                         <div id="goal-assist" hidden></div>
-                        <button id="goal-replay" class="btn small">Replay <kbd>R</kbd></button>
+                        <button id="goal-replay" class="btn small" data-i18n="html.watch.goal.replay">Replay <kbd>R</kbd></button>
                     </div>
-                    <div id="replay-badge" hidden data-prompt><span class="replay-word">Replay</span><span id="replay-hint" hidden></span></div>
+                    <div id="replay-badge" hidden data-prompt><span class="replay-word" data-i18n="html.watch.replay">Replay</span><span id="replay-hint" hidden></span></div>
                     <div id="follow-label" hidden></div>
                 </div>
                 <div id="stinger" hidden aria-hidden="true"><div class="stinger-band"></div><div class="stinger-band two"></div><img class="stinger-logo" src="assets/cuju-logo.png" alt=""></div>
 
                 <div id="watch-empty">
-                    <p>Open a recording or a live source from the <b>Match</b> menu above, type its id and press Enter, or drop a .cjr file here. <button id="open-file" class="link" type="button">Choose a file</button></p>
-                    <p class="muted small offline-note">The server is not answering. Opening a file still works.</p>
+                    <p data-i18n="html.watch.empty">Open a recording or a live source from the <b data-i18n="html.watch.bar.match">Match</b> menu above, type its id and press Enter, or drop a .cjr file here. <button id="open-file" class="link" type="button" data-i18n="html.watch.empty.choose">Choose a file</button></p>
+                    <p class="muted small offline-note" data-i18n="html.watch.empty.offline">The server is not answering. Opening a file still works.</p>
                     <input id="file-input" type="file" accept=".cjr,application/gzip,application/octet-stream" hidden>
                 </div>
 
-                <div id="waiting" hidden><div class="spinner"></div><span id="waiting-text">Waiting for the source</span></div>
+                <div id="waiting" hidden><div class="spinner"></div><span id="waiting-text" data-i18n="html.watch.waiting">Waiting for the source</span></div>
 
                 <div id="controls">
                     <div class="timeline-row">
                         <span id="time-now" class="time">0:00</span>
-                        <div id="timeline" tabindex="0" role="slider" aria-label="Timeline">
+                        <div id="timeline" tabindex="0" role="slider" aria-label="Timeline" data-i18n-aria-label="html.watch.timeline">
                             <div class="track"></div>
                             <div id="timeline-fill"></div>
                             <div id="timeline-markers"></div>
@@ -144,22 +147,22 @@ SPDX-License-Identifier: Apache-2.0
                     </div>
                     <div class="button-row">
                         <div class="group transport">
-                            <button class="icon-btn" data-act="restart" title="Restart (Home)" aria-label="Restart"><svg class="icon"><use href="#i-restart"/></svg></button>
-                            <button class="icon-btn" data-act="prev-goal" title="Previous goal (Shift N)" aria-label="Previous goal"><svg class="icon flip"><use href="#i-goal"/></svg></button>
-                            <button class="text-btn" data-act="back-30" title="Back 30 seconds (Shift Left)">30</button>
-                            <button class="text-btn" data-act="back-5" title="Back 5 seconds (Left while playing)">5</button>
-                            <button class="icon-btn" data-act="frame-back" title="Previous frame (comma)" aria-label="Previous frame"><svg class="icon"><use href="#i-frame-back"/></svg></button>
-                            <button id="btn-reverse" class="icon-btn" data-act="reverse" title="Play backwards (J)" aria-label="Play backwards"><svg class="icon"><use href="#i-reverse"/></svg></button>
-                            <button id="btn-pause" class="icon-btn" data-act="pause" title="Pause (K or Space)" aria-label="Pause"><svg class="icon"><use href="#i-pause"/></svg></button>
-                            <button id="btn-play" class="icon-btn big" data-act="play" title="Play (L or Space)" aria-label="Play"><svg class="icon"><use href="#i-play"/></svg></button>
-                            <button class="icon-btn" data-act="frame-forward" title="Next frame (period)" aria-label="Next frame"><svg class="icon"><use href="#i-frame-forward"/></svg></button>
-                            <button class="text-btn fwd" data-act="forward-5" title="Forward 5 seconds (Right while playing)">5</button>
-                            <button class="text-btn fwd" data-act="forward-30" title="Forward 30 seconds (Shift Right)">30</button>
-                            <button class="icon-btn" data-act="next-goal" title="Next goal (N)" aria-label="Next goal"><svg class="icon"><use href="#i-goal"/></svg></button>
+                            <button class="icon-btn" data-act="restart" title="Restart (Home)" aria-label="Restart" data-i18n-title="html.watch.controls.restart.title" data-i18n-aria-label="html.watch.controls.restart"><svg class="icon" aria-hidden="true"><use href="#i-restart"/></svg></button>
+                            <button class="icon-btn" data-act="prev-goal" title="Previous goal (Shift N)" aria-label="Previous goal" data-i18n-title="html.watch.controls.prevGoal.title" data-i18n-aria-label="html.watch.controls.prevGoal"><svg class="icon flip" aria-hidden="true"><use href="#i-goal"/></svg></button>
+                            <button class="text-btn" data-act="back-30" title="Back 30 seconds (Shift Left)" aria-label="Back 30 seconds" data-i18n-title="html.watch.controls.back30.title" data-i18n-aria-label="html.watch.controls.back30">30</button>
+                            <button class="text-btn" data-act="back-5" title="Back 5 seconds (Left while playing)" aria-label="Back 5 seconds" data-i18n-title="html.watch.controls.back5.title" data-i18n-aria-label="html.watch.controls.back5">5</button>
+                            <button class="icon-btn" data-act="frame-back" title="Previous frame (comma)" aria-label="Previous frame" data-i18n-title="html.watch.controls.frameBack.title" data-i18n-aria-label="html.watch.controls.frameBack"><svg class="icon" aria-hidden="true"><use href="#i-frame-back"/></svg></button>
+                            <button id="btn-reverse" class="icon-btn" data-act="reverse" title="Play backwards (J)" aria-label="Play backwards" data-i18n-title="html.watch.controls.reverse.title" data-i18n-aria-label="html.watch.controls.reverse"><svg class="icon" aria-hidden="true"><use href="#i-reverse"/></svg></button>
+                            <button id="btn-pause" class="icon-btn" data-act="pause" title="Pause (K or Space)" aria-label="Pause" data-i18n-title="html.watch.controls.pause.title" data-i18n-aria-label="html.watch.controls.pause"><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg></button>
+                            <button id="btn-play" class="icon-btn big" data-act="play" title="Play (L or Space)" aria-label="Play" data-i18n-title="html.watch.controls.play.title" data-i18n-aria-label="html.watch.controls.play"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg></button>
+                            <button class="icon-btn" data-act="frame-forward" title="Next frame (period)" aria-label="Next frame" data-i18n-title="html.watch.controls.frameForward.title" data-i18n-aria-label="html.watch.controls.frameForward"><svg class="icon" aria-hidden="true"><use href="#i-frame-forward"/></svg></button>
+                            <button class="text-btn fwd" data-act="forward-5" title="Forward 5 seconds (Right while playing)" aria-label="Forward 5 seconds" data-i18n-title="html.watch.controls.forward5.title" data-i18n-aria-label="html.watch.controls.forward5">5</button>
+                            <button class="text-btn fwd" data-act="forward-30" title="Forward 30 seconds (Shift Right)" aria-label="Forward 30 seconds" data-i18n-title="html.watch.controls.forward30.title" data-i18n-aria-label="html.watch.controls.forward30">30</button>
+                            <button class="icon-btn" data-act="next-goal" title="Next goal (N)" aria-label="Next goal" data-i18n-title="html.watch.controls.nextGoal.title" data-i18n-aria-label="html.watch.controls.nextGoal"><svg class="icon" aria-hidden="true"><use href="#i-goal"/></svg></button>
                         </div>
                         <div class="group">
-                            <label class="speed" title="Speed (Up and Down arrows)">
-                                <span class="sr-only">Speed</span>
+                            <label class="speed" title="Speed (Up and Down arrows)" data-i18n-title="html.watch.speed.title">
+                                <span class="sr-only" data-i18n="html.watch.speed">Speed</span>
                                 <select id="speed">
                                     <option value="0.25">0.25×</option>
                                     <option value="0.5">0.5×</option>
@@ -169,33 +172,33 @@ SPDX-License-Identifier: Apache-2.0
                                 </select>
                             </label>
                             <div id="live-box" hidden>
-                                <span id="live-state">Live</span>
-                                <button id="go-live" class="btn small live" data-act="live" hidden>Go live</button>
+                                <span id="live-state" data-i18n="html.watch.live.state">Live</span>
+                                <button id="go-live" class="btn small live" data-act="live" hidden data-i18n="html.watch.live.go">Go live</button>
                                 <form id="live-env" class="live-env" hidden>
-                                    <label title="The environment of the batch that the source shows"><span>Environment</span>
+                                    <label title="The environment of the batch that the source shows" data-i18n-title="html.watch.live.environment.title"><span data-i18n="html.watch.live.environment">Environment</span>
                                         <input id="live-env-index" type="number" min="0" step="1" required></label>
-                                    <button id="live-env-go" class="btn small" type="submit">Switch</button>
+                                    <button id="live-env-go" class="btn small" type="submit" data-i18n="html.watch.live.environment.switch">Switch</button>
                                 </form>
-                                <button id="live-grid" class="btn small" type="button" title="Many environments of the batch at once" hidden>Grid</button>
-                                <button id="post-show" class="btn small" data-act="post-show" hidden>Match summary</button>
+                                <button id="live-grid" class="btn small" type="button" title="Many environments of the batch at once" hidden data-i18n-title="html.watch.live.grid.title" data-i18n="html.watch.live.grid">Grid</button>
+                                <button id="post-show" class="btn small" data-act="post-show" hidden data-i18n="html.watch.live.summary">Match summary</button>
                             </div>
                         </div>
                         <div class="group">
-                            <button id="mute" class="icon-btn" title="Mute (M)" aria-label="Mute" aria-pressed="false">
-                                <svg class="icon on"><use href="#i-volume"/></svg><svg class="icon off"><use href="#i-muted"/></svg>
+                            <button id="mute" class="icon-btn" title="Mute (M)" aria-label="Mute" aria-pressed="false" data-i18n-title="html.watch.mute.title" data-i18n-aria-label="html.watch.mute">
+                                <svg class="icon on" aria-hidden="true"><use href="#i-volume"/></svg><svg class="icon off" aria-hidden="true"><use href="#i-muted"/></svg>
                             </button>
-                            <input id="volume" type="range" min="0" max="1" step="0.01" value="0.7" aria-label="Volume">
+                            <input id="volume" type="range" min="0" max="1" step="0.01" value="0.7" aria-label="Volume" data-i18n-aria-label="html.watch.volume">
                         </div>
                     </div>
                 </div>
 
-                <div id="tv-hint" aria-hidden="true">Broadcast mode. The bottom edge or <kbd>Esc</kbd> shows the controls, <kbd>T</kbd> leaves.</div>
+                <div id="tv-hint" aria-hidden="true" data-i18n="html.watch.tvHint">Broadcast mode. The bottom edge or <kbd data-i18n="html.key.esc">Esc</kbd> shows the controls, <kbd>T</kbd> leaves.</div>
 
-                <div id="drop-hint"><div>Drop a .cjr recording to open it</div></div>
+                <div id="drop-hint"><div data-i18n="html.watch.drop">Drop a .cjr recording to open it</div></div>
                 <div id="loading" hidden role="status">
                     <div class="spinner"></div>
                     <div class="loading-body">
-                        <div id="loading-text">Loading</div>
+                        <div id="loading-text" data-i18n="html.watch.loading">Loading</div>
                         <div class="progress"><div id="loading-bar" class="bar"></div></div>
                     </div>
                 </div>
@@ -214,96 +217,96 @@ SPDX-License-Identifier: Apache-2.0
             <div class="teams-layout">
                 <aside id="teams-side"></aside>
                 <div class="teams-main">
-                    <div id="teams-placeholder" class="placeholder"><h2>Choose a team</h2><p>Pick a team on the left to customize its kit, players, model, fans, celebrations, sounds and sponsors. Matches between teams are played from the Matches page.</p></div>
+                    <div id="teams-placeholder" class="placeholder"><h2 data-i18n="html.teams.placeholder.title">Choose a team</h2><p data-i18n="html.teams.placeholder.text">Pick a team on the left to customize its kit, players, model, fans, celebrations, sounds and sponsors. Matches between teams are played from the Matches page.</p></div>
                     <div id="team-editor" hidden></div>
                 </div>
             </div>
         </section>
 
         <section id="page-field" class="page" hidden></section>
-        <section id="page-help" class="page" hidden><div id="help" aria-label="Help">
+        <section id="page-help" class="page" hidden><div id="help" aria-label="Help" data-i18n-aria-label="html.help.title">
             <div class="help-card">
-                <header><h2>Help</h2><button id="help-close" class="icon-btn" aria-label="Close" title="Close (Esc)">✕</button></header>
-                <p id="help-keyboard">Keyboard. Tab and Shift Tab move between controls. Enter or Space activates a control.
+                <header><h1 data-i18n="html.help.title">Help</h1><button id="help-close" class="icon-btn" aria-label="Close" title="Close (Esc)" data-i18n-aria-label="html.help.close" data-i18n-title="html.help.close.title">✕</button></header>
+                <p id="help-keyboard" data-i18n="html.help.keyboard">Keyboard. Tab and Shift Tab move between controls. Enter or Space activates a control.
                     Arrow keys, Home and End move through menus and lists. Esc closes panels and returns
                     focus. Focus the picture for camera and playback keys. Field arrows turn the camera,
                     Watch uses Alt and arrows. Plus and minus zoom. Color fields also accept hex values.</p>
-                <section><h3 id="help-start">Getting started</h3>
-                <p>Watch, open a file or choose a source. Recordings, browse saved games.
+                <section><h2 id="help-start" data-i18n="html.help.start.title">Getting started</h2>
+                <p data-i18n="html.help.start">Watch, open a file or choose a source. Recordings, browse saved games.
                     Record a batch with cuju.render.Recorder. Watch live with cuju.render.watch.
                     Matches, choose teams and request a game. Play, choose a side and start.</p>
-                <h3 id="help-pages">Pages</h3><p>Home, choose an activity. Teams, import submissions and edit players.
+                <h2 id="help-pages" data-i18n="html.help.pages.title">Pages</h2><p data-i18n="html.help.pages">Home, choose an activity. Teams, import submissions and edit players.
                     Field, arrange the pitch and stadium. Help, find controls and guides.
                     Ctrl K, or the search button in the top bar, opens the command palette on any page.</p>
-                <h3 id="help-teams">Making a team</h3><p>A team is a submission folder in the format of
+                <h2 id="help-teams" data-i18n="html.help.teams.title">Making a team</h2><p data-i18n="html.help.teams">A team is a submission folder in the format of
                     Kaggle's football competition, whose main.py defines the agent as its last function.
                     Add the folder on the Teams page, or with cuju render team add, then pick the team on
                     Matches or Play. The built-in AI is always a team.</p>
-                <h3 id="help-play">Play controls</h3><p>Arrow keys move. S passes short, W passes long, A passes high
+                <h2 id="help-play" data-i18n="html.help.play.title">Play controls</h2><p data-i18n="html.help.play">Arrow keys move. S passes short, W passes long, A passes high
                     or tackles, D shoots. Hold E to sprint and C to dribble. Esc pauses. The input
                     settings on Play change these keys and the dead zone of the stick. On a touch screen a
                     stick and the buttons of play show over the game.</p>
-                <p class="pad-help">Controller, <span class="padicon pad-stick" role="img" aria-label="Left stick">L</span> left stick or
-                    <span class="padicon pad-dpad" role="img" aria-label="Directional pad"></span> D pad moves.
-                    <span class="padicon pad-face pad-a" role="img" aria-label="A button">A</span> passes short,
-                    <span class="padicon pad-face pad-b" role="img" aria-label="B button">B</span> shoots,
-                    <span class="padicon pad-face pad-x" role="img" aria-label="X button">X</span> passes high or tackles,
-                    <span class="padicon pad-face pad-y" role="img" aria-label="Y button">Y</span> passes long.
-                    <span class="padicon pad-trigger" role="img" aria-label="Right trigger">RT</span> sprints,
-                    <span class="padicon pad-shoulder" role="img" aria-label="Right bumper">RB</span> dribbles.
-                    <span class="padicon pad-menu" role="img" aria-label="Menu button, also called Start"></span> pauses,
-                    <span class="padicon pad-view" role="img" aria-label="View button, also called Back"></span> shows controls.
+                <p class="pad-help" data-i18n="html.help.pad">Controller, <span class="padicon pad-stick" role="img" aria-label="Left stick" data-i18n-aria-label="html.help.pad.leftStick">L</span> left stick or
+                    <span class="padicon pad-dpad" role="img" aria-label="Directional pad" data-i18n-aria-label="html.help.pad.dpad"></span> D pad moves.
+                    <span class="padicon pad-face pad-a" role="img" aria-label="A button" data-i18n-aria-label="html.help.pad.a">A</span> passes short,
+                    <span class="padicon pad-face pad-b" role="img" aria-label="B button" data-i18n-aria-label="html.help.pad.b">B</span> shoots,
+                    <span class="padicon pad-face pad-x" role="img" aria-label="X button" data-i18n-aria-label="html.help.pad.x">X</span> passes high or tackles,
+                    <span class="padicon pad-face pad-y" role="img" aria-label="Y button" data-i18n-aria-label="html.help.pad.y">Y</span> passes long.
+                    <span class="padicon pad-trigger" role="img" aria-label="Right trigger" data-i18n-aria-label="html.help.pad.rt">RT</span> sprints,
+                    <span class="padicon pad-shoulder" role="img" aria-label="Right bumper" data-i18n-aria-label="html.help.pad.rb">RB</span> dribbles.
+                    <span class="padicon pad-menu" role="img" aria-label="Menu button, also called Start" data-i18n-aria-label="html.help.pad.menu"></span> pauses,
+                    <span class="padicon pad-view" role="img" aria-label="View button, also called Back" data-i18n-aria-label="html.help.pad.view"></span> shows controls.
                     The controls card in Play sets up other controllers.</p>
-                <p>Home pauses your game. Return to Play to Resume or Quit. Quit to Home ends the game
+                <p data-i18n="html.help.pause">Home pauses your game. Return to Play to Resume or Quit. Quit to Home ends the game
                     and saves it when Save to Recordings is selected.</p>
-                <p><a href="https://github.com/AndreKoraleski/cuju/blob/main/docs/rendering.md">Full guide</a>
-                    <a href="https://github.com/AndreKoraleski/cuju">Repository</a></p></section>
+                <p><a href="https://github.com/AndreKoraleski/cuju/blob/main/docs/rendering.md" data-i18n="html.help.guide">Full guide</a>
+                    <a href="https://github.com/AndreKoraleski/cuju" data-i18n="html.help.repository">Repository</a></p></section>
                 <div class="help-grid">
                     <section>
-                        <h3 id="help-playback">Playback</h3>
+                        <h2 id="help-playback" data-i18n="html.help.playback.title">Playback</h2>
                         <dl>
-                            <dt><kbd>Space</kbd></dt><dd>Play or pause</dd>
-                            <dt><kbd>L</kbd></dt><dd>Play forward, again to speed up</dd>
-                            <dt><kbd>J</kbd></dt><dd>Play backwards, again to speed up</dd>
-                            <dt><kbd>K</kbd></dt><dd>Pause</dd>
-                            <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>One frame when paused, 5 seconds when playing</dd>
-                            <dt><kbd>Shift</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>30 seconds</dd>
-                            <dt><kbd>,</kbd> <kbd>.</kbd></dt><dd>One frame</dd>
-                            <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Faster, slower</dd>
-                            <dt><kbd>Home</kbd></dt><dd>Restart</dd>
-                            <dt><kbd>End</kbd></dt><dd>End, or go live</dd>
-                            <dt><kbd>N</kbd></dt><dd>Next goal, with Shift the previous one</dd>
-                            <dt><kbd>R</kbd></dt><dd>Replay the last goal</dd>
-                            <dt><kbd>Shift</kbd> <kbd>R</kbd></dt><dd>More angles of the last goal</dd>
-                            <dt><kbd>Enter</kbd></dt><dd>Skip the lineups, a celebration, a replay or a post-match part</dd>
-                            <dt><kbd>Esc</kbd></dt><dd>End the lineups, replays or the post-match show</dd>
+                            <dt><kbd data-i18n="html.key.space">Space</kbd></dt><dd data-i18n="html.help.playback.toggle.text">Play or pause</dd>
+                            <dt><kbd>L</kbd></dt><dd data-i18n="html.help.playback.forward.text">Play forward, again to speed up</dd>
+                            <dt><kbd>J</kbd></dt><dd data-i18n="html.help.playback.backward.text">Play backwards, again to speed up</dd>
+                            <dt><kbd>K</kbd></dt><dd data-i18n="html.help.playback.pause.text">Pause</dd>
+                            <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="html.help.playback.step.text">One frame when paused, 5 seconds when playing</dd>
+                            <dt><kbd data-i18n="html.key.shift">Shift</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="html.help.playback.jump.text">30 seconds</dd>
+                            <dt><kbd>,</kbd> <kbd>.</kbd></dt><dd data-i18n="html.help.playback.frame.text">One frame</dd>
+                            <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd data-i18n="html.help.playback.speed.text">Faster, slower</dd>
+                            <dt><kbd data-i18n="html.key.home">Home</kbd></dt><dd data-i18n="html.help.playback.restart.text">Restart</dd>
+                            <dt><kbd data-i18n="html.key.end">End</kbd></dt><dd data-i18n="html.help.playback.end.text">End, or go live</dd>
+                            <dt><kbd>N</kbd></dt><dd data-i18n="html.help.playback.goal.text">Next goal, with Shift the previous one</dd>
+                            <dt><kbd>R</kbd></dt><dd data-i18n="html.help.playback.replay.text">Replay the last goal</dd>
+                            <dt><kbd data-i18n="html.key.shift">Shift</kbd> <kbd>R</kbd></dt><dd data-i18n="html.help.playback.angles.text">More angles of the last goal</dd>
+                            <dt><kbd data-i18n="html.key.enter">Enter</kbd></dt><dd data-i18n="html.help.playback.skip.text">Skip the lineups, a celebration, a replay or a post-match part</dd>
+                            <dt><kbd data-i18n="html.key.esc">Esc</kbd></dt><dd data-i18n="html.help.playback.endShow.text">End the lineups, replays or the post-match show</dd>
                         </dl>
                     </section>
                     <section>
-                        <h3 id="help-cameras">Cameras</h3>
+                        <h2 id="help-cameras" data-i18n="html.help.cameras.title">Cameras</h2>
                         <dl>
-                            <dt><kbd>V</kbd></dt><dd>Broadcast, tactical, behind the goal, follow player and free in turn</dd>
-                            <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Chase camera on the previous or next player</dd>
-                            <dt><kbd>1</kbd> to <kbd>0</kbd></dt><dd>A left team player, back line first and each line from left to right, with Shift the right team</dd>
-                            <dt><kbd>G</kbd></dt><dd>The left keeper, with Shift the right keeper</dd>
-                            <dt>Again</dt><dd>Over the shoulder, first person, side, face</dd>
-                            <dt><kbd>B</kbd></dt><dd>Follow the ball at the current angle</dd>
-                            <dt><kbd>P</kbd></dt><dd>Follow the player on the ball</dd>
-                            <dt><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></dt><dd>Move, starts the free camera</dd>
-                            <dt><kbd>E</kbd> <kbd>Q</kbd></dt><dd>Up and down, <kbd>C</kbd> also down</dd>
-                            <dt><kbd>Shift</kbd></dt><dd>Move faster</dd>
-                            <dt>Drag</dt><dd>Look around, a right click captures the pointer when the setting allows it</dd>
-                            <dt>Wheel</dt><dd>Flying speed, or distance when following</dd>
+                            <dt><kbd>V</kbd></dt><dd data-i18n="html.help.cameras.cycle.text">Broadcast, tactical, behind the goal, follow player and free in turn</dd>
+                            <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd data-i18n="html.help.cameras.chase.text">Chase camera on the previous or next player</dd>
+                            <dt data-i18n="html.help.cameras.digits.key"><kbd>1</kbd> to <kbd>0</kbd></dt><dd data-i18n="html.help.cameras.digits.text">A left team player, back line first and each line from left to right, with Shift the right team</dd>
+                            <dt><kbd>G</kbd></dt><dd data-i18n="html.help.cameras.keeper.text">The left keeper, with Shift the right keeper</dd>
+                            <dt data-i18n="html.help.cameras.again">Again</dt><dd data-i18n="html.help.cameras.views.text">Over the shoulder, first person, side, face</dd>
+                            <dt><kbd>B</kbd></dt><dd data-i18n="html.help.cameras.ball.text">Follow the ball at the current angle</dd>
+                            <dt><kbd>P</kbd></dt><dd data-i18n="html.help.cameras.owner.text">Follow the player on the ball</dd>
+                            <dt><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></dt><dd data-i18n="html.help.cameras.move.text">Move, starts the free camera</dd>
+                            <dt><kbd>E</kbd> <kbd>Q</kbd></dt><dd data-i18n="html.help.cameras.updown.text">Up and down, <kbd>C</kbd> also down</dd>
+                            <dt><kbd data-i18n="html.key.shift">Shift</kbd></dt><dd data-i18n="html.help.cameras.faster.text">Move faster</dd>
+                            <dt data-i18n="html.help.cameras.drag">Drag</dt><dd data-i18n="html.help.cameras.drag.text">Look around, a right click captures the pointer when the setting allows it</dd>
+                            <dt data-i18n="html.help.cameras.wheel">Wheel</dt><dd data-i18n="html.help.cameras.wheel.text">Flying speed, or distance when following</dd>
                         </dl>
                     </section>
                     <section>
-                        <h3 id="help-view">View</h3>
+                        <h2 id="help-view" data-i18n="html.help.view.title">View</h2>
                         <dl>
-                            <dt><kbd>T</kbd></dt><dd>Broadcast mode, the picture alone, <kbd>Esc</kbd> shows the controls, twice leaves</dd>
-                            <dt><kbd>F</kbd></dt><dd>Fullscreen</dd>
-                            <dt><kbd>M</kbd></dt><dd>Mute</dd>
-                            <dt><kbd>H</kbd></dt><dd>This help</dd>
-                            <dt><kbd>Esc</kbd></dt><dd>Close panels, leave a player camera, release the pointer</dd>
+                            <dt><kbd>T</kbd></dt><dd data-i18n="html.help.view.tv.text">Broadcast mode, the picture alone, <kbd data-i18n="html.key.esc">Esc</kbd> shows the controls, twice leaves</dd>
+                            <dt><kbd>F</kbd></dt><dd data-i18n="html.help.view.fullscreen.text">Fullscreen</dd>
+                            <dt><kbd>M</kbd></dt><dd data-i18n="html.help.view.mute.text">Mute</dd>
+                            <dt><kbd>H</kbd></dt><dd data-i18n="html.help.view.help.text">This help</dd>
+                            <dt><kbd data-i18n="html.key.esc">Esc</kbd></dt><dd data-i18n="html.help.view.close.text">Close panels, leave a player camera, release the pointer</dd>
                         </dl>
                     </section>
                 </div>
@@ -312,56 +315,56 @@ SPDX-License-Identifier: Apache-2.0
 
     </main>
 
-    <div id="settings" class="popover" role="dialog" aria-label="Settings">
-        <h3 class="panel-title">Settings</h3>
-        <label class="check"><input type="checkbox" id="idle-return"> Return to broadcast when idle</label>
-        <label>Seconds without input before the free camera returns
+    <div id="settings" class="popover" role="dialog" aria-label="Settings" data-i18n-aria-label="html.top.settings">
+        <h3 class="panel-title" data-i18n="html.top.settings">Settings</h3>
+        <label class="check" data-i18n="html.settings.idleReturn"><input type="checkbox" id="idle-return"> Return to broadcast when idle</label>
+        <label data-i18n="html.settings.idleSeconds">Seconds without input before the free camera returns
             <input type="number" id="idle-seconds" min="5" max="300" step="5" value="20">
         </label>
-        <label class="check"><input type="checkbox" id="trail"> Ball trail</label>
-        <label class="check"><input type="checkbox" id="tv-mode"> Broadcast mode, the picture alone as on television <kbd>T</kbd></label>
-        <label class="check"><input type="checkbox" id="lineups-on"> Lineups before kick-off</label>
-        <label class="check"><input type="checkbox" id="celebrations-on"> Celebrations after goals</label>
-        <label class="check"><input type="checkbox" id="replays"> Replays after goals</label>
-        <label class="check"><input type="checkbox" id="decision-replays"> Decision replays, fouls, cards and offsides</label>
-        <label class="check"><input type="checkbox" id="restart-transitions"> Restart transitions</label>
-        <label>Slow motion in replays
+        <label class="check" data-i18n="html.settings.trail"><input type="checkbox" id="trail"> Ball trail</label>
+        <label class="check" data-i18n="html.settings.tvMode"><input type="checkbox" id="tv-mode"> Broadcast mode, the picture alone as on television <kbd>T</kbd></label>
+        <label class="check" data-i18n="html.settings.lineups"><input type="checkbox" id="lineups-on"> Lineups before kick-off</label>
+        <label class="check" data-i18n="html.settings.celebrations"><input type="checkbox" id="celebrations-on"> Celebrations after goals</label>
+        <label class="check" data-i18n="html.settings.replays"><input type="checkbox" id="replays"> Replays after goals</label>
+        <label class="check" data-i18n="html.settings.decisionReplays"><input type="checkbox" id="decision-replays"> Decision replays, fouls, cards and offsides</label>
+        <label class="check" data-i18n="html.settings.transitions"><input type="checkbox" id="restart-transitions"> Restart transitions</label>
+        <label data-i18n="html.settings.slowmo">Slow motion in replays
             <select id="slowmo">
-                <option value="1">Off</option>
-                <option value="0.5">Half speed</option>
-                <option value="0.25">Quarter speed</option>
+                <option value="1" data-i18n="html.settings.slowmo.off">Off</option>
+                <option value="0.5" data-i18n="html.settings.slowmo.half">Half speed</option>
+                <option value="0.25" data-i18n="html.settings.slowmo.quarter">Quarter speed</option>
             </select>
         </label>
-        <label class="check"><input type="checkbox" id="podium-on"> Post-match show, facts, highlights, player of the match, podium</label>
-        <label class="check"><input type="checkbox" id="view-2d"> 2D view, a flat drawing from above without WebGL</label>
-        <label class="check"><input type="checkbox" id="classic"> GRF classic pitch</label>
-        <label class="check"><input type="checkbox" id="pointer-lock"> Capture the mouse on right click in the free camera, Esc releases it</label>
-        <label class="check"><input type="checkbox" id="saved-style"> Use the kits saved in the match</label>
-        <p class="muted small">Without that, teams known to this server wear their current style.</p>
-        <label>Theme
+        <label class="check" data-i18n="html.settings.podium"><input type="checkbox" id="podium-on"> Post-match show, facts, highlights, player of the match, podium</label>
+        <label class="check" data-i18n="html.settings.view2d"><input type="checkbox" id="view-2d"> 2D view, a flat drawing from above without WebGL</label>
+        <label class="check" data-i18n="html.settings.classic"><input type="checkbox" id="classic"> GRF classic pitch</label>
+        <label class="check" data-i18n="html.settings.pointerLock"><input type="checkbox" id="pointer-lock"> Capture the mouse on right click in the free camera, Esc releases it</label>
+        <label class="check" data-i18n="html.settings.savedStyle"><input type="checkbox" id="saved-style"> Use the kits saved in the match</label>
+        <p class="muted small" data-i18n="html.settings.savedStyle.note">Without that, teams known to this server wear their current style.</p>
+        <label data-i18n="html.settings.theme">Theme
             <select id="theme">
-                <option value="system">Follow the system</option>
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
+                <option value="system" data-i18n="html.settings.theme.system">Follow the system</option>
+                <option value="dark" data-i18n="html.settings.theme.dark">Dark</option>
+                <option value="light" data-i18n="html.settings.theme.light">Light</option>
             </select>
         </label>
     </div>
 
     <!-- The menus of the Watch page. The container view-environment belongs to the time of day,
          the sky and the weather, which scene code fills. -->
-    <div id="match-menu" role="menu" aria-label="Match"></div>
-    <div id="view-menu" role="menu" aria-label="View">
-        <div class="dd-heading" role="presentation"><span>Camera</span><span class="dd-aside"><kbd>V</kbd> cycles the first five</span></div>
+    <div id="match-menu" role="menu" aria-label="Match" data-i18n-aria-label="html.watch.bar.match"></div>
+    <div id="view-menu" role="menu" aria-label="View" data-i18n-aria-label="html.watch.bar.view">
+        <div class="dd-heading" role="presentation"><span data-i18n="html.view.camera">Camera</span><span class="dd-aside" data-i18n="html.view.camera.cycle"><kbd>V</kbd> cycles the first five</span></div>
         <div id="view-cameras"></div>
         <div id="view-screen"></div>
-        <div class="dd-heading" role="presentation"><span>Drawing</span></div>
+        <div class="dd-heading" role="presentation"><span data-i18n="html.view.drawing">Drawing</span></div>
         <div id="view-drawing"></div>
         <div id="view-photo"></div>
-        <div class="dd-heading" role="presentation"><span>Time and weather</span></div>
+        <div class="dd-heading" role="presentation"><span data-i18n="html.view.environment">Time and weather</span></div>
         <div id="view-environment"></div>
-        <div class="dd-heading" role="presentation"><span>Quality</span></div>
+        <div class="dd-heading" role="presentation"><span data-i18n="html.view.quality">Quality</span></div>
         <div id="view-quality"></div>
-        <div class="dd-heading" role="presentation"><span>Theme</span></div>
+        <div class="dd-heading" role="presentation"><span data-i18n="html.view.theme">Theme</span></div>
         <div id="view-theme"></div>
     </div>
 

@@ -21,7 +21,6 @@ import argparse
 import base64
 import contextlib
 import dataclasses
-import http.server
 import json
 import math
 import os
@@ -71,14 +70,16 @@ WARMUP = 1.0
 # The identifier under which the export's server offers a recording file outside the library.
 _FILE_IDENTIFIER = 'video-source'
 
+# How to install each program. The command names a program with an option or a variable, and a
+# server with the variable alone, set before it starts.
 _INSTALL_CHROME = (
     'Install Google Chrome or Chromium, from https://www.google.com/chrome/ or with the package '
-    'manager, such as apt install chromium, or name the program with --chrome or $CUJU_CHROME.'
+    'manager, such as apt install chromium, or name the program with {named}.'
 )
 _INSTALL_FFMPEG = (
     'Install ffmpeg, from https://ffmpeg.org/download.html or with the package manager, such as '
     'apt install ffmpeg, brew install ffmpeg or winget install ffmpeg, or name the program with '
-    '--ffmpeg or $CUJU_FFMPEG.'
+    '{named}.'
 )
 
 
@@ -116,6 +117,7 @@ class Options:
     fps: int = DEFAULT_FPS
     quality: str = 'standard'
     score: bool = True
+    annotations: bool = False
     arena: str | None = None
     hour: float | None = None
     broadcast: bool = False
@@ -133,8 +135,13 @@ class Options:
         if self.camera not in CAMERAS:
             raise ArgumentError(f'expected a camera of {", ".join(CAMERAS)}, found {self.camera!r}')
         check_size(self.width, self.height)
-        if isinstance(self.fps, bool) or not isinstance(self.fps, int) or not 1 <= self.fps <= 60:
+        fps = self.fps
+        if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= MAX_FPS:
             raise ArgumentError(f'expected a frame rate from 1 to {MAX_FPS}, found {self.fps!r}')
+        if not isinstance(self.annotations, bool):
+            raise ArgumentError(
+                f'expected annotations as true or false, found {self.annotations!r}'
+            )
         if self.quality not in QUALITIES:
             raise ArgumentError(
                 f'expected a quality of {", ".join(QUALITIES)}, found {self.quality!r}'
@@ -385,15 +392,28 @@ def find_ffmpeg(explicit: str | None = None) -> str | None:
     return find_program(('ffmpeg',), explicit, 'CUJU_FFMPEG')
 
 
-def tools(options: Options) -> tuple[str | None, str | None, list[str]]:
-    """Returns the paths of Chrome and ffmpeg and a message for each one missing."""
+def tools(options: Options, server: bool = False) -> tuple[str | None, str | None, list[str]]:
+    """Returns the paths of Chrome and ffmpeg and a message for each one missing.
+
+    Args:
+        options: The options, which may name either program.
+        server: Whether the messages are for the page's server, which takes the variables alone.
+    """
+
+    def named(option: str, variable: str) -> str:
+        if server:
+            return f'${variable} in the environment of cuju render serve'
+        return f'{option} or ${variable}'
+
     missing = []
     chrome = find_chrome(options.chrome)
     if chrome is None:
-        missing.append(f'Video export needs Chrome or Chromium, found neither. {_INSTALL_CHROME}')
+        hint = _INSTALL_CHROME.format(named=named('--chrome', 'CUJU_CHROME'))
+        missing.append(f'Video export needs Chrome or Chromium, found neither. {hint}')
     ffmpeg = find_ffmpeg(options.ffmpeg)
     if ffmpeg is None:
-        missing.append(f'Video export needs ffmpeg, found none. {_INSTALL_FFMPEG}')
+        hint = _INSTALL_FFMPEG.format(named=named('--ffmpeg', 'CUJU_FFMPEG'))
+        missing.append(f'Video export needs ffmpeg, found none. {hint}')
     return chrome, ffmpeg, missing
 
 
@@ -492,7 +512,8 @@ def preload_script(options: Options) -> str:
     Sound stays muted, the pointer stays free and controllers stay unseen. The page shows the
     picture alone in its broadcast mode. Without `broadcast` it keeps the team sheets, the
     presentation of restarts, celebrations, replays and the show after the match off, which hold
-    or stop play, so the video follows the match clock.
+    or stop play, so the video follows the match clock. The labels and the box of a recording's
+    annotations show only with `annotations`, and then with their numbers, actions and text.
     """
     _, _, drawing = QUALITIES[options.quality]
     field: dict[str, Any] = {}
@@ -517,6 +538,7 @@ def preload_script(options: Options) -> str:
         'transitions': options.broadcast,
         'podium': False,
         'motion': 'full',
+        'annotations': dict.fromkeys(('players', 'actions', 'text'), options.annotations),
     }
     if field:
         settings['field'] = field
@@ -703,8 +725,10 @@ def _page_server(path: Path, identifier: str) -> Any:
                 while chunk := stream.read(1 << 20):
                     self.wfile.write(chunk)
 
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    server.daemon_threads = True
+    # The server of the renderer, whose queue of connections holds the bursts of the page.
+    from .._http.launch import LoopbackServer
+
+    server = LoopbackServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -856,9 +880,7 @@ def export(
     output = Path(output)
     if output.suffix.lower() != '.mp4':
         raise ArgumentError(f'expected an output file ending in .mp4, found {output.name}')
-    chrome, ffmpeg, missing = tools(options)
-    if missing:
-        raise VideoError(' '.join(missing))
+    # The range is checked before the programs are looked for, so a mistake in it shows at once.
     facts = recording_facts(Path(path))
     start, end = resolve_range(options, facts)
     frames = frame_count(start, end, options.fps)
@@ -869,6 +891,9 @@ def export(
             f'{start:.1f} to {end:.1f} runs {end - start:.1f} seconds, so choose a shorter range '
             'or raise the maximum length'
         )
+    chrome, ffmpeg, missing = tools(options)
+    if missing:
+        raise VideoError(' '.join(missing))
     warm = min(start, WARMUP)
     warm_frames = round(warm * options.fps)
     warm_from = start - warm_frames / options.fps
@@ -1096,6 +1121,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         help='the time of day, as dawn, day, dusk, night or an hour from 0 to 24',
     )
     parser.add_argument(
+        '--annotations',
+        action='store_true',
+        help="show the labels and the box of the recording's annotations",
+    )
+    parser.add_argument(
         '--broadcast',
         action='store_true',
         help='keep the team sheets, restarts, celebrations and replays, which lengthen the video',
@@ -1174,6 +1204,7 @@ def options_from(namespace: argparse.Namespace) -> Options:
         fps=namespace.fps,
         quality=namespace.quality,
         score=namespace.score,
+        annotations=namespace.annotations,
         arena=namespace.arena,
         hour=namespace.hour,
         broadcast=namespace.broadcast,
@@ -1248,9 +1279,16 @@ def run(namespace: argparse.Namespace) -> int:
         print(f'cuju render: the page reported {error}', file=sys.stderr)
     print(
         f'saved {output}, {result["frames"]} frames, {result["seconds"]:.1f} s, '
-        f'{result["bytes"] / 1e6:.1f} MB'
+        f'{file_size(result["bytes"])}'
     )
     return 0
+
+
+def file_size(count: int) -> str:
+    """Returns the size of a file for people, in KB below a megabyte and in MB from there."""
+    if count < 1e6:
+        return f'{max(1, round(count / 1e3))} KB'
+    return f'{count / 1e6:.1f} MB'
 
 
 def main(arguments: list[str] | None = None) -> int:

@@ -10,19 +10,21 @@
 // moves through the match from where it stands, while a tap seeks to the place tapped. The rules
 // at the top of the file touch nothing of the page, so they hold the same in a test.
 
+import { t } from '../core/i18n.js';
+
 export const TOUCH_KEY = 'cuju.touchControls';
-export const TOUCH_CHOICES = [['auto', 'When a touch screen is used'], ['on', 'Always'], ['off', 'Never']];
+export const TOUCH_CHOICES = ['auto', 'on', 'off'].map((choice) => [choice, t(`touch.choice.${choice}`)]);
 
 // The buttons of the pad, each with the inputs it presses, the same as the keys of play send.
 // High pass also slides when defending, as GRF reads one input for both.
 export const TOUCH_BUTTONS = [
-    { id: 'long_pass', label: 'Long pass', short: 'Long', names: ['long_pass'] },
-    { id: 'high_pass', label: 'High pass or slide', short: 'High', names: ['high_pass', 'sliding'] },
-    { id: 'shot', label: 'Shot', short: 'Shot', names: ['shot'] },
-    { id: 'short_pass', label: 'Short pass', short: 'Pass', names: ['short_pass'] },
-    { id: 'sprint', label: 'Sprint while held', short: 'Sprint', names: ['sprint'] },
-    { id: 'dribble', label: 'Dribble while held', short: 'Dribble', names: ['dribble'] },
-];
+    { id: 'long_pass', names: ['long_pass'] },
+    { id: 'high_pass', names: ['high_pass', 'sliding'] },
+    { id: 'shot', names: ['shot'] },
+    { id: 'short_pass', names: ['short_pass'] },
+    { id: 'sprint', names: ['sprint'] },
+    { id: 'dribble', names: ['dribble'] },
+].map((button) => ({ ...button, label: t(`touch.button.${button.id}`), short: t(`touch.button.${button.id}.short`) }));
 
 // The stored choice, auto for anything else.
 export function touchChoice(value) {
@@ -104,7 +106,7 @@ export class TouchControls {
         if (!anchor) {
             return;
         }
-        this.select = h('select', { id: 'touch-controls', 'aria-label': 'Touch controls on Play' },
+        this.select = h('select', { id: 'touch-controls', 'aria-label': t('touch.setting') },
             TOUCH_CHOICES.map(([value, label]) => h('option', { value }, label)));
         this.select.value = this.choice;
         this.select.addEventListener('change', () => {
@@ -116,7 +118,7 @@ export class TouchControls {
             }
             this.update();
         });
-        anchor.after(h('label', {}, 'Touch controls on Play', this.select));
+        anchor.after(h('label', {}, t('touch.setting'), this.select));
         import('../core/menu.js').then((menu) => menu.enhanceSelect(this.select, { className: 'in-panel', align: 'right' }))
             .catch(() => {});
     }
@@ -124,7 +126,7 @@ export class TouchControls {
     // The pad of the Play page, built into its stage the first time the stage exists.
     build(play) {
         this.play = play;
-        this.device = new play.keyboard.constructor('touch', 'Touch screen');
+        this.device = new play.keyboard.constructor('touch', t('touch.device'));
         play.touch = this.device;
         this.knob = h('div', { class: 'touch-knob' });
         this.stick = h('div', { class: 'touch-stick' }, this.knob);
@@ -136,7 +138,7 @@ export class TouchControls {
             this.hold(node, (down) => this.press(button.names, down));
             return node;
         });
-        this.pause = h('button', { type: 'button', class: 'touch-pause', tabindex: '-1', title: 'Pause menu' }, 'Pause');
+        this.pause = h('button', { type: 'button', class: 'touch-pause', tabindex: '-1', title: t('touch.pause.title') }, t('touch.pause'));
         this.pause.addEventListener('click', () => {
             if (play.game && !play.game.ended) {
                 play.pause(true);

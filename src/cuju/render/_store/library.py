@@ -21,9 +21,9 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, TypeVar
 
-from cuju.errors import ArgumentError
-
 from .._format import recording as _recording
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from . import home as _home
 
 _SCORE = struct.Struct('<2i')
@@ -31,6 +31,12 @@ _SCORE = struct.Struct('<2i')
 _SAMPLES = Path(__file__).parents[1] / 'samples'
 # The file of the home folder that names the samples the library has received.
 _SEEDED = 'samples.json'
+# The title that each sample ships with and its message, which the page shows in its language
+# while the sample keeps that title.
+_SAMPLE_TITLES = {
+    'sample-5v5': 'server.names.sample_5v5',
+    'sample-11v11': 'server.names.sample_11v11',
+}
 # The limits of the details that the page edits.
 _TAGS, _TAG_LENGTH, _NOTES_LENGTH = 20, 40, 10000
 # One server thread at a time reads and writes the summaries, so no change undoes another.
@@ -73,7 +79,81 @@ def _summary(path: Path) -> dict[str, Any]:
     entry['tags'] = [tag for tag in entry['tags'] if isinstance(tag, str)]
     if not isinstance(entry.get('deleted_at'), str):
         entry.pop('deleted_at', None)
+    group = _group_of(entry.get('group'))
+    if group is None:
+        entry.pop('group', None)
+    else:
+        entry['group'] = group
+    return _labelled(entry)
+
+
+# The fields of a group beside its identifier and labels, each with the types it may hold.
+_GROUP_FIELDS: tuple[tuple[str, tuple[type, ...]], ...] = (
+    ('kind', (str,)),
+    ('challenge', (str,)),
+    ('state', (str,)),
+    ('attempt', (int,)),
+    ('attempts', (int,)),
+    ('value', (int, float, type(None))),
+    ('seconds', (int, float, type(None))),
+    ('medal', (str, type(None))),
+    ('practice', (bool,)),
+)
+
+
+def _group_of(value: Any) -> dict[str, Any] | None:
+    """Returns the group of a summary in its expected form, or `None` for one that does not fit.
+
+    A group gathers the recordings of one run of a challenge. It holds its identifier, its title,
+    competitor and result as labels or text, the attempt of the recording and the run's details,
+    and a field of the wrong type, from a hand edit or another version, is left out.
+    """
+    if not isinstance(value, dict) or not isinstance(value.get('id'), str):
+        return None
+    if not _home.valid_identifier(value['id']):
+        return None
+    group: dict[str, Any] = {'id': value['id']}
+    for field, default in (('title', value['id']), ('competitor', ''), ('result', '')):
+        found = _recording.label_of(value, field)
+        group.update(_messages.named(field, found if isinstance(found, (str, dict)) else default))
+    for field, kinds in _GROUP_FIELDS:
+        found = value.get(field)
+        whole = isinstance(found, bool) == (kinds == (bool,))
+        if field in value and isinstance(found, kinds) and whole:
+            group[field] = found
+    return group
+
+
+def _labelled(entry: dict[str, Any]) -> dict[str, Any]:
+    """Returns a summary whose names that cuju made carry their messages, the rest as text.
+
+    A title keeps `title_id` and `title_values` while they are valid, and a shipped sample whose
+    title is still the one it ships with takes its message. `team_labels` holds the label of each
+    team that has one and `None` beside a name that a person gave.
+    """
+    title = _recording.label_of(entry, 'title')
+    message = _SAMPLE_TITLES.get(str(entry.get('id')))
+    if not isinstance(title, dict) and message and entry.get('title') == _messages.text(message):
+        title = _messages.label(message)
+    entry = {key: value for key, value in entry.items() if key not in ('title_id', 'title_values')}
+    entry.update(_messages.named('title', title))
+    labels = entry.get('team_labels')
+    if not (
+        isinstance(labels, list)
+        and len(labels) == len(entry.get('teams') or ())
+        and all(label is None or _messages.valid_label(label) for label in labels)
+    ):
+        entry.pop('team_labels', None)
     return entry
+
+
+def _team_labels(document: dict[str, Any]) -> list[dict[str, Any] | None]:
+    """Returns the label of each team of a header, `None` for a name that a person gave."""
+    labels = []
+    for team in document['teams']:
+        found = _recording.label_of(team, 'name')
+        labels.append(found if isinstance(found, dict) else None)
+    return labels
 
 
 def _store(path: Path, summary: dict[str, Any]) -> None:
@@ -141,9 +221,10 @@ def _write_summary(
     """Writes the summary of the recording at `path` beside it and returns the summary."""
     summary = {
         'id': path.stem,
-        'title': document['title'],
+        **_messages.named('title', _recording.label_of(document, 'title')),
         'scenario': document['scenario'],
         'teams': [team['name'] for team in document['teams']],
+        'team_labels': _team_labels(document),
         'score': list(_SCORE.unpack_from(last, 8)) if last else [0, 0],
         'steps': steps,
         'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
@@ -155,12 +236,14 @@ def _write_summary(
         else {},
     }
     path.with_suffix('.json').write_text(json.dumps(summary))
-    return summary
+    return _labelled(summary)
 
 
 def samples() -> list[str]:
     """Returns the names of the sample matches that ship with the package, such as `sample-5v5`."""
-    return sorted(path.stem for path in _SAMPLES.glob('*.cjr'))
+    # Five a side lists before eleven a side, as the page offers them.
+    names = (path.stem for path in _SAMPLES.glob('*.cjr'))
+    return sorted(names, key=lambda name: (len(name), name))
 
 
 def _seeded() -> set[str]:
@@ -188,7 +271,11 @@ def _add_sample(name: str) -> Path | None:
     last = None
     for frame in _recording.frames(path, start=max(0, document['frame_count'] - 1)):
         last = frame
-    _write_summary(path, document, last, document['frame_count'])
+    summary = _write_summary(path, document, last, document['frame_count'])
+    # A sample dates from its shipped file, so the user's own recordings list above it.
+    shipped = (_SAMPLES / f'{name}.cjr').stat().st_mtime
+    summary['created'] = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(shipped))
+    path.with_suffix('.json').write_text(json.dumps(summary))
     return path
 
 
@@ -212,7 +299,7 @@ def add_samples(names: list[str] | None = None, again: bool = True) -> list[Path
     names = shipped if names is None else names
     unknown = [name for name in names if name not in shipped]
     if unknown:
-        raise ArgumentError(f'expected a sample from {shipped}, found {unknown}')
+        raise MessageError('server.library.samples', shipped=shipped, unknown=unknown)
     seeded = _seeded()
     wanted = [name for name in names if again or name not in seeded]
     if not wanted:
@@ -228,33 +315,72 @@ def add_samples(names: list[str] | None = None, again: bool = True) -> list[Path
 
 
 @_locked
-def matches(trash: bool = False) -> list[dict[str, Any]]:
-    """Returns the summary of every recording of the library, or of the Trash, newest first."""
+def matches(trash: bool = False, group: str | None = None) -> list[dict[str, Any]]:
+    """Returns the summary of every recording of the library, or of the Trash, newest first.
+
+    With `group`, it returns the recordings of that group alone, in the order of their attempts.
+    """
     entries = []
     for path in _home.folder('matches').glob('*.cjr'):
         entry = _summary(path)
-        if ('deleted_at' in entry) == trash:
+        if ('deleted_at' in entry) != trash:
+            continue
+        if group is None or (entry.get('group') or {}).get('id') == group:
             entries.append(entry)
     entries.sort(key=lambda entry: str(entry.get('created') or ''), reverse=True)
+    if group is not None:
+        entries.sort(key=lambda entry: entry['group'].get('attempt', 0))
     return entries
+
+
+@_locked
+def set_group(group: dict[str, Any], members: dict[str, int]) -> None:
+    """Writes a group into the summary of each of its recordings, with the attempt of each.
+
+    Args:
+        group: The group, its identifier and the fields that `_group_of` keeps.
+        members: The attempt of each recording of the group, by recording identifier.
+    """
+    for identifier, attempt in members.items():
+        path = path_of(identifier, include_trash=True)
+        if path is None:
+            continue
+        summary = _summary(path)
+        summary['group'] = {**group, 'attempt': attempt}
+        _store(path, summary)
+
+
+@_locked
+def trash_group(group: str, restore: bool = False) -> list[str]:
+    """Moves every recording of a group to the Trash at once, or restores them all.
+
+    Returns:
+        The identifiers of the recordings moved, empty for a group without any to move.
+    """
+    if not isinstance(group, str):
+        return []
+    return [entry['id'] for entry in matches(restore, group) if trash(entry['id'], restore)]
 
 
 def _summarize(path: Path) -> dict[str, Any]:
     """Returns the summary of a recording that has none, such as one copied into the folder."""
     provenance: Any = {}
+    labels: list[dict[str, Any] | None] = [None, None]
     try:
         document = _recording.read_header(path)
         teams = [team['name'] for team in document['teams']]
-        title, scenario = document['title'], document['scenario']
+        title, scenario = _recording.label_of(document, 'title'), document['scenario']
+        labels = _team_labels(document)
         provenance = document.get('provenance', {})
     except Exception:
         teams, title, scenario = ['', ''], path.stem, ''
     created = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(path.stat().st_mtime))
     return {
         'id': path.stem,
-        'title': title,
+        **_messages.named('title', title),
         'scenario': scenario,
         'teams': teams,
+        'team_labels': labels,
         'score': None,
         'steps': None,
         'created': created,
@@ -266,12 +392,10 @@ def _summarize(path: Path) -> dict[str, Any]:
 def _folder_path(folder: Any) -> str:
     """Returns a folder of the explorer in canonical form, or raises `ArgumentError`."""
     if not isinstance(folder, str):
-        raise ArgumentError(f'expected a folder as text, found {folder!r}')
+        raise MessageError('server.library.folder_text', folder=repr(folder))
     parts = [part.strip() for part in folder.replace('\\', '/').split('/') if part.strip()]
     if any(part in ('.', '..') or len(part) > 64 for part in parts) or len(parts) > 8:
-        raise ArgumentError(
-            f'expected a folder of at most 8 names of 64 characters, found {folder!r}'
-        )
+        raise MessageError('server.library.folder_size', folder=repr(folder))
     return '/'.join(parts)
 
 
@@ -302,11 +426,11 @@ def update(
     """
     path = path_of(identifier)
     if path is None:
-        raise ArgumentError(f'expected a recording of the library, found {identifier!r}')
+        raise MessageError('server.library.unknown', identifier=repr(identifier))
     summary = _summary(path)
     if favorite is not None:
         if not isinstance(favorite, bool):
-            raise ArgumentError(f'expected favorite as true or false, found {favorite!r}')
+            raise MessageError('server.library.favorite', favorite=repr(favorite))
         summary['favorite'] = favorite
     if tags is not None:
         if (
@@ -314,16 +438,19 @@ def update(
             or len(tags) > _TAGS
             or not all(isinstance(tag, str) and 0 < len(tag.strip()) <= _TAG_LENGTH for tag in tags)
         ):
-            raise ArgumentError('expected up to twenty tags, each of one to forty characters')
+            raise MessageError('server.library.tags')
         summary['tags'] = list(dict.fromkeys(tag.strip() for tag in tags))
     if notes is not None:
         if not isinstance(notes, str) or len(notes) > _NOTES_LENGTH:
-            raise ArgumentError('expected notes as text of at most ten thousand characters')
+            raise MessageError('server.library.notes')
         summary['notes'] = notes
     if title is not None:
         title = str(title).strip()[:120]
         if not title:
-            raise ArgumentError('expected a title with at least one character')
+            raise MessageError('server.library.title')
+        # A title that a person gives is text, which the page shows as given.
+        summary.pop('title_id', None)
+        summary.pop('title_values', None)
         summary['title'] = title
     if folder is not None:
         summary['folder'] = _folder_path(folder)
@@ -355,7 +482,7 @@ def details(identifier: str) -> dict[str, Any]:
     """
     path = path_of(identifier)
     if path is None:
-        raise ArgumentError(f'expected a recording of the library, found {identifier!r}')
+        raise MessageError('server.library.unknown', identifier=repr(identifier))
     return _summary(path)
 
 

@@ -17,9 +17,11 @@
 // ceilings. A team holds at most its budget of voices, a new one ending the oldest. While one team
 // plays a moment, the other's beds lose 6 dB and its actions 3 dB, the renderer's fairness rule.
 // Music stems loop on the team's musical clock, crossfade by command, sit under the crowd's swell
-// after a goal and never above the renderer's own beds. A package's AudioWorklet module runs in the
-// page's audio context with no network, after the renderer froze the built in objects of that
-// scope, its nodes count against the worklet budget and play through the team's effects bus.
+// after a goal and never above the renderer's own beds. A package's AudioWorklet module runs in an
+// audio context of the team's own, whose AudioWorklet scope shares nothing with the page's, so
+// the module reaches none of the renderer's meters, governors and limiters. Its nodes count
+// against the worklet budget, and their sound reaches the page as a stream into the team's bus,
+// through the governor and the limiter like every other sound of the team.
 
 import { SAFETY } from './commands.js';
 import { dbToGain, measure } from './loudness.js';
@@ -53,6 +55,26 @@ export function cueScale(m, peak) {
     return Math.max(0, Math.min(byPeak, byShort, byMoment, byTrue));
 }
 
+// An audio context of a team's own for its processors, at the sample rate of the page's context,
+// or null where the browser makes none that can stream into the page's context. A package's
+// module never loads into the page's own context.
+export function teamContext(ctx, Context = globalThis.AudioContext) {
+    if (typeof Context !== 'function' || typeof ctx.createMediaStreamSource !== 'function') {
+        return null;
+    }
+    let own = null;
+    try {
+        own = new Context({ sampleRate: ctx.sampleRate, latencyHint: 'interactive' });
+    } catch {
+        return null;
+    }
+    if (!own.audioWorklet || typeof own.createMediaStreamDestination !== 'function') {
+        own.close().catch(() => {});
+        return null;
+    }
+    return own;
+}
+
 function channels(buffer, seconds = Infinity) {
     const n = Math.min(buffer.length, Math.floor(seconds * buffer.sampleRate));
     return Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c).subarray(0, n));
@@ -80,7 +102,7 @@ function scaled(ctx, buffer, scale) {
 }
 
 // The sound of one team, its buses, cues, voices, music and processors.
-class TeamBus {
+export class TeamBus {
     constructor(audio, pkg) {
         this.audio = audio;
         this.pkg = pkg;
@@ -90,6 +112,11 @@ class TeamBus {
         this.music = new Map();
         this.processors = new Map();
         this.meters = { effects: null, music: null };
+        // The team's own context of its processors, and the streams from it into each bus.
+        this.context = null;
+        this.bridges = {};
+        this.contextTime = null;
+        this.contextStalled = 0;
         this.moments = 0;
         this.penalized = false;
         this.notes = [];
@@ -131,12 +158,31 @@ class TeamBus {
             this.meters[channel] = m;
             if (m.penalized && !this.penalized) {
                 this.penalized = true;
-                this.audio.presentation.notice(`The sound of ${this.pkg.manifest.name || 'a team'} stayed too loud and plays 6 dB lower`);
+                this.audio.presentation.notice(this.pkg.manifest.name
+                    ? { id: 'presentation.notice.loud', values: { team: this.pkg.manifest.name } }
+                    : { id: 'presentation.notice.loudTeam' });
             }
         } else if (m.type === 'runaway') {
             this.notes.push(`the ${channel} bus ran away, ${m.reason || 'non finite'}, its processors stop`);
             this.stopProcessors();
         }
+    }
+
+    // The stream from the team's own context into the bus of channel, made on its first use.
+    bridge(channel) {
+        if (!this.bridges[channel]) {
+            const out = this.context.createMediaStreamDestination();
+            const source = this.audio.sound.ctx.createMediaStreamSource(out.stream);
+            source.connect((channel === 'music' ? this.musicBus : this.effects).classes.action);
+            this.bridges[channel] = { out, source };
+        }
+        return this.bridges[channel].out;
+    }
+
+    // The time of the team's own context that a time of the page's context names.
+    contextAt(at) {
+        const ctx = this.audio.sound.ctx;
+        return this.context.currentTime + Math.max(0, at - ctx.currentTime);
     }
 
     stopProcessors() {
@@ -149,6 +195,18 @@ class TeamBus {
         }
         this.processors.clear();
         this.pkg.budget.used.worklets = 0;
+        for (const bridge of Object.values(this.bridges)) {
+            try {
+                bridge.source.disconnect();
+            } catch {
+                // A stream already disconnected needs nothing more.
+            }
+        }
+        this.bridges = {};
+        if (this.context) {
+            this.context.close().catch(() => {});
+            this.context = null;
+        }
     }
 
     dispose() {
@@ -268,24 +326,32 @@ export class TeamAudio {
         this.master = { head, clip };
     }
 
-    async loadProcessors(team) {
-        const ctx = this.sound.ctx;
+    // Loads a package's module into a context of the team's own and makes its processors there,
+    // each streaming into the team's effects or music bus.
+    async loadProcessors(team, Context = globalThis.AudioContext) {
         const m = team.pkg.manifest.audio;
-        await ctx.audioWorklet.addModule(this.presentation.fileUrl(team.pkg, m.worklet));
+        const own = teamContext(this.sound.ctx, Context);
+        if (!own) {
+            throw new Error('the browser makes no audio context of the team’s own');
+        }
+        team.context = own;
+        await own.audioWorklet.addModule(this.presentation.fileUrl(team.pkg, m.worklet));
+        if (team.context !== own) {
+            return;
+        }
         for (const [name, spec] of Object.entries(m.processors || {})) {
             if (!team.pkg.budget.take({ worklets: 1 })) {
                 team.pkg.errors.push(`processor ${name} is past the team's budget`);
                 continue;
             }
             try {
-                const node = new AudioWorkletNode(ctx, spec.processor, { parameterData: spec.parameters || {}, processorOptions: spec.options || {}, outputChannelCount: [2] });
+                const node = new AudioWorkletNode(own, spec.processor, { parameterData: spec.parameters || {}, processorOptions: spec.options || {}, outputChannelCount: [2] });
                 node.onprocessorerror = () => {
                     team.notes.push(`processor ${name} failed and stops`);
                     node.disconnect();
                     team.processors.delete(name);
                 };
-                const bus = spec.bus === 'music' ? team.musicBus : team.effects;
-                node.connect(bus.classes.action);
+                node.connect(team.bridge(spec.bus === 'music' ? 'music' : 'effects'));
                 team.processors.set(name, node);
             } catch (err) {
                 team.pkg.errors.push(`processor ${name} not made, ${err.message || err}`);
@@ -364,7 +430,7 @@ export class TeamAudio {
             const node = team.processors.get(c.node);
             const param = node && c.param ? node.parameters.get(c.param) : null;
             if (param) {
-                param.setTargetAtTime(c.value, this.when(c, event), 0.02);
+                param.setTargetAtTime(c.value, team.contextAt(this.when(c, event)), 0.02);
             }
             return !!param;
         }
@@ -560,7 +626,7 @@ export class TeamAudio {
                 const node = team.processors.get(a.processor);
                 const param = node ? node.parameters.get(a.param) : null;
                 if (param) {
-                    param.setTargetAtTime(param.defaultValue + (a.value - param.defaultValue) * a.weight, now, 0.03);
+                    param.setTargetAtTime(param.defaultValue + (a.value - param.defaultValue) * a.weight, team.context.currentTime, 0.03);
                 }
             }
         }
@@ -579,6 +645,35 @@ export class TeamAudio {
             this.stalled = 0;
         }
         this.lastTime = now;
+        for (const team of this.teams) {
+            if (team && team.context) {
+                this.follow(ctx, team);
+            }
+        }
+    }
+
+    // A team's own context runs while the page's runs and rests while it rests, and one whose
+    // time stands still for a second while it runs stops its processors.
+    follow(ctx, team) {
+        const own = team.context;
+        const want = ctx.state === 'running' ? 'running' : 'suspended';
+        if (own.state !== want && own.state !== 'closed' && team.wanted !== want) {
+            team.wanted = want;
+            (want === 'running' ? own.resume() : own.suspend()).catch(() => {}).finally(() => {
+                team.wanted = null;
+            });
+        }
+        if (own.state === 'running' && team.contextTime === own.currentTime) {
+            team.contextStalled += 1;
+            if (team.contextStalled > 60 && team.processors.size) {
+                team.notes.push('the audio thread of the team stalled, the processors stop');
+                team.stopProcessors();
+                return;
+            }
+        } else {
+            team.contextStalled = 0;
+        }
+        team.contextTime = own.currentTime;
     }
 
     // Sends an event to the processors of its team, which may sound it.
@@ -610,7 +705,7 @@ export class TeamAudio {
             worklets: this.worklets, master: this.masterMeter, limiter: this.limiter || null, masterChain: !!this.master,
             teams: this.teams.map((t) => (t ? {
                 voices: t.voices.length, cues: t.cues.size, music: [...t.music.keys()].filter((k) => t.music.get(k).sources),
-                processors: [...t.processors.keys()], meters: t.meters, penalized: t.penalized, notes: t.notes.slice(-8),
+                processors: [...t.processors.keys()], ownContext: !!t.context, meters: t.meters, penalized: t.penalized, notes: t.notes.slice(-8),
                 scales: [...t.cues.entries()].map(([file, e]) => ({ file, scale: e.scale ?? null, maxShortTerm: e.measure ? e.measure.maxShortTerm : null })),
             } : null)),
         };

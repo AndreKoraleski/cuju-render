@@ -25,6 +25,7 @@ from typing import Any
 
 from cuju.errors import ArgumentError
 
+from .._text.messages import MessageError
 from . import teams as _teams
 
 FOLDER = 'clips'
@@ -46,10 +47,7 @@ _UNSUPPORTED = ('KHR_draco_mesh_compression', 'EXT_meshopt_compression', 'KHR_te
 def check_name(name: Any) -> str:
     """Returns the name of a clip, or raises `ArgumentError` for one that is no safe file name."""
     if not isinstance(name, str) or not _NAME.fullmatch(name) or _DEVICES.fullmatch(name):
-        raise ArgumentError(
-            f'expected a clip name of up to 40 lowercase letters, digits and underscores, '
-            f'found {name!r}'
-        )
+        raise MessageError('server.clips.name', name=repr(name))
     return name
 
 
@@ -81,63 +79,60 @@ def check(data: bytes) -> dict[str, Any]:
             animation.
     """
     if len(data) > MAXIMUM_CLIP_BYTES:
-        raise ArgumentError(f'expected a clip of at most 10 MB, found {len(data)} bytes')
+        raise MessageError('server.clips.size', size=len(data))
     # glTF: a binary file opens with `glTF`, the version and the length, then its chunks, each
     # with its length and type, padded to four bytes, the JSON chunk first.
     if len(data) < 20 or data[:4] != b'glTF':
-        raise ArgumentError('expected a binary glTF file, .glb, found other bytes')
+        raise MessageError('server.clips.binary')
     version, length = struct.unpack_from('<II', data, 4)
     if version != 2:
-        raise ArgumentError(f'expected a binary glTF file of version 2, found version {version}')
+        raise MessageError('server.clips.version', version=version)
     if length != len(data):
-        raise ArgumentError(
-            f'expected a binary glTF file of the length its header gives, {length} bytes, '
-            f'found {len(data)}'
-        )
+        raise MessageError('server.clips.length', length=length, size=len(data))
     chunks = []
     offset = 12
     while offset < length:
         if offset + 8 > length:
-            raise ArgumentError('expected whole chunks in the binary glTF file, found a cut one')
+            raise MessageError('server.clips.cut')
         size, kind = struct.unpack_from('<II', data, offset)
         if size % 4 or offset + 8 + size > length:
-            raise ArgumentError('expected chunks padded to four bytes inside the file')
+            raise MessageError('server.clips.padding')
         chunks.append((kind, offset + 8, size))
         offset += 8 + size
     if not chunks or chunks[0][0] != _JSON_CHUNK:
-        raise ArgumentError('expected a binary glTF file with its JSON chunk first')
+        raise MessageError('server.clips.json_first')
     if any(kind == _JSON_CHUNK for kind, _, _ in chunks[1:]) or (
         sum(kind == _BIN_CHUNK for kind, _, _ in chunks) > 1
         or any(kind == _BIN_CHUNK for kind, _, _ in chunks[2:])
     ):
-        raise ArgumentError('expected one JSON chunk and at most one binary chunk after it')
+        raise MessageError('server.clips.chunks')
     _, start, size = chunks[0]
     try:
         document = json.loads(data[start : start + size])
     except (ValueError, UnicodeDecodeError) as error:
-        raise ArgumentError(f'expected the JSON chunk of a glTF file, found {error}') from error
+        raise MessageError('server.clips.json', error=error) from error
     if not isinstance(document, dict):
-        raise ArgumentError('expected the JSON chunk of a glTF file to hold an object')
+        raise MessageError('server.clips.json_object')
     asset = document.get('asset')
     if not isinstance(asset, dict) or not str(asset.get('version', '')).startswith('2.'):
-        raise ArgumentError('expected a glTF 2.0 file, whose asset names version 2.0')
+        raise MessageError('server.clips.asset_version')
     outside = _uris(document)
     if outside:
-        raise ArgumentError(f'expected a self-contained clip, found a link to {outside[0]!r}')
+        raise MessageError('server.clips.link', uri=repr(outside[0]))
     binary = next((size for kind, _, size in chunks if kind == _BIN_CHUNK), None)
     for buffer in document.get('buffers') or []:
         if isinstance(buffer, dict) and 'uri' not in buffer:
             if binary is None or not isinstance(buffer.get('byteLength'), int):
-                raise ArgumentError('expected the binary chunk that the buffer of the file needs')
+                raise MessageError('server.clips.buffer')
             if buffer['byteLength'] > binary:
-                raise ArgumentError('expected a binary chunk as long as the buffer of the file')
+                raise MessageError('server.clips.buffer_length')
     required = [name for name in document.get('extensionsRequired') or [] if name in _UNSUPPORTED]
     if required:
-        raise ArgumentError(f'expected a clip without {required[0]}, which the page cannot read')
+        raise MessageError('server.clips.extension', extension=required[0])
     nodes = document.get('nodes') or []
     skins = document.get('skins') or []
     if not isinstance(nodes, list) or not isinstance(skins, list) or not skins:
-        raise ArgumentError('expected a skinned skeleton, a glTF file with a skin, found none')
+        raise MessageError('server.clips.skinned')
     bones = set()
     for skin in skins:
         for joint in (skin.get('joints') or []) if isinstance(skin, dict) else []:
@@ -148,20 +143,20 @@ def check(data: bytes) -> dict[str, Any]:
             ):
                 bones.add(str(nodes[joint].get('name', '')))
     if not bones:
-        raise ArgumentError('expected a skin with joints, found an empty one')
+        raise MessageError('server.clips.skin_joints')
     animations = document.get('animations') or []
     if not isinstance(animations, list) or not animations:
-        raise ArgumentError('expected a clip with at least one animation, found none')
+        raise MessageError('server.clips.animations_none')
     if len(animations) > MAXIMUM_ANIMATIONS:
-        raise ArgumentError(
-            f'expected at most {MAXIMUM_ANIMATIONS} animations in a clip, found {len(animations)}'
+        raise MessageError(
+            'server.clips.animations_count', most=MAXIMUM_ANIMATIONS, count=len(animations)
         )
     names = []
     for index, animation in enumerate(animations):
         channels = animation.get('channels') if isinstance(animation, dict) else None
         samplers = animation.get('samplers') if isinstance(animation, dict) else None
         if not isinstance(channels, list) or not channels or not isinstance(samplers, list):
-            raise ArgumentError(f'expected animation {index} to hold channels and samplers')
+            raise MessageError('server.clips.animation', index=index)
         for channel in channels:
             target = channel.get('target') if isinstance(channel, dict) else None
             node = target.get('node') if isinstance(target, dict) else None
@@ -172,7 +167,7 @@ def check(data: bytes) -> dict[str, Any]:
                 and isinstance(sampler, int)
                 and 0 <= sampler < len(samplers)
             ):
-                raise ArgumentError(f'expected the channels of animation {index} to name nodes')
+                raise MessageError('server.clips.channels', index=index)
         name = animation.get('name')
         name = _teams._printable(name).strip()[:60] if isinstance(name, str) else ''
         names.append(name or f'Animation {index + 1}')
@@ -186,17 +181,17 @@ def _check_joints(joints: Any, bones: set[str]) -> dict[str, str]:
     if not isinstance(joints, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in joints.items()
     ):
-        raise ArgumentError(f'expected the joints as names of bones by joint, found {joints!r}')
+        raise MessageError('server.clips.joints', joints=repr(joints))
     if not joints:
         return {}
     if 'body' not in joints:
-        raise ArgumentError('expected a bone for the joint body, the pelvis, which every rig has')
+        raise MessageError('server.clips.body')
     unknown = [joint for joint in joints if joint not in (*_teams.JOINTS, 'player')]
     if unknown:
-        raise ArgumentError(f"expected joints of GRF's skeleton, found {', '.join(unknown)}")
+        raise MessageError('server.clips.unknown_joints', joints=', '.join(unknown))
     absent = [bone for bone in joints.values() if bone not in bones]
     if absent:
-        raise ArgumentError(f'expected bones of the clip, found {", ".join(absent)}')
+        raise MessageError('server.clips.missing_bones', bones=', '.join(absent))
     return dict(joints)
 
 
@@ -284,12 +279,10 @@ def set_clip(
             other for other in (folder.glob('*.glb') if folder.is_dir() else []) if other != path
         ]
         if len(others) >= MAXIMUM_CLIPS:
-            raise ArgumentError(f'expected at most {MAXIMUM_CLIPS} clips for a team')
+            raise MessageError('server.clips.count', most=MAXIMUM_CLIPS)
         total = sum(other.stat().st_size for other in others) + len(data)
         if total > MAXIMUM_TEAM_BYTES:
-            raise ArgumentError(
-                f'expected at most 40 MB of clips for a team, found {total} bytes with this one'
-            )
+            raise MessageError('server.clips.total', total=total)
         _teams._replace(path, data)
         _write_sidecar(path, found['animations'], mapping)
     return _teams.entry(identifier)
@@ -299,7 +292,7 @@ def set_joints(identifier: str, name: str, joints: Any) -> dict[str, Any]:
     """Changes the joint mapping of a team's clip and returns the team's new entry."""
     path = clip_path(identifier, name)
     if path is None:
-        raise ArgumentError(f'expected a clip of the team, found {name!r}')
+        raise MessageError('server.clips.unknown', name=repr(name))
     found = check(path.read_bytes())
     mapping = _check_joints(joints, found['bones'])
     with _teams._LOCK:

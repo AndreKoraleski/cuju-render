@@ -18,6 +18,7 @@
 // limit of the flash governor, since its drawing sits beside the picture the backstop reads.
 
 import * as THREE from 'three';
+import { SLOT_SIZES } from './commands.js';
 import { SLOT_GRID, SlotGuard, downsample } from './flash.js';
 import { clamp } from './values.js';
 
@@ -452,10 +453,15 @@ export class Moments {
         if (!s) {
             return false;
         }
+        const [width, height] = SLOT_SIZES[c.slot];
+        if (bitmap && (bitmap.width !== width || bitmap.height !== height)) {
+            bitmap.close();
+            return this.refuse('overlay', `a drawing of ${bitmap.width} by ${bitmap.height} pixels for the slot ${c.slot}`);
+        }
         if (bitmap && s.context) {
             s.guard.draw(this.measure(bitmap));
-            s.canvas.width = bitmap.width;
-            s.canvas.height = bitmap.height;
+            s.canvas.width = width;
+            s.canvas.height = height;
             s.context.transferFromImageBitmap(bitmap);
         }
         if (c.op === 'hide') {

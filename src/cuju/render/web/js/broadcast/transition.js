@@ -14,9 +14,11 @@ import { narrowShare, turnBetween } from '../world/framing.js';
 import { NODE_COUNT, NODE_FLOATS, NODE_PARENTS, NODES_FLOAT, PLAYER_FLOATS, episodeBoundary, isCut } from '../recording/format.js';
 import { fullMatch } from '../recording/episodes.js';
 import { teamNames } from './hud.js';
+import { teamName } from '../core/names.js';
 import { BALL_RADIUS, FULL_HALF_H, FULL_HALF_W, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_H, HALF_W, POST_RADIUS } from '../world/pitch.js';
 import * as figures from '../players/players.js';
 import * as timeline from '../recording/timeline.js';
+import { t } from '../core/i18n.js';
 
 export const HALF_TIME_MS = 45 * 60 * 1000;
 // Seconds of the logo wipe, of the walk before it, of the walk before a goal's wipe and of the
@@ -40,8 +42,10 @@ const BALL_RATE = 120;
 const BALL_SECONDS = 6;
 
 export const RESTART_NAMES = {
-    kickoff: 'Kick-off', goal_kick: 'Goal kick', free_kick: 'Free kick', corner: 'Corner',
-    throw_in: 'Throw-in', penalty: 'Penalty', halftime: 'Half time',
+    kickoff: t('transition.restart.kickoff'), goal_kick: t('transition.restart.goal_kick'),
+    free_kick: t('transition.restart.free_kick'), corner: t('transition.restart.corner'),
+    throw_in: t('transition.restart.throw_in'), penalty: t('transition.restart.penalty'),
+    halftime: t('transition.restart.halftime'),
 };
 const MODE_KINDS = [null, 'kickoff', 'goal_kick', 'free_kick', 'corner', 'throw_in', 'penalty'];
 
@@ -742,13 +746,13 @@ class TitleCard {
     // Shows the card, with buttons under it when actions are given.
     show(kicker, header, styles, frame, foot, actions = []) {
         this.kicker.textContent = kicker;
-        const names = header ? teamNames(header) : ['Left', 'Right'];
+        const names = header ? teamNames(header) : [t('transition.team.left'), t('transition.team.right')];
         for (const side of [0, 1]) {
             const s = this.sides[side];
             const team = (header && header.teams[side]) || {};
             const style = styles && styles[side];
             s.name.textContent = names[side];
-            s.badge.textContent = (style && style.badge) || (team.name || '?').slice(0, 1).toUpperCase();
+            s.badge.textContent = (style && style.badge) || (teamName(team) || '?').slice(0, 1).toUpperCase();
             const color = style ? rgb(style.kit.primary) : (side ? '#2a56b8' : '#b3262e');
             const trim = style ? rgb(style.kit.secondary) : '#ffffff';
             s.badge.style.background = color;
@@ -1296,7 +1300,7 @@ export class Transitions {
             const sps = this.app.timeline.sps;
             return [
                 { name: 'hold', dur: WIPE / 2, at: () => T - 1, dress: (pose, l) => this.dressStage(pose, seq, l, 0) },
-                this.titleScene(seq, 'Half time'),
+                this.titleScene(seq, RESTART_NAMES.halftime, t('transition.halftime.foot')),
                 { name: 'resume', dur: WIPE / 2, wipe: true, at: (s, l) => T - 1 - (WIPE / 2 - l) * sps, dress: () => {} },
             ];
         }
@@ -1314,7 +1318,7 @@ export class Transitions {
             });
         }
         if (ev.half) {
-            scenes.push(this.titleScene(seq, 'Half time'));
+            scenes.push(this.titleScene(seq, RESTART_NAMES.halftime, t('transition.halftime.foot')));
         }
         scenes.push(this.setupScene(seq));
         return scenes;
@@ -1343,7 +1347,7 @@ export class Transitions {
                 if (seq.following && tl.live && seq.decision && tl.last - seq.T > delay + 40) {
                     seq.liveCut = true;
                     seq.liveT = Math.max(tl.first, tl.last - delay);
-                    seq.wipeLabel = 'Live';
+                    seq.wipeLabel = t('transition.wipe.live');
                     this.giveCamera(true);
                     return;
                 }
@@ -1354,7 +1358,7 @@ export class Transitions {
         };
     }
 
-    titleScene(seq, kicker) {
+    titleScene(seq, kicker, foot = '') {
         const T = seq.T;
         return {
             name: 'title', dur: WIPE / 2 + TITLE + WIPE / 2, wipe: true,
@@ -1367,7 +1371,7 @@ export class Transitions {
                     seq.halfWhistled = true;
                     this.whistle([0.45, 0.9]);
                 }
-                this.title.show(kicker, app.source.header, app.styles, frame, kicker === 'Half time' ? '45′, the second half starts' : '');
+                this.title.show(kicker, app.source.header, app.styles, frame, foot);
             },
             exit: () => this.title.hide(),
         };
@@ -2215,7 +2219,7 @@ export class Transitions {
         }
         this.fullShown = tl;
         const frame = tl ? tl.store.get(tl.index) : null;
-        const title = fullMatch(app.source.header) ? 'Full time' : 'End of episode';
+        const title = fullMatch(app.source.header) ? t('transition.title.fulltime') : t('transition.title.episode');
         this.title.show(title, app.source.header, app.styles, frame, '',
             app.source.kind === 'live' ? [] : [app.postMatch.statsButton()]);
         clearTimeout(this.fullTimer);

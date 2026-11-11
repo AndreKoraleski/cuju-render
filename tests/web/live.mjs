@@ -21,6 +21,7 @@ const load = (name) => import(pathToFileURL(join(folder, name)).href);
 const { LiveSource, RECONNECT_ATTEMPTS, liveLimit } = await load('recording/live.js');
 const { NODES_FLOAT, PLAYER_FLOATS, StreamParser, isCut, readSections, validateHeader } = await load('recording/format.js');
 const { decodeFrames } = await load('recording/codec.js');
+const { tileState } = await load('watch/grid.js');
 
 const sample = (name) => gunzipSync(readFileSync(new URL(`../../src/cuju/render/samples/${name}`, import.meta.url)));
 const bytes = sample('sample-5v5.cjr');
@@ -244,6 +245,53 @@ test('the state of the connection reaches onState', async () => {
     assert.deepEqual(states, ['connecting', 'connected', 'reconnecting', 'connected', 'ended']);
 });
 
+test('a held stream lets its connection go and resumes on release', async () => {
+    const states = [];
+    const signals = [];
+    // The first connection stays open after its frames, as a live stream does, until aborted.
+    const open = (signal) => new Response(new ReadableStream({
+        start(controller) {
+            controller.enqueue(new Uint8Array(body([0, 1])));
+            signal.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')));
+        },
+    }));
+    let calls = 0;
+    const live = new LiveSource('test', {
+        open: async (signal) => {
+            calls++;
+            signals.push(signal);
+            return calls === 1 ? open(signal) : stream([1, 3, 4], true);
+        },
+        onHeader: () => {},
+        onFrame: () => {},
+        onEnd: () => {},
+        onError: (error) => assert.fail(error),
+        onState: (state) => {
+            states.push(state);
+            if (state === 'connected' && calls === 1) {
+                setTimeout(() => assert.equal(live.hold(), true), 5);
+            } else if (state === 'held') {
+                setTimeout(() => {
+                    assert.equal(calls, 1);
+                    live.release();
+                }, 20);
+            }
+        },
+    });
+    await live.start();
+    assert.deepEqual(states, ['connecting', 'connected', 'held', 'reconnecting', 'connected', 'ended']);
+    assert.equal(calls, 2);
+    assert.equal(signals[0].aborted, true);
+    assert.equal(live.store.size, 4);
+    assert.equal(live.gaps, 1);
+});
+
+test('a stream without serials does not hold', () => {
+    const live = new LiveSource('test', { onHeader() {}, onFrame() {}, onEnd() {}, onError() {} });
+    assert.equal(live.hold(), false);
+    assert.equal(live.held, false);
+});
+
 test('the live memory budget keeps 15 minutes of eleven a side within 80 MiB', () => {
     const big = sample('sample-11v11.cjr');
     const head = JSON.parse(big.subarray(12, 12 + big.readUInt32LE(8)));
@@ -253,4 +301,26 @@ test('the live memory budget keeps 15 minutes of eleven a side within 80 MiB', (
     // A decoded frame keeps its floats, three bytes per player and its fields, no raw bytes.
     const decoded = (NODES_FLOAT + 22 * PLAYER_FLOATS) * 4 + 3 * 22 + 160;
     assert.ok(limit * decoded <= 80 * 1024 * 1024);
+});
+
+test('a grid tile keeps its last picture while the source refreshes it', () => {
+    const tile = { environment: 3, step: 40, score: [1, 0], clock: 61000, mode: 0, ball: [0, 0, 0], teams: [], players: [], active: [] };
+    const later = { ...tile, step: 52, score: [1, 1], clock: 75000 };
+    const waiting = tileState(3, null, undefined);
+    assert.deepEqual(waiting, { tile: null, refreshing: false, label: 'Environment 3, waiting for its first picture' });
+    const fresh = tileState(3, tile, undefined);
+    assert.equal(fresh.tile, tile);
+    assert.equal(fresh.refreshing, false);
+    assert.match(fresh.label, /^Environment 3, 1 to 0, clock \S+$/);
+    // An answer without the tile keeps the one held, and the label says it refreshes.
+    const held = tileState(3, null, tile);
+    assert.equal(held.tile, tile);
+    assert.equal(held.refreshing, true);
+    assert.equal(held.label, `${fresh.label}, refreshing`);
+    // A new answer replaces the held tile, and the label tells its own score and clock.
+    const next = tileState(3, later, tile);
+    assert.equal(next.tile, later);
+    assert.equal(next.refreshing, false);
+    assert.match(next.label, /^Environment 3, 1 to 1, clock \S+$/);
+    assert.notEqual(next.label, fresh.label);
 });

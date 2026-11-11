@@ -11,12 +11,15 @@
 import * as THREE from 'three';
 import { api } from '../core/api.js';
 import { ChallengesPanel } from './challenges.js';
+import { serverText, t, tn, tOr } from '../core/i18n.js';
 import { LiveSource } from '../recording/live.js';
 import { el as h } from '../core/menu.js';
 import { PLAYER_FLOATS } from '../recording/format.js';
+import { SLOW_FPS, offersView2d } from '../watch/flat.js';
+import { summaryTeams, teamName } from '../core/names.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
 import {
-    BINDINGS, DEAD_ZONE, actionName, devicesClash, keyLabel, keyMap, keyMessage, keyProblem,
+    BINDINGS, DEAD_ZONE, actionName, devicesClash, keyLabel, keyMap, keyProblem,
     loadSettings, defaultSettings, saveSettings, stickDirections,
 } from '../core/input-settings.js';
 
@@ -32,6 +35,18 @@ const HELD_BACK = { celebrations: false, replays: false, transitions: false, dec
 // The steps in a row without an answer in time after which a registered team counts as falling
 // behind, as the game reports it.
 const LATE_STREAK = 10;
+// The picture of a game is measured over windows of this many seconds, and a window below the
+// rate of flat.js offers a lower quality once for each visit, as Watch offers the 2D view.
+const SLOW_WINDOW = 5;
+const SLOW_DECLINED = 'cuju.playSlowDeclined';
+// The direction that GRF's sticky actions hold, by the held directions of the page.
+const STICKY_NAMES = { up: 'top', down: 'bottom', left: 'left', right: 'right' };
+
+// An error of the server as a sentence on a card, with its first letter in capitals.
+function sentence(text) {
+    const value = String(text);
+    return value.charAt(0).toUpperCase() + value.slice(1);
+}
 
 // The keyboard's keys come from the input settings, by the physical key, so every layout plays the
 // same. Controller actions bind to the position of a button, GRF's own Xbox layout, so the same hands
@@ -88,6 +103,30 @@ const NAV_RELEASE = 0.3;
 const FOCUSABLE = 'button, select, input, summary, a[href], [tabindex]:not([tabindex="-1"])';
 // The input tester refreshes this often while it shows.
 const TESTER_MS = 100;
+// The names of the devices, which the status line shows and the page compares.
+const KEYBOARD = t('play.device.keyboard');
+const CONTROLLER = t('play.device.controller');
+
+// The label of a binding of the input settings, by its id.
+function bindingLabel(binding) {
+    return t(`play.binding.${binding.id}`);
+}
+
+// The name of an input held, such as short pass, as the tester lists it.
+function inputName(name) {
+    return tOr(`play.input.${name}`, name.replaceAll('_', ' '));
+}
+
+// The name of one of GRF's engine actions, such as top left, by its index.
+function engineAction(index) {
+    const name = actionName(index);
+    return tOr(`play.engineAction.${name.toLowerCase().replace(/[^a-z]+/g, '_')}`, name);
+}
+
+// Two names joined, such as A and B, and more joined in turn.
+function joinAnd(names) {
+    return names.reduce((left, right) => t('play.and', { left, right }));
+}
 
 // Focus that a controller moves shows the ring of keyboard focus.
 function padFocus(el) {
@@ -97,72 +136,77 @@ function padFocus(el) {
 // The keyboard rows of the current keys. The four arrows share a row while they move.
 export function keyboardControls(settings) {
     const arrows = ['left', 'up', 'down', 'right'].every((id) => settings.keys[id] === `Arrow${id[0].toUpperCase()}${id.slice(1)}`);
-    const rows = arrows ? [['Arrow keys', 'Move, sticky while held']] : [];
+    const rows = arrows ? [['Arrow keys', t('play.controls.move')]] : [];
     for (const binding of BINDINGS) {
         if (!(arrows && binding.names.length === 1 && ['left', 'right', 'up', 'down'].includes(binding.id))) {
-            rows.push([keyLabel(settings.keys[binding.id]), binding.label]);
+            rows.push([keyLabel(settings.keys[binding.id]), bindingLabel(binding)]);
         }
     }
-    return rows.concat([['Esc', 'Pause menu'], ['H or ?', 'Help']]);
+    return rows.concat([['Esc', t('play.controls.pause')], ['H or ?', t('play.controls.help')]]);
 }
 // The controller rows name positions, drawn in the icons of the controller's style.
 export const PAD_CONTROLS = [
-    ['stick or dpad', 'Move, sticky while held'],
-    ['south', 'Short pass'],
-    ['east', 'Shot'],
-    ['west', 'High pass, or a sliding tackle when defending'],
-    ['north', 'Long pass'],
-    ['rt', 'Sprint while held'],
-    ['rb', 'Dribble while held'],
-    ['start', 'Pause menu'],
-    ['back', 'This card'],
+    ['stick or dpad', t('play.controls.move')],
+    ['south', t('play.binding.short_pass')],
+    ['east', t('play.binding.shot')],
+    ['west', t('play.binding.high_pass')],
+    ['north', t('play.binding.long_pass')],
+    ['rt', t('play.binding.sprint')],
+    ['rb', t('play.binding.dribble')],
+    ['start', t('play.controls.pause')],
+    ['back', t('play.controls.card')],
 ];
 
 // The buttons of each style of controller by position, each with its classes, spoken name, text
-// on the icon and short name, drawn without images so they stay crisp at any size.
+// on the icon and short name, drawn without images so they stay crisp at any size. A button named
+// by its letters is spoken as the letters with the word button.
+const padButton = (name) => t('play.pad.button', { name });
 const PAD_STYLES = {
     xbox: {
         name: 'Xbox',
-        south: ['pad-face pad-a', 'A button', 'A', 'A'],
-        east: ['pad-face pad-b', 'B button', 'B', 'B'],
-        west: ['pad-face pad-x', 'X button', 'X', 'X'],
-        north: ['pad-face pad-y', 'Y button', 'Y', 'Y'],
-        lb: ['pad-shoulder', 'Left bumper', 'LB', 'LB'],
-        rb: ['pad-shoulder', 'Right bumper', 'RB', 'RB'],
-        lt: ['pad-trigger', 'Left trigger', 'LT', 'LT'],
-        rt: ['pad-trigger', 'Right trigger', 'RT', 'RT'],
-        back: ['pad-view', 'View button, also called Back', '', 'View'],
-        start: ['pad-menu', 'Menu button, also called Start', '', 'Menu'],
+        south: ['pad-face pad-a', padButton('A'), 'A', 'A'],
+        east: ['pad-face pad-b', padButton('B'), 'B', 'B'],
+        west: ['pad-face pad-x', padButton('X'), 'X', 'X'],
+        north: ['pad-face pad-y', padButton('Y'), 'Y', 'Y'],
+        lb: ['pad-shoulder', t('play.pad.xbox.lb'), 'LB', 'LB'],
+        rb: ['pad-shoulder', t('play.pad.xbox.rb'), 'RB', 'RB'],
+        lt: ['pad-trigger', t('play.pad.xbox.lt'), 'LT', 'LT'],
+        rt: ['pad-trigger', t('play.pad.xbox.rt'), 'RT', 'RT'],
+        back: ['pad-view', t('play.pad.xbox.back'), '', t('play.pad.xbox.back.short')],
+        start: ['pad-menu', t('play.pad.xbox.start'), '', t('play.pad.xbox.start.short')],
     },
     nintendo: {
         name: 'Nintendo',
-        south: ['pad-face', 'B button', 'B', 'B'],
-        east: ['pad-face', 'A button', 'A', 'A'],
-        west: ['pad-face', 'Y button', 'Y', 'Y'],
-        north: ['pad-face', 'X button', 'X', 'X'],
-        lb: ['pad-shoulder', 'L button', 'L', 'L'],
-        rb: ['pad-shoulder', 'R button', 'R', 'R'],
-        lt: ['pad-trigger', 'ZL button', 'ZL', 'ZL'],
-        rt: ['pad-trigger', 'ZR button', 'ZR', 'ZR'],
-        back: ['pad-sys', 'Minus button', '−', 'minus'],
-        start: ['pad-sys', 'Plus button', '+', 'plus'],
+        south: ['pad-face', padButton('B'), 'B', 'B'],
+        east: ['pad-face', padButton('A'), 'A', 'A'],
+        west: ['pad-face', padButton('Y'), 'Y', 'Y'],
+        north: ['pad-face', padButton('X'), 'X', 'X'],
+        lb: ['pad-shoulder', padButton('L'), 'L', 'L'],
+        rb: ['pad-shoulder', padButton('R'), 'R', 'R'],
+        lt: ['pad-trigger', padButton('ZL'), 'ZL', 'ZL'],
+        rt: ['pad-trigger', padButton('ZR'), 'ZR', 'ZR'],
+        back: ['pad-sys', t('play.pad.nintendo.back'), '−', t('play.pad.nintendo.back.short')],
+        start: ['pad-sys', t('play.pad.nintendo.start'), '+', t('play.pad.nintendo.start.short')],
     },
     playstation: {
         name: 'PlayStation',
-        south: ['pad-face pad-ps pad-cross', 'Cross button', '✕', 'cross'],
-        east: ['pad-face pad-ps pad-circle', 'Circle button', '○', 'circle'],
-        west: ['pad-face pad-ps pad-square', 'Square button', '□', 'square'],
-        north: ['pad-face pad-ps pad-triangle', 'Triangle button', '△', 'triangle'],
-        lb: ['pad-shoulder', 'L1 button', 'L1', 'L1'],
-        rb: ['pad-shoulder', 'R1 button', 'R1', 'R1'],
-        lt: ['pad-trigger', 'L2 button', 'L2', 'L2'],
-        rt: ['pad-trigger', 'R2 button', 'R2', 'R2'],
-        back: ['pad-sys', 'Create button, also called Share', '', 'Create'],
-        start: ['pad-menu', 'Options button', '', 'Options'],
+        south: ['pad-face pad-ps pad-cross', t('play.pad.playstation.south'), '✕', t('play.pad.playstation.south.short')],
+        east: ['pad-face pad-ps pad-circle', t('play.pad.playstation.east'), '○', t('play.pad.playstation.east.short')],
+        west: ['pad-face pad-ps pad-square', t('play.pad.playstation.west'), '□', t('play.pad.playstation.west.short')],
+        north: ['pad-face pad-ps pad-triangle', t('play.pad.playstation.north'), '△', t('play.pad.playstation.north.short')],
+        lb: ['pad-shoulder', padButton('L1'), 'L1', 'L1'],
+        rb: ['pad-shoulder', padButton('R1'), 'R1', 'R1'],
+        lt: ['pad-trigger', padButton('L2'), 'L2', 'L2'],
+        rt: ['pad-trigger', padButton('R2'), 'R2', 'R2'],
+        back: ['pad-sys', t('play.pad.playstation.back'), '', t('play.pad.playstation.back.short')],
+        start: ['pad-menu', t('play.pad.playstation.start'), '', t('play.pad.playstation.start.short')],
     },
 };
-const PAD_COMMON = { stick: ['pad-stick', 'Left stick', 'L', 'left stick'], dpad: ['pad-dpad', 'Directional pad', '', 'D-pad'] };
-const ARROWS = [['←', 'Left arrow'], ['↑', 'Up arrow'], ['↓', 'Down arrow'], ['→', 'Right arrow']];
+const PAD_COMMON = {
+    stick: ['pad-stick', t('play.pad.stick'), 'L', t('play.pad.stick.short')],
+    dpad: ['pad-dpad', t('play.pad.dpad'), '', t('play.pad.dpad.short')],
+};
+const ARROWS = [['←', t('play.key.left')], ['↑', t('play.key.up')], ['↓', t('play.key.down')], ['→', t('play.key.right')]];
 
 function padInfo(style, pos) {
     return PAD_COMMON[pos] || (PAD_STYLES[style] || PAD_STYLES.xbox)[pos];
@@ -214,7 +258,7 @@ function controlKeys(key, style) {
     return h('span', { class: 'keys' }, parts.flatMap((part, i) => {
         const info = style && padInfo(style, part);
         return [
-            i ? h('span', { class: 'keys-or' }, 'or') : null,
+            i ? h('span', { class: 'keys-or' }, t('play.controls.or')) : null,
             info ? padIcon(style, part) : h('kbd', {}, part),
             info && !info[2] && (part === 'back' || part === 'start') ? h('span', { class: 'pad-name' }, info[3]) : null,
         ];
@@ -229,11 +273,11 @@ function controlsTable(rows, style = null) {
 
 // The controller line of the Help page in a style's icons.
 function padHelp(style) {
-    const i = (pos) => padIcon(style, pos);
-    return ['Controller, ', i('stick'), ' left stick or ', i('dpad'), ' D pad moves. ',
-        i('south'), ' passes short, ', i('east'), ' shoots, ', i('west'), ' passes high or tackles, ',
-        i('north'), ' passes long. ', i('rt'), ' sprints, ', i('rb'), ' dribbles. ',
-        i('start'), ' pauses, ', i('back'), ' shows controls. The controls card in Play sets up other controllers.'];
+    const icons = {};
+    for (const pos of ['stick', 'dpad', 'south', 'east', 'west', 'north', 'rt', 'rb', 'start', 'back']) {
+        icons[pos] = padIcon(style, pos);
+    }
+    return tn('play.help.controller', icons);
 }
 
 // A small sketch of a controller with one position lit, the face buttons in the style's labels.
@@ -291,7 +335,7 @@ export class PlayPage {
         this.setup = { scenario: DEFAULT_SCENARIO, side: 'left', ability: [null, null], record: true, teams: ['builtin', 'builtin'] };
         this.teamList = [];
         this.game = null;
-        this.keyboard = new Device('keyboard', 'Keyboard');
+        this.keyboard = new Device('keyboard', KEYBOARD);
         this.input = loadSettings();
         this.keys = keyMap(this.input);
         this.testerAt = 0;
@@ -336,14 +380,14 @@ export class PlayPage {
 
     build() {
         this.built = true;
-        this.scenarioSelect = h('select', { 'aria-label': 'Scenario' });
+        this.scenarioSelect = h('select', { 'aria-label': t('play.setup.scenario') });
         this.scenarioSelect.addEventListener('change', () => {
             this.setup.scenario = this.scenarioSelect.value;
             this.scenarioText.textContent = scenarioText(this.setup.scenario);
         });
         this.scenarioText = h('p', { class: 'scenario-text muted small', 'aria-live': 'polite' });
-        const sides = [['left', 'Left, at home'], ['right', 'Right, away'], ['both', 'Both, two players']];
-        this.sideSelect = h('select', { 'aria-label': 'Your side' }, sides.map(([v, t]) => h('option', { value: v }, t)));
+        const sides = ['left', 'right', 'both'].map((v) => [v, t(`play.setup.side.${v}`)]);
+        this.sideSelect = h('select', { 'aria-label': t('play.setup.side') }, sides.map(([v, text]) => h('option', { value: v }, text)));
         this.sideSelect.addEventListener('change', () => {
             this.setup.side = this.sideSelect.value;
             this.syncTeams();
@@ -358,59 +402,60 @@ export class PlayPage {
             return select;
         });
         const ability = (side) => {
-            const own = h('input', { type: 'checkbox', 'aria-label': `Set the ability of the built-in AI on the ${side ? 'right' : 'left'}` });
-            const range = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: '0.5', disabled: true, 'aria-label': `${side ? 'Right' : 'Left'} ability, from 0 to 1` });
-            const shown = h('output', { class: 'ability-value' }, "Scenario's");
+            const where = side ? 'right' : 'left';
+            const own = h('input', { type: 'checkbox', 'aria-label': t(`play.setup.ability.${where}.own`) });
+            const range = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: '0.5', disabled: true, 'aria-label': t(`play.setup.ability.${where}.range`) });
+            const shown = h('output', { class: 'ability-value' }, t('play.setup.ability.scenario'));
             const sync = () => {
                 this.setup.ability[side] = own.checked ? Number(range.value) : null;
                 range.disabled = !own.checked;
-                shown.textContent = own.checked ? Number(range.value).toFixed(2) : "Scenario's";
+                shown.textContent = own.checked ? Number(range.value).toFixed(2) : t('play.setup.ability.scenario');
             };
             own.addEventListener('change', sync);
             range.addEventListener('input', sync);
-            return h('div', { class: 'ability' }, h('label', { class: 'check' }, own, side ? 'Right ability' : 'Left ability'), range, shown);
+            return h('div', { class: 'ability' }, h('label', { class: 'check' }, own, t(`play.setup.ability.${where}`)), range, shown);
         };
         this.recordBox = h('input', { type: 'checkbox', checked: true });
         this.recordBox.addEventListener('change', () => {
             this.setup.record = this.recordBox.checked;
         });
-        this.startButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.start() }, 'Play');
+        this.startButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.start() }, t('play.setup.start'));
         this.padNote = h('div', { class: 'muted small play-pads' });
-        this.padTable = h('div', {}, h('h3', {}, 'Controller'), controlsTable(PAD_CONTROLS, 'xbox'));
+        this.padTable = h('div', {}, h('h3', {}, CONTROLLER), controlsTable(PAD_CONTROLS, 'xbox'));
         this.setupView = h('section', { class: 'play-setup', 'aria-labelledby': 'play-title' },
-            h('header', {}, h('h2', { id: 'play-title' }, 'Play a game'),
-                h('p', { class: 'muted' }, 'Use a keyboard or controller to play.')),
+            h('header', {}, h('h2', { id: 'play-title' }, t('play.setup.title')),
+                h('p', { class: 'muted' }, t('play.setup.lead'))),
             h('div', { class: 'setup-row' },
-                h('label', { class: 'field' }, 'Scenario', this.scenarioSelect),
-                h('label', { class: 'field' }, 'Your side', this.sideSelect)),
+                h('label', { class: 'field' }, t('play.setup.scenario'), this.scenarioSelect),
+                h('label', { class: 'field' }, t('play.setup.side'), this.sideSelect)),
             this.scenarioText,
             h('div', { class: 'setup-row' }, [0, 1].map((side) => h('label', { class: 'field' }, this.teamLabels[side], this.teamSelects[side]))),
-            h('div', { class: 'setup-row', title: 'How well the built-in AI plays the players it controls, from 0 to 1' }, ability(0), ability(1)),
-            h('label', { class: 'check' }, this.recordBox, 'Save to Recordings'),
+            h('div', { class: 'setup-row', title: t('play.setup.ability.title') }, ability(0), ability(1)),
+            h('label', { class: 'check' }, this.recordBox, t('play.setup.record')),
             h('div', { class: 'play-tables' },
-                this.keyTable = h('div', {}, h('h3', {}, 'Keyboard'), controlsTable(keyboardControls(this.input))),
+                this.keyTable = h('div', {}, h('h3', {}, KEYBOARD), controlsTable(keyboardControls(this.input))),
                 this.padTable),
             this.padNote,
             this.inputSettings(),
             h('div', { class: 'play-row' }, this.startButton),
             this.challenges.element());
-        this.view = h('div', { class: 'play-view', tabindex: '0', 'aria-label': 'Game, Escape opens the pause menu' });
+        this.view = h('div', { class: 'play-view', tabindex: '0', 'aria-label': t('play.view') });
         this.view.addEventListener('focusout', () => this.releaseKeys());
         this.status = h('div', { class: 'play-status', 'aria-live': 'polite' });
         this.card = h('div', { class: 'play-card', hidden: true });
-        this.resumeButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.pause(false) }, 'Resume');
-        this.controlsButton = h('button', { type: 'button', class: 'btn', onclick: () => this.toggleCard(true) }, 'Controls');
-        this.menu = h('div', { class: 'play-menu', role: 'dialog', 'aria-label': 'Paused', hidden: true },
-            h('div', { class: 'play-panel' }, h('h2', {}, 'Paused'),
+        this.resumeButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.pause(false) }, t('play.pause.resume'));
+        this.controlsButton = h('button', { type: 'button', class: 'btn', onclick: () => this.openCard() }, t('play.pause.controls'));
+        this.menu = h('div', { class: 'play-menu', role: 'dialog', 'aria-label': t('play.pause.title'), hidden: true },
+            h('div', { class: 'play-panel' }, h('h2', {}, t('play.pause.title')),
                 this.resumeButton,
                 this.controlsButton,
-                h('button', { type: 'button', class: 'btn', onclick: () => this.openPadSetup() }, 'Set up controller'),
-                h('button', { type: 'button', class: 'btn danger', onclick: () => this.quit() }, 'Quit'),
-                h('button', { type: 'button', class: 'btn danger', onclick: () => this.goHome(true) }, 'Quit to Home'),
-                h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, 'Home'),
+                h('button', { type: 'button', class: 'btn', onclick: () => this.openPadSetup() }, t('play.padSetup.open')),
+                h('button', { type: 'button', class: 'btn danger', onclick: () => this.quit() }, t('play.pause.quit')),
+                h('button', { type: 'button', class: 'btn danger', onclick: () => this.goHome(true) }, t('play.pause.quitHome')),
+                h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, t('play.home')),
                 this.menuHint = h('p', { class: 'muted small keys pad-hint', hidden: true })));
         this.endPanel = h('div', { class: 'play-panel' });
-        this.end = h('div', { class: 'play-menu', role: 'dialog', 'aria-label': 'Full time', hidden: true }, this.endPanel);
+        this.end = h('div', { class: 'play-menu', role: 'dialog', 'aria-label': t('play.end.fullTime'), hidden: true }, this.endPanel);
         this.end.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -418,14 +463,34 @@ export class PlayPage {
                 this.startButton.focus();
             }
         });
-        this.wait = h('div', { class: 'play-wait', hidden: true }, h('div', { class: 'spinner' }), h('span', {}, 'Starting the game'));
-        this.stage = h('div', { class: 'play-stage', hidden: true }, this.view, this.status, this.card, this.wait, this.menu, this.end);
+        this.wait = h('div', { class: 'play-wait', hidden: true }, h('div', { class: 'spinner' }), h('span', {}, t('play.starting')));
+        // The card follows the pause menu, so the card that Controls opens is the dialog on top.
+        this.stage = h('div', { class: 'play-stage', hidden: true }, this.view, this.status, this.wait, this.menu, this.card, this.end);
+        // The offer names the controller that reports its own layout, which its button sets up.
+        this.offerPad = null;
         this.offer = h('div', { class: 'pad-offer', role: 'status', hidden: true },
-            h('span', {}, 'This controller reports its own layout. Set it up so each button does what the card shows.'),
-            h('button', { type: 'button', class: 'btn primary', onclick: () => this.openPadSetup() }, 'Set up controller'),
-            h('button', { type: 'button', class: 'btn', onclick: () => { this.offer.hidden = true; } }, 'Not now'));
+            h('span', {}, t('play.padOffer.text')),
+            h('button', { type: 'button', class: 'btn primary', onclick: () => this.openPadSetup(this.offerPad) }, t('play.padSetup.open')),
+            h('button', { type: 'button', class: 'btn', onclick: () => { this.offer.hidden = true; } }, t('play.padOffer.later')));
+        this.slowText = h('span', {});
+        this.slowOffer = h('div', { class: 'pad-offer play-slow-offer', role: 'status', hidden: true },
+            this.slowText,
+            h('button', { type: 'button', class: 'btn primary', onclick: () => {
+                this.slowOffer.hidden = true;
+                this.app.setQuality('low');
+                this.app.hud.toast(t('play.slow.done'), 'info', 4000);
+            } }, t('play.slow.low')),
+            h('button', { type: 'button', class: 'btn', onclick: () => {
+                this.slowOffer.hidden = true;
+                try {
+                    localStorage.setItem(SLOW_DECLINED, 'true');
+                } catch {
+                    // Storage can be unavailable, the offer then stays away for this visit only.
+                }
+            } }, t('play.slow.keep')));
         this.setupBox = h('div', { class: 'play-panel pad-setup-panel' });
-        this.setupPanel = h('div', { class: 'pad-setup', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Set up controller', hidden: true }, this.setupBox);
+        this.setupPanel = h('div', { class: 'pad-setup', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('play.padSetup.open'), hidden: true }, this.setupBox);
+        this.stage.append(this.slowOffer);
         this.root.replaceChildren(this.setupView, this.stage, this.offer, this.setupPanel);
         this.shownStyle = null;
         this.refreshStyle();
@@ -450,7 +515,10 @@ export class PlayPage {
         this.challenges.show(this.teamList);
         if (this.game) {
             this.enterStage();
-            if (!this.game.ended && this.app.source !== this.game.source) {
+            // A game that the page started away from Play, such as a match of a tournament, has
+            // no stream yet, and a game whose picture another source took connects again.
+            const game = this.game;
+            if (!game.ended && (game.source ? this.app.source !== game.source : !game.live)) {
                 this.connect();
             }
         }
@@ -513,15 +581,15 @@ export class PlayPage {
         const two = humans[0] && humans[1];
         [0, 1].forEach((side) => {
             const human = humans[side];
-            const role = human ? (two ? `player ${side + 1}'s teammates` : 'your teammates') : 'opponents';
-            const where = side ? 'Right' : 'Left';
-            this.teamLabels[side].textContent = `${where}, ${role}`;
+            const role = human ? (two ? t('play.team.role.player', { number: side + 1 }) : t('play.team.role.yours')) : t('play.team.role.opponents');
+            const where = side ? 'right' : 'left';
+            this.teamLabels[side].textContent = t(`play.team.${where}`, { role });
             const teams = this.teamList.filter((team) => team.kind !== 'builtin'
                 && (!human || (team.control && team.control.assignment === 'dynamic')));
             const select = this.teamSelects[side];
-            select.setAttribute('aria-label', `${where} team, ${role}`);
-            select.replaceChildren(h('option', { value: 'builtin' }, 'Built-in AI'),
-                ...teams.map((team) => h('option', { value: team.id }, `${team.name}, ${team.format === '5v5' ? 'five' : 'eleven'} a side`)));
+            select.setAttribute('aria-label', t(`play.team.${where}.select`, { role }));
+            select.replaceChildren(h('option', { value: 'builtin' }, t('play.team.builtin')),
+                ...teams.map((team) => h('option', { value: team.id }, t(team.format === '5v5' ? 'play.team.five' : 'play.team.eleven', { name: teamName(team) }))));
             select.value = teams.some((team) => team.id === this.setup.teams[side]) ? this.setup.teams[side] : 'builtin';
             this.setup.teams[side] = select.value;
         });
@@ -546,7 +614,7 @@ export class PlayPage {
         try {
             entry = await api.startGame({ scenario: s.scenario, humans, ability: s.ability.slice(), record: s.record, teams: s.teams.slice(), ...(s.seed != null ? { seed: s.seed } : {}) });
         } catch (err) {
-            this.app.hud.toast(err.status === 409 ? 'A game is already playing. Quit it first.' : err.message, 'error', 7000);
+            this.app.hud.toast(err.status === 409 ? t('play.toast.busy') : err.message, 'error', 7000);
             this.startButton.disabled = false;
             return;
         }
@@ -573,6 +641,9 @@ export class PlayPage {
     connect() {
         const game = this.game;
         this.wait.hidden = false;
+        // The scoreboard of the game before, its clock and score, leaves at once, and the new
+        // game's header brings the scoreboard back.
+        this.app.hud.hide();
         const live = new LiveSource(game.id, {
             open: (signal) => api.gameStream(game.id, signal),
             onHeader: async (header, store) => {
@@ -602,11 +673,15 @@ export class PlayPage {
             onEnd: () => this.refresh(),
             onError: (err) => {
                 this.wait.hidden = true;
+                if (game.live === live) {
+                    game.live = null;
+                }
                 if (this.game === game && !game.ended) {
-                    this.app.hud.toast(`The game stream stopped, ${err.message}`, 'error', 7000);
+                    this.app.hud.toast(t('play.toast.streamStopped', { reason: err.message }), 'error', 7000);
                 }
             },
         });
+        game.live = live;
         live.start();
     }
 
@@ -629,6 +704,10 @@ export class PlayPage {
             return;
         }
         this.menu.hidden = !on;
+        if (!on && !this.card.hidden && this.card.getAttribute('role') === 'dialog') {
+            // The card of the pause menu leaves with it, so play keeps its focus.
+            this.toggleCard(false);
+        }
         if (on) {
             this.releaseKeys();
             this.resumeButton.focus();
@@ -680,7 +759,7 @@ export class PlayPage {
                 return;
             }
             if (!game.ended) {
-                this.app.hud.toast('The game is still ending. Try Home again.', 'error');
+                this.app.hud.toast(t('play.toast.stillEnding'), 'error');
                 return;
             }
         }
@@ -702,14 +781,14 @@ export class PlayPage {
         // A registered team that keeps missing its time is named once, until it catches up again.
         if ((entry.streak || 0) >= LATE_STREAK && !game.behind) {
             game.behind = true;
-            this.notice('The registered team keeps missing its time, so the built-in AI plays its players until it answers in time.');
+            this.notice(t('play.notice.late'));
         } else if (!entry.streak && game.behind) {
             game.behind = false;
         }
         this.updateStatus();
         if (entry.state === 'paused' && entry.reason === 'input' && !game.waiting) {
             game.waiting = true;
-            this.notice('Waiting for the connection to the game.');
+            this.notice(t('play.notice.waiting'));
         } else if (entry.state === 'playing' && game.waiting) {
             game.waiting = false;
         }
@@ -737,10 +816,12 @@ export class PlayPage {
         const game = this.game;
         game.ended = true;
         this.menu.hidden = true;
+        this.toggleCard(false);
+        this.slowOffer.hidden = true;
         this.marker.visible = false;
         this.hush();
         const score = entry.score || [0, 0];
-        const names = entry.teams || ['Left', 'Right'];
+        const names = entry.teams ? summaryTeams(entry) : [t('play.end.left'), t('play.end.right')];
         const header = game.source && game.source.header;
         const store = game.source && game.source.store;
         const frame = store && store.get(store.last);
@@ -748,32 +829,34 @@ export class PlayPage {
             !!(frame.flags & 1) &&
             frame.step >= header.duration && frame.timeMs >= header.duration * 1800;
         const played = entry.ending === 'full time' || entry.ending === 'episode';
-        const title = entry.state === 'failed' || entry.ending === 'policy' ? 'The game stopped' :
-            full ? 'Full time' : played ? 'End of episode' : 'Game over';
+        const title = entry.state === 'failed' || entry.ending === 'policy' ? t('play.end.stopped') :
+            full ? t('play.end.fullTime') : played ? t('play.end.episode') : t('play.end.over');
         this.end.setAttribute('aria-label', title);
         const lines = [h('h2', {}, title),
-            h('p', { class: 'play-score' }, `${names[0]} ${score[0]}, ${names[1]} ${score[1]}`)];
+            h('p', { class: 'play-score' }, t('play.end.score', { left: names[0], leftScore: score[0], right: names[1], rightScore: score[1] }))];
         if (entry.error) {
-            lines.push(h('p', { class: 'error-text' }, entry.error));
+            lines.push(h('p', { class: 'error-text' }, sentence(serverText(entry))));
+        } else if (entry.ending === 'timeout') {
+            lines.push(h('p', { class: 'muted' }, t('play.end.timeout')));
         }
         if (entry.late) {
-            lines.push(h('p', { class: 'muted' }, `The built-in AI stood in for the registered team on ${entry.late} ${entry.late === 1 ? 'step' : 'steps'}.`));
+            lines.push(h('p', { class: 'muted' }, t('play.end.late', { count: entry.late })));
         }
         if (entry.match) {
-            lines.push(h('p', { class: 'muted' }, 'Saved to Recordings.'),
-                h('button', { type: 'button', class: 'btn primary', onclick: () => this.app.openMatchInWatch(entry.match) }, 'Watch it'));
+            lines.push(h('p', { class: 'muted' }, t('play.end.saved')),
+                h('button', { type: 'button', class: 'btn primary', onclick: () => this.app.openMatchInWatch(entry.match) }, t('play.end.watch')));
         }
         if (game.context) {
             lines.push(h('p', { class: 'muted' }, game.context.label),
                 h('button', { type: 'button', class: 'btn', onclick: () => {
                     this.showSetup();
                     game.context.back();
-                } }, 'Back to the tournament'));
+                } }, t('play.end.tournament')));
         } else {
-            lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.start() }, 'Play again'),
-                h('button', { type: 'button', class: 'btn', onclick: () => this.showSetup() }, 'New game'));
+            lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.start() }, t('play.end.again')),
+                h('button', { type: 'button', class: 'btn', onclick: () => this.showSetup() }, t('play.end.new')));
         }
-        lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, 'Home'));
+        lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, t('play.home')));
         this.endPanel.replaceChildren(...this.challenges.endCard(entry, game, lines));
         this.end.hidden = false;
     }
@@ -789,28 +872,28 @@ export class PlayPage {
             button.addEventListener('click', () => this.listenKey(binding.id));
             button.addEventListener('keydown', (e) => this.bindKey(e, binding.id));
             button.addEventListener('blur', () => this.listenKey(null));
-            return h('tr', {}, h('th', {}, binding.label), h('td', {}, button));
+            return h('tr', {}, h('th', {}, bindingLabel(binding)), h('td', {}, button));
         });
         this.deadZone = h('input', {
             type: 'range', min: String(DEAD_ZONE.min), max: String(DEAD_ZONE.max), step: String(DEAD_ZONE.step),
-            'aria-label': 'Stick dead zone, from 0.1 to 0.8',
+            'aria-label': t('play.input.deadZone.range'),
         });
         this.deadZoneShown = h('output', { class: 'ability-value' });
         this.deadZone.addEventListener('input', () => {
             this.input.deadZone = Number(this.deadZone.value);
             this.saveInput();
         });
-        const options = [['auto', 'Automatic'], ['keyboard', 'Keyboard'],
-            ...[0, 1, 2, 3].map((slot) => [`pad${slot}`, `Controller in slot ${slot + 1}`])];
+        const options = [['auto', t('play.input.device.auto')], ['keyboard', KEYBOARD],
+            ...[0, 1, 2, 3].map((slot) => [`pad${slot}`, t('play.input.device.slot', { slot: slot + 1 })])];
         this.deviceSelects = [0, 1].map((side) => {
-            const select = h('select', { 'aria-label': `Device of the ${side ? 'right' : 'left'} side, when two people play` },
+            const select = h('select', { 'aria-label': t(side ? 'play.input.device.right.select' : 'play.input.device.left.select') },
                 options.map(([value, text]) => h('option', { value }, text)));
             select.addEventListener('change', () => {
                 const devices = this.input.devices.slice();
                 devices[side] = select.value;
                 if (devicesClash(devices)) {
                     select.value = this.input.devices[side];
-                    this.inputNote.textContent = 'Each side needs a device of its own. Choose another one.';
+                    this.inputNote.textContent = t('play.input.device.clash');
                     return;
                 }
                 this.input.devices = devices;
@@ -819,7 +902,7 @@ export class PlayPage {
             });
             return select;
         });
-        this.tester = h('div', { class: 'input-tester', tabindex: '0', 'aria-label': 'Input tester, press keys here or use a controller' },
+        this.tester = h('div', { class: 'input-tester', tabindex: '0', 'aria-label': t('play.tester.label') },
             this.testerLines = h('div', { 'aria-live': 'polite' }));
         this.testerKeys = new Set();
         const test = (e, down) => {
@@ -842,20 +925,20 @@ export class PlayPage {
             this.updateTester(true);
         });
         this.inputPanel = h('details', { class: 'input-settings' },
-            h('summary', {}, 'Input settings and tester'),
-            h('p', { class: 'muted small' }, 'Choose a key, then press the key that takes its action. Arrow keys, letters and digits work, apart from H, M and F. The browser keeps these settings.'),
+            h('summary', {}, t('play.input.summary')),
+            h('p', { class: 'muted small' }, t('play.input.lead')),
             h('table', { class: 'controls-table key-bindings' }, h('tbody', {}, rows)),
             h('div', { class: 'setup-row' },
-                h('label', { class: 'field' }, 'Stick dead zone', h('div', { class: 'ability' }, this.deadZone, this.deadZoneShown)),
-                ...[0, 1].map((side) => h('label', { class: 'field' }, `${side ? 'Right' : 'Left'} side device, two people`, this.deviceSelects[side]))),
+                h('label', { class: 'field' }, t('play.input.deadZone'), h('div', { class: 'ability' }, this.deadZone, this.deadZoneShown)),
+                ...[0, 1].map((side) => h('label', { class: 'field' }, t(side ? 'play.input.device.right' : 'play.input.device.left'), this.deviceSelects[side]))),
             this.inputNote,
-            h('h3', {}, 'Tester'),
+            h('h3', {}, t('play.tester.title')),
             this.tester,
             h('div', { class: 'play-row' }, h('button', { type: 'button', class: 'btn', onclick: () => {
                 this.input = defaultSettings();
                 this.saveInput();
-                this.inputNote.textContent = 'The input settings are back to their defaults.';
-            } }, 'Reset input settings')));
+                this.inputNote.textContent = t('play.input.resetDone');
+            } }, t('play.input.reset'))));
         this.inputPanel.addEventListener('toggle', () => this.updateTester(true));
         this.showInput();
         return this.inputPanel;
@@ -866,8 +949,9 @@ export class PlayPage {
         for (const binding of BINDINGS) {
             const button = this.keyButtons[binding.id];
             const code = this.input.keys[binding.id];
-            button.textContent = this.listening === binding.id ? 'Press a key' : keyLabel(code);
-            button.setAttribute('aria-label', `${binding.label}, key ${this.listening === binding.id ? 'waiting' : keyLabel(code)}. Choose to change it.`);
+            button.textContent = this.listening === binding.id ? t('play.input.pressKey') : keyLabel(code);
+            button.setAttribute('aria-label', this.listening === binding.id ? t('play.input.bindWaiting', { action: bindingLabel(binding) })
+                : t('play.input.bind', { action: bindingLabel(binding), key: keyLabel(code) }));
             button.setAttribute('aria-pressed', String(this.listening === binding.id));
         }
         this.deadZone.value = String(this.input.deadZone);
@@ -875,14 +959,14 @@ export class PlayPage {
         this.deviceSelects.forEach((select, side) => {
             select.value = this.input.devices[side];
         });
-        this.keyTable.replaceChildren(h('h3', {}, 'Keyboard'), controlsTable(keyboardControls(this.input)));
+        this.keyTable.replaceChildren(h('h3', {}, KEYBOARD), controlsTable(keyboardControls(this.input)));
     }
 
     saveInput() {
         this.releaseKeys();
         this.keys = keyMap(this.input);
         if (!saveSettings(this.input)) {
-            this.inputNote.textContent = 'The browser keeps no settings here, so they hold for this visit only.';
+            this.inputNote.textContent = t('play.input.notKept');
         }
         this.showInput();
         this.updateTester(true);
@@ -894,7 +978,7 @@ export class PlayPage {
         }
         this.listening = id;
         if (id) {
-            this.inputNote.textContent = 'Press the new key, or Esc to keep the old one.';
+            this.inputNote.textContent = t('play.input.listening');
         }
         this.showInput();
     }
@@ -914,12 +998,12 @@ export class PlayPage {
         }
         const problem = keyProblem(this.input, id, e.code);
         if (problem) {
-            this.inputNote.textContent = keyMessage(problem);
+            this.inputNote.textContent = t(`play.input.problem.${problem}`);
             return;
         }
         this.input.keys = { ...this.input.keys, [id]: e.code };
         this.listening = null;
-        this.inputNote.textContent = `${BINDINGS.find((b) => b.id === id).label} now uses ${keyLabel(e.code)}.`;
+        this.inputNote.textContent = t('play.input.bound', { action: bindingLabel(BINDINGS.find((b) => b.id === id)), key: keyLabel(e.code) });
         this.saveInput();
     }
 
@@ -934,12 +1018,12 @@ export class PlayPage {
             return;
         }
         this.testerAt = time;
-        const names = (list) => (list.length ? [...new Set(list)].join(', ').replaceAll('_', ' ') : 'nothing held');
+        const names = (list) => (list.length ? [...new Set(list)].map(inputName).join(', ') : t('play.tester.nothing'));
         const keys = [...this.testerKeys];
         const mapped = keys.flatMap((code) => this.keys[code] || []);
         const unmapped = keys.filter((code) => !this.keys[code]).map(keyLabel);
-        const lines = [`Keyboard, ${document.activeElement === this.tester ? names(mapped) : 'focus the tester to try keys'}`
-            + (unmapped.length ? `, ${unmapped.join(' and ')} not in use` : '')];
+        const held = document.activeElement === this.tester ? names(mapped) : t('play.tester.focus');
+        const lines = [unmapped.length ? t('play.tester.keyboardUnused', { held, keys: joinAnd(unmapped) }) : t('play.tester.keyboard', { held })];
         const list = navigator.getGamepads ? Array.from(navigator.getGamepads() || []) : [];
         for (const pad of list) {
             const device = pad && pad.connected ? this.pads.get(pad.index) : null;
@@ -947,10 +1031,10 @@ export class PlayPage {
                 continue;
             }
             const { held, x, y } = this.padHeld(pad, device.entry.layout);
-            lines.push(`Controller in slot ${pad.index + 1}, stick ${x.toFixed(2)} and ${y.toFixed(2)}, ${names([...held])}`);
+            lines.push(t('play.tester.pad', { slot: pad.index + 1, x: x.toFixed(2), y: y.toFixed(2), held: names([...held]) }));
         }
         if (lines.length === 1) {
-            lines.push('No controller found yet. Connect one and press a button.');
+            lines.push(t('play.tester.noPad'));
         }
         const text = lines.join('\n');
         if (text !== this.testerText) {
@@ -985,7 +1069,11 @@ export class PlayPage {
         if (e.code === 'Escape' && down) {
             e.preventDefault();
             e.stopImmediatePropagation();
-            this.pause(this.menu.hidden);
+            if (!this.menu.hidden && !this.card.hidden) {
+                this.closeCard();
+            } else {
+                this.pause(this.menu.hidden);
+            }
             return;
         }
         if (e.target.closest('button, a') || !this.menu.hidden) {
@@ -1029,7 +1117,7 @@ export class PlayPage {
             seen.add(pad.index);
             let device = this.pads.get(pad.index);
             if (!device || device.gpId !== pad.id) {
-                device = new Device(`pad${pad.index}`, 'Controller');
+                device = new Device(`pad${pad.index}`, CONTROLLER);
                 device.index = pad.index;
                 device.gpId = pad.id;
                 device.mapping = pad.mapping;
@@ -1038,8 +1126,9 @@ export class PlayPage {
                 device.custom = !!(stored && stored.layout);
                 device.entry = device.custom ? stored : { style: detectStyle(pad.id), layout: STANDARD };
                 this.pads.set(pad.index, device);
-                this.notice(`A controller is connected${this.pads.size > 1 ? `, controller ${this.pads.size}` : ''}.`);
+                this.notice(this.pads.size > 1 ? t('play.notice.connectedNumber', { number: this.pads.size }) : t('play.notice.connected'));
                 if (pad.mapping !== 'standard' && !device.custom && this.built) {
+                    this.offerPad = pad.index;
                     this.offer.hidden = false;
                 }
             }
@@ -1077,7 +1166,7 @@ export class PlayPage {
                 if (this.padSetup && this.padSetup.index === index) {
                     this.closePadSetup(false);
                 }
-                this.notice('A controller is disconnected.');
+                this.notice(t('play.notice.disconnected'));
                 this.flush();
             }
         }
@@ -1312,7 +1401,7 @@ export class PlayPage {
             this.closePadSetup(false);
         } else if (!this.menu.hidden && !this.card.hidden) {
             const inside = this.card.contains(document.activeElement);
-            this.toggleCard(false);
+            this.closeCard();
             if (inside) {
                 padFocus(this.controlsButton);
             }
@@ -1455,7 +1544,8 @@ export class PlayPage {
 
     // What the browser reports of the controller in use, to tell a standard one from a custom one.
     padReport(pad) {
-        return `Controller: ${pad.gpId}, mapping ${pad.mapping === 'standard' ? 'standard' : 'custom'}${pad.custom ? ', set up here' : ''}`;
+        const mapping = t(pad.mapping === 'standard' ? 'play.pad.mapping.standard' : 'play.pad.mapping.custom');
+        return t(pad.custom ? 'play.pad.reportSetUp' : 'play.pad.report', { id: pad.gpId, mapping });
     }
 
     // The tables, the pause menu and the Help page draw the style of the controller in use.
@@ -1466,8 +1556,8 @@ export class PlayPage {
         }
         this.shownStyle = style;
         const name = PAD_STYLES[style].name;
-        this.padTable.replaceChildren(h('h3', {}, `Controller, ${name}`), controlsTable(PAD_CONTROLS, style));
-        this.menuHint.replaceChildren(padIcon(style, 'south'), ' selects, ', padIcon(style, 'east'), ' resumes');
+        this.padTable.replaceChildren(h('h3', {}, t('play.controls.pad', { style: name })), controlsTable(PAD_CONTROLS, style));
+        this.menuHint.replaceChildren(...tn('play.pause.hint', { select: padIcon(style, 'south'), resume: padIcon(style, 'east') }));
         const help = document.querySelector('.pad-help');
         if (help) {
             help.replaceChildren(...padHelp(style));
@@ -1477,7 +1567,7 @@ export class PlayPage {
     // The report line of a controller and the action that sets it up.
     padTools(pad) {
         return pad ? [h('p', { class: 'muted small pad-report' }, this.padReport(pad)),
-            h('button', { type: 'button', class: 'btn', onclick: () => this.openPadSetup() }, 'Set up controller')] : [];
+            h('button', { type: 'button', class: 'btn', onclick: () => this.openPadSetup() }, t('play.padSetup.open'))] : [];
     }
 
     updatePadNote() {
@@ -1485,8 +1575,7 @@ export class PlayPage {
             const n = this.pads.size;
             const pad = this.activePad();
             this.padNote.replaceChildren(
-                h('p', {}, n ? `${n} ${n === 1 ? 'controller' : 'controllers'} connected. Whichever device you used last drives your player.`
-                    : 'No controller found yet. Connect one and press a button, the page picks it up at once.'),
+                h('p', {}, n ? t('play.pads.connected', { count: n }) : t('play.pads.none')),
                 ...this.padTools(pad));
             this.menuHint.hidden = !n;
         }
@@ -1497,9 +1586,9 @@ export class PlayPage {
             return;
         }
         const pads = this.pads.size;
-        const parts = [`${this.lastDevice || 'Keyboard'}`];
-        if (pads && this.lastDevice !== 'Controller') {
-            parts.push(`${pads} ${pads === 1 ? 'controller' : 'controllers'} ready`);
+        const parts = [`${this.lastDevice || KEYBOARD}`];
+        if (pads && this.lastDevice !== CONTROLLER) {
+            parts.push(t('play.status.pads', { count: pads }));
         }
         const entry = this.game && this.game.entry;
         // The engine's action of each person, as the game last reported it, once every second or
@@ -1508,24 +1597,85 @@ export class PlayPage {
         const two = this.game && this.game.humans[0] && this.game.humans[1];
         taken.forEach((action, side) => {
             if (typeof action === 'number') {
-                parts.push(`${two ? `${side ? 'right' : 'left'} ` : ''}engine action ${actionName(action)}`);
+                // GRF keeps a held direction, sprint and dribble as sticky actions, so the engine
+                // takes no new action while they stay held, and the line names what is held.
+                const where = two ? (side ? '.right' : '.left') : '';
+                parts.push(action === 0 ? t(`play.status.idle${where}`) : t(`play.status.action${where}`, { action: engineAction(action) }));
+                parts.push(...this.heldParts(side, action));
             }
         });
         const late = entry && entry.late;
         if (late) {
-            parts.push(`built-in AI stood in for ${late} ${late === 1 ? 'step' : 'steps'}`);
+            parts.push(t('play.status.late', { count: late }));
         }
         this.status.textContent = parts.join(', ');
     }
 
+    // The sticky actions that a person's side holds, the direction while the engine's action is
+    // none of the directions, then sprint and dribble, each as a part of the status line.
+    heldParts(side, action) {
+        const device = this.game && this.game.humans[side] ? this.activeOf(side) : null;
+        if (!device) {
+            return [];
+        }
+        const parts = [];
+        const direction = action === 0 || action > 8 ? this.heldDirection(side) : null;
+        if (direction) {
+            parts.push(t('play.status.held.direction', { direction }));
+        }
+        for (const name of ['sprint', 'dribble']) {
+            if (device.held.has(name)) {
+                parts.push(t(`play.status.held.${name}`));
+            }
+        }
+        return parts;
+    }
+
+    // The direction a person's side holds, as GRF names its sticky direction, or null.
+    heldDirection(side) {
+        const device = this.game && this.game.humans[side] ? this.activeOf(side) : null;
+        if (!device) {
+            return null;
+        }
+        const vertical = ['up', 'down'].find((n) => device.held.has(n) && !device.held.has(n === 'up' ? 'down' : 'up'));
+        const horizontal = ['left', 'right'].find((n) => device.held.has(n) && !device.held.has(n === 'left' ? 'right' : 'left'));
+        const names = [vertical, horizontal].filter(Boolean).map((n) => STICKY_NAMES[n]);
+        // The names join as one of GRF's directions, such as top left, in the page's language.
+        return names.length ? tOr(`play.engineAction.${names.join('_')}`, names.join(' ')) : null;
+    }
+
+    // The controls card from the pause menu, a dialog that takes the focus until Esc or the
+    // back button closes it, and gives the focus back to Controls.
+    openCard() {
+        // The card hides and shows again, so the dialogs of the page take it up and focus it.
+        this.card.hidden = true;
+        this.toggleCard(true);
+        this.card.setAttribute('role', 'dialog');
+        this.card.setAttribute('aria-label', t('play.card.dialog.label'));
+    }
+
+    closeCard() {
+        const inside = this.card.contains(document.activeElement);
+        this.toggleCard(false);
+        if (inside) {
+            this.controlsButton.focus();
+        }
+    }
+
     toggleCard(on, ms = 0) {
         clearTimeout(this.cardTimer);
+        if (this.card.hidden && this.card.getAttribute('role') === 'dialog') {
+            // A card that shows during play is no dialog, so it never takes the focus of the game.
+            this.card.removeAttribute('role');
+            this.card.removeAttribute('aria-label');
+            this.card.removeAttribute('tabindex');
+        }
         const pad = this.activePad();
-        if (pad && this.lastDevice === 'Controller') {
+        if (pad && this.lastDevice === CONTROLLER) {
             const style = pad.entry.style;
-            this.card.replaceChildren(h('h3', {}, `Controller, ${PAD_STYLES[style].name}`), controlsTable(PAD_CONTROLS, style), ...this.padTools(pad));
+            this.card.replaceChildren(h('h3', {}, t('play.controls.pad', { style: PAD_STYLES[style].name })), controlsTable(PAD_CONTROLS, style), ...this.padTools(pad));
         } else {
-            this.card.replaceChildren(h('h3', {}, 'Keyboard'), controlsTable(keyboardControls(this.input)), ...this.padTools(pad));
+            this.card.replaceChildren(h('h3', {}, KEYBOARD), controlsTable(keyboardControls(this.input)), ...this.padTools(pad));
         }
         this.card.hidden = !on;
         if (on && ms) {
@@ -1538,21 +1688,24 @@ export class PlayPage {
     // The controller setup, which asks the style of the controller, then each button in turn by
     // its position, and keeps the layout for the controller's id.
 
-    openPadSetup() {
-        const pad = this.activePad();
+    openPadSetup(index = null) {
+        const pad = (index !== null && this.pads.get(index)) || this.activePad();
         if (!this.built || !pad) {
-            this.app.hud.toast('Connect a controller and press a button first.', 'info', 4000);
+            this.app.hud.toast(t('play.toast.noPad'), 'info', 4000);
             return;
         }
         if (this.playing) {
             this.pause(true);
         }
+        // The notice of a controller without the standard layout comes back on Cancel, unless
+        // the setup saved a layout for that controller.
+        const offered = !this.offer.hidden;
         this.offer.hidden = true;
         this.card.hidden = true;
         this.padSetup = {
             index: pad.index, id: pad.gpId, style: pad.entry.style,
             layout: { ...pad.entry.layout }, step: -1, armed: false, still: null, stillAt: 0, rest: [],
-            back: document.activeElement,
+            back: document.activeElement, offered,
         };
         this.setupPanel.hidden = false;
         this.renderSetup();
@@ -1578,7 +1731,11 @@ export class PlayPage {
                 device.navAt = 0;
             }
             this.shownStyle = null;
-            this.app.hud.toast('The controller is set up, its layout is kept for next time.', 'info', 4000);
+            this.app.hud.toast(t('play.toast.padSaved'), 'info', 4000);
+        }
+        const offeredPad = this.offerPad !== null ? this.pads.get(this.offerPad) : null;
+        if (s.offered && offeredPad && !offeredPad.custom) {
+            this.offer.hidden = false;
         }
         this.refreshStyle();
         this.updatePadNote();
@@ -1603,7 +1760,7 @@ export class PlayPage {
     renderSetup() {
         const s = this.padSetup;
         const button = (text, onclick, cls = 'btn') => h('button', { type: 'button', class: cls, onclick }, text);
-        const cancel = button('Cancel', () => this.closePadSetup(false));
+        const cancel = button(t('play.padSetup.cancel'), () => this.closePadSetup(false));
         if (s.step < 0) {
             const choices = Object.entries(PAD_STYLES).map(([style, info]) => {
                 const b = button(info.name, () => {
@@ -1613,11 +1770,11 @@ export class PlayPage {
                 b.setAttribute('aria-pressed', String(style === s.style));
                 return b;
             });
-            this.setupBox.replaceChildren(h('h2', {}, 'Set up controller'),
-                h('p', {}, 'Which style is your controller? The buttons then show in its own labels.'),
+            this.setupBox.replaceChildren(h('h2', {}, t('play.padSetup.open')),
+                h('p', {}, t('play.padSetup.style')),
                 h('div', { class: 'pad-setup-row' }, choices),
-                h('p', { class: 'muted small' }, `Controller ${this.padNumber(s.index)}: ${s.id}`),
-                ...(this.pads.size > 1 ? [h('p', { class: 'muted small' }, 'To set up another controller, press a button on it.')] : []),
+                h('p', { class: 'muted small' }, t('play.padSetup.which', { number: this.padNumber(s.index), id: s.id })),
+                ...(this.pads.size > 1 ? [h('p', { class: 'muted small' }, t('play.padSetup.another'))] : []),
                 h('div', { class: 'pad-setup-row' }, cancel));
             choices[Object.keys(PAD_STYLES).indexOf(s.style)].focus();
             return;
@@ -1625,24 +1782,24 @@ export class PlayPage {
         const pos = SETUP_STEPS[s.step];
         let prompt;
         if (pos === 'stickX') {
-            prompt = 'Push the left stick to the right';
+            prompt = t('play.padSetup.stickX');
         } else if (pos === 'stickY') {
-            prompt = 'Push the left stick down';
+            prompt = t('play.padSetup.stickY');
         } else if (DIRECTIONS.has(pos)) {
-            prompt = `Press ${pos} on the D-pad`;
+            prompt = t(`play.padSetup.dpad.${pos}`);
         } else {
-            prompt = `Press ${padInfo(s.style, pos)[3]}`;
+            prompt = t('play.padSetup.press', { button: padInfo(s.style, pos)[3] });
         }
         const icon = pos.startsWith('stick') ? 'stick' : DIRECTIONS.has(pos) ? 'dpad' : pos;
         const sketch = h('div', { class: 'pad-sketch-box' });
         sketch.innerHTML = padSketch(s.style, pos);
-        const skip = button('Skip', () => this.setupStep(s.step + 1));
-        this.setupBox.replaceChildren(h('h2', {}, 'Set up controller'),
-            h('p', { class: 'muted small' }, `Step ${s.step + 1} of ${SETUP_STEPS.length}, ${PAD_STYLES[s.style].name}`),
+        const skip = button(t('play.padSetup.skip'), () => this.setupStep(s.step + 1));
+        this.setupBox.replaceChildren(h('h2', {}, t('play.padSetup.open')),
+            h('p', { class: 'muted small' }, t('play.padSetup.step', { step: s.step + 1, total: SETUP_STEPS.length, style: PAD_STYLES[s.style].name })),
             h('p', { class: 'pad-prompt keys', 'aria-live': 'polite' }, padIcon(s.style, icon), prompt),
             sketch,
-            h('p', { class: 'muted small' }, 'Release every button, then press. Skip keeps what this position had.'),
-            h('div', { class: 'pad-setup-row' }, button('Back', () => this.setupStep(s.step - 1)), skip, cancel));
+            h('p', { class: 'muted small' }, t('play.padSetup.release')),
+            h('div', { class: 'pad-setup-row' }, button(t('play.padSetup.back'), () => this.setupStep(s.step - 1)), skip, cancel));
         skip.focus();
     }
 
@@ -1712,9 +1869,45 @@ export class PlayPage {
         return group;
     }
 
+    // The frame rate of the picture while a game plays, which offers a lower quality once for each
+    // visit below the rate at which Watch offers the 2D view, and never after it was declined.
+    measureFrames(on) {
+        const now = performance.now();
+        const dt = this.slowAt ? (now - this.slowAt) / 1000 : 0;
+        this.slowAt = now;
+        if (!on || this.game.paused || document.hidden || dt <= 0 || dt > 1) {
+            this.slowFrames = 0;
+            this.slowSeconds = 0;
+            return;
+        }
+        this.slowFrames = (this.slowFrames || 0) + 1;
+        this.slowSeconds = (this.slowSeconds || 0) + dt;
+        if (this.slowSeconds < SLOW_WINDOW) {
+            return;
+        }
+        const fps = this.slowFrames / this.slowSeconds;
+        this.slowFrames = 0;
+        this.slowSeconds = 0;
+        let declined = false;
+        try {
+            declined = localStorage.getItem(SLOW_DECLINED) === 'true';
+        } catch {
+            // Without storage the offer shows once for this visit.
+        }
+        if (fps >= SLOW_FPS || this.slowOffered || declined || this.app.settings.quality === 'low'
+            || !offersView2d(location.search)) {
+            return;
+        }
+        this.slowOffered = true;
+        const rate = Math.max(1, Math.round(fps));
+        this.slowText.textContent = t('play.slow.text', { count: rate });
+        this.slowOffer.hidden = false;
+    }
+
     placeMarker(pose, s) {
         const game = this.game;
         const on = !!(game && game.started && !game.ended && this.app.source === game.source && this.app.page === 'play' && s.a);
+        this.measureFrames(on);
         this.marker.visible = on;
         if (!on) {
             return;

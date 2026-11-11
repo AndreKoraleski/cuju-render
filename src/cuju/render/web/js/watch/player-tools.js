@@ -6,6 +6,7 @@
 // roof keeps no label and takes no click.
 
 import * as THREE from 'three';
+import { t } from '../core/i18n.js';
 import { h } from '../teams/library.js';
 import { blocksPlayer } from '../world/occlusion.js';
 
@@ -51,8 +52,8 @@ export class PlayerTools {
         const trail = document.getElementById('trail');
         const anchor = trail && trail.closest('label');
         if (anchor) {
-            anchor.after(check('labels-on', 'Player labels, the number and name over each visible player', 'labels', 'playerLabels'),
-                check('click-follow', 'Click a player to follow with the player camera', 'picking', 'clickFollow'));
+            anchor.after(check('labels-on', t('playerTools.labels'), 'labels', 'playerLabels'),
+                check('click-follow', t('playerTools.clickFollow'), 'picking', 'clickFollow'));
         }
         // A short click without a drag picks, so dragging keeps turning the camera.
         const canvas = app.view.renderer.domElement;

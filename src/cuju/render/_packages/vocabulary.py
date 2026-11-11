@@ -12,6 +12,7 @@ in `web/js/presentation/commands.js` and `catalog.js`.
 
 from __future__ import annotations
 
+import difflib
 import re
 from typing import Any
 
@@ -375,6 +376,11 @@ def overlays(value: Any) -> dict[str, Any]:
 def _music(key: str, spec: Any, file: Any) -> dict[str, Any]:
     _name(key, 'the name of music')
     stems = spec.get('stems') if isinstance(spec, dict) else None
+    if isinstance(stems, dict):
+        raise ArgumentError(
+            f'expected the stems of music {key} as a list of files, found a mapping, and a music '
+            'action picks stems by their places in that list from 0'
+        )
     if not isinstance(stems, list) or not 0 < len(stems) <= 16:
         raise ArgumentError(f'expected music {key} with one to sixteen stems')
     return {
@@ -510,9 +516,15 @@ def _action(action: Any, index: int, names: dict[str, Any]) -> dict[str, Any]:
         raise ArgumentError(f'expected action {index} to name one of {ACTIONS}')
     out = dict(action)
     if 'audio' in action and action['audio'] not in names.get('cues', {}):
-        raise ArgumentError(f'expected action {index} to play a cue of the audio')
+        raise ArgumentError(
+            f'expected action {index} to play a cue of the audio, found {action["audio"]!r}, '
+            f'{_among(names.get("cues", {}), "cues")}'
+        )
     if 'effect' in action and action['effect'] not in names.get('effects', {}):
-        raise ArgumentError(f'expected action {index} to start an effect of the manifest')
+        raise ArgumentError(
+            f'expected action {index} to start an effect of the manifest, found '
+            f'{action["effect"]!r}, {_among(names.get("effects", {}), "effects")}'
+        )
     if 'clip' in action and not isinstance(action['clip'], str):
         raise ArgumentError(f'expected action {index} to name a clip role')
     if 'claim' in action and action['claim'] not in CLAIMS:
@@ -542,8 +554,27 @@ def _action(action: Any, index: int, names: dict[str, Any]) -> dict[str, Any]:
     if 'time' in action:
         out['time'] = _time(action['time'], f'action {index}')
     if 'music' in action and action['music'] not in names.get('music', {}):
-        raise ArgumentError(f'expected action {index} to play music of the audio')
+        raise ArgumentError(
+            f'expected action {index} to play music of the audio, found {action["music"]!r}, '
+            f'{_among(names.get("music", {}), "music")}'
+        )
     return out
+
+
+def _among(names: Any, what: str) -> str:
+    """Returns the end of a message that names what a manifest holds, or that it holds none."""
+    names = sorted(str(name) for name in names)
+    if not names:
+        return f'and the manifest keeps no {what}'
+    shown = ', '.join(names[:8]) + (f' and {len(names) - 8} more' if len(names) > 8 else '')
+    return f'the {what} are {shown}'
+
+
+def _event(value: Any) -> str:
+    """Returns the end of a message for a reflex on an event outside the catalog."""
+    near = difflib.get_close_matches(value, EVENTS, 1, 0.5) if isinstance(value, str) else []
+    hint = f', the nearest is {near[0]}' if near else ''
+    return f'found {value!r}{hint}, and the section Events of docs/presentation.md lists them'
 
 
 def reflexes(value: Any, names: dict[str, Any], warnings: list[str]) -> list[dict[str, Any]]:
@@ -551,10 +582,12 @@ def reflexes(value: Any, names: dict[str, Any], warnings: list[str]) -> list[dic
     if not isinstance(value, list) or len(value) > MAXIMUM_REFLEXES:
         raise ArgumentError(f'expected reflexes as a list of at most {MAXIMUM_REFLEXES}')
     out = []
-    for index, spec in enumerate(value):
+    # Reflexes and their actions count from 1 in messages, as an author counts them.
+    for index, spec in enumerate(value, 1):
         try:
             if not isinstance(spec, dict) or spec.get('on') not in EVENTS:
-                raise ArgumentError(f'expected reflex {index} on an event of the catalog')
+                found = _event(spec.get('on') if isinstance(spec, dict) else spec)
+                raise ArgumentError(f'expected reflex {index} on an event of the catalog, {found}')
             item: dict[str, Any] = {'on': spec['on'], 'phase': spec.get('phase', 'occur')}
             if item['phase'] not in PHASES:
                 raise ArgumentError(f'expected the phase of reflex {index} among {PHASES}')
@@ -569,7 +602,7 @@ def reflexes(value: Any, names: dict[str, Any], warnings: list[str]) -> list[dic
             actions = spec.get('do')
             if not isinstance(actions, list) or not 0 < len(actions) <= MAXIMUM_ACTIONS:
                 raise ArgumentError(f'expected one to {MAXIMUM_ACTIONS} actions in reflex {index}')
-            item['do'] = [_action(action, i, names) for i, action in enumerate(actions)]
+            item['do'] = [_action(action, i, names) for i, action in enumerate(actions, 1)]
             out.append(item)
         except ArgumentError as error:
             warnings.append(f'reflex {index} left out, {error}')

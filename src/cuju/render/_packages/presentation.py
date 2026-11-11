@@ -88,8 +88,36 @@ CONTENT_TYPES = {
 _PART = re.compile(r'[a-z0-9][a-z0-9_.-]{0,59}')
 _DEVICES = re.compile(r'(con|prn|aux|nul|com[0-9]|lpt[0-9])', re.IGNORECASE)
 _ID = re.compile(r'[A-Za-z0-9_.-]{1,40}')
-# An import or a re-export, which a single file module may not hold.
-_IMPORT = re.compile(r'^\s*import\b(?!\s*\.)|\bimport\s*\(|^\s*export\b[^;\n]*\bfrom\s*[\'"]', re.M)
+# The pieces of JavaScript that `module_problem` tells apart, to find imports and re-exports.
+_LINE_ENDS = '\n\r\u2028\u2029'
+_NUMBER = re.compile(
+    r'0[xXoObB][0-9a-fA-F_]*n?|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?[\d_]*)?n?'
+)
+_ESCAPE = re.compile(r'\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))')
+_PUNCTUATORS = ('>>>=', '...', '=>', '++', '--')
+# The words after which a slash starts a regular expression rather than a division.
+_BEFORE_REGEX = frozenset(
+    (
+        'return',
+        'typeof',
+        'instanceof',
+        'in',
+        'of',
+        'new',
+        'delete',
+        'void',
+        'throw',
+        'case',
+        'do',
+        'else',
+        'yield',
+        'await',
+        'extends',
+    )
+)
+# The words of a statement whose head in parentheses a regular expression may follow.
+_HEADS = frozenset(('if', 'while', 'for', 'with'))
+_DOTS = (('punct', '.'), ('punct', '?.'))
 
 DRIVERS = ('grf', 'grf+layers', 'team', 'worker')
 ROOT_MOTION = ('ignore', 'cosmetic')
@@ -175,6 +203,14 @@ _SECTIONS = (
     'post',
     'overlays',
 )
+
+
+def words(values: Any, last: str = 'or') -> str:
+    """Returns names as a list in words, such as `spin, oscillate or curve`."""
+    values = [str(value) for value in values]
+    if len(values) < 2:
+        return ''.join(values)
+    return f'{", ".join(values[:-1])} {last} {values[-1]}'
 
 
 def _number(value: Any, low: float, high: float, name: str) -> float:
@@ -293,7 +329,7 @@ def _rig(value: Any, file: Any, warnings: list[str]) -> dict[str, Any]:
     if not isinstance(driver, dict) or not all(
         role in ('outfield', 'goalkeeper') and d in DRIVERS for role, d in driver.items()
     ):
-        raise ArgumentError(f'expected the drivers of the roles among {DRIVERS}')
+        raise ArgumentError(f'expected the drivers of the roles among {words(DRIVERS)}')
     out['driver'] = dict(driver)
     out['sockets'] = {}
     for name, socket in _mapping(spec.get('sockets', {}), 64, 'sockets').items():
@@ -314,7 +350,7 @@ def _rig(value: Any, file: Any, warnings: list[str]) -> dict[str, Any]:
                 out['bounds'][key] = _number(bounds[key], 0, high, f'the bounds {key}')
     out['rootMotion'] = spec.get('rootMotion', 'ignore')
     if out['rootMotion'] not in ROOT_MOTION:
-        raise ArgumentError(f'expected root motion among {ROOT_MOTION}')
+        raise ArgumentError(f'expected root motion among {words(ROOT_MOTION)}')
     if 'blend' in spec:
         out['blend'] = _number(spec['blend'], 0.01, 2, 'the blend time')
     if 'joints' in spec:
@@ -356,7 +392,7 @@ def _rig(value: Any, file: Any, warnings: list[str]) -> dict[str, Any]:
         if not isinstance(spec['layers'], list) or len(spec['layers']) > 8:
             raise ArgumentError('expected the layers of the rig as a list of at most 8')
         out['layers'] = []
-        for index, item in enumerate(spec['layers']):
+        for index, item in enumerate(spec['layers'], 1):
             try:
                 out['layers'].append(_layer(item))
             except ArgumentError as error:
@@ -480,7 +516,8 @@ def _curve(value: Any, name: str) -> Any:
         or re.fullmatch(r'jointSpeed:.{1,80}', source)
         or re.fullmatch(r'role:[a-z.]{1,40}', source)
     ):
-        raise ArgumentError(f'expected an input of {name} among {INPUTS}, jointSpeed or role')
+        inputs = words([*INPUTS, 'jointSpeed', 'role'])
+        raise ArgumentError(f'expected an input of {name} among {inputs}')
     out: dict[str, Any] = {'input': source}
     if 'keys' in value:
         keys = value['keys']
@@ -493,16 +530,27 @@ def _curve(value: Any, name: str) -> Any:
     return out
 
 
+def _behaviour_name(spec: Any, index: int) -> str:
+    """Returns how messages name a behaviour, by its id or by its place counted from 1."""
+    identifier = spec.get('id') if isinstance(spec, dict) else None
+    return f'behaviour {identifier if isinstance(identifier, str) else index + 1}'
+
+
 def behaviour(spec: Any, index: int = 0) -> dict[str, Any]:
     """Checks one persistent behaviour of section 7.5 and returns it.
+
+    Args:
+        spec: The behaviour as the manifest or a worker gives it.
+        index: Its place in the list from 0, which names it in messages from 1 when it has no id.
 
     Raises:
         ArgumentError: If the behaviour is of an unknown type or holds a value out of range.
     """
+    name = _behaviour_name(spec, index)
     if not isinstance(spec, dict) or spec.get('type') not in BEHAVIOURS:
-        raise ArgumentError(f'expected behaviour {index} of a type among {BEHAVIOURS}')
+        found = spec.get('type') if isinstance(spec, dict) else spec
+        raise ArgumentError(f'expected {name} of a type among {words(BEHAVIOURS)}, found {found!r}')
     kind = spec['type']
-    name = f'behaviour {spec.get("id", index)}'
     out: dict[str, Any] = dict(spec)
     out['id'] = _identifier(spec.get('id', f'{kind}{index}'), 'the id of a behaviour')
     if 'weight' in spec:
@@ -519,7 +567,7 @@ def behaviour(spec: Any, index: int = 0) -> dict[str, Any]:
     ):
         raise ArgumentError(f'expected the seed of {name} as entity, number, index or an integer')
     if 'channel' in spec and spec['channel'] not in CHANNELS:
-        raise ArgumentError(f'expected the channel of {name} among {CHANNELS}')
+        raise ArgumentError(f'expected the channel of {name} among {words(CHANNELS)}')
     for key in ('rate', 'amp', 'freq', 'offset', 'goal', 'gain', 'value'):
         if key in spec:
             out[key] = _curve(spec[key], name)
@@ -542,7 +590,7 @@ def behaviour(spec: Any, index: int = 0) -> dict[str, Any]:
             raise ArgumentError(f'expected the keys of {name} as 2 to 64 points')
         out['keys'] = [_vector(key, 2, 1e6, f'a key of {name}') for key in keys]
         if spec.get('clock', 'cosmetic') not in CLOCKS:
-            raise ArgumentError(f'expected the clock of {name} among {CLOCKS}')
+            raise ArgumentError(f'expected the clock of {name} among {words(CLOCKS)}')
     elif kind == 'materialParam' and not spec.get('uniform'):
         raise ArgumentError(f'expected the uniform of {name}')
     elif kind == 'audioParam' and not (spec.get('processor') and spec.get('param')):
@@ -567,7 +615,7 @@ def _behaviours(value: Any, warnings: list[str]) -> list[dict[str, Any]]:
         try:
             out.append(behaviour(spec, index))
         except ArgumentError as error:
-            warnings.append(f'behaviour {index} left out, {error}')
+            warnings.append(f'{_behaviour_name(spec, index)} left out, {error}')
     if len({item['id'] for item in out}) != len(out):
         raise ArgumentError('expected behaviours of distinct ids')
     return out
@@ -626,7 +674,7 @@ def _shader_entry(item: dict[str, Any], name: str, file: Any) -> dict[str, Any]:
     """Checks the mode, uniforms, textures and options of the custom shader of a material."""
     out: dict[str, Any] = {'mode': item.get('mode', 'chunks')}
     if out['mode'] not in _glsl.MODES:
-        raise ArgumentError(f'expected the mode of the shader of {name} among {_glsl.MODES}')
+        raise ArgumentError(f'expected the mode of the shader of {name} among {words(_glsl.MODES)}')
     out['uniforms'] = {}
     for key, value in _mapping(item.get('uniforms', {}), 16, f'the uniforms of {name}').items():
         if not _UNIFORM.fullmatch(str(key)):
@@ -643,7 +691,7 @@ def _shader_entry(item: dict[str, Any], name: str, file: Any) -> dict[str, Any]:
     ):
         if key in item:
             if item[key] not in choices:
-                raise ArgumentError(f'expected the {key} of {name} among {choices}')
+                raise ArgumentError(f'expected the {key} of {name} among {words(choices)}')
             out[key] = item[key]
     for key in ('transparent', 'depthWrite'):
         if key in item:
@@ -690,7 +738,7 @@ def _quality(value: Any) -> dict[str, Any]:
     out = {}
     for level, item in spec.items():
         if level not in QUALITIES or not isinstance(item, dict):
-            raise ArgumentError(f'expected quality by {QUALITIES}')
+            raise ArgumentError(f'expected quality by {words(QUALITIES)}')
         drop = item.get('drop', [])
         if not isinstance(drop, list) or not all(isinstance(d, str) and len(d) <= 60 for d in drop):
             raise ArgumentError('expected what a quality drops as a list of names')
@@ -805,14 +853,269 @@ def _glb(data: bytes) -> None:
 def check_path(name: str) -> str:
     """Returns the path of a file inside a package, or raises `ArgumentError` for a bad one."""
     parts = name.split('/') if isinstance(name, str) else []
+    if len(parts) > MAXIMUM_DEPTH:
+        raise ArgumentError(
+            f'expected a file in at most {MAXIMUM_DEPTH - 1} folders of the package, found '
+            f'{name!r} in {len(parts) - 1}'
+        )
     if (
-        not 0 < len(parts) <= MAXIMUM_DEPTH
+        not parts
         or not all(_PART.fullmatch(part) and '..' not in part for part in parts)
         or any(_DEVICES.fullmatch(part.split('.')[0]) for part in parts)
-        or PurePosixPath(name).suffix not in MAXIMUM_BYTES
     ):
-        raise ArgumentError(f'expected a lowercase path of a known kind of file, found {name!r}')
+        raise ArgumentError(
+            'expected a path of lowercase letters, digits, dots, dashes and underscores, found '
+            f'{name!r}'
+        )
+    if PurePosixPath(name).suffix not in MAXIMUM_BYTES:
+        raise ArgumentError(
+            f'expected a known kind of file, {", ".join(MAXIMUM_BYTES)}, found {name!r}'
+        )
     return name
+
+
+def _js_name(text: str, i: int) -> tuple[str, int] | None:
+    """Reads the name at `i` with its escapes decoded, and returns it and the offset past it."""
+    out = []
+    j = i
+    if text[j] == '#':
+        out.append('#')
+        j += 1
+    while j < len(text):
+        c = text[j]
+        if c == '\\':
+            match = _ESCAPE.match(text, j)
+            code = int(match.group(1) or match.group(2), 16) if match else 0x110000
+            if code > 0x10FFFF:
+                return None
+            out.append(chr(code))
+            j = match.end()
+        elif c in '$\u200c\u200d' or ('a' + c).isidentifier():
+            out.append(c)
+            j += 1
+        else:
+            break
+    return ''.join(out), j
+
+
+def _quoted(text: str, i: int) -> int:
+    """Returns the offset past the string that opens at `i`, or -1 for one left open."""
+    quote = text[i]
+    j = i + 1
+    while j < len(text):
+        c = text[j]
+        if c == '\\':
+            j += 3 if text.startswith('\r\n', j + 1) else 2
+        elif c == quote:
+            return j + 1
+        elif c in '\n\r':
+            return -1
+        else:
+            j += 1
+    return -1
+
+
+def _regex(text: str, i: int) -> int:
+    """Returns the offset past the regular expression that opens at `i`, or -1 for one left open."""
+    j = i + 1
+    inside = False
+    while j < len(text):
+        c = text[j]
+        if c in _LINE_ENDS:
+            return -1
+        if c == '\\':
+            if j + 1 < len(text) and text[j + 1] in _LINE_ENDS:
+                return -1
+            j += 2
+            continue
+        if c == '[':
+            inside = True
+        elif c == ']':
+            inside = False
+        elif c == '/' and not inside:
+            flags = _js_name(text, j + 1) if j + 1 < len(text) else None
+            return flags[1] if flags else j + 1
+        j += 1
+    return -1
+
+
+def _template(text: str, i: int) -> tuple[int, bool]:
+    """Reads the text of a template from `i` to its end or to a substitution.
+
+    Returns the offset past what it read, -1 for a template left open, and whether a
+    substitution opens there.
+    """
+    j = i
+    while j < len(text):
+        c = text[j]
+        if c == '\\':
+            j += 2
+        elif c == '`':
+            return j + 1, False
+        elif text.startswith('${', j):
+            return j + 2, True
+        else:
+            j += 1
+    return -1, False
+
+
+def _tokens(text: str) -> list[tuple[str, str]] | str:
+    """Splits a module into the tokens that `module_problem` reads, or returns what stops it.
+
+    Comments go, and strings, templates, regular expressions and numbers stay as one token of
+    their kind without their text, so only words and punctuators keep their value.
+    """
+    tokens: list[tuple[str, str]] = []
+    # Each open brace, `brace`, or open substitution of a template, `template`.
+    braces: list[str] = []
+    # Each open parenthesis, and whether it holds the head of an if, while, for or with.
+    parens: list[bool] = []
+    n = len(text)
+    i = 0
+    # Whether a line ends between the last token and the next, which ends a statement before a
+    # `++` or `--`.
+    newline = False
+
+    def add(kind: str, value: str) -> None:
+        nonlocal newline
+        if value in ('++', '--') and tokens and not newline:
+            last = tokens[-1]
+            ends = last[0] in ('number', 'string', 'template', 'regex', 'postfix') or (
+                last[0] == 'word' and last[1] not in _BEFORE_REGEX
+            )
+            if ends or last in (('punct', ')'), ('punct', ']')):
+                kind = 'postfix'
+        tokens.append((kind, value))
+        newline = False
+
+    if text.startswith('#!'):
+        while i < n and text[i] not in _LINE_ENDS:
+            i += 1
+
+    def regex_allowed() -> bool | None:
+        # Whether a slash here starts a regular expression, None when only a parser could say.
+        if not tokens:
+            return True
+        kind, value = tokens[-1]
+        if kind in ('number', 'string', 'template', 'regex'):
+            return False
+        if kind == 'word':
+            return value in _BEFORE_REGEX and not (len(tokens) > 1 and tokens[-2] in _DOTS)
+        if kind == 'head':
+            return True
+        if kind == 'postfix' or value in (')', ']'):
+            return False
+        if value == '}':
+            return None
+        return True
+
+    while i < n:
+        c = text[i]
+        if c.isspace() or c == '\ufeff':
+            newline = newline or c in _LINE_ENDS
+            i += 1
+        elif text.startswith('//', i):
+            while i < n and text[i] not in _LINE_ENDS:
+                i += 1
+        elif text.startswith('/*', i):
+            end = text.find('*/', i + 2)
+            if end < 0:
+                return 'found a comment left open'
+            newline = newline or any(c in _LINE_ENDS for c in text[i:end])
+            i = end + 2
+        elif c in '\'"':
+            i = _quoted(text, i)
+            if i < 0:
+                return 'found a string left open'
+            add('string', '')
+        elif c == '`' or (c == '}' and braces and braces[-1] == 'template'):
+            if c == '}':
+                braces.pop()
+            i, opens = _template(text, i + 1)
+            if i < 0:
+                return 'found a template left open'
+            if opens:
+                braces.append('template')
+                add('punct', '${')
+            else:
+                add('template', '')
+        elif c == '/':
+            allowed = regex_allowed()
+            if allowed is None:
+                return (
+                    'found a slash right after a closing brace, which reads two ways, put the '
+                    'expression in parentheses'
+                )
+            if allowed:
+                i = _regex(text, i)
+                if i < 0:
+                    return 'found a regular expression left open'
+                add('regex', '')
+            else:
+                add('punct', '/')
+                i += 1
+        elif c.isdigit() or (c == '.' and i + 1 < n and text[i + 1].isdigit()):
+            i = _NUMBER.match(text, i).end()
+            add('number', '')
+        elif c in '#\\$' or c.isidentifier():
+            word = _js_name(text, i)
+            if word is None or word[1] == i:
+                return 'found an escape that names no character'
+            add('word', word[0])
+            i = word[1]
+        elif text.startswith('?.', i) and not (i + 2 < n and text[i + 2].isdigit()):
+            add('punct', '?.')
+            i += 2
+        else:
+            value = next((p for p in _PUNCTUATORS if text.startswith(p, i)), c)
+            if value == '(':
+                last = tokens[-1] if tokens else ('', '')
+                before = tokens[-2] if len(tokens) > 1 else ('', '')
+                head = last[0] == 'word' and (
+                    (last[1] in _HEADS and before not in _DOTS)
+                    or (last[1] == 'await' and before == ('word', 'for'))
+                )
+                parens.append(head)
+            elif value == ')' and parens and parens.pop():
+                add('head', ')')
+                i += 1
+                continue
+            elif value == '{':
+                braces.append('brace')
+            elif value == '}' and braces:
+                braces.pop()
+            add('punct', value)
+            i += len(value)
+    if 'template' in braces:
+        return 'found a template left open'
+    return tokens
+
+
+def module_problem(text: str) -> str | None:
+    """Returns why a module may not run as a single file module, or `None` when it may.
+
+    The reader walks the text as JavaScript does, past comments, strings, template literals and
+    regular expressions, and refuses every `import`, static, dynamic or `import.meta`, and every
+    `export` that names a module with `from`. It also refuses a comment, string, template or
+    regular expression left open, and a slash right after a closing brace, whose reading only a
+    parser could tell, so no import hides in what the reader takes for text.
+    """
+    tokens = _tokens(text)
+    if isinstance(tokens, str):
+        return tokens
+    for k, (kind, value) in enumerate(tokens):
+        if kind != 'word' or value not in ('import', 'export') or (k and tokens[k - 1] in _DOTS):
+            continue
+        if value == 'import':
+            return 'found import'
+        after = tokens[k + 1] if k + 1 < len(tokens) else None
+        if after == ('punct', '*'):
+            return 'found export from'
+        if after == ('punct', '{'):
+            close = next((m for m in range(k + 2, len(tokens)) if tokens[m][1] == '}'), None)
+            if close is not None and tokens[close + 1 : close + 2] == [('word', 'from')]:
+                return 'found export from'
+    return None
 
 
 def check_file(name: str, data: bytes) -> None:
@@ -845,8 +1148,11 @@ def check_file(name: str, data: bytes) -> None:
                 json.loads(text)
             except ValueError as error:
                 raise ArgumentError(f'expected {name} as JSON, found {error}') from error
-        if suffix == '.js' and _IMPORT.search(text):
-            raise ArgumentError(f'expected {name} as a single file module without imports')
+        problem = module_problem(text) if suffix == '.js' else None
+        if problem:
+            raise ArgumentError(
+                f'expected {name} as a single file module without imports, {problem}'
+            )
 
 
 def _assets(team_folder: Path, remove: bool) -> dict[str, str]:
@@ -1001,6 +1307,29 @@ def file_path(identifier: str, name: str) -> Path | None:
     return None
 
 
+def content_type(identifier: str, name: str) -> str:
+    """Returns the type that a file of a team's package is served with.
+
+    The page reads a worker as text and hands it to its sandbox, so a module of JavaScript goes
+    out as plain text, which no page runs from its address. Only the sound worklet that the
+    manifest names, which the page loads by its address into an audio context of the team's own,
+    and every module of developer mode, which the page imports, go out as JavaScript.
+    """
+    suffix = PurePosixPath(name).suffix
+    if suffix != '.js':
+        return CONTENT_TYPES[suffix]
+    folder, developer = _team_folder(identifier)
+    if developer:
+        return CONTENT_TYPES[suffix]
+    manifest = None
+    if folder is not None:
+        with contextlib.suppress(ArgumentError, OSError):
+            manifest = _read(folder)
+    audio = manifest.get('audio') if isinstance(manifest, dict) else None
+    worklet = audio.get('worklet') if isinstance(audio, dict) else None
+    return CONTENT_TYPES[suffix] if worklet == name else 'text/plain; charset=utf-8'
+
+
 def sides() -> dict[str, str | None]:
     """Returns the registered team whose presentation each side draws, by the viewer's choice.
 
@@ -1048,8 +1377,11 @@ def assign(changes: Any) -> dict[str, str | None]:
 
 
 # The policy of the sandbox page, which runs its own bootstrap, blob scripts and WebAssembly alone,
-# connects nowhere and may be framed by the pages it names.
+# connects nowhere and may be framed by the pages it names. Its sandbox directive gives the page an
+# opaque origin wherever it loads, in the renderer's frame or opened on its own as a whole window,
+# so it never holds the storage, caches or service worker of the server's origin.
 SANDBOX_POLICY = (
+    'sandbox allow-scripts; '
     "default-src 'none'; script-src '{hash}' blob: 'wasm-unsafe-eval'; worker-src blob:; "
     "connect-src 'none'; img-src blob: data:; frame-ancestors {ancestors}; base-uri 'none'; "
     "form-action 'none'"

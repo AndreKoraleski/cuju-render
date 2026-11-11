@@ -17,8 +17,8 @@ function startWorker() {
 }
 
 // Decodes in a worker made by makeWorker, resolving with the recording or rejecting with the
-// worker's own error. A format error keeps its class, other failures carry `failed` so the caller
-// falls back to the page.
+// worker's own error. A format error keeps its class and takes its message again from its id, in
+// the page's language, other failures carry `failed` so the caller falls back to the page.
 function inWorker(bytes, makeWorker) {
     return new Promise((resolve, reject) => {
         let worker;
@@ -37,7 +37,7 @@ function inWorker(bytes, makeWorker) {
             }
             done();
             if (data.error) {
-                reject(data.format ? new FormatError(data.error) : Object.assign(new Error(data.error), { failed: true }));
+                reject(data.format ? new FormatError(data.messageId, data.messageValues) : Object.assign(new Error(data.error), { failed: true }));
             } else {
                 resolve({ header: data.header, frames: data.frames, annotations: data.annotations || null });
             }

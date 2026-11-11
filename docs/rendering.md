@@ -2,12 +2,11 @@
 
 In cuju, the **renderer** is a browser page that shows matches in three dimensions, with the
 players, the ball, the pitch and the crowd drawn from the art of Google Research Football, or GRF,
-and from free characters, and with sound mixed in the browser. It watches two kinds of source.
-A **recording** is a match saved to a file,
-which the page plays at any speed, forwards and backwards, and a **live source** is one environment
-of a running batch, which the page shows while the batch plays. The renderer ships in the package
-as the module `cuju.render`. Its server needs only Python's standard library beside cuju's own
-dependencies, and its page runs in the browser.
+and from free characters, and with sound mixed in the browser. It watches two kinds of source. A
+**recording** is a match saved to a file, which the page plays at any speed, forwards and backwards,
+and a **live source** is one environment of a running batch, which the page shows while the batch
+plays. The renderer ships in the package as the module `cuju.render`. Its server needs only Python's
+standard library beside cuju's own dependencies, and its page runs in the browser.
 
 The viewer reads states. Watching a match therefore leaves every observation, reward, done flag and
 state of the batch as it would be unwatched, bit for bit. GRF's own renderer runs inside the engine
@@ -37,15 +36,15 @@ The quickest first look is the demo, which needs no script at all.
 cuju render demo
 ```
 
-The demo starts the server, or uses the server that already answers on its port, and plays a
-match between the built in AIs in a process of its own, five a side by default. It opens the page
-on that match as a live source, so play shows within seconds of the command, and one match follows
-another until Ctrl+C, which ends the match, any server that the demo started and the command
-itself. The option `--eleven` plays eleven a side, `--scenario` plays another shipped scenario,
-such as `academy_corner`, `--port` names the port of the server, `--seed` fixes the seed and
-`--no-open` leaves the browser as it is. A server that keeps another folder lists other sources,
-so the demo then says so and opens the page at its start, and the option `--home` of
-`cuju render` gives both the same folder.
+The demo starts the server, or uses the server that already answers on its port, and plays a match
+between the built in AIs in a process of its own, five a side by default. It opens the page on that
+match as a live source, so play shows within seconds of the command, and one match follows another
+until Ctrl+C, which ends the match, any server that the demo started and the command itself within
+about a second. The option `--eleven` plays eleven a side, `--scenario` plays another shipped
+scenario, such as `academy_corner`, `--port` names the port of the server, `--seed` fixes the seed
+and `--no-open` leaves the browser as it is. A server that keeps another folder lists other sources,
+so the demo then says so and opens the page at its start, and the option `--home` of `cuju render`
+gives both the same folder.
 
 The page runs as a local server, which listens on the loopback interface of the machine and keeps
 its files in a hidden folder, `~/.cuju/render` by default. The package installs the command `cuju`,
@@ -129,6 +128,10 @@ the viewer again.
 import cuju.render
 cuju.render.show('sample-11v11', height=480)
 ```
+
+A shipped sample opens by its name in any home folder, also one whose server never started, since
+`show` and `cuju render open` add it to the library first, as `cuju render sample` does. A sample
+in the Trash stays there until it is restored.
 
 The frame shows the page of the server on the machine of the kernel at `127.0.0.1`, which is the
 machine of the browser when Jupyter runs locally. A kernel on another machine needs its port
@@ -219,22 +222,23 @@ recorder = cuju.render.Recorder(
 ```
 
 The summary holds the `episode` number, counted from 0 over the episodes that the recorder ended,
-the `environment`, the `score` of the left and the right team, the number of `goals`, the
-`length` in frames, the `steps` number of the last frame, the `rewards` of each agent of the
-environment summed over the captured steps, their sum as `reward`, and the episode's
-[annotations](#annotations), each with its `frame`, `step`, `player`, `values`, `text`, `action`
-and `probabilities`. The agents count in the batch's order, the left team's first. An episode is
-saved when every condition holds, and `every`
-counts every episode that ends, saved or not. The recorder decides when the episode ends, and
-discards the frames of an episode that it drops without writing anything, which
+the `environment`, the `score` of the left and the right team, the number of `goals`, the `length`
+in frames, the `steps` number of the last frame, the `rewards` of each agent of the environment
+summed over the captured steps, their sum as `reward`, and the episode's
+[annotations](#annotations), each with its `frame`, `step`, `player`, `values`, `text`, `action` and
+`probabilities`. The agents count in the batch's order, the left team's first, and an annotation's
+`player` is the number that `annotate` took, which counts the left team's players first as well,
+whatever order the file lists the teams in. An episode is saved when every condition holds, and
+`every` counts every episode that ends, saved or not. The recorder decides when the episode ends,
+and discards the frames of an episode that it drops without writing anything, which
 `recorder.dropped` counts. A filter reads only what the recorder captured and the rewards that the
 step returned, so filters leave every output of the batch as it was. A call of `recorder.save()`
-writes the frames captured so far whatever the filters say, and a function that raises an
-exception removes the recorder from its batch as any failure of capture does.
-A recorder that captures by hand does so after every step to preserve consecutive motion. Each
-recorder takes one batch of a `MultiDeviceBatch`, as a live source does. A recorder that fails
-while it captures by itself, from a full disk for example, leaves its batch with one warning
-through the logger `cuju`, and the batch steps on.
+writes the frames captured so far whatever the filters say, and a function that raises an exception
+removes the recorder from its batch as any failure of capture does. A recorder that captures by hand
+does so after every step to preserve consecutive motion. Each recorder takes one batch of a
+`MultiDeviceBatch`, as a live source does. A recorder that fails while it captures by itself, from a
+full disk for example, leaves its batch with one warning through the logger `cuju`, and the batch
+steps on.
 
 A full match of eleven a side takes 3001 frames with automatic resets and 3002 without, about 4.4 MB
 on disk, and one of five a side about 1.1 MB with the built in AI on both sides and more when agents
@@ -249,10 +253,40 @@ went to the Trash, so every one of these changes rewrites the small file and lea
 they are. Deleting a recording on the page moves it to the Trash, which keeps both files on disk
 until a recording is deleted from there for good.
 
+The recordings of one run of a [challenge](#challenges) form a group, which the Recordings page
+shows as one row, as [Page layout](#page-layout) describes. The summary of each such recording
+holds its `group`, with the run's identifier `id`, its `title`, `competitor` and `result`, each an
+English text with its message beside it in `title_id` and `title_values` and so on, the `attempt`
+of the recording counted from zero, and the run's `challenge`, `attempts`, `state`, `value`,
+`seconds`, `medal` and `practice`. The state is `playing` while a headless run plays, `done` once
+the run is scored, `left` for a run that a person left and `stopped` for a run that ended on a
+failure. `GET /api/matches` lists the summaries of the library and `GET /api/trash` those of the
+Trash, both with `?group=ID` for the recordings of one group in the order of their attempts.
+`DELETE /api/groups/ID` moves every recording of a group to the Trash at once and answers with
+their identifiers in `trashed`, and `POST /api/groups/ID/restore` brings them all back and answers
+with `restored`. Each recording of the group also restores on its own, like any other.
+
+The command `cuju render recordings` prints the library with each group on one line, its title,
+result and count, and its recordings indented below it in the order of their attempts.
+`--group ID` lists one group, `--trash` lists the Trash, `--delete-group ID` and
+`--restore-group ID` move a whole group, and `--json` prints the summaries. From Python,
+`cuju.render.recordings` returns the same summaries, and `cuju.render.delete_group` and
+`cuju.render.restore_group` move a group and return the identifiers of its recordings.
+
+```python
+import cuju.render
+
+result = cuju.render.challenge('corner', team='builtin')
+for summary in cuju.render.recordings(group=result['group']):
+    print(summary['group']['attempt'], summary['id'], summary['score'])
+cuju.render.delete_group(result['group'])
+```
+
 Two sample matches ship with the renderer, a full match of eleven a side and one of five a side,
 both played by the built-in AI. The first start of the server copies each into the library as
 `sample-11v11` and `sample-5v5`, where they appear on Home and in Recordings and open in Watch like
-any other recording. The folder notes each sample it has received in `samples.json`, so a deleted
+any other recording, dated from its shipped file, so the recordings of the user list above it.
+The folder notes each sample it has received in `samples.json`, so a deleted
 sample stays deleted, and a recording of the same name stays as it is. A sample in the Trash stays
 there when the server starts, and Restore brings it back. The command `cuju render sample` adds
 both samples again, and `cuju render sample 11v11` or `cuju render sample 5v5` adds one. A sample
@@ -299,6 +333,14 @@ first, so a second viewer, or a page reopened, starts with that history. The fir
 source starts at the present. The variable `CUJU_RENDER_BACKLOG`, or `backlog=True` for `watch`,
 makes the source read every step, watched or not, at the cost of one state read per step, so that
 every viewer starts 10 seconds back.
+
+A browser keeps six connections at most to one server, shared by every tab of the page, and each
+live stream holds one of them for as long as it plays. A page out of sight for half a minute
+therefore lets its live stream go and takes it up again as soon as it shows, the steps in between
+marked as a cut, so tabs left behind others leave the connections to the pages in use. A clean
+feed keeps its stream, since a streaming program shows it unseen. Six pages on screen that each
+play a live source take every connection, so a seventh page of the same server waits until one of
+them closes or goes out of sight.
 
 A source shows one environment at a time, and a viewer may switch it to any other environment of
 the batch, from the Watch page or from code.
@@ -351,19 +393,22 @@ against the source's number of environments. The source answers the server alone
 request that carries an origin or a body. A source of cuju 0.2.0 has no grid, and the server then
 answers 404 with a message that says so.
 
-The grid reads states only while a viewer asks for it, and stops 3 seconds after the last request,
-so an unwatched source pays one attribute check per step for it. While it reads, the reads stay
-small and bounded four ways. They happen at the end of a step of the batch, as the stream's do,
-and no step reads more than 4 states for the grid. The grid reads at most 10 states a second of
-wall time, the pace at which a watched stream reads its own, and starts a pass over the range at
-most twice a second, so a grid of 4 environments refreshes twice a second, one of 16 about every
-1.6 seconds and one of 64 about every 6.4 seconds. After each step that read, the grid also waits
-until its reads amount to at most a twentieth of the wall time, which a slow machine reaches first.
-Each read leaves every observation, reward, done flag and state of the batch as it was, bit for
-bit, and consumes no random numbers. On a laptop with 64 environments of eleven a side, a state
+The grid reads states only while a viewer asks for it, and stops 15 seconds after it last answered a
+request, so an unwatched source pays one attribute check per step for it. The source keeps the tiles
+it read until the range changes or the source closes, and a pass over the range that stopped goes on
+where it stopped. A busy machine can relay the page's requests many seconds apart, and each such
+request still receives the tiles read before it while the grid reads again. While it reads, the
+reads stay small and bounded four ways. They happen at the end of a step of the batch, as the
+stream's do, and no step reads more than 4 states for the grid. The grid reads at most 10 states a
+second of wall time, the pace at which a watched stream reads its own, and starts a pass over the
+range at most twice a second, so a grid of 4 environments refreshes twice a second, one of 16 about
+every 1.6 seconds and one of 64 about every 6.4 seconds. After each step that read, the grid also
+waits until its reads amount to at most a twentieth of the wall time, which a slow machine reaches
+first. Each read leaves every observation, reward, done flag and state of the batch as it was, bit
+for bit, and consumes no random numbers. On a laptop with 64 environments of eleven a side, a state
 read and the gathering of its fields took about 2 milliseconds on the CPU and 3.5 milliseconds on
-CUDA, and a watched grid took about 3.5 percent of the wall time on either. The stream of the
-source goes on beside the grid at its own cost.
+CUDA, and a watched grid took about 3.5 percent of the wall time on either. The stream of the source
+goes on beside the grid at its own cost.
 
 ## Annotations
 
@@ -390,13 +435,16 @@ for step in range(3001):
     recorder.annotate(values={'reward': reward[0, 0]}, player=(0, 3))
 ```
 
-An annotation belongs to a step and to a player. `player` takes the index of a player in the
-header's list of players, or a pair of the team, 0 for the left, and the index within the team, and
-`None` leaves the annotation to the whole match. `step` takes the step number of the current
-episode, as the frame counts it, and by default the annotation goes to the step captured last. A
-call before `batch.step` therefore describes the step that the policy looked at, and a call after
-it the step that the batch has just played. Several calls for one step and player join their
-numbers, and a later text, action or probabilities replace the earlier ones.
+An annotation belongs to a step and to a player. `player` takes the number of a player, which counts
+the players of the left team first and then those of the right team, each team from its goalkeeper
+on, as the rewards and observations of a batch count them, or a pair of the team, 0 for the left,
+and the index within the team, and `None` leaves the annotation to the whole match. The file keeps
+the player's index in the header's list of players, which may list the right team first, and the
+summary that a [filter](#recordings) reads names the player by its number again. `step` takes the
+step number of the current episode, as the frame counts it, and by default the annotation goes to
+the step captured last. A call before `batch.step` therefore describes the step that the policy
+looked at, and a call after it the step that the batch has just played. Several calls for one step
+and player join their numbers, and a later text, action or probabilities replace the earlier ones.
 
 `values` holds at most 16 names of at most 40 characters, each number finite and kept to six
 significant digits. The text is cut at 200 characters, and of the probabilities the three most
@@ -419,15 +467,16 @@ Annotating reads nothing of the batch and changes nothing of it, so every observ
 state stays as it was, bit for bit.
 
 On the page, a recording or a live source with annotations shows the button Annotations among the
-Watch controls, and a recording without them keeps the button and the overlay hidden. Under each
-player in view the overlay shows the player's numbers, the action chosen with the three most likely
-actions and their probabilities, and the text, and the annotation of the whole match shows in a box
-over the controls. The labels of the nearest players come first, and a label that would cover
-another stays out, as the player labels do. Lines over the timeline draw the chosen series, one
-series for each name of each player and each name of the whole match, each scaled from its smallest
-value to its largest. The Annotations panel turns the numbers, the actions and the text on or off,
-a choice that the page keeps in the browser, and picks the series of the timeline. The first series
-shows when a recording opens. The panel works by keyboard, and Esc closes it.
+Watch controls, and a recording without them keeps the button and the overlay hidden. Under the feet
+of each player in view, clear of the player, the overlay shows the player's numbers, the action
+chosen with the three most likely actions and their probabilities, and the text, and the annotation
+of the whole match shows in a box over the controls. A label that would reach the controls shows
+over the player's head instead. The labels of the nearest players come first, and a label that
+would cover another stays out, as the player labels do. Lines over the timeline draw the chosen
+series, one series for each name of each player and each name of the whole match, each scaled from
+its smallest value to its largest. The Annotations panel turns the numbers, the actions and the
+text on or off, a choice that the page keeps in the browser, and picks the series of the timeline.
+The first series shows when a recording opens. The panel works by keyboard, and Esc closes it.
 
 ## Moments and captions
 
@@ -524,16 +573,17 @@ possession team:right score:trailing before:15
 
 ### Captions
 
-Captions put the events of a match into short plain lines, such as `Goal, number 9 for the Greens,
-2 to 1`, timed to the events, on Watch and Play and for live sources. The setting Captions of the
+Captions put the events of a match into short plain lines, such as `Goal, number 9 of Greens, 2 to
+1`, timed to the events, on Watch and Play and for live sources. The setting Captions of the
 events of the match in the settings panel turns them on and off, and Size of the captions picks
 small, medium or large. The command palette turns them on and off too, and the browser keeps both
 settings. Captions name goals with the scorer and the score, own goals, shots and headers at goal,
 saves, blocks, the ball off a post or the bar, near misses, sliding tackles, fouls, cards,
 offsides, corners, free kicks, penalties, throw ins, goal kicks, half time and full time with the
-result. A player is named by shirt number and roster name, and a team by its name, or as the left
-or right team when it has none. The roster is the one the page dresses the players in, the
-team's current one for a team of the registry and the one saved in the match otherwise.
+result. A player is named by shirt number and roster name as a player of the team, as in
+`number 4 of Right`, and a team by its name alone, or as Left or Right when it has none. The
+roster is the one the page dresses the players in, the team's current one for a team of the
+registry and the one saved in the match otherwise.
 
 A caption starts at the moment of its event, which for a touch of the ball is the estimated contact
 inside its step, and stays four seconds or until the next caption starts, and at least a second and
@@ -545,9 +595,13 @@ stays behind anyway, so the outcome of every caption is settled.
 
 Save captions in the Match menu of Watch saves the captions of the open recording as a WebVTT file
 named after it, which a video player shows beside a video exported from the same recording. Every
-caption comes from one table of message identifiers, `web/captions.json` in the package, such as
-`caption.goal` with its values `player`, `team`, `left` and `right`, so a translation of the page
-replaces that table alone.
+caption is a message of the language files, such as `caption.goal` with its values `player`,
+`team`, `left` and `right`, so the captions of the page and the file it saves follow the language
+of the page, as [Languages](#languages) describes. The server and `cuju render captions` write
+their captions in English. Each cue of a file, whether the page saves it or the server writes it,
+holds its text on one line, a line break inside a team name becomes a space, and the characters
+`&`, `<` and `>` are written as `&amp;`, `&lt;` and `&gt;`, so a video player shows a name as text
+and a name never adds a cue or a tag.
 
 ### Agents
 
@@ -559,7 +613,7 @@ with the same results.
 | `GET /api/search?q=QUERY&limit=N` | the results of a query |
 | `GET /api/matches/ID/moments` | every moment of a recording with its line of text |
 | `GET /api/matches/ID/captions.vtt` | the captions of a recording as WebVTT |
-| `cuju render search QUERY [--limit N] [--json]` | the results, one a line or as JSON |
+| `cuju render search QUERY [--limit N] [--json]` | the results under the identifier and title of each recording, or as JSON |
 | `cuju render captions RECORDING [-o FILE] [--json]` | the captions of a recording or a `.cjr` file, as WebVTT or JSON |
 | `cuju.render.search(query, limit=None)` | the results as a dictionary |
 | `cuju.render.captions(recording, path=None)` | the cues, written as WebVTT to `path` when given |
@@ -573,11 +627,22 @@ search also returns the `total` number of moments before the limit and the numbe
 searched. A cue holds its `start` and `end` in seconds, its message `id`, its `params` and its
 `text`.
 
+The command prints each recording's identifier and title, then each of its moments with the
+minute of the clock, the time `t` of the moment in seconds of the recording, its line of text and
+the whole address that opens Watch at the seek time. The address names the server of the folder
+when one runs, and otherwise port 8780, the port of `cuju render serve`, and the command then adds
+that `cuju render open` with an address in quotes starts the server and opens it.
+
 ```console
 $ cuju render search goal team:left
-sample-5v5    2:54  t=5.7  Goal, number 3 for the Lakeside United, 1 to 0
-sample-11v11   12:46  t=38.6  Goal, number 10 for the Harbour Rovers, 1 to 0
+sample-5v5  Sample match, 5 vs 5
+    2:54  t=9.7  Goal, number 3 of Lakeside United, 1 to 0
+          http://127.0.0.1:8780/#match=sample-5v5&t=5.7
+sample-11v11  Sample match, 11 vs 11
+   12:46  t=42.6  Goal, number 10 of Harbour Rovers, 1 to 0
+          http://127.0.0.1:8780/#match=sample-11v11&t=38.6
 2 of 2 moments in 2 recordings
+No server runs, and cuju render open with an address above in quotes starts one.
 $ cuju render captions sample-5v5 -o sample-5v5.vtt
 wrote sample-5v5.vtt
 ```
@@ -601,8 +666,29 @@ cuju render team export t-20261106-101500-3fa9 --out baseline.zip
 The team add command also accepts exported zip files, keeping the team name, format, control
 settings and assets. The option `--name` can rename the import.
 
+`cuju render team show ID` prints a team with its control, and `cuju render team set ID` changes
+its name with `--name`, its format with `--format` and its control with the options that `add`
+also takes. `--players` sets the count of controlled players, `--assignment` takes `dynamic` or
+`fixed`, `--selection` takes the fixed players as indices of the formation or as roles, such as
+`1,2,3` or `CB,CM`, and makes the assignment fixed, `--goalkeeper` takes `agent`, `builtin` or
+`scenario`, and `--action-set` takes `default` or `v2`. A change keeps every setting it leaves
+out, and dynamic assignment drops the selection. The option `--json` of `list`, `show`, `add` and
+`set` prints the team or the list as the server returns them, and `remove` deletes a team's
+folder and says so. A new team takes the next of eight kits in turn, the one that fewest teams of
+the registry wear, so teams added one after another differ on the pitch.
+
 The command `cuju render challenge` plays a challenge headless with a team, as described under
 Challenges, and `cuju render challenge list` names them all.
+
+`cuju render play` plays the match in its own process and prints the path of the recording it
+saved, or with `--json` one line of JSON with the recording's identifier `match` and its `path`.
+In a terminal a line on standard error follows the share of the match played, and a script or a
+pipe reads the result alone, since whatever a submission prints goes to standard error as well. A
+submission that fails ends the command with one line that names the team and the reason, while
+`cuju.render.play` raises the submission's own error. The recording appears under Recordings,
+with the source `requested_match` in its provenance. The list of requested matches on the Matches
+page holds the requests of the server, those made on the page or through `POST /api/requests`, so
+a match of the command line shows under Recordings alone.
 
 A match requested on the page plays in a process of its own on the CPU and becomes a recording in
 the library. The play command also takes a device. Each submission runs from its own folder,
@@ -689,8 +775,46 @@ with at most 10000 files and 500 MB after unpacking. The submission needs `main.
 A submission is Python code that runs with the permissions of the server's user, so only trusted
 code belongs in the registry, and a submission that imports Kaggle's helpers needs the package
 `kaggle_environments` installed beside cuju. A submission that fails ends only its own match, and
-the page shows its error. A match that runs past 30 minutes ends, and the page cancels a waiting or
-running match on request.
+the page shows its error in one line. The variable `CUJU_RENDER_DEBUG`, set to `on` for the server
+or the command, also prints the full traceback of a policy's error to standard error, in requested
+matches, games and challenges alike. A match that runs past 30 minutes ends, and the page cancels a
+waiting or running match on request.
+
+### Teams and matches over HTTP
+
+Scripts and agents reach the registry and the requested matches through the routes of the server,
+which pass the same checks of host and origin as every other route.
+
+| Route | Body | Answer |
+| ----- | ---- | ------ |
+| `GET /api/teams` | none | every team of the registry, the built in AI first |
+| `POST /api/teams?name=NAME&filename=FILE&format=5v5&control=CONTROL` | the bytes of a `main.py`, a `.zip` or a `.tar.gz` | the new team, with 201 |
+| `PATCH /api/teams/ID` | `{"name": "Visitors", "format": "5v5", "control": {...}, "style": {...}}`, each field optional | the changed team |
+| `POST /api/teams/ID/duplicate` | none | the copy, with 201 |
+| `DELETE /api/teams/ID` | none | 204 once the team is gone |
+| `PUT /api/teams/ID/model?joints=JOINTS` | the bytes of a skinned `.glb` of at most 30 MB | the changed team, its model checked as an upload of the team editor |
+| `PUT /api/teams/ID/images/SLOT` | the bytes of a PNG, JPEG or WebP image, or the JSON of an editor document for a slot ending in `-edit` | the changed team |
+| `PUT /api/teams/ID/sounds/KIND` | the bytes of an Ogg, MP3 or WAV sound of at most 2 MB | the changed team |
+| `PUT /api/teams/ID/clips/NAME?joints=JOINTS` | the bytes of a celebration clip, a `.glb` of at most 10 MB | the changed team |
+| `GET /api/teams/ID/model`, `images/SLOT`, `sounds/KIND`, `clips/NAME` | none | the file |
+| `DELETE /api/teams/ID/model`, `images/SLOT`, `sounds/KIND`, `clips/NAME` | none | 204 once the file is gone |
+| `GET /api/requests` | none | every requested match with its `state`, `progress`, `match` and `error` |
+| `POST /api/requests` | `{"left": "ID", "right": "builtin", "scenario": "5_vs_5", "seed": 7, "ability": [null, 0.4]}` | the new request, with 201 |
+| `DELETE /api/requests/ID` | none | 204 once a waiting or running request is cancelled |
+
+`JOINTS` is the JSON of the bone each of GRF's joints follows, such as `{"body": "Hips"}`, encoded
+for the address, and an empty mapping maps the bones by their names. `SLOT` is one of
+`shirt-front`, `shirt-back`, `sponsor-1` to `sponsor-4` and each of them followed by `-edit`, and
+`KIND` one of `goal`, `shot`, `pass`, `tackle`, `save`, `kick`, `celebration` and `chant`. A sound
+is read past its first bytes, so a WAV file holds a format chunk and samples, an Ogg file starts
+with a page of Vorbis, Opus or FLAC and an MP3 file holds a frame, and a file that only starts
+like a sound answers 400 with the message `server.teams.sound_damaged`.
+
+`CONTROL` is the JSON of a control, encoded for the address, such as
+`{"players": 2, "assignment": "fixed", "selection": [1, 2], "goalkeeper": "scenario", "action_set": "default"}`,
+and the fields it leaves out take their defaults. A request goes from `queued` to `running` and then
+to `done`, with the identifier of its recording in `match`, or to `failed`, with the reason in
+`error`. A refused field answers 400 with the reason.
 
 ### Multi agent teams
 
@@ -818,7 +942,8 @@ a goal, a shot, a pass, a tackle, a save, any kick, the scorer's celebration and
 fans sing now and then in every arena. The page plays each one from where it happens, cut to four
 seconds and brought to the level of the other sounds on the page. A sound is stored as soon as it is
 chosen, and the match on the page plays the new sound from then on, a sound replaced under the same
-moment included.
+moment included. `cuju render team sound ID goal goal.ogg` gives a team the same sound from the
+command line, and `--remove` in place of the file takes it away.
 
 A team also holds up to four sponsors, wide images made in the same editor from uploaded images and
 drawing, which the advertising boards around the pitch show while the team plays. Boards alternate
@@ -835,7 +960,9 @@ colors of the fans and the names of the roster. Everything it fills is an unsave
 other edit, so Save keeps it and Cancel or leaving the team discards it. The format, the control,
 the models, the looks and numbers of the roster, the celebrations, the sounds and the artwork stay
 as they are. Enter in the Seed field presses the button, and the focus returns to the button after
-each press, so the panel works from the keyboard alone.
+each press, so the panel works from the keyboard alone. A screen reader hears the new name and the
+line under the panel after each press, and the same after Surprise me in the form that adds a
+team.
 
 A seed is any text or number. With the Seed field empty, each press draws a fresh seed of six digits
 and names it in the line under the panel, together with the kit style and the color scheme it used.
@@ -884,8 +1011,10 @@ Scripts and agents that drive the page call `cuju.surprise`, a function of the p
 `window.cuju`. It takes an object with `seed`, `style`, `format` and `apply`, each optional. The
 `style` is one of `any`, `stripes`, `hoops`, `sash`, `halves`, `checkers`, `minimal` and `neon`,
 `format` is `5v5` or `11v11` and sets the length of the roster names, and `apply` set to `true`
-fills the open editor as the button does. The function returns the seed, the kit style, the
-scheme, the name, the badge and a `style` that `PATCH /api/teams/<id>` takes as it is.
+fills the editor open on the Teams page as the button does, and throws while no editor shows
+there. The seed is text or a number, and any other seed throws. The function returns the seed,
+the kit style, the scheme, the name, the badge and a `style` that `PATCH /api/teams/<id>` takes
+as it is.
 
 ```js
 const team = cuju.surprise({ seed: 'harbor', style: 'stripes', format: '5v5' });
@@ -1037,19 +1166,23 @@ Commands, or Ctrl K on any page, opens the **command palette**, a search field o
 everything the page does. The list holds every page, the live sources and the eight newest
 recordings, a game on Play in each listed scenario, a request for a match, the settings of sound,
 theme, broadcast mode, player labels, motion and the presets of the presentation, the choices of
-the View menu, which are the cameras, the arenas, the four times of day, the weather and
-fullscreen, every player of the open match to follow with the Follow player camera, and the topics
-of the Help page. Typing narrows the list, with the letters of each word in order anywhere in a
-name, so `gotm` finds Go to Teams and `follow 10` finds the player with that number. Words that
-belong to an action also find it, such as `volume` for Mute. The arrows move through the list,
+the View menu, which are the cameras, the arenas, the four times of day, the weather, photo mode
+and fullscreen, every player of the open match to follow with the Follow player camera, the
+challenges of Play, Surprise me for a team, and the topics of the Help page. Typing narrows the
+list, with the letters of each word in order anywhere in a name, so `gotea` finds Go to Teams
+and `follow 10` finds the player with that number. Words that belong to an action also find it,
+such as `volume` for Mute and `photo` for Photo mode. The arrows move through the list,
 Page Up and Page Down move further, Enter runs the chosen action, a click runs any action and Esc
 closes the palette. Focus then returns to the control that held it before. Ctrl K reaches the
 palette from everywhere except a text field, which keeps its own keys, and an open palette
 releases a captured pointer as any dialog does.
 
-A first visit finds help along the way. Each page but Help shows a short tip in its lower left
-corner after a moment, which points to the next thing to try, such as the command palette on Home
-or the camera keys on Watch once a match is open. Got it puts that tip away for good, the button
+A first visit finds help along the way. Each page but Help shows a short tip in a corner of the
+window after a moment, which points to the next thing to try, such as the command palette on Home
+or the camera keys on Watch once a match is open. The tip takes the lower left corner, or else the
+first other corner where it covers no control of the page and no notice, and it waits while a
+dialog, a menu, the palette, photo mode, broadcast mode or a game is open. The tip comes right after
+the top bar in the order of the Tab key. Got it puts that tip away for good, the button
 No more tips turns every tip off, and the setting Tips for new visitors turns them on again with
 every tip back. Take the tour, beside Got it, starts the guided tour of
 [Learning the renderer](#learning-the-renderer). The browser keeps each dismissal. The main controls
@@ -1087,20 +1220,22 @@ that does not answer is shown as such, and a recording file still opens from the
 narrow screen the sections use one column.
 
 **Watch** fills the page with the match. Its bar holds the Match and View menus and camera controls.
-The Match menu opens a
-recording file from the computer, takes an address, leads to the Recordings and Matches pages, lists
-the goals of the open match, each of which jumps to six seconds before it, and lists the live
-sources and the six newest recordings, with a count of the live sources on the menu's button. The
-address field takes the identifier of a live source or of a recording, such as
-`m-20261106-105640-3a3f`. The View menu chooses the camera, turns broadcast mode, fullscreen and
-the 2D view on and off, sets the hour, the weather and the arena, and sets the quality and the
-theme. Copy feed address in the View menu writes the address of a clean feed for OBS, of the open
-match or of a source to follow, with its size, background, sound and frame rate, as described
-under Streaming with OBS. Export video turns a range of the open recording into a video file, as
-described under Exporting video. Under This match, the Match menu also holds Save captions and
-Moments of this match, as [Moments and captions](#moments-and-captions) describes. A recording
-also opens when its file is dropped anywhere on the page. The view shows a spinner while it waits
-for a live source to send its first step, and a bar of progress while a recording downloads.
+The Match menu opens a recording file from the computer, takes an address, leads to the Recordings
+and Matches pages, lists the goals of the open match, each of which jumps to six seconds before it,
+and lists the live sources and the six newest recordings, with a count of the live sources on the
+menu's button. The address field takes the identifier of a live source or of a recording, such as
+`m-20261106-105640-3a3f`. On a phone the address field takes a row of its own below the menus, so
+it keeps its room in every language. The View menu chooses the camera, turns broadcast mode,
+fullscreen and the 2D view on and off, sets the hour, the weather and the arena, and sets the
+quality and the theme. Copy feed address in the View menu writes the address of a clean feed for
+OBS, of the open match or of a source to follow, each live source and tournament of the server among
+them, with its size, graphics scale, background, frame rate, camera and sound, and the graphics
+alone without the picture when asked, as described under Streaming with OBS. Export video turns a
+range of the open recording into a video file, as described under Exporting video. Under This match,
+the Match menu also holds Save captions and Moments of this match, as [Moments and
+captions](#moments-and-captions) describes. A recording also opens when its file is dropped anywhere
+on the page. The view shows a spinner while it waits for a live source to send its first step, and a
+bar of progress while a recording downloads.
 
 The controls along the bottom of the view hold a timeline, the time and the length of the match,
 buttons that restart, jump to the previous and next goal, skip 30 and 5 seconds either way, step
@@ -1145,6 +1280,17 @@ recordings to the library with their folder, details and frames as they were, an
 permanently removes their files from the disk after a question, which cannot be undone. Only a
 recording already in the Trash can be deleted for good. A recording of the Trash opens in Watch
 once it is restored, and the Trash keeps using disk space until its recordings are deleted.
+
+The recordings of one run of a challenge show as one group, a row that names the challenge and the
+competitor, such as One on one, GRF's built-in AI, with the run's result, such as goal difference
++3, silver medal, the count of its recordings and their total steps and size. The title of the row
+is a disclosure button, which a click, Enter or the right arrow opens to the rows of the attempts
+in their order, and a click, Enter or the left arrow closes again. The left arrow on the row of an
+attempt goes back to its group, and a screen reader hears the button as expanded or collapsed. The
+group's row selects all its recordings, so Delete moves the whole group to the Trash in one step,
+and in the Trash the group's row restores the group in one step too. A run under way shows how
+many of its attempts it has played, a run that a person left says after how many attempts, and a
+run that ended on a failure says that it stopped.
 
 **Matches** requests a match between two teams of the registry. Two cards pick the left team,
 which plays at home, and the right team, which plays away. Each card shows the count, assignment,
@@ -1265,10 +1411,14 @@ a panel over the view with many environments of the same batch at once. Each til
 view of one environment, from above as in the 2D view, with its index, its score and its clock
 along the top, and the tile of the environment that the main view shows carries a border. The
 tiles refresh at the modest pace that the grid of environments under Live sources describes, and
-a tile that the source has not read yet says it is waiting. The Tiles field sets 4, 9, 16, 25,
-36, 49 or 64 tiles, up to the first size that holds the whole batch, and the choice stays in the
-browser. Previous and Next, or Page Up and Page Down on a tile, move to the neighboring page of
-environments, and the panel names the range it shows.
+a tile that the source has not read yet says it is waiting. A tile whose environment the source
+answers without a new picture keeps its last picture and says that it is refreshing, along its top
+and to screen readers, until a later answer brings the environment again. The panel keeps the last
+picture of each environment while it shows the same source, so a page of tiles seen before shows
+them at once and refreshes them. The Tiles field sets 4, 9, 16, 25, 36, 49 or 64 tiles, up to the
+first size that holds the whole batch, and the choice stays in the browser. Previous and Next, or
+Page Up and Page Down on a tile, move to the neighboring page of environments, and the panel names
+the range it shows.
 
 A click on a tile, or Enter or Space on a focused tile, closes the panel and shows that
 environment in the main view, through the switch of environments above, in 3D or in the 2D view
@@ -1335,7 +1485,8 @@ A browser without WebGL opens the page in the 2D view, which then stays on, and 
 The Play and Field pages draw their pictures with WebGL alone. When the 3D picture of a playing
 match draws fewer than 12 frames a second over 5 seconds, a card at the top right offers the 2D
 view once in each visit. Use the 2D view turns it on, and Keep 3D keeps the 3D view and stops the
-offer for good in that browser.
+offer for good in that browser. A clean feed and a video export draw at a pace of their own, which
+says nothing of the computer, so they never show the offer.
 
 ### Photo mode
 
@@ -1417,7 +1568,8 @@ in meters as `[x, y, z]`, with y up. The looks are `natural`, `warm`, `cold`, `n
 meters. Vignette, grain and aperture run from 0 to 1, and a resolution is `'window'`, a size such
 as `'3840x2160'`, a name of [Picture sizes](#picture-sizes) such as `'vertical'`, or an object with
 width and height up to 8192 pixels each. An unknown name or a value
-out of place throws an error that says what fits, and the settings stay as they were.
+out of place, a number out of its range among them, throws an error that says what fits, and the
+settings stay as they were. The keys and the controller stop a setting at the end of its range.
 
 ```js
 const photo = window.cuju.photo;
@@ -1458,7 +1610,8 @@ with seconds before or after it, as in `goal:2-8` or `goal:2+4`. The option `--g
 range from 8 seconds before the second goal to 4 seconds after it, and a `--start` or `--end` beside
 it replaces that end of the range. The range is the whole recording when no moment and no goal is
 given. A range is kept within the recording, and a goal beyond the last one stops the command with
-the number of goals that the recording holds.
+the number of goals that the recording holds. The command checks the range before it looks for
+Chrome and ffmpeg, so a mistake in the range shows at once.
 
 ### Presentation
 
@@ -1469,6 +1622,11 @@ replays and the show after the match each hold or stop play, so they stay off. T
 `--broadcast` keeps them all, and the video then shows the match as Watch presents it and runs
 until play reaches the end of the range, longer than the range itself and at most the maximum
 length.
+
+A video shows the picture of the match alone, as a page of a recording without annotations shows
+it. The labels under the players and the box of the whole match that [annotations](#annotations)
+add serve the study of a match on Watch, and a video shows them only with `--annotations`, each
+with its numbers, its actions and its text.
 
 The option `--no-score` hides the scoreboard and clock. The option `--camera` picks one of the
 cameras that follow play by themselves, `broadcast`, `tactical`, `goal`, `ball` or `owner`, as
@@ -1495,6 +1653,7 @@ export draws far slower than real time, so the sound of the page stays out of th
 | `--fps` | frames a second from 1 to 60, 30 by default |
 | `--quality` | `draft`, `standard` or `high`, `standard` by default |
 | `--no-score` | hide the scoreboard and clock |
+| `--annotations` | show the labels and the box of the recording's annotations |
 | `--arena`, `--time` | the arena and the time of day |
 | `--broadcast` | keep the team sheets, restarts, celebrations and replays |
 | `--max-seconds` | the longest video, 600 seconds by default and 3600 at most |
@@ -1523,6 +1682,10 @@ or `winget install ffmpeg` on Windows. Chrome running as root, as in many contai
 its sandbox, which Chrome refuses to the root user, and `--no-sandbox` turns the sandbox off
 elsewhere, for the containers that need it. A machine whose graphics card the headless browser
 cannot use draws in software by itself, and `--software` asks for that from the start.
+Software drawing is slow, as in WSL, where Chrome finds no graphics card. There a laptop processor
+takes about half a minute to load the page and about two seconds for each frame of 1280 by 720, so
+a range of three seconds at ten frames a second takes about two minutes, and a smaller `--size`
+or a shorter range takes less.
 
 The command prints the range and the number of frames, then one line of progress with the frame,
 the share done and an estimate of the time left. The pictures pass from Chrome to ffmpeg through a
@@ -1539,20 +1702,67 @@ seconds after it. From here and To here take the timeline's position, and the Go
 range around one goal of the match, from 8 seconds before it to 4 seconds after. The dialog offers
 the sizes of [Picture sizes](#picture-sizes) and Custom size, which takes any even width and
 height, the scale and safe area of the graphics, frame rates of 24, 25, 30, 50 and 60 a second,
-the three qualities, the five cameras and the scoreboard, and it uses the arena and the time of day
-of the page's own field settings. A range is at most 10 minutes.
+the three qualities, the five cameras and the scoreboard, and for a recording with annotations a
+check box for them, off at first, and it uses the arena and the time of day of the page's own
+field settings. A range is at most 10 minutes.
 
 Export asks the server to run the same export as the command, in a process of its own on the
 machine of the server, and the dialog shows a bar and a line of progress. Once the video is ready,
-Download video saves it under the title of the recording and its range, and Export again starts
-another. Cancel export stops a running export, which removes its partial file. The server runs one
-export at a time, and a second request waits for the first to finish or be cancelled. Closing the
-dialog leaves the export running, and opening it again shows the latest export of that recording.
+the line names its range and size, as in `The video of 0:30 to 0:45 is ready, 56 KB`, since the
+latest export may cover another range than the fields show, and Download video saves it under
+the title of the recording and its range, and Export again starts another. Cancel export stops a
+running export, which removes its partial file. The server runs one export at a time, and a second
+request waits for the first to finish or be cancelled. Closing the dialog leaves the export running,
+and opening it again shows the latest export of that recording.
 
-The server looks for Chrome and ffmpeg as the command does. When either is missing, the dialog says
-which one and how to install it, and the server needs a restart once both are installed. A file
-dropped on the page and a live source carry no recording of the library, and for them the dialog
-explains that the export draws recordings of the library.
+The server looks for Chrome and ffmpeg as the command does, on the path and in the variables
+`CUJU_CHROME` and `CUJU_FFMPEG` of its environment. When either is missing, the dialog says which
+one and how to install it, and the server needs a restart once both are installed. A file dropped
+on the page and a live source carry no recording of the library, and for them the dialog explains
+that the export draws recordings of the library. The size of a finished video reads in KB below a
+megabyte and in MB from there, here and on the command line.
+
+### Over HTTP
+
+The dialog asks the server through routes that a script or an agent can use the same way. The
+server checks the host of every request, and a request that starts or cancels an export comes from
+the page of the same server or carries no origin, as for every request that changes data.
+
+| Route | Answer |
+| --- | --- |
+| `GET /api/video` | `available`, whether the server finds Chrome and ffmpeg, and `missing`, a message for each one it lacks |
+| `POST /api/matches/ID/video` | starts an export of the recording `ID` of the library and answers 201 with its entry |
+| `GET /api/videos` | the entries of the exports, the one that runs and the three newest that ended |
+| `GET /api/videos/VIDEO` | the entry of the export `VIDEO`, asked for again while it runs |
+| `GET /api/videos/VIDEO/file` | the finished MP4 file, as a download under the entry's `filename` |
+| `DELETE /api/videos/VIDEO` | cancels a running export or removes an ended one with its file, and answers 204 |
+
+The body of `POST /api/matches/ID/video` is a JSON object, and every field but `end` may stay out.
+
+| Field | Meaning |
+| --- | --- |
+| `start`, `end` | the range in seconds from the first frame, `start` 0 by default |
+| `width`, `height` | the size in pixels with even sides, 1280 by 720 by default |
+| `fps` | a whole number of frames a second from 1 to 60, as for the command line, 30 by default |
+| `quality` | `draft`, `standard` or `high`, `standard` by default |
+| `camera` | `broadcast`, `tactical`, `goal`, `ball` or `owner`, `broadcast` by default |
+| `scale`, `safe` | the scale and the safe area of the graphics, as `--scale` and `--safe` take them |
+| `score` | false hides the scoreboard and clock |
+| `annotations` | true shows the labels and the box of the recording's annotations |
+| `arena`, `time` | the arena and the hour of the day from 0 to 24 |
+
+An entry holds the `id` of the export, the `match` it draws, its `title`, the `start` and `end` of
+its range, its `state`, which is `running`, `done`, `failed` or `cancelled`, the `frame` drawn and
+the `frames` in all, the `progress` from 0 to 1, the `bytes` of the finished file, the `error` of
+a failed export and the `filename` that the download suggests. A field out of place answers 400
+with an `error` that says what fits, a recording outside the library answers 400 as well, and a
+second export while one runs answers 409.
+
+```sh
+curl -X POST http://127.0.0.1:8780/api/matches/sample-5v5/video \
+    -H 'Content-Type: application/json' -d '{"start": 8, "end": 20, "fps": 30}'
+curl http://127.0.0.1:8780/api/videos/v-20261110-101500-3fa9
+```
 
 ## Picture sizes
 
@@ -1640,11 +1850,13 @@ feed start its sound by itself, and a browser tab plays it once the browser allo
 play sound without a click.
 
 A feed with `bg=transparent` keeps the page's background transparent, so OBS shows the sources
-beneath it wherever the feed shows no picture, while it waits and around a picture of another
-shape. With `layer=graphics` the feed shows the graphics alone over that background, the score,
-the banners and the cards of the match without the picture, for laying over a picture of another
-source, and draws nothing in three dimensions. A named background such as `green` or a hex color
-such as `1a1a1a` gives a solid color in place of the transparency, and `black` is the default.
+beneath it wherever the feed shows no picture, while it waits and around a picture of another shape.
+The frame of `/feed` takes the color scheme of the theme, so Chrome and the browser source of OBS,
+which is Chromium, draw no backdrop behind it. With `layer=graphics` the feed shows the graphics
+alone over that background, the score, the banners and the cards of the match without the picture,
+for laying over a picture of another source, and draws nothing in three dimensions. A named
+background such as `green` or a hex color such as `1a1a1a` gives a solid color in place of the
+transparency, and `black` is the default.
 
 ### What a feed follows
 
@@ -1671,12 +1883,13 @@ shows the background alone instead. A feed of one recording holds its last pictu
 `loop=1` plays it again from the start, with its team sheets.
 
 A live stream that drops reconnects as on Watch, and a feed whose stream ended or failed asks the
-server again until a source answers. A training script that starts again announces a new live
-source under the same title, so a feed of `live:TITLE` follows it through every restart, and a
-feed of `live` takes the newest source. A server that stops leaves the feed on its last picture,
-or on the slate when nothing showed, and the feed picks up again once the server answers. A page
-of the feed that fails to start, stops answering or loses its drawing context loads again by
-itself.
+server again until a source answers. A training script that starts again announces a new live source
+under the same title, so a feed of `live:TITLE` follows it through every restart, and a feed of
+`live` takes the newest source. A stream that has lost its connection gives way at once to a newer
+live source that the server names, and a question to the server without an answer within 10 seconds
+counts as failed and goes again. A server that stops leaves the feed on its last picture, or on the
+slate when nothing showed, and the feed picks up again once the server answers. A page of the feed
+that fails to start, stops answering or loses its drawing context loads again by itself.
 
 ### Options
 
@@ -1715,7 +1928,10 @@ source in OBS sets the pace of the display, and a feed at the same rate draws ev
 `cuju render feed` prints the address of a feed for the server of the renderer's folder, which
 suits a script that sets up OBS or an agent that hands the address on. Without a source it lists
 every source that a feed may follow, the five kinds and each live source and tournament of the
-running server, with the address of each.
+running server, with the address of each. A live source shows as `live:TITLE`, which follows it
+through its restarts, and a source without a title by its identifier. A recording that the library
+lacks, or a tournament that the running server lacks, stops the command with an error that names
+it, while a live source may start later and its name passes.
 
 ```sh
 cuju render feed live:Evaluation --size vertical --scale 1.25
@@ -1732,6 +1948,7 @@ cuju render feed --json
 | `--fps`, `--camera`, `--quality`, `--theme` | the frame rate, the camera, the quality and the theme |
 | `--loop`, `--start` | play a recording again, and the second it starts |
 | `--plain`, `--no-show`, `--no-score`, `--no-slate` | `broadcast=0`, `show=0`, `score=0` and `slate=0` |
+| `--captions` | captions of the events, `captions=1` |
 | `--arena`, `--time` | the arena and the time of day |
 | `--json` | print JSON with the server, whether it runs and every feed |
 | `--port` | the port of the address while no server of the folder runs, 8780 by default |
@@ -1744,7 +1961,9 @@ options of the table above under their names in the address, such as `size='vert
 
 The server answers `GET /api/feed/resolve?source=SOURCE` with what a source names at the moment,
 an object with `kind`, which is `match`, `live` or `none`, the `id` and `title` of the match or
-source, and for `none` a `message` that says what the feed waits for. `GET /api/feed` lists the
+source, and for `none` a `message` that says what the feed waits for. The title and the message
+come with `title_id` and `message_id` and their values, and each source of `GET /api/feed` with
+`label_id`, as [Languages](#agents-and-scripts) describes. `GET /api/feed` lists the
 sources with their addresses, as `cuju render feed --json` does. A page that holds a feed reads
 its state through `cuju.feed.state()` inside the frame, or `cujuFeedFrame.state()` from the frame
 of `/feed` itself, with the source, the match it shows, whether that match finished, whether the
@@ -1773,6 +1992,18 @@ the engine plays for them. A change of direction comes first in a step, then the
 state changed. The arrows and the stick stay held as GRF's sticky directions, sprint and dribble
 stay pressed while held, and the passes, the shot and the slide act on the step they are pressed.
 The controlled player switches automatically, by the engine's choice.
+
+Each game plays in a process of its own, which plays that one game and ends. Once a game's picture
+opens, the server readies the process of the next game, which loads PyTorch and cuju and then
+waits, so Play again, the next attempt of a challenge and every later game start at once, where
+loading took several seconds. The process kept ready reads the setup of its game only when the
+game starts, so it plays the game exactly as a process started for it would, with the same seed,
+frames and recording. A kept process that has stopped, or whose environment no longer matches the
+server's, gives way to a new process, and the game starts as it would without one. The kept
+process ends after ten minutes without a game and when the server ends, so a server where nobody
+plays holds no memory for it. The first game after the server starts loads in a new process. While
+a game starts, the scoreboard of the game before leaves the picture at once, and the new game's
+scoreboard takes its place with the first frame.
 
 The high pass key and button send both high pass and slide inputs. GRF handles high pass first,
 then slide on a later step if the input stays held, so the result also depends on possession and
@@ -1815,17 +2046,19 @@ GRF's own gamepad player reads it, and the input settings move it.
 | <kbd>View</kbd>, minus, Create or Share, also called Back | the card of the controls |
 
 A controller that the browser reports in the standard mapping of the Gamepad API plays at once.
-Any other controller reports its own layout, and a notice offers to set it up. The setup, also
-on the controls card and in the pause menu, first asks the style of the controller, Xbox,
-Nintendo or PlayStation, preselected from the id the browser reports. It then asks for each
+Any other controller reports its own layout, and a notice offers to set up that controller. The
+setup, also on the controls card and in the pause menu, first asks the style of the controller,
+Xbox, Nintendo or PlayStation, preselected from the id the browser reports. It then asks for each
 button in turn, the four face buttons, the bumpers, the triggers, the two system buttons, the left
 stick and the D-pad, drawing each on a small sketch of the controller, and takes the next press,
 whether the controller reports it as a button or as an axis. A trigger or button read as an axis
 counts as pressed past half its travel. Skip keeps what a position had, Back returns a step, and
-Cancel or Esc leaves the layout as it was. The page keeps the style and the layout in the
-browser's storage for each controller id, so two people each set up their own controller, and
-before the style is chosen a press on another controller moves the setup to that one. The controls
-card also shows the id the browser reports and whether its mapping is standard or custom.
+Cancel or Esc leaves the layout as it was, and the notice of a controller without the standard
+mapping comes back after Cancel until that controller has a layout. The page keeps the style and the
+layout in the browser's storage for each controller id, so two people each set up their own
+controller, and before the style is chosen a press on another controller moves the setup to that
+one. The controls card also shows the id the browser reports and whether its mapping is standard or
+custom.
 
 On a tablet or a phone, **touch controls** show over the game once a touch screen is used. A stick
 in the lower left corner moves the player and holds a direction on each axis pushed past a third
@@ -1873,24 +2106,35 @@ During a game, the status line under the picture names the device in use and the
 engine took for each person, as GRF's controller logic turned the keys and buttons into it. The
 game reports that action about once a second and whenever the score changes, so the line shows a
 sample of play, enough to see whether a key or button reaches the engine as the action it should.
+GRF keeps a held direction, sprint and dribble as sticky actions, so the engine takes no new action
+on the steps after one of them starts. The line then says so and names what the person holds, as
+in `no new engine action, direction top left held, sprint held`, and with a person on each side
+each part names its side.
 
-Esc or Start opens the pause menu, which pauses the game on the server and offers Resume, the
-controls, the controller setup, Quit, Home and Quit to Home. The paused picture and the end of a
+Esc or Start opens the pause menu, which pauses the game on the server and offers Resume,
+Controls, Set up controller, Quit, Quit to Home and Home. Controls opens the card of the controls
+above the menu and moves the focus into it, and Esc or the right face button closes the card
+before the menu and returns the focus to Controls. The paused picture and the end of a
 game fall silent. Home pauses the game and opens Home. Return to Play to Resume or Quit. Quit to
 Home ends the game and opens Home. A page that hides pauses its game, a game that hears nothing from
 its page for eight seconds waits for it and carries on by itself as soon as the page is heard again,
-and after two minutes of silence the game ends. A game that ends, at full time or on Quit, lands in
-Recordings when the setup asked for it, up to where it stopped, and the card at the end offers to
-watch it on the Watch page with every feature of the viewer. Restart transitions, replays and
-celebrations stay off during a game, so play never waits for the page, while the scoreboard, the
-clock, the goal graphic and the sound remain. The server plays one game at a time, independently of
-its queue of requested matches. Leaving Play for another page pauses the game, and returning
-lets it resume. Losing window focus releases the keyboard inputs. The end card offers Play again
-with the same setup, New game to return to setup and Home. The Play page calls a natural ending
-Full time when the scenario is a full match, the final frame marks an episode end and both the
-step and the clock reach the configured duration. Other natural endings show End of episode.
-A saved game needs at least one played step. Its stream stays separate from the list of live
-training sources.
+and after two minutes of silence the game ends, with an end card that names the silence. A game that
+ends, at full time or on Quit, lands in Recordings when the setup asked for it, up to where it
+stopped, and the card at the end offers to watch it on the Watch page with every feature of the
+viewer. Restart transitions, replays and celebrations stay off during a game, so play never waits
+for the page, while the scoreboard, the clock, the goal graphic and the sound remain. The server
+plays one game at a time, independently of its queue of requested matches. Leaving Play for another
+page pauses the game, and returning lets it resume. Losing window focus releases the keyboard
+inputs. The end card offers Play again with the same setup, New game to return to setup and Home.
+The Play page calls a natural ending Full time when the scenario is a full match, the final frame
+marks an episode end and both the step and the clock reach the configured duration. Other natural
+endings show End of episode. A saved game needs at least one played step. Its stream stays separate
+from the list of live training sources.
+
+A game whose picture draws fewer than 12 frames a second over five seconds of play offers Low
+graphics quality once a visit, as Watch offers the 2D view. Use low quality sets it, the View menu
+sets it back, and Keep this quality keeps the offer away in that browser. The offer shows only
+above Low quality, and a clean feed or a video export never shows it.
 
 A controller also works the setup card, the pause menu, the controls card, the end card and the
 controller setup by the positions of its buttons. The D-pad or the left stick moves the focus and
@@ -1934,6 +2178,29 @@ waits for a team beyond its time.
     in both cases, saves its recording up to the last step when the setup asked for it, and the
     end card shows the error. A team that fails to load or misses its first allowance stops the
     game before it starts, and the page shows the error.
+
+### Games over HTTP
+
+The Play page drives a game through routes that a script or an agent may use as well, with the
+same checks of host and origin as every other route.
+
+| Route | Body | Answer |
+| ----- | ---- | ------ |
+| `GET /api/game` | none | the game of the server, with its `state`, `step`, `score`, `ending` and `match`, or `null` |
+| `POST /api/game` | `{"scenario": "5_vs_5", "humans": [true, false], "teams": ["builtin", "builtin"], "ability": [null, null], "seed": 7, "record": true}` | the new game, with 201, or 409 while another game plays |
+| `GET /api/game/ID/stream` | none | the frames of the game, as the stream of a live source |
+| `POST /api/game/ID/pause` | `{"paused": false}` | the game |
+| `POST /api/game/ID/input` | `{"side": 0, "held": ["left", "sprint"], "pressed": ["shot"]}` | the game |
+| `DELETE /api/game/ID` | none | the game, which ends |
+
+`humans` says which sides a person plays, and the other side plays its team of `teams`. A game
+waits at the kick off until a pause of `false` starts it. An input names the side of a person,
+`held` lists what the side holds now, among the directions `left`, `right`, `up` and `down` and the
+buttons `long_pass`, `high_pass`, `short_pass`, `shot`, `sliding`, `sprint` and `dribble`, and
+`pressed` lists the buttons pressed since the last input. A game that hears no input or pause for
+eight seconds waits, and after two minutes it ends with the ending `timeout`, so a script sends an
+input at least every few seconds while it plays. An input for a side that no person plays is
+refused, with an error that names the sides a person plays in that game.
 
 ## Tournaments
 
@@ -1991,9 +2258,10 @@ Each stage plays one of eight formats.
     entrants would take. The first round pairs the seeds in order. Each later round orders the
     entrants by the table so far and pairs each with the best placed entrant it has not met. An
     odd count gives a bye to the lowest entrant without one, worth a win, a draw or nothing as the
-    stage sets. Every pair meets at most once. Such a pairing always exists while each entrant has
-    met fewer than half the field, so a Swiss stage plays at most half as many rounds as it has
-    entrants, rounded up.
+    stage sets. A bye adds its points and counts in the table's Byes column, apart from the
+    matches played, won and drawn. Every pair meets at most once. Such a pairing always exists
+    while each entrant has met fewer than half the field, so a Swiss stage plays at most half as
+    many rounds as it has entrants, rounded up.
 - **Ladder.** The entrants stand on a ladder in seed order. In each round, neighbours meet, the
     first and second, the third and fourth and so on, and in the next round the second and third,
     the fourth and fifth, in turn. A challenger who wins takes the higher place, and on a draw the
@@ -2038,8 +2306,9 @@ cannot work, such as more Swiss rounds than allow a pairing without rematches, g
 bracket too small for its entrants, a stage that receives fewer than two entrants or a team in a
 scenario of another format, is refused with a message that names the setting, the stage and why.
 
-Ratings come from earlier tournaments. Every match of a tournament moves the rating of both
+Ratings come from earlier tournaments. Every match that a tournament plays moves the rating of both
 entrants by the Elo formula, 20 points for an upset at most, and a new entrant starts at 1500.
+A match awarded by forfeit was never played, so it leaves the ratings as they are.
 A registered team, the built in AI at each ability and each person by name keep their own rating.
 An entrant's rating may also be set by hand, and seeding by rating uses the ratings as they stand
 when the tournament is made.
@@ -2056,7 +2325,11 @@ again from the start with the same seed and gives the same result.
 ### Presets
 
 A preset holds a tournament's format, its stages, defaults and seeding, without its entrants. Those
-that ship adapt to the number of entrants where their format allows.
+that ship fit any number of entrants from 2 to 256. While its stages stay as the preset ships them,
+a group size, a best place, a number of Swiss rounds or of entrants that advance comes down to the
+most that the entrants allow, so the Swiss of 16 plays two rounds with three entrants and the
+league phase sends four of five entrants on. Stages changed on the page or in a configuration are
+the user's own, and a setting that the entrants cannot play is refused with the reason.
 
 | Preset | Format |
 | ------ | ------ |
@@ -2107,16 +2380,39 @@ place match in sections of their own, and a bracket wider than the page scrolls 
 groups, Swiss rounds, ladders and the challenges of a king show **tables**, with the places that
 qualify marked, a caption that names the order of the tiebreakers, and a line for each entrant that
 stands above another on equal points that names the tiebreaker that placed it there. **Fixtures and
-results** list every round with its matches, their scores, how a tie was decided, the progress of
-a match that plays, and Watch, which opens the recording of each match. The page follows a running
+results** list every round with its matches, their scores, or their state while none of their
+matches has played, how a tie was decided, the progress of a match that plays, and Watch, which
+opens the recording of each match. The page follows a running
 tournament as it plays and announces a match that waits for a person and the end of a tournament.
 
 A match with a person shows **Play now**, which starts it as a game of the Play page with the
 tournament's scenario, length, abilities and match seed. The person's name stands on the
 scoreboard, and two people in one match play the game for two. A game that reaches its end gives
 the result, and the end card leads back to the tournament. A game that ends early, by Quit or a
-lost page, leaves the match to be played again. **Award** gives a match to either side by the
-forfeit score, for a person who cannot play or a team that keeps failing.
+lost page, leaves the match to be played again, and a game that the other side's policy ends
+names that failure on the match, beside Play now and Award. **Award** gives a match to either side
+by the forfeit score, for a person who cannot play or a team that keeps failing. It asks first in
+place of the button, naming the match, the winner and the score, and Award confirms it while Cancel
+or Escape leaves the match as it was. An award is final once confirmed, since the matches after it
+may already have played with its winner.
+
+A match of agents that fails shows its error and Award for either side, and waits for an award or
+a retry while the matches that do not depend on it play on. Once only failed matches hold the
+tournament up, it stops with the first failure as its error, which names the team whose policy
+failed by the name it entered under. The notice of a stopped tournament lists each failed match
+with Award for either side, and Play now waits until the tournament runs again. An award that
+leaves a match to play runs it on, and Resume plays every failed match again. A failure stays a
+choice of the organizer, since a team that failed under a busy machine may well play on a retry,
+so the tournament awards no match by itself.
+
+The names that the rules give show in the language of the page, the rounds and ties such as
+Semi-final 1, Matchday 2 and Group A, the sides still to come such as Winner of Semi-final 1, the
+built in AI at an ability such as Built-in AI 0.50 with the decimal sign of the language, the stage
+names of the presets and formats, a tournament left without a name, the notes of a match and the
+titles of its recordings. A name that a person typed, of a tournament, a stage or an entrant, shows
+as typed, and so does the name of a registered team. The tournament files keep the English text of
+each name with its message beside it, the command line prints the English text, and a tournament
+of an earlier version shows its names as it saved them.
 
 The **trophy ceremony** of a finished tournament opens the last match that the champion played on
 the Watch page at its end, and holds the podium and confetti of the show after a match, with the
@@ -2128,21 +2424,49 @@ won with the runner up beneath it. Close ends it.
 ```sh
 cuju render tournament new --preset world_cup --name "Office cup" --seed 7 \
     --team t-20261106-101500-3fa9 --builtin 0.3 --builtin 0.8 --person Ana --run
-cuju render tournament list
-cuju render tournament show t-20261110-090000-1a2b
-cuju render tournament run t-20261110-090000-1a2b
-cuju render tournament cancel t-20261110-090000-1a2b
+cuju render tournament check --config spring.json
+cuju render tournament list --json
+cuju render tournament show cup-20261110-090000-1a2b
+cuju render tournament run cup-20261110-090000-1a2b
+cuju render tournament forfeit cup-20261110-090000-1a2b --match 0/w4-1/1 --winner away
+cuju render tournament resume cup-20261110-090000-1a2b
+cuju render tournament cancel cup-20261110-090000-1a2b
+cuju render tournament delete cup-20261110-090000-1a2b
+cuju render tournament ratings
 cuju render tournament presets
 ```
 
 The new command makes a tournament from a preset, `quick_cup` by default, or from a JSON file of a
 whole configuration given to `--config`, with the entrants in the order of the options `--team`,
 `--builtin`, with an ability or `any`, and `--person`. The options `--seeding`, `--scenario`,
-`--length` and `--concurrency` change the preset. A running server plays a new tournament, and
-`run` plays it in the terminal until it ends or waits for people, who play their matches on the
-page. One process at a time runs a tournament, and a lock file beside it names the process, so the
-server leaves alone a tournament that `run` plays, and the page follows it. A cancel from either
-reaches the process that runs it.
+`--length`, `--concurrency` and `--rounds`, the rounds of every Swiss or ladder stage, change the
+preset, and rounds beyond what the entrants allow are refused with the most they allow. A
+tournament's identifier starts with `cup-`. A running server plays a new tournament, and `run`
+plays it in the terminal until it ends, stops on failed matches or waits for people, who play
+their matches on the page. One process at a time runs a tournament, and a lock file beside it
+names the process, so the server leaves alone a tournament that `run` plays, and the page follows
+it. A cancel from either reaches the process that runs it. An award or a resume from the command
+line, or from the page while `run` holds the tournament, goes to the process that runs it, which
+applies it within a moment and answers. The key of a match is checked first, so a wrong one reads
+as such at once. A process that gives no answer within ten seconds leaves the change undone, and
+the refusal names the route of its server to send it to, such as
+`POST /api/tournaments/ID/forfeit`. A tournament that stopped leaves its lock, so the command line
+awards or resumes it while a server runs, and the server plays it on.
+
+The show command prints each stage with its tables and results, a tie that has played none of its
+matches as not played, and then every match still to play with its key, label, sides and state,
+with the error of a failed one. `forfeit`, also named `award`, gives the match of `--match` to the
+side of `--winner`, `home` or `away`, by the forfeit score, as Award does on the page, and
+`resume` plays the failed matches again, as `run` also does. The check command takes the options
+of new and prints each stage with its entrants, those who advance, its scenario and its first draw
+or groups, and makes nothing, or the reason the configuration cannot make a tournament. A cancel
+of a tournament that has ended is refused, and `delete` removes a tournament that has ended, which
+leaves its recordings in the library. The ratings command lists the rating of every entrant that
+has played, the highest first, with its matches and key. Every action takes `--json`, which prints
+what the server returns for it, the summary of a new tournament, the summaries of `list`, the whole
+tournament of `show`, `forfeit` and `cancel`, the resolved configuration and draw of `check`, the
+ratings, the presets, and for `run` the `outcome`, `done`, `stopped`, `people` or `cancelled`,
+beside the whole `tournament`.
 
 The server answers `GET /api/tournaments`, `GET /api/tournaments/ID`, `GET
 /api/tournaments/presets`, `GET /api/tournaments/ratings`, `POST /api/tournaments` with a
@@ -2150,6 +2474,110 @@ configuration, `POST /api/tournaments/check`, which resolves a configuration and
 `POST /api/tournaments/ID/cancel`, `resume`, `play` and `forfeit`, `POST
 /api/tournaments/presets/NAME`, and `DELETE` of a tournament or a preset, with the same Host and
 Origin checks as every other route.
+
+| Route | Body | Answer |
+| ----- | ---- | ------ |
+| `POST /api/tournaments/ID/forfeit` | `{"key": "0/w4-1/1", "winner": "away"}`, the winner `home` or `away` | the whole tournament, with the match awarded by the forfeit score |
+| `POST /api/tournaments/ID/resume` | `{}` | the summary of the tournament, which plays its failed matches again |
+| `POST /api/tournaments/ID/play` | `{"key": "0/w4-1/1"}`, a match with a person | the game of the Play page that plays it |
+| `POST /api/tournaments/ID/cancel` | `{}` | the whole tournament, cancelled |
+
+A match key comes from the `matches` of `GET /api/tournaments/ID`, each with its `key`, `label`,
+`home` and `away` entrants and `state`, and the summary of a tournament counts its `failed`
+matches. A refused change answers 400 with the reason, and an unknown tournament 404.
+
+### Configuration files
+
+The option `--config` of `cuju render tournament new` and `check`, `POST /api/tournaments` and
+`POST /api/tournaments/check` take a whole configuration as JSON. The page's Edit as JSON shows the
+stages and defaults of the same form. A configuration that names a `preset` and has no `stages`
+takes the preset's settings for those it leaves out, and the options of `new` change it as they
+change a preset. Each stage starts from the defaults below, then takes the configuration's
+`defaults`, then its own settings, so a setting of `defaults` reaches every stage that leaves it
+out.
+
+```json
+{
+  "name": "Spring league",
+  "seed": 7,
+  "seeding": "rating",
+  "concurrency": 2,
+  "entrants": [
+    {"kind": "team", "team": "t-20261106-101500-3fa9", "name": "Reds"},
+    {"kind": "builtin", "ability": 0.3},
+    {"kind": "builtin", "ability": 0.8, "rating": 1600},
+    {"kind": "person", "name": "Ana"}
+  ],
+  "defaults": {"scenario": "5_vs_5", "length": 600},
+  "stages": [
+    {"format": "swiss", "name": "Swiss", "rounds": 2, "bye_points": "draw", "advance": 2,
+     "tiebreakers": ["buchholz", "goal_difference", "head_to_head", "lots"]},
+    {"format": "knockout", "name": "Final", "legs": 2, "final_legs": 1,
+     "settle": ["away_goals", "decider", "lots"]}
+  ]
+}
+```
+
+This makes a Swiss stage of two rounds among four entrants, a bye worth a draw, whose best two
+meet in a final of one match, settled by away goals, a deciding match and lots in turn.
+
+| Key of the tournament | Value | Default |
+| --------------------- | ----- | ------- |
+| `name` | text of 1 to 80 characters | `Tournament` |
+| `seed` | a whole number from 0 | drawn at random |
+| `entrants` | a list of 2 to 256 entrants, as the next table describes | |
+| `seeding` | `random`, `manual` in the order of the entrants, or `rating` | `random` |
+| `concurrency` | the matches of agents at once, 1 to 8 | `1` |
+| `forfeit_score` | the goals of an awarded match, 1 to 10 | `3` |
+| `defaults` | stage settings for every stage | `{}` |
+| `stages` | a list of 1 to 8 stages, as the last table describes | |
+| `preset` | the name of a preset, which fills what the configuration leaves out | none |
+
+| Key of an entrant | Value |
+| ----------------- | ----- |
+| `kind` | `team`, `builtin` or `person`, `team` when absent |
+| `team` | the identifier of a registered team, for a team |
+| `ability` | from 0 to 1, or null for the scenario's own, for the built in AI |
+| `name` | the name the tournament shows, up to 40 characters, by default the team's name or Built-in AI with its ability, and required for a person |
+| `teammates` | `builtin` or a registered team of dynamic assignment, for a person |
+| `rating` | a rating from 0 to 10000 that replaces the one of earlier tournaments |
+
+| Key of a stage | Formats | Default | Value |
+| -------------- | ------- | ------- | ----- |
+| `format` | all | `knockout` | `knockout`, `double_elimination`, `league`, `groups`, `swiss`, `ladder`, `king_of_the_hill` or `gauntlet` |
+| `name` | all | the format's name | text of up to 60 characters |
+| `scenario` | all | the Kaggle match, or `5_vs_5` for teams of five a side | a scenario of the scenario list |
+| `length` | all | null, the scenario's own | steps from 50 to 5000 |
+| `ability` | all | null, the scenario's own | the built in AI's ability from 0 to 1 |
+| `legs` | all | `1` | the matches of a tie or meeting, 1 to 10 |
+| `final_legs` | `knockout`, `double_elimination` | null, as `legs` | the matches of the final, 1 to 10 |
+| `settle` | `knockout`, `double_elimination`, `ladder`, `king_of_the_hill`, `gauntlet` | `["replay", "lots"]` | an ordered list of `away_goals`, `replay`, `decider` and `lots`, which always comes last |
+| `replays` | as `settle` | `1` | replays at most, 1 to 5 |
+| `decider_scenario` | as `settle` | `academy_run_to_score_with_keeper` | the scenario of a deciding match |
+| `decider_length` | as `settle` | null, the scenario's own | steps from 50 to 5000 |
+| `points` | `league`, `groups`, `swiss`, `ladder`, `king_of_the_hill` | `{"win": 3, "draw": 1, "loss": 0}` | whole numbers from minus 100 to 100 |
+| `tiebreakers` | `league`, `groups`, `swiss` | `["goal_difference", "goals_for", "head_to_head", "wins", "fair_play", "lots"]` | an ordered list of `goal_difference`, `goals_for`, `goals_against`, `head_to_head`, `wins`, `away_goals`, `fair_play`, `buchholz` and `lots`, which always comes last |
+| `seeding` | a later stage | `standing` | `standing`, `random` or `rating` |
+| `bracket` | `knockout` | `byes` | `byes` or `play_in` |
+| `bracket_size` | `knockout`, `double_elimination` | null, from the entrants | a power of two |
+| `until` | `knockout` | `1` | a power of two below the bracket size, the entrants that remain |
+| `third_place` | `knockout` | `false` | `true` or `false` |
+| `grand_final_reset` | `double_elimination` | `true` | `true` or `false` |
+| `cycles` | `league`, `groups` | `1` | the times each pair meets, 1 to 10 |
+| `groups` | `groups` | null, from `group_size` | the number of groups |
+| `group_size` | `groups` | `4` | entrants of a group, from 2 |
+| `group_sizes` | `groups` | null | a list of sizes that add up to the entrants |
+| `pots` | `groups` | null, the largest group size | the pots of the draw |
+| `qualifiers` | `groups` | `2` | a count for every group, or a list of one count a group |
+| `best_position` | `groups` | null | a place whose best entrants across the groups also qualify |
+| `best_count` | `groups` | `0` | how many of them, or `"fill"` for enough to fill a bracket |
+| `rounds` | `swiss`, `ladder` | null, from the entrants | Swiss rounds up to half the entrants rounded up, ladder rounds up to 1000 |
+| `laps` | `king_of_the_hill` | `1` | the times the challengers come round, 1 to 10 |
+| `bye_points` | `swiss` | `win` | `win`, `draw` or `none` |
+| `draws` | `ladder`, `king_of_the_hill`, `gauntlet` | `holder`, or `settle` for a gauntlet | `holder` or `settle` |
+| `advance` | every stage but the last | from the format | the entrants that go on to the next stage |
+
+### Files
 
 Each tournament lives in a JSON file of the folder `tournaments`, with its resolved configuration,
 the result of every match and its state, written through a temporary file. A file that cannot be
@@ -2219,9 +2647,24 @@ the challenge's scenario, seed and ability, with Save to Recordings on and the p
 alone. The end card of each attempt shows the attempt's result, which the server scores from the
 saved recording, and offers Next attempt, Watch it and Leave challenge. After the last attempt the
 page sends the run to the server, the person's name and the recordings in order, and the end card
-shows the value, the medal, the personal best, the rank and any achievements, with Try again. A
+shows the value with the seconds that its counting attempts took to score in all, the medal, the
+personal best or, for the person's first run, its place on the board, the rank and any
+achievements, with Try again. A run in which no attempt counted shows its value alone. An
+achievement earned again in a run shows on the first end card that earns it. Leave challenge and
+the Challenges button of the last end card return to the setup with the focus on the challenge
+just played, and each button of a challenge names its challenge for screen readers. A
 setup card that opens while a run is under way, after Esc on an end card for example, names the run
 and offers Next attempt and Leave challenge.
+
+Keep attempts as recordings, a setting of the section that the browser keeps, is on by default,
+and the attempts of each run then gather in one group of the Recordings page. With the setting
+off, a run scores, ranks and earns exactly as with it on, and leaves the library as it was. The
+attempts of a person's run still save their recordings while the run plays, since the server
+scores each attempt from its recording, and the server removes them for good once it has scored
+the whole run, so the end card of such a run offers no Watch it. A run that a person leaves before
+its end hands its attempts to the server as well, which keeps them as the group of a left run, or
+removes them when the setting is off. The setting applies to the headless runs that the section
+starts too.
 
 The server scores every recording of the run again and checks that each one fits its attempt, a
 game of the Play page with the challenge's scenario and abilities, the seed of the attempt, a
@@ -2241,13 +2684,25 @@ seconds, 120 seconds for its first answer, ends the run, and so does one that fa
 anything but actions. Such a run stays off the leaderboard. Each attempt plays in a batch
 of one environment with the challenge's seed and abilities and the action set that a requested
 match would choose for the team, and becomes a recording of the library whose provenance names the
-source `challenge`, as described under Recording format.
+source `challenge`, as described under Recording format. The recordings of a run form one group,
+as [Recordings](#recordings) describes, and the result names it in `group`.
+
+`keep_recordings=False` in Python and `--no-recordings` on the command line play a run without
+recordings. Such a run scores, ranks and earns from the same frames as one that keeps them, and
+adds nothing to the library. Its attempts then name no recording, `match` is `None` in each of
+them, and `group` is `None`.
 
 A run with fewer attempts than the challenge's count is practice. It is scored and saved as
 recordings, wins no medal and stays off the leaderboard. A full run reaches the board, which keeps
 the best run of each competitor as its personal best, a person by name, a team of the registry by
 its identifier and a Python policy by its name, and holds the best 100 competitors. A registered
 team may be `builtin`, GRF's built in AI on the whole side without any agent.
+
+A Python policy goes by the name that `name` gives, by default its function's name, and a function
+without a name of its own, such as a lambda, plays as Python policy. The board marks each
+competitor as a person, a team or a Python policy, so a policy that shares a team's name ranks
+apart from the team. A search by `team:` reads the names in the recordings, so it finds both, and
+a name of its own keeps the policy apart there too.
 
 From the Play page, the team list and Attempts of the Challenges section and Run headless on a
 challenge start a run on the server, in a process of its own, one at a time. The line above the
@@ -2256,18 +2711,27 @@ and rank when it is done.
 
 From the command line, `cuju render challenge list` prints the catalog, and a challenge's
 identifier with a team plays it, printing each attempt with its seed, its goal and its recording,
-then the value, the medal, the rank and the personal best.
+then the value, the medal, the rank and the personal best. An attempt that scored after the time
+limit of its challenge says so, and a run whose attempts all fall short says that no attempt
+counts in place of the seconds to score. `--json` prints the catalog, or the whole result of a run
+as `cuju.render.challenge` returns it, once the run has ended.
 
 ```sh
 cuju render challenge list
 cuju render challenge empty_goal_close --team t-20261106-101500-3fa9
 cuju render challenge one_on_one --team builtin --attempts 1 --device cpu
+cuju render challenge empty_goal_close --team builtin --attempts 1 --json
+cuju render challenge corner --team builtin --no-recordings
 ```
 
 From Python, `cuju.render.challenge` plays a challenge with a team of the registry or with any
 Kaggle style agent function, and returns a plain dictionary of the run. A function plays one player
 of dynamic assignment by default, and `control` takes the control settings of a team in its place.
-`cuju.render.challenges` returns the catalog.
+`cuju.render.challenges` returns the catalog. A policy that fails, answers with anything but actions
+or stops answering raises `cuju.render.PolicyError`, an `Error` of cuju and a `RuntimeError`, whose
+message names the policy and the reason in one line, with the policy's own error as its cause. The
+result's `achievements` lists what a team of the registry keeps from the run, and stays empty for
+the built in AI and for a Python policy, which keep none.
 
 ```python
 import cuju.render
@@ -2295,7 +2759,7 @@ exists once the Play page has opened, as `cuju.showPage('play')` does for a scri
 | `await start(id, { name })` | start a person's run and play its first attempt |
 | `await next()` | play the next attempt once the last one has ended |
 | `leave()` | leave the person's run |
-| `await run(id, { team, attempts })` | start a headless run of a team on the server |
+| `await run(id, { team, attempts, keepRecordings })` | start a headless run of a team on the server, which keeps its recordings as the setting of the section says unless `keepRecordings` says otherwise |
 | `await jobs()` and `await cancel(job)` | the headless runs, and the end of one |
 | `await score(id, match, attempt)` | the result of a recording as an attempt |
 | `await achievements()` | the catalog of achievements, the person's and every team's |
@@ -2304,7 +2768,9 @@ exists once the Play page has opened, as `cuju.showPage('play')` does for a scri
 The server's routes are `GET /api/challenges`, with `?person=` for a person's best runs,
 `GET /api/challenges/<id>` for a board, `GET /api/challenges/<id>/score?match=&attempt=` for one
 attempt, `POST /api/challenges/<id>/runs` with `person` and `matches` for a person's run or `team`
-and `attempts` for a headless one, `GET /api/challenges/jobs` and
+and `attempts` for a headless one, each with `keep_recordings` false for a run without recordings,
+`POST /api/challenges/<id>/leave` with `person`, `matches` and `keep_recordings` for the attempts
+of a run that a person left, `GET /api/challenges/jobs` and
 `DELETE /api/challenges/jobs/<job>`. They pass the same checks of host and origin as every other
 route.
 
@@ -2349,10 +2815,8 @@ team's stay with the server in a JSON file of its own, which holds for each achi
 time, the count and the recording of the first time. `GET /api/achievements` returns the catalog
 and every team's achievements.
 
-A program that plays registered teams in its own way awards them with
-`cuju.render._playing.achievements.award_match(header, frames, team_ids, match)`, the header and
-frames of a recording, the registry identifier of each side or `None`, and the recording's
-identifier.
+Requested matches, challenges and tournaments award their teams as each recording is saved, and
+`cuju.render.challenge` returns what a team of the registry keeps from a run.
 
 ## Learning the renderer
 
@@ -2371,14 +2835,18 @@ list of Teams, New tournament of Tournaments, the Settings button and the Learn 
 Help, eleven steps in all. Each step opens its page, names the step and its number, and says in a
 sentence what the control does and the key that reaches it.
 
-The tour shows as a card beside its control, below it when there is room and above it near the
-bottom of the window. The card is a dialog that leaves the page usable, so the control it points at
-works while the card shows, and Try it moves the focus to the control itself. The focus moves to
-the title of the card at each step, and a screen reader hears the number, the title and the text of
-the step. Next and Back move through the steps, and so do the Right and Left arrows while the card
-has the focus. Finish on the last step ends the tour. Esc, or Leave the tour, closes it from the
-card, and from the page whenever no menu, palette or dialog is open over it, and the page then
-says at which step it stopped.
+The tour shows as a card beside its control, below it when there is room, above it near the
+bottom of the window, and at its side when the control is taller than the room left. A part of
+the page larger than the window has its ring around the part in view. The card is a dialog that
+leaves the page usable, so the control it points at works while the card shows, the focus and the
+Tab key move freely between the card and the page, and Try it moves the focus to the control
+itself. A control outside the window scrolls to its middle, and scrolls back while the page settles
+for a moment after the step shows. The focus moves to the title of the card at each step, so a
+screen reader hears the title, and then hears the number and the text of the step once. Next and
+Back move through the steps, and so do the Right and Left arrows while the card has the focus.
+Finish on the last step ends the tour. Esc, or Leave the tour, closes it from the card, and from the
+page whenever no menu, palette or dialog is open over it, and the page then says at which step it
+stopped.
 
 A step that needs a recording, such as the timeline, offers Open the sample match when nothing
 plays, which adds the five a side sample to the library when it is missing, restores it from the
@@ -2424,7 +2892,11 @@ and replays among them, move the camera through modes of their own that no lesso
 The browser keeps the lessons done, with the time of each, and Help shows how many are done and
 marks each one. Reset the lessons forgets them all, and the page then starts again from the first.
 Every lesson done is also reported to the server, which keeps the lessons that only a page can
-check, so the command line sees them as well.
+check, so the command line sees them as well. Those four lessons, Jump to a goal, Switch the
+camera, Follow a player and Make a photo, are watched even while no lesson is under way, so a
+person or a script that does one of them on the page completes it, and a replay or the show after
+the match leaves Jump to a goal open there. On loading, the page takes in every lesson the server
+knows done, so a new browser shows the same progress as the command line.
 
 ### The tutorial for agents
 
@@ -2453,14 +2925,15 @@ Each lesson has one check, which reads the home folder.
 
 Open a recording, Play for 30 seconds, Register a team and Start a challenge have checks of the
 library and the registry, so an agent does them from the command line, with
-`cuju render sample sample-5v5`, `cuju render play --scenario 5_vs_5 --seed 1`,
+`cuju render sample 5v5`, `cuju render play --scenario 5_vs_5 --seed 1`,
 `cuju render sample starter-team` and
 `cuju render challenge empty_goal_close --team builtin --attempts 1`. Jump to a goal, Switch the
 camera, Follow a player and Make a photo are lessons of the page, and their steps are the calls of
 `window.cuju` that do them, such as `cuju.act('next-goal')`, `cuju.setCamera('tactical')` and
 `await cuju.photo.capture({ width: 640, height: 360 })`. An agent that drives the page in a
 browser, through the Chrome DevTools Protocol for example, runs those calls, the page notices the
-lesson done and reports it, and the command then counts it.
+lesson done and reports it, and the command then counts it. The lesson needs no start on the page
+first.
 
 The server answers `GET /api/help/tutorial` with every lesson and its state, and
 `GET /api/help/tutorial/<lesson>` with one. `POST /api/help/tutorial` with `done`, a list of
@@ -2487,20 +2960,21 @@ A script that drives the page reaches the lessons and the tour through `window.c
 cuju ships three samples, a whole match of five a side and one of eleven a side between built in
 AIs, and the **starter team**, a small Kaggle submission whose player runs at the ball, carries it
 toward the goal and shoots from close range. The Samples part of Help lists each one with what the
-library holds of it, In the library, In the Trash or Not in the library. Open plays a recording on
+library holds of it, In the library, In the Trash or Not in the library for a recording, and In
+the registry or Not in the registry for the starter team. Open plays a recording on
 Watch and shows the Teams page for the team, Restore brings a recording back from the Trash with
 its details, and Add copies a missing recording into the library or registers the starter team as
 a new team. Add or restore every sample does all of it at once. The folder of the starter team,
 `cuju/render/samples/teams/starter` of the package, is a good start for a team of one's own.
 
-`cuju render sample` adds or restores every sample, and a name does one, `sample-5v5`,
-`sample-11v11` or `starter-team`, with `5v5` and `11v11` as before. `cuju render sample list`
-prints each sample with its kind and state. The server answers `GET /api/help/samples` with the
-same list, and `POST /api/help/samples` with `names`, a list, adds or restores those samples, or
-every one without it. Scripts call `await cuju.samples.list()` and `await cuju.samples.add(names)`.
-The file `sample-teams.json` of the home folder names the team that the starter team became, so
-the list knows it again, and a team removed from the registry shows as missing and comes back as a
-new team.
+`cuju render sample` adds or restores every sample, and a name does one, `5v5`, `11v11` or
+`starter-team`, and the identifiers `sample-5v5` and `sample-11v11` name the recordings as well.
+`cuju render sample list` prints each sample with its kind and state. The server answers
+`GET /api/help/samples` with the same list, and `POST /api/help/samples` with `names`, a list, adds
+or restores those samples, or every one without it. Scripts call `await cuju.samples.list()` and
+`await cuju.samples.add(names)`. The file `sample-teams.json` of the home folder names the team that
+the starter team became, so the list knows it again, and a team removed from the registry shows as
+missing and comes back as a new team.
 
 ## Diagnostic report
 
@@ -2528,7 +3002,10 @@ tournaments, leaderboards with runs and live sources, the server of the folder, 
 warnings and errors of the server, the 50 newest, which include every request that failed inside
 the server. The checks then name what is wrong, a home folder that is missing, a file, or cannot be
 written, less than 500 MB of free space, a missing sample or page file, a stale `server.json` and
-whether video export finds Chrome and ffmpeg.
+whether video export finds Chrome and ffmpeg. Video export is optional, so a missing program marks
+its check `warn`, with `warning` true in the JSON, and the check still passes. The line under the
+button names each check that fails and each check that warns, and says that every check passes only
+when none does either.
 
 The report names no path beyond the renderer's home folder, and writes the user's home directory
 as `~` there and in every message, a home folder of the renderer outside it as `$CUJU_RENDER_HOME`
@@ -2581,7 +3058,9 @@ returns with the version. Each time the page opens, the worker asks the server f
 the build is the worker's own, files come from the cache first. Once the server holds a new
 version, or a file of the page changes, files come from the server at once and the page registers
 the worker of the new build, which replaces the old one and its cache. With no server answering,
-the cache answers.
+the cache answers. The server writes the SHA-256 of every file of the page into the worker as it
+serves it, and the worker keeps and answers only copies with the digest of their file, so it drops
+any other entry of its cache and asks the server again.
 
 The worker keeps only files of the page itself. Every answer of the API stays out of it, so
 recordings, teams, live streams, games and reports always come fresh from the server, and so do the
@@ -2589,6 +3068,11 @@ sandbox of team workers, a request with a query such as the page of a notebook, 
 range, and the montage video. The page registers the worker only at its top on http at a loopback
 host, `127.0.0.1`, `localhost` or `[::1]`, so a notebook's frame, Google Colab's proxy and any
 other address keep no copy, and a worker that finds itself elsewhere removes itself.
+
+The page points its manifest at `manifest.webmanifest?lang=CODE` for any language but English, and
+the server then fills the manifest's description and the names of its shortcuts, Watch, Play and
+Help, from that language file, so an install made from a Portuguese page names them in
+Portuguese.
 
 Update on Help shows a newer build at once, and Remove the offline copy unregisters the worker and
 deletes its cache until the page keeps them again on its next start. The browser's own list of
@@ -2611,8 +3095,10 @@ players to their places at a restart, with the transitions of television. Settin
 off.
 
 **Lineups.** A recording opened at its start pauses for a pan across the ground under the team
-sheets, with each team's goalkeeper, its lines from the back and its formation. Enter or a click
-starts the match.
+sheets, with each team's goalkeeper, its lines from the back and its formation at kick off, such as
+2-2 or 4-3-3. Players close in depth share a line, by a gap that shrinks with the depth the team
+spans, so the lines of five a side, a few meters apart at kick off, part as those of eleven a side
+do. Enter or a click starts the match.
 
 **Goals.** Playing forwards at up to two and a half times real time, the page holds play on the step
 before a goal, so the kick off that follows stays unseen. The crowd roars, a graphic names the
@@ -2914,6 +3400,7 @@ offers the same presets.
 | Tips for new visitors | on | a short tip on each page until dismissed |
 | Touch controls on Play | when a touch screen is used | the stick and buttons of a game |
 | Theme | the system's | dark or light |
+| Language | the browser's | the language of the page, as [Languages](#languages) describes |
 
 The Motion setting follows the system's preference for reduced motion by default, and Reduced or
 Full sets it for the page alone. Reduced motion keeps everything a match shows and replaces the
@@ -2939,16 +3426,154 @@ Three quality levels in the View menu set the resolution of the shadows, the pix
 glow of bright lights, the particles of rain and snow, the detail of the crowd and the shadows of
 the floodlights, and the page picks one from the device.
 
+## Languages
+
+The page speaks English and Brazilian Portuguese, and a language of anyone's own joins them as one
+file. Every text the page shows comes from a language file, the pages, menus, buttons, titles,
+labels for screen readers, tips, the tour and the lessons, toasts and messages, the captions, the
+names and texts of the scenarios, and the messages of the server that the page shows, such as the
+reasons an upload or a request was refused. The command line and the answers of the API stay in
+English, and an answer that the page shows also names its message, so the page shows it in its
+own language. Names that come from the data, such as the names of teams and players, read as they
+were given.
+
+### Choosing a language
+
+The Language list of the settings panel offers Follow the browser, then the languages that ship
+with cuju, then the languages of the person's own. Follow the browser, the default, picks the
+first language of the browser that a file exists for, by its whole code such as `pt-br` and then
+by its language alone such as `pt`, and English otherwise. A choice in the list stays in the
+browser, and the page reloads at the same address in the new language, so the open page, the
+open recording and its moment come back as they were. A file opened from the computer opens again
+after the change. Numbers and dates follow the language too, so the Portuguese page writes `0,5`
+and its own dates. The command palette lists each other language too, as Language with its name,
+and Language follows the browser while a language is chosen, so the word language, or the name of
+a language, finds them.
+
+The parameter `lang` of the address, such as `?lang=pt`, picks a language for one visit without
+storing it, which suits a clean feed for OBS and scripts. A choice stored in the browser comes
+first, and the feed keeps its own storage, so `lang` decides there. A message that a language
+lacks shows in English, so a language that covers only part of the page still works. The server
+puts the shipped languages into the page itself, so the page starts without asking for them.
+
+### Adding a language
+
+A language is one JSON file named after its code, such as `de.json` for German or `pt-br.json`
+for a variant, with lowercase letters and digits in parts. The file is one object keyed by message
+identifier, and the key `@language` holds the code, the name of the language in itself, its
+English name, the locale of numbers and dates, the direction of the text and its plural
+categories.
+
+```json
+{
+    "@language": {
+        "code": "de",
+        "name": "Deutsch",
+        "english": "German",
+        "locale": "de-DE",
+        "dir": "ltr",
+        "plurals": ["one", "other"]
+    },
+    "html.nav.watch": "Ansehen",
+    "recordings.count.trash": {
+        "one": "{count} Aufnahme, {size} im Papierkorb",
+        "other": "{count} Aufnahmen, {size} im Papierkorb"
+    }
+}
+```
+
+A message is a text whose placeholders in braces, such as `{count}` or `{team}`, the page fills
+in, or an object of plural forms for a count, keyed by the plural categories of the language as
+Unicode CLDR names them, `zero`, `one`, `two`, `few`, `many` and `other`. Portuguese has `one`,
+`many` and `other`, Polish has `one`, `few`, `many` and `other`, and Japanese has `other` alone. A
+form for an exact count, such as `=0`, comes before the categories. A text keeps the placeholders
+of its English message and adds none, and a plural form may leave the count out, as in `one
+recording`. A message may count what English leaves alone when the English text holds `{count}`.
+The captions stay plain texts. A message never holds markup, and the page puts every text in as
+text.
+
+`cuju render language new de --name Deutsch` writes `de.json` with every English message, the
+header and the plural forms of German filled in, ready to translate in place. `cuju render
+language check de.json` compares a file with English and names each message the file lacks,
+each message English lacks, and each malformed message, whose placeholders differ from English or
+whose plural forms miss a category of the language. It also counts the messages that still read
+as in English, which is no fault. It exits with 0 when the file is complete and well formed and 1
+otherwise, and `--json` prints the report for a script or an agent.
+
+The folder `languages` of the renderer's folder holds the languages of a person's own. A file
+dropped there joins the Language list once the page lists the languages again, and Import a
+language file on the settings panel sends a file to the server, which checks it and keeps it there
+when every message is well formed. Missing messages are allowed and show in English. A malformed
+file is refused with the first problem named, a file in the folder that is malformed shows in the
+list as refused, and the code of a shipped language belongs to that language, so a variant of it
+takes a code of its own, such as `pt-x-mine`. `cuju render language add FILE`, `list` and `remove
+CODE` do the same from the command line.
+
+### Contributing a language
+
+A language for everyone ships in `src/cuju/render/web/languages` of the repository. A
+contribution adds its file there, with a code that names the language, and the check passes on it.
+The test suite checks every shipped file the same way, so a message added to the page in English
+and missing from a shipped file fails the tests until each language holds it. English is the
+reference, and a new message of the page joins `en.json` first. A translation follows the plain
+style of the English, short sentences joined by commas and periods, and the same term for the same
+thing everywhere, and a native speaker reads it through before it ships.
+
+### Agents and scripts
+
+| Route | Does |
+| --- | --- |
+| `GET /api/languages` | lists the languages, shipped first, each with its code, name, English name, locale, direction, source, whether the page can use it, its count of messages and of missing ones, and its problems |
+| `GET /api/languages/CODE` | answers the file of a language |
+| `POST /api/languages` | checks the language file of the body and keeps it in the folder, or refuses it with the problem |
+| `DELETE /api/languages/CODE` | removes a language of the folder |
+
+The page offers the same as `cuju.language`, whose `list()` returns the languages, `choose(code)`
+picks one, or `null` to follow the browser, and `importText(text)` imports a file. An error answer
+of the server carries `error` with its English text, `error_id` with the identifier of its
+message and `error_values` with the values of its placeholders, and so does each requested match,
+game, video, challenge run and tournament match that failed, so an agent reads the text or
+matches the identifier.
+
+The names and titles that cuju makes come the same way, so the page shows them in its own
+language. GRF's built-in AI, the sides Left and Right of a recording whose teams have no names,
+You and Player 1 on the Play page, a person with a registered team as teammates, a policy without
+a name of its own, and the titles of games, challenge attempts, the demo, the Recorder, live
+sources and the shipped samples each travel as a label. A label holds the English text in its
+field, such as `title` or `name`, and beside it `title_id` and `title_values`, or `name_id` and
+`name_values`. A value may be a label of its own, a scenario, which the page shows by its name, or
+a challenge, which the page shows by its title. A recording keeps its labels in its header, and a
+summary of the library adds `team_labels`, the label of each team or null. A name that a person
+gave, a renamed built-in AI and a title typed on the Recordings page stay plain text and show as
+given, and a recording of an earlier version shows the English text it holds. The command line and
+every English answer read the same text as before. The slate messages of the feed, its list of
+sources and its refusals carry their identifiers in the same way, and so does a team's name inside
+a refusal of the server, with a scenario named by its name on the page.
+
 ## Keyboard
 
 Tab and Shift Tab move between controls on every page. Enter or Space activates a control.
 Ctrl K opens the command palette outside text fields, as described under Page layout.
-The skip link moves to the main content. Menus and lists use the arrow keys, Home and End.
-Esc closes a menu or panel and returns focus to its opener. Dialogs keep Tab inside them.
+The skip link moves the focus to the main content and leaves the address of the page as it is.
+Menus and lists use the arrow keys, Home and End.
+Esc closes a menu or panel and returns focus to its opener, unless another dialog took the focus
+meanwhile. Dialogs keep Tab inside them, except the card of the guided tour, which leaves the
+page usable.
 Sliders use the arrow keys. Color fields accept a hex value beside the color picker.
 
+Each page has a title of its own in the window, such as `Help · cuju`, and Watch takes the title
+of the recording that plays. The main content carries the name of the page in view, and a screen
+reader hears the name of each page it moves to. Every page has one heading at the top level, the
+visible title on Teams, Tournaments and Help and a heading for a screen reader on the other pages,
+and the headings below it descend one level at a time. The clock of the score bug is a timer, so
+a screen reader reads it when asked while the HUD says goals and banners as they come, and the skip
+buttons of Watch carry their names, such as Back 30 seconds. The timeline of
+Watch is a slider that says where it stands as it moves, such as `1:23 of 5:00`.
+
 Home cards open their pages. Watch keeps its playback and camera keys while the picture has
-focus. Focused controls use their own keys, and text fields keep typing within the field. Space on
+focus. Focused controls use their own keys, and text fields keep typing within the field. Buttons
+and links take Enter and Space alone, so a single key such as H, the question mark, M or F reaches
+the page while one has the focus, outside a dialog or a menu. Space on
 a focused control acts on that control, so a summary that opens a section opens it while playback
 carries on as before. The controls of the Watch page stay in view while keyboard focus is inside
 them and rest again once focus leaves.
@@ -2959,7 +3584,8 @@ Matches and Play setup use Tab through their forms, and the input settings of Pl
 keys of play. Teams uses arrows through its list and
 section menus, with Tab through editor controls. Field uses Tab through settings and the
 preview, where the camera keys move the view and arrows turn it. Play uses Esc for its pause menu,
-with Home available there and on the end card. Home pauses an active game. Quit to Home ends
+with Home available there and on the end card. The arrows, Home and End move between the buttons
+of the pause menu and of the end card, as in any menu. Home pauses an active game. Quit to Home ends
 the game and saves it when Save to Recordings is enabled. A natural ending shows Full time
 for a complete match
 and End of episode otherwise.
@@ -3018,7 +3644,8 @@ A requested match adds its resolved `seed`, the `scenario`, the registry identif
 `ability` that played on each side. A game on the Play page adds its seed, scenario, the sides of
 the people as `humans`, the action set and the ability. A match of a tournament adds `tournament`,
 with the identifier and name of the tournament, the name of its stage, the label of the match and
-its key, and the names of its people as `names` when it was a game, and a match of a set length
+its key, and the names of its two entrants as the tournament shows them as `names`, home first,
+which also name the teams of the recording, and a match of a set length
 adds `length`. An agent's attempt of a challenge adds the `challenge`, the index of the `attempt`
 from zero, its seed, the scenario, the `teams` with the registry identifier of the left team or null
 for a Python policy, the `competitor` by name, the `policy` name of a Python policy, the agent
@@ -3169,7 +3796,8 @@ for the scenario files of set match lengths, `challenges` for the leaderboards a
 for what the teams of the registry earned. A ninth, `videos`, holds the videos that the page
 exports, the three latest of the running server beside the one in progress, and the server empties
 it before its first export. A tenth, `index`, holds the index of the moments of the library, one
-JSON file per recording, which the server rebuilds from the recordings whenever it needs. Each
+JSON file per recording, which the server rebuilds from the recordings whenever it needs. The
+folder `languages` holds the languages a person adds, one JSON file each. Each
 leaderboard is one JSON file named after its challenge, and each
 team's achievements one JSON file named after the team, both written through a temporary file
 under a lock and read with every field checked, so a file or an entry of the wrong form is skipped
@@ -3195,16 +3823,23 @@ keep its own matches beside its code.
 The server listens on the loopback interface alone, since its API deletes files and plays the code
 of submissions, and it checks the loopback host on every request. Requests that change data also
 check any
-Origin header against the server's own address, including the scheme and port. A server on another
+Origin header against the server's own address, including the scheme and port. Each request runs
+on a thread of its own, and a thread that finished waits half a minute for the next request, so a
+page that asks for its few hundred files makes few new threads. The server holds up to 128
+connections waiting to be accepted, since a page opens its files many at once and Windows refuses
+a connection beyond the queue. A page whose module fails to load all the same reloads once after
+a second. A server on another
 machine is reached through a tunnel, such as
 the port forwarding of SSH, which makes it a loopback server of the local machine, as
 [Remote use](#remote-use) describes.
 
 While a server runs, the file `server.json` of the renderer's folder names its port, its process
-and the key that lets a notebook frame its page, and the server removes the file when it stops.
-`show` and `cuju render open` read the file and ask the server whether it answers, so they reuse a
-running server of the same folder and start one only when none answers. A server that `show`
-starts in the background writes its messages to `server.log` beside it.
+and the key that lets a notebook frame its page, and the server removes the file when it stops,
+on Ctrl+C, on a terminate signal and when the process that started it ends. `show` and
+`cuju render open` read the file and ask the server whether it answers, so they reuse a running
+server of the same folder and start one only when none answers, and they remove a file whose
+process has ended. A server that `show` starts in the background writes its messages to
+`server.log` beside it.
 
 ## Command line
 
@@ -3216,18 +3851,23 @@ picks the renderer's folder for that command alone.
 | `cuju render` | serves the page and opens Home, or opens Home of the server that already runs for the folder |
 | `cuju render serve` | serves the page until interrupted, with `--port`, `--open` to open the page and `--remote` for [Remote use](#remote-use) |
 | `cuju render open TARGET` | opens a `.cjr` file, the identifier of a recording or a live source, or a URL of the page, with `--port` for a server that it starts |
-| `cuju render team add FOLDER` | registers a submission folder or archive, with `--name` and `--format` |
-| `cuju render team list`, `export ID`, `remove ID` | lists, exports with `--out` or removes registered teams |
-| `cuju render play` | records a match between `--left` and `--right` on `--scenario`, with `--seed`, `--device`, `--left-ability` and `--right-ability` |
-| `cuju render sample` | adds the sample matches and the starter team again or restores them, or one with `sample-5v5`, `sample-11v11`, `starter-team`, `5v5` or `11v11`, and `list` prints what the library holds of each |
+| `cuju render team add FOLDER` | registers a submission folder or archive, with `--name`, `--format`, the control options and `--json` |
+| `cuju render team list`, `show ID`, `set ID`, `export ID`, `remove ID` | lists, shows, changes with `--name`, `--format` and the control options, exports with `--out` or removes registered teams, as [Teams and requested matches](#teams-and-requested-matches) describes |
+| `cuju render team sound ID KIND FILE` | gives a team the sound of a moment, checked as the page's upload is, removes it with `--remove` in place of the file, or lists the team's sounds without a moment, with `--json` |
+| `cuju render play` | records a match between `--left` and `--right` on `--scenario`, with `--seed`, `--device`, `--left-ability`, `--right-ability` and `--json` |
+| `cuju render sample` | adds the sample matches and the starter team again or restores them, or one with `5v5`, `11v11` or `starter-team`, or `sample-5v5` and `sample-11v11`, and `list` prints what the library holds of each, with `--json` |
 | `cuju render tutorial` | prints the lessons for an agent and checks each one, with a lesson's identifier, `--json`, `--check` and `--reset`, as [The tutorial for agents](#the-tutorial-for-agents) describes |
 | `cuju render doctor` | prints the diagnostic report, with `--json` and `--out`, as [Diagnostic report](#diagnostic-report) describes |
 | `cuju render demo` | streams a live match between the built in AIs to the page, as [Quick start](#quick-start) describes |
-| `cuju render tournament` | makes, lists, shows, runs and cancels tournaments, as [Tournaments](#tournaments) describes |
+| `cuju render tournament` | makes, checks, lists, shows, runs, cancels, awards, resumes and deletes tournaments and lists ratings, as [Tournaments](#tournaments) describes |
+| `cuju render challenge` | lists the challenges with `list`, or plays one headless with `--team`, `--attempts`, `--device`, `--no-recordings` and `--json`, as [Challenges](#challenges) describes |
+| `cuju render recordings` | lists the library with the group of each challenge run, one group with `--group`, the Trash with `--trash`, and moves a group with `--delete-group` or `--restore-group`, with `--json`, as [Recordings](#recordings) describes |
+| `cuju render pack` | checks a presentation package with `check`, writes a new team with `new`, previews a package with `preview` or shows and sets the package of each side with `sides`, as lines or as JSON with `--json`, as [Presentation packages](#presentation-packages) describes |
 | `cuju render search QUERY` | finds moments across the library, with `--limit` and `--json`, as [Searching moments](#searching-moments) describes |
 | `cuju render captions RECORDING` | writes the captions of a recording or a `.cjr` file as WebVTT with `-o`, or as JSON with `--json` |
 | `cuju render video SOURCE` | exports a range of a recording as an MP4 video, as [Exporting video](#exporting-video) describes |
 | `cuju render feed [SOURCE]` | prints the address of a clean feed, or of every source a feed may follow, as [Streaming with OBS](#streaming-with-obs) describes |
+| `cuju render language` | writes a new language with `new CODE`, checks one with `check FILE`, and lists, adds and removes the languages of the folder with `list`, `add FILE` and `remove CODE`, with `--json`, as [Languages](#languages) describes |
 
 `cuju render open` copies a recording file from outside the library into it, under a new
 identifier, and opens the copy. A file whose bytes the library already holds opens that recording,
@@ -3244,6 +3884,18 @@ missing file, a file that holds no recording, an identifier that names nothing a
 the Trash each have a message of their own. A folder that is a file, lies under a file, or cannot
 be created or written stops every command at its start, with a message that names the folder and
 the option `--home`.
+
+A command run with `--json` prints its error as JSON on standard output alone when it fails, an
+object of `error`, the English text, and `error_id` and `error_values`, the message and its values
+when the error carries one and `null` otherwise, so a script reads one answer whatever happens.
+A failure exits with status 1, and arguments that do not fit exit with status 2. Without `--json`
+the error goes to standard error as one line.
+
+In Python, the errors of the renderer read as the public classes they belong to, such as
+`cuju.errors.ArgumentError` and `cuju.render.PolicyError`, and `dir(cuju.render)` lists the names
+of `cuju.render.__all__`. The `repr` of a recorder names its environment, scenario, version and
+state, the frames of the episode it captures, the episodes that ended and those it saved and
+dropped.
 
 ## Remote use
 
@@ -3265,7 +3917,9 @@ ssh -N -L 8780:127.0.0.1:8780 user@training-server
 ```
 
 The server then waits for the page and prints one line with the time when a browser first reaches
-it, which confirms that the tunnel works. A tunnel that forwards another local port works the same
+it, which confirms that the tunnel works. `cuju render serve --remote` on a port that a server of
+the renderer already serves prints that server's SSH command as well, so the tunnel reaches the
+server that runs. A tunnel that forwards another local port works the same
 way, with the page at that port.
 
 VS Code with its Remote SSH extension forwards a port from its Ports view, where adding 8780 opens

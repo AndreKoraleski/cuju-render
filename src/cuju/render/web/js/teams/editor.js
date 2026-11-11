@@ -26,42 +26,27 @@ import { animationLibrary, danceNames, posePlayer } from '../broadcast/celebrate
 import { attachKayKitClips, kaykitLabel, menuClips } from '../players/kaykit.js';
 import { clipMoveLabel, clipMoves, clipsPanel, openClips, previewMove } from './clip-editor.js';
 import { surprisePanel } from './surprise-ui.js';
+import { t } from '../core/i18n.js';
+import { teamName } from '../core/names.js';
 
-const LABELS = {
-    plain: 'Plain', stripes: 'Stripes', hoops: 'Hoops', halves: 'Halves', sash: 'Sash', checkers: 'Checkers',
-    mixed: 'Mixed', light: 'Light', medium: 'Medium', dark: 'Dark', bald: 'Bald', short: 'Short', long: 'Long',
-    white: 'White', black: 'Black', secondary: 'Trim color', tan: 'Tan',
-    short01: 'Short 1', short02: 'Short 2', medium01: 'Medium', long01: 'Long 1', long02: 'Long 2',
-    brown: 'Brown', darkblonde: 'Dark blonde', blonde: 'Blonde', red: 'Red', grf: 'GRF',
-};
+const LABELS = Object.fromEntries([
+    'plain', 'stripes', 'hoops', 'halves', 'sash', 'checkers',
+    'mixed', 'light', 'medium', 'dark', 'bald', 'short', 'long',
+    'white', 'black', 'secondary', 'tan',
+    'short01', 'short02', 'medium01', 'long01', 'long02',
+    'brown', 'darkblonde', 'blonde', 'red',
+].map((key) => [key, t(`editor.look.${key}`)]).concat([['grf', 'GRF']]));
 
-const SECTIONS = [
-    { id: 'identity', label: 'Identity', hint: 'Name, format and badge' },
-    { id: 'kit', label: 'Kit', hint: 'Colors, pattern and shirt artwork' },
-    { id: 'roster', label: 'Roster', hint: 'Names, numbers, looks, models' },
-    { id: 'model', label: 'Model and colors', hint: 'The player model and its colors' },
-    { id: 'fans', label: 'Fans', hint: 'The colors in the stands' },
-    { id: 'celebrations', label: 'Celebrations', hint: 'Moves after a goal' },
-    { id: 'sounds', label: 'Sounds', hint: 'Noises when players act' },
-    { id: 'sponsors', label: 'Sponsors', hint: 'Boards around the pitch' },
-    { id: 'export', label: 'Export', hint: 'The team as a submission folder' },
-];
+const SECTIONS = ['identity', 'kit', 'roster', 'model', 'fans', 'celebrations', 'sounds', 'sponsors', 'export']
+    .map((id) => ({ id, label: t(`editor.section.${id}.label`), hint: t(`editor.section.${id}.hint`) }));
 
-const SOUND_LABELS = {
-    goal: ['Goal', 'When the team scores'],
-    shot: ['Shot', 'When a player shoots'],
-    pass: ['Pass', 'When a player passes'],
-    tackle: ['Tackle', 'When a player wins the ball'],
-    save: ['Save', 'When the keeper saves'],
-    kick: ['Kick', 'Any touch of the ball'],
-    celebration: ['Celebration', 'While the scorer celebrates'],
-    chant: ['Chant', 'The fans sing now and then'],
-};
+const SOUND_LABELS = Object.fromEntries(['goal', 'shot', 'pass', 'tackle', 'save', 'kick', 'celebration', 'chant']
+    .map((slot) => [slot, [t(`editor.sound.${slot}.label`), t(`editor.sound.${slot}.hint`)]]));
 
 const MAX_RECOLORS = 32;
 // The kit color each role of a model's color follows, and its name in the list.
 const ROLE_KIT = { shirt: 'primary', trim: 'secondary', shorts: 'shorts', socks: 'socks' };
-const ROLE_LABELS = { shirt: 'Shirt', trim: 'Trim', shorts: 'Shorts', socks: 'Socks' };
+const ROLE_LABELS = { shirt: t('editor.kit.shirt'), trim: t('editor.kit.trim'), shorts: t('editor.kit.shorts'), socks: t('editor.kit.socks') };
 // A color shown on the preview while its swatch is picked, and how long it blinks.
 const FLASH = '#ff2bd6';
 const FLASH_MS = 900;
@@ -175,7 +160,10 @@ export class TeamEditor {
         const token = ++this.token;
         this.releaseThumbs();
         this.team = team;
-        this.name = team.name;
+        // A name that cuju made, such as the built-in AI's, shows in the page's language, and goes
+        // back to the server as it came while it stays unchanged.
+        this.shownName = teamName(team);
+        this.name = this.shownName;
         this.format = FORMATS[team.format] ? team.format : '11v11';
         // The players the submission controls, as a value of controlValue.
         this.control = controlValue(team.control);
@@ -228,7 +216,7 @@ export class TeamEditor {
                 this.loadExistingModel(token);
             }
         } catch (err) {
-            this.app.hud.toast(`The team editor could not open, ${err.message || err}.`, 'error', 7000);
+            this.app.hud.toast(t('editor.openFailed', { reason: err.message || err }), 'error', 7000);
         }
     }
 
@@ -250,7 +238,7 @@ export class TeamEditor {
         if (!this.isOpen || !this.dirty) {
             return true;
         }
-        return confirm(`Discard the unsaved changes to ${this.team.name}?`);
+        return confirm(t('editor.discard', { name: teamName(this.team) }));
     }
 
     close(force = false) {
@@ -308,12 +296,12 @@ export class TeamEditor {
 
     // The models that may be chosen, by id and name.
     modelOptions() {
-        const list = [['grf', 'GRF player']];
+        const list = [['grf', t('editor.model.grf')]];
         for (const m of this.shipped) {
             list.push([m.id, m.name || m.id]);
         }
         if (this.model || (this.team.model && !this.removeModel)) {
-            list.push(['custom', this.model ? `Own model, ${this.model.label}` : 'Own model']);
+            list.push(['custom', this.model ? t('editor.model.ownNamed', { label: this.model.label }) : t('editor.model.own')]);
         }
         return list;
     }
@@ -376,7 +364,7 @@ export class TeamEditor {
             this.refreshPreview();
         } catch (err) {
             if (token === this.token) {
-                this.app.hud.toast(`The team's artwork could not be loaded, ${err.message || err}.`, 'error');
+                this.app.hud.toast(t('editor.art.loadFailed', { reason: err.message || err }), 'error');
             }
         }
     }
@@ -390,12 +378,12 @@ export class TeamEditor {
             if (token !== this.token) {
                 return;
             }
-            loaded = await this.useModelBytes(bytes, 'Saved model', team.model.joints, false, false, token);
+            loaded = await this.useModelBytes(bytes, t('editor.model.savedLabel'), team.model.joints, false, false, token);
         } catch (err) {
-            reason = `, ${String(err.message || err).replace(/\.$/, '')}`;
+            reason = String(err.message || err).replace(/\.$/, '');
         }
         if (!loaded && token === this.token) {
-            this.modelNote = { text: `The saved model could not be loaded${reason}. It stays on the server and saving keeps it.`, kind: 'error' };
+            this.modelNote = { text: reason ? t('editor.model.savedFailedReason', { reason }) : t('editor.model.savedFailed'), kind: 'error' };
             this.invalidate('model');
         }
     }
@@ -406,7 +394,7 @@ export class TeamEditor {
             return;
         }
         if (file.size > MAX_MODEL_BYTES) {
-            this.app.hud.toast(`This file is ${formatBytes(file.size)}, the limit is 30 MB.`, 'error');
+            this.app.hud.toast(t('editor.model.tooLarge', { size: formatBytes(file.size) }), 'error');
             return;
         }
         const token = this.token;
@@ -416,14 +404,14 @@ export class TeamEditor {
                 await this.useModelBytes(bytes, file.name, null, true, true, token);
             }
         } catch (err) {
-            this.app.hud.toast(`The file could not be read, ${err.message || err}.`, 'error', 7000);
+            this.app.hud.toast(t('editor.model.readFailed', { reason: err.message || err }), 'error', 7000);
         }
     }
 
     // Returns whether the model was taken.
     async useModelBytes(bytes, label, joints, dirty, select = true, token = this.token) {
         if (bytes.byteLength > MAX_MODEL_BYTES) {
-            this.app.hud.toast(`This file is ${formatBytes(bytes.byteLength)}, the limit is 30 MB.`, 'error');
+            this.app.hud.toast(t('editor.model.tooLarge', { size: formatBytes(bytes.byteLength) }), 'error');
             return false;
         }
         let gltf;
@@ -431,7 +419,7 @@ export class TeamEditor {
             // The same checks as the match view, a self contained file of bounded size.
             gltf = await parseModel(bytes);
         } catch (err) {
-            this.app.hud.toast(`This is not a readable binary glTF file, ${err.message || err}.`, 'error', 7000);
+            this.app.hud.toast(t('editor.model.notGltf', { reason: err.message || err }), 'error', 7000);
             return false;
         }
         if (token !== this.token) {
@@ -471,9 +459,9 @@ export class TeamEditor {
         this.formHost = h('div', { class: 'editor-form', tabindex: '-1' });
         this.sectionLabel = h('span', { class: 'section-name' });
         this.sectionCount = h('span', { class: 'section-count' });
-        const sectionBtn = h('button', { type: 'button', class: 'section-btn', title: 'Choose a section' },
+        const sectionBtn = h('button', { type: 'button', class: 'section-btn', title: t('editor.nav.choose') },
             this.sectionLabel, this.sectionCount, h('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
-        const sectionMenu = h('div', { role: 'menu', class: 'section-menu', 'aria-label': 'Sections' });
+        const sectionMenu = h('div', { role: 'menu', class: 'section-menu', 'aria-label': t('editor.nav.sections') });
         const fillSections = () => {
             sectionMenu.replaceChildren(...SECTIONS.map((sec, i) => menuItem(sec.label, {
                 hint: sec.hint, checked: sec.id === this.section, kbd: String(i + 1), onSelect: () => this.showSection(sec.id, true),
@@ -484,8 +472,8 @@ export class TeamEditor {
             const i = SECTIONS.findIndex((s) => s.id === this.section);
             this.showSection(SECTIONS[(i + d + SECTIONS.length) % SECTIONS.length].id, true);
         };
-        this.prevBtn = h('button', { type: 'button', class: 'icon-btn step-btn', 'aria-label': 'Previous section', title: 'Previous section', onclick: () => step(-1) }, '‹');
-        this.nextBtn = h('button', { type: 'button', class: 'icon-btn step-btn', 'aria-label': 'Next section', title: 'Next section', onclick: () => step(1) }, '›');
+        this.prevBtn = h('button', { type: 'button', class: 'icon-btn step-btn', 'aria-label': t('editor.nav.previous'), title: t('editor.nav.previous'), onclick: () => step(-1) }, '‹');
+        this.nextBtn = h('button', { type: 'button', class: 'icon-btn step-btn', 'aria-label': t('editor.nav.next'), title: t('editor.nav.next'), onclick: () => step(1) }, '›');
         this.titleShirt = h('span', { class: 'title-shirt' });
         this.titleName = h('h2', {});
         this.titleMeta = h('span', { class: 'muted small' });
@@ -493,22 +481,22 @@ export class TeamEditor {
             h('div', { class: 'preview-stage', id: 'preview-stage' }),
             h('div', { class: 'preview-caption muted small' }),
             h('div', { class: 'chips center preview-modes' },
-                h('button', { type: 'button', class: 'chip-btn active', 'data-mode': 'idle', onclick: () => this.setPreviewMode('idle') }, 'Idle'),
-                h('button', { type: 'button', class: 'chip-btn', 'data-mode': 'walk', onclick: () => this.setPreviewMode('walk') }, 'Walk'),
-                h('button', { type: 'button', class: 'chip-btn', 'data-mode': 'gk', 'aria-pressed': 'false', onclick: () => this.setPreviewMode('gk') }, 'Goalkeeper')));
-        this.saveBtn = h('button', { type: 'button', class: 'btn primary', onclick: () => this.save() }, 'Save');
-        this.dirtyNote = h('span', { class: 'dirty-note muted small', hidden: true }, 'Unsaved changes');
+                h('button', { type: 'button', class: 'chip-btn active', 'data-mode': 'idle', onclick: () => this.setPreviewMode('idle') }, t('editor.preview.idle')),
+                h('button', { type: 'button', class: 'chip-btn', 'data-mode': 'walk', onclick: () => this.setPreviewMode('walk') }, t('editor.preview.walk')),
+                h('button', { type: 'button', class: 'chip-btn', 'data-mode': 'gk', 'aria-pressed': 'false', onclick: () => this.setPreviewMode('gk') }, t('editor.preview.goalkeeper'))));
+        this.saveBtn = h('button', { type: 'button', class: 'btn primary', onclick: () => this.save() }, t('editor.save'));
+        this.dirtyNote = h('span', { class: 'dirty-note muted small', hidden: true }, t('editor.unsaved'));
         const actions = h('div', { class: 'editor-actions' },
-            h('button', { type: 'button', class: 'btn ghost', onclick: () => this.resetDefaults() }, 'Reset to defaults'),
+            h('button', { type: 'button', class: 'btn ghost', onclick: () => this.resetDefaults() }, t('editor.resetDefaults')),
             h('span', { class: 'spacer' }),
             this.dirtyNote,
-            h('button', { type: 'button', class: 'btn', onclick: () => this.close() }, 'Cancel'),
+            h('button', { type: 'button', class: 'btn', onclick: () => this.close() }, t('editor.cancel')),
             this.saveBtn);
         const body = h('div', { class: 'editor' },
             h('header', { class: 'editor-head' },
                 h('div', { class: 'editor-title' }, this.titleShirt, h('div', {}, this.titleName, this.titleMeta)),
-                h('nav', { class: 'section-nav', 'aria-label': 'Editor sections' }, this.prevBtn, sectionBtn, this.nextBtn),
-                h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Close the editor', title: 'Close', onclick: () => this.close() }, '✕')),
+                h('nav', { class: 'section-nav', 'aria-label': t('editor.nav.label') }, this.prevBtn, sectionBtn, this.nextBtn),
+                h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('editor.close.label'), title: t('editor.close.title'), onclick: () => this.close() }, '✕')),
             h('div', { class: 'editor-grid' }, preview, this.formHost), actions, sectionMenu);
         // Keep the preview canvas across teams, a new WebGL context each time is slow.
         if (oldStage && this.renderer) {
@@ -534,8 +522,8 @@ export class TeamEditor {
     }
 
     updateTitle() {
-        this.titleName.textContent = this.name || this.team.name;
-        this.titleMeta.textContent = [this.team.kind === 'builtin' ? 'Built-in AI' : 'Submission', this.format === '5v5' ? '5 against 5' : '11 against 11', this.modelName(this.style.model)].join(', ');
+        this.titleName.textContent = this.name || teamName(this.team);
+        this.titleMeta.textContent = [this.team.kind === 'builtin' ? t('editor.meta.builtin') : t('editor.meta.submission'), t(`editor.format.${this.format === '5v5' ? '5v5' : '11v11'}`), this.modelName(this.style.model)].join(', ');
         this.titleShirt.replaceChildren(kitShirt({ style: this.style }, 0));
     }
 
@@ -544,7 +532,7 @@ export class TeamEditor {
         this.section = id;
         const i = SECTIONS.findIndex((s) => s.id === id);
         this.sectionLabel.textContent = SECTIONS[i].label;
-        this.sectionCount.textContent = `${i + 1} of ${SECTIONS.length}`;
+        this.sectionCount.textContent = t('editor.nav.count', { index: i + 1, total: SECTIONS.length });
         let el = this.built.get(id);
         if (!el) {
             el = this.buildSection(id);
@@ -639,7 +627,7 @@ export class TeamEditor {
             this.name = nameInput.value;
             this.updateTitle();
         });
-        const format = h('select', {}, Object.keys(FORMATS).map((f) => h('option', { value: f, selected: f === this.format }, f === '5v5' ? '5 against 5' : '11 against 11')));
+        const format = h('select', {}, Object.keys(FORMATS).map((f) => h('option', { value: f, selected: f === this.format }, t(`editor.format.${f === '5v5' ? '5v5' : '11v11'}`))));
         const control = controlForm(this.format, controlFromValue(this.control));
         const fillControl = () => {
             control.setFormat(this.format);
@@ -659,7 +647,7 @@ export class TeamEditor {
             this.invalidate('roster');
             this.refreshPreview();
         });
-        const badge = h('input', { type: 'text', value: s.badge, maxlength: '8', placeholder: 'ABC or one emoji', class: 'badge-input' });
+        const badge = h('input', { type: 'text', value: s.badge, maxlength: '8', placeholder: t('editor.identity.badgePlaceholder'), class: 'badge-input' });
         badge.addEventListener('input', () => {
             s.badge = Array.from(badge.value).slice(0, 3).join('');
             this.updateTitle();
@@ -668,13 +656,13 @@ export class TeamEditor {
         return h('div', { class: 'sec-body' },
             surprisePanel(this),
             h('div', { class: 'grid2' },
-                h('label', { class: 'field' }, 'Team name', nameInput),
-                h('label', { class: 'field' }, 'Format', format)),
+                h('label', { class: 'field' }, t('editor.identity.name'), nameInput),
+                h('label', { class: 'field' }, t('editor.identity.format'), format)),
             this.team.kind === 'builtin' ? null : h('div', {}, control),
-            h('label', { class: 'field' }, 'Badge, up to three characters on the scoreboard and the shirt', badge),
+            h('label', { class: 'field' }, t('editor.identity.badge'), badge),
             h('p', { class: 'muted small' }, this.team.kind === 'builtin'
-                ? 'The built-in AI plays any scenario, its format sets the size of its roster here.'
-                : 'Full matches follow the team format. Academy scenarios check each setting.'));
+                ? t('editor.identity.builtinNote')
+                : t('editor.identity.formatNote')));
     }
 
     kitSection() {
@@ -697,49 +685,49 @@ export class TeamEditor {
             s[group][part] = c;
         }, { onInput: kitChanged });
         const lockNote = this.grf ? null : h('p', { class: 'note' },
-            `This team plays as ${this.modelName(s.model)}, which wears the kit below, its main colors taking the shirt, trim, shorts and socks. Model and colors shows which color follows which part and takes colors of the team's own. The pattern, the artwork and the numbers dress GRF players.`);
+            t('editor.kit.lockNote', { model: this.modelName(s.model) }));
         return h('div', { class: 'sec-body' },
             surprisePanel(this),
             lockNote,
-            h('h4', {}, 'Shirt pattern'),
+            h('h4', {}, t('editor.kit.pattern')),
             this.chips(PATTERNS, s.kit.pattern, (v) => {
                 s.kit.pattern = v;
                 this.updateTitle();
                 this.refreshPreview();
             }, patternIcon),
-            h('h4', {}, 'Kit'),
+            h('h4', {}, t('editor.kit.kit')),
             h('div', { class: 'swatches' },
-                color('Shirt', 'kit', 'primary'), color('Pattern and trim', 'kit', 'secondary'),
-                color('Shorts', 'kit', 'shorts'), color('Socks', 'kit', 'socks')),
-            h('h4', {}, 'Goalkeeper'),
+                color(t('editor.kit.shirt'), 'kit', 'primary'), color(t('editor.kit.trimPattern'), 'kit', 'secondary'),
+                color(t('editor.kit.shorts'), 'kit', 'shorts'), color(t('editor.kit.socks'), 'kit', 'socks')),
+            h('h4', {}, t('editor.kit.goalkeeper')),
             h('div', { class: 'swatches' },
-                color('Shirt', 'goalkeeper', 'primary'), color('Trim', 'goalkeeper', 'secondary'),
-                color('Shorts', 'goalkeeper', 'shorts'), color('Socks', 'goalkeeper', 'socks')),
-            h('div', { class: 'field-row' }, h('span', { class: 'field-label' }, 'Numbers'), this.chips(NUMBER_COLORS, s.number, (v) => {
+                color(t('editor.kit.shirt'), 'goalkeeper', 'primary'), color(t('editor.kit.trim'), 'goalkeeper', 'secondary'),
+                color(t('editor.kit.shorts'), 'goalkeeper', 'shorts'), color(t('editor.kit.socks'), 'goalkeeper', 'socks')),
+            h('div', { class: 'field-row' }, h('span', { class: 'field-label' }, t('editor.kit.numbers')), this.chips(NUMBER_COLORS, s.number, (v) => {
                 s.number = v;
                 this.refreshPreview();
             })),
             h('section', { class: 'art' },
-                h('h4', {}, 'Shirt artwork'),
-                h('p', { class: 'muted small' }, 'Front and back artwork saves with the drawing.'),
-                h('div', { class: 'slots two' }, this.slotTile('shirt-front', 'Front', 'shirt'), this.slotTile('shirt-back', 'Back', 'shirt'))));
+                h('h4', {}, t('editor.kit.art')),
+                h('p', { class: 'muted small' }, t('editor.kit.artNote')),
+                h('div', { class: 'slots two' }, this.slotTile('shirt-front', t('editor.kit.front'), 'shirt'), this.slotTile('shirt-back', t('editor.kit.back'), 'shirt'))));
     }
 
     rosterSection() {
-        const modelOptions = [['team', `Team model, ${this.modelName(this.style.model)}`], ...this.modelOptions()];
+        const modelOptions = [['team', t('editor.roster.teamModel', { model: this.modelName(this.style.model) })], ...this.modelOptions()];
         const moves = [...celebrationNames(), ...this.lastClips.map((c) => `clip:${c}`), ...clipMoves(this)];
         const select = (list, value, onChange, label, disabled = false) => {
-            const el = h('select', { 'aria-label': label, disabled }, list.map(([v, t]) => h('option', { value: v, selected: v === value }, t)));
+            const el = h('select', { 'aria-label': label, disabled }, list.map(([v, text]) => h('option', { value: v, selected: v === value }, text)));
             el.addEventListener('change', () => onChange(el.value));
             return el;
         };
         const named = (list) => list.map((v) => [v, LABELS[v] || v]);
         const cards = this.style.players.map((p, i) => {
-            const name = h('input', { type: 'text', value: p.name, maxlength: '24', placeholder: i === 0 ? 'Goalkeeper' : `Player ${i + 1}`, 'aria-label': `Name of player ${i + 1}` });
+            const name = h('input', { type: 'text', value: p.name, maxlength: '24', placeholder: i === 0 ? t('editor.roster.goalkeeper') : t('editor.roster.player', { n: i + 1 }), 'aria-label': t('editor.roster.nameOf', { n: i + 1 }) });
             name.addEventListener('input', () => {
                 p.name = name.value.slice(0, 24);
             });
-            const number = h('input', { type: 'number', min: '0', max: '99', value: String(p.number), class: 'num', 'aria-label': `Number of player ${i + 1}` });
+            const number = h('input', { type: 'number', min: '0', max: '99', value: String(p.number), class: 'num', 'aria-label': t('editor.roster.numberOf', { n: i + 1 }) });
             const badge = h('span', { class: 'player-number' }, String(p.number));
             number.addEventListener('change', () => {
                 const n = Math.max(0, Math.min(99, Number.parseInt(number.value, 10) || 0));
@@ -756,9 +744,9 @@ export class TeamEditor {
             };
             const grfOnly = this.playerModel(i) !== 'grf';
             const lookSelects = [
-                h('label', { class: 'mini' }, 'Skin', select(named(PLAYER_SKINS), p.skin, look('skin'), 'Skin', grfOnly)),
-                h('label', { class: 'mini' }, 'Hair', select(named(PLAYER_HAIRS), p.hair, look('hair'), 'Hair', grfOnly)),
-                h('label', { class: 'mini' }, 'Hair color', select(named(HAIR_COLORS_NAMED), p.hair_color, look('hair_color'), 'Hair color', grfOnly)),
+                h('label', { class: 'mini' }, t('editor.roster.skin'), select(named(PLAYER_SKINS), p.skin, look('skin'), t('editor.roster.skin'), grfOnly)),
+                h('label', { class: 'mini' }, t('editor.roster.hair'), select(named(PLAYER_HAIRS), p.hair, look('hair'), t('editor.roster.hair'), grfOnly)),
+                h('label', { class: 'mini' }, t('editor.roster.hairColor'), select(named(HAIR_COLORS_NAMED), p.hair_color, look('hair_color'), t('editor.roster.hairColor'), grfOnly)),
             ];
             const modelSelect = select(modelOptions, p.model || 'team', (v) => {
                 p.model = v;
@@ -769,33 +757,33 @@ export class TeamEditor {
                 this.built.delete('model');
                 this.focusPlayer(i);
                 this.refreshPreview();
-            }, 'Model');
-            const celebration = select([['team', 'Team default'], ...moves.map((m) => [m, clipMoveLabel(this, m) || celebrationLabel(m)])], p.celebration || 'team', (v) => {
+            }, t('editor.roster.model'));
+            const celebration = select([['team', t('editor.roster.teamDefault')], ...moves.map((m) => [m, clipMoveLabel(this, m) || celebrationLabel(m)])], p.celebration || 'team', (v) => {
                 p.celebration = v;
                 this.focusPlayer(i);
                 if (v !== 'team') {
                     this.playCelebration(v);
                 }
-            }, 'Celebration');
+            }, t('editor.roster.celebration'));
             const card = h('li', {
                 class: `player-card${i === this.previewIndex && !this.previewGk ? ' focused' : ''}${i === 0 && this.previewGk ? ' focused' : ''}`,
                 'data-index': String(i),
             },
             h('div', { class: 'player-head' },
                 badge,
-                h('span', { class: 'player-role' }, i === 0 ? 'Goalkeeper' : `Outfield ${i}`),
-                h('button', { type: 'button', class: 'link small', onclick: () => this.focusPlayer(i) }, 'Preview')),
+                h('span', { class: 'player-role' }, i === 0 ? t('editor.roster.goalkeeper') : t('editor.roster.outfield', { n: i })),
+                h('button', { type: 'button', class: 'link small', onclick: () => this.focusPlayer(i) }, t('editor.roster.preview'))),
             h('div', { class: 'player-fields' },
-                h('label', { class: 'mini grow' }, 'Name', name),
-                h('label', { class: 'mini' }, 'Number', number)),
+                h('label', { class: 'mini grow' }, t('editor.roster.name'), name),
+                h('label', { class: 'mini' }, t('editor.roster.number'), number)),
             h('div', { class: 'player-looks' }, ...lookSelects,
-                h('label', { class: 'mini' }, 'Model', modelSelect),
-                h('label', { class: 'mini' }, 'Celebration', celebration)));
+                h('label', { class: 'mini' }, t('editor.roster.model'), modelSelect),
+                h('label', { class: 'mini' }, t('editor.roster.celebration'), celebration)));
             card.addEventListener('focusin', () => this.focusPlayer(i, false));
             return card;
         });
         return h('div', { class: 'sec-body' },
-            h('p', { class: 'muted small' }, 'Choose each player model and celebration.'),
+            h('p', { class: 'muted small' }, t('editor.roster.note')),
             h('ul', { class: 'player-cards' }, cards));
     }
 
@@ -844,9 +832,13 @@ export class TeamEditor {
         if (cap && this.team) {
             const i = this.previewGk ? 0 : this.previewIndex;
             const p = this.style.players[i];
-            const who = p ? `${p.number} ${p.name || (i === 0 ? 'Goalkeeper' : `Player ${i + 1}`)}` : '';
-            const move = this.playing ? clipMoveLabel(this, this.playing.name) || celebrationLabel(this.playing.name) : '';
-            cap.textContent = `${who}, ${this.modelName(this.playerModel(i))}${move ? `, ${move}` : ''}`;
+            const values = {
+                number: p ? p.number : '',
+                name: p ? p.name || (i === 0 ? t('editor.roster.goalkeeper') : t('editor.roster.player', { n: i + 1 })) : '',
+                model: this.modelName(this.playerModel(i)),
+                move: this.playing ? clipMoveLabel(this, this.playing.name) || celebrationLabel(this.playing.name) : '',
+            };
+            cap.textContent = t(values.move ? 'editor.preview.captionMove' : 'editor.preview.caption', values);
         }
     }
 
@@ -854,11 +846,11 @@ export class TeamEditor {
         const has = this.images.has(slot);
         const thumb = this.thumbs.get(slot);
         return h('div', { class: `slot ${kind}`, 'data-slot': slot },
-            h('div', { class: 'slot-thumb', style: thumb ? `background-image:url(${thumb})` : '' }, has ? null : h('span', { class: 'muted small' }, 'Empty')),
+            h('div', { class: 'slot-thumb', style: thumb ? `background-image:url(${thumb})` : '' }, has ? null : h('span', { class: 'muted small' }, t('editor.slot.empty'))),
             h('div', { class: 'slot-label' }, label),
             h('div', { class: 'row' },
-                h('button', { type: 'button', class: 'btn small', onclick: () => this.paint(slot, label, kind) }, has ? 'Edit' : 'Create'),
-                has ? h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.removeSlot(slot) }, 'Remove') : null));
+                h('button', { type: 'button', class: 'btn small', onclick: () => this.paint(slot, label, kind) }, has ? t('editor.slot.edit') : t('editor.slot.create')),
+                has ? h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.removeSlot(slot) }, t('editor.remove')) : null));
     }
 
     // Redraws the artwork tiles where they are shown, after a drawing saved or loaded.
@@ -877,16 +869,16 @@ export class TeamEditor {
 
     sponsorSection() {
         return h('div', { class: 'sec-body' },
-            h('p', { class: 'muted small' }, 'Sponsor drawings save separately.'),
-            h('div', { class: 'slots sponsors' }, SPONSOR_SLOTS.map((s, i) => this.slotTile(s, `Sponsor ${i + 1}`, 'sponsor'))));
+            h('p', { class: 'muted small' }, t('editor.sponsors.note')),
+            h('div', { class: 'slots sponsors' }, SPONSOR_SLOTS.map((s, i) => this.slotTile(s, t('editor.sponsors.slot', { n: i + 1 }), 'sponsor'))));
     }
 
     exportSection() {
         return h('div', { class: 'sec-body' },
-            h('a', { class: 'btn primary', href: api.exportUrl(this.team.id), download: `${this.team.name || 'team'}.zip` }, 'Export to submission folder'),
-            h('p', { class: 'muted small' }, 'Save changes before exporting. Import the zip to restore the team.'),
-            this.team.kind !== 'builtin' ? h('button', { class: 'btn', type: 'button', onclick: (e) => this.duplicate(e.currentTarget) }, 'Duplicate saved team') : null,
-            this.team.kind !== 'builtin' ? h('p', { class: 'muted small' }, 'Duplicate makes a new team from the files, controls and look saved last, so save changes first.') : null);
+            h('a', { class: 'btn primary', href: api.exportUrl(this.team.id), download: `${this.team.name || 'team'}.zip` }, t('editor.export.button')),
+            h('p', { class: 'muted small' }, t('editor.export.note')),
+            this.team.kind !== 'builtin' ? h('button', { class: 'btn', type: 'button', onclick: (e) => this.duplicate(e.currentTarget) }, t('editor.export.duplicate')) : null,
+            this.team.kind !== 'builtin' ? h('p', { class: 'muted small' }, t('editor.export.duplicateNote')) : null);
     }
 
     // Copies the saved team as a new team of the registry, which then changes on its own.
@@ -895,7 +887,7 @@ export class TeamEditor {
         try {
             const copy = await api.duplicateTeam(this.team.id);
             this.app.teamsChanged();
-            this.app.hud.toast(`${copy.name} is a new team in the list.`);
+            this.app.hud.toast(t('editor.export.duplicated', { name: copy.name }));
         } catch (err) {
             this.app.hud.toast(err.message, 'error', 7000);
         } finally {
@@ -946,19 +938,22 @@ export class TeamEditor {
             return;
         }
         const size = kind === 'sponsor' ? SPONSOR_SIZE : SHIRT_SIZE;
+        // The slot names the texts, front, back or the sponsor's number.
+        const which = kind === 'sponsor' ? 'sponsor' : slot === 'shirt-back' ? 'back' : 'front';
+        const n = SPONSOR_SLOTS.indexOf(slot) + 1;
         this.painter.open({
-            title: `${team.name}, ${kind === 'sponsor' ? label.toLowerCase() : `shirt ${label.toLowerCase()}`}`,
+            title: t(`editor.paint.title.${which}`, { team: teamName(team), n }),
             width: size.width,
             height: size.height,
             json,
             guide: kind === 'shirt' ? this.shirtGuide(slot) : null,
             note: kind === 'shirt'
-                ? 'The gray shape is the shirt, anything outside it is cut away. The left of the front panel is the player\'s right. Saving stores the drawing on the team at once.'
-                : 'A wide board, 1024 by 128 pixels. Saving stores the board on the team at once.',
+                ? t('editor.paint.shirtNote')
+                : t('editor.paint.sponsorNote'),
             onSave: async (png, doc) => {
                 await api.putImage(team.id, slot, png, 'image/png');
                 await api.putImage(team.id, `${slot}-edit`, doc, 'application/json');
-                this.app.hud.toast(`${label} saved.`);
+                this.app.hud.toast(t(`editor.paint.saved.${which}`, { n }));
                 this.app.teamsChanged();
                 if (token !== this.token) {
                     return;
@@ -971,11 +966,11 @@ export class TeamEditor {
                 this.thumbs.set(slot, URL.createObjectURL(png));
                 this.loadArt(token);
             },
-        }).catch((err) => this.app.hud.toast(`The painter could not open, ${err.message || err}.`, 'error'));
+        }).catch((err) => this.app.hud.toast(t('editor.paint.openFailed', { reason: err.message || err }), 'error'));
     }
 
     async removeSlot(slot) {
-        if (!confirm('Remove this artwork? This cannot be undone.')) {
+        if (!confirm(t('editor.slot.removeConfirm'))) {
             return;
         }
         const token = this.token;
@@ -1005,21 +1000,21 @@ export class TeamEditor {
 
     modelSection() {
         const s = this.style;
-        const pick = h('select', { 'aria-label': 'Team model' },
-            h('option', { value: 'grf', selected: s.model === 'grf' }, 'GRF player'),
-            this.shipped.length ? h('optgroup', { label: 'Shipped models' }, this.shipped.map((m) =>
+        const pick = h('select', { 'aria-label': t('editor.model.team') },
+            h('option', { value: 'grf', selected: s.model === 'grf' }, t('editor.model.grf')),
+            this.shipped.length ? h('optgroup', { label: t('editor.model.shipped') }, this.shipped.map((m) =>
                 h('option', { value: m.id, selected: s.model === m.id }, m.name || m.id))) : null,
-            h('option', { value: 'custom', selected: s.model === 'custom' }, this.model ? `Own model, ${this.model.label}` : 'Own model, upload below'));
+            h('option', { value: 'custom', selected: s.model === 'custom' }, this.model ? t('editor.model.ownNamed', { label: this.model.label }) : t('editor.model.ownUpload')));
         pick.addEventListener('change', () => {
             s.model = pick.value;
             this.colorModel = null;
             this.invalidate('model', 'kit', 'roster', 'celebrations');
             this.refreshPreview();
         });
-        const parts = [h('label', { class: 'field' }, 'Team model', pick)];
+        const parts = [h('label', { class: 'field' }, t('editor.model.team'), pick)];
         const entry = this.shipped.find((m) => m.id === s.model);
         if (entry && (entry.author || entry.license)) {
-            parts.push(h('p', { class: 'muted small' }, [entry.author ? `By ${entry.author}` : null, entry.license].filter(Boolean).join(', ')));
+            parts.push(h('p', { class: 'muted small' }, [entry.author ? t('editor.model.by', { author: entry.author }) : null, entry.license].filter(Boolean).join(', ')));
         }
         if (s.model === 'custom') {
             const file = h('input', { type: 'file', accept: '.glb,model/gltf-binary', hidden: true });
@@ -1029,8 +1024,8 @@ export class TeamEditor {
                 this.useModelFile(f);
             });
             const drop = h('div', { class: 'dropzone small' },
-                h('p', {}, 'Drop a rigged .glb here, or'),
-                h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, 'Choose a .glb file'), file);
+                h('p', {}, t('editor.model.drop')),
+                h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, t('editor.model.choose')), file);
             drop.addEventListener('dragover', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1046,9 +1041,9 @@ export class TeamEditor {
             const note = this.modelNote;
             parts.push(drop, h('div', { class: 'model-message', 'data-kind': note ? note.kind : 'info' },
                 note ? note.text
-                    : this.model ? `${this.model.label}, ${this.model.bones.length} bones, ${formatBytes(this.model.bytes.byteLength)}. Materials named shirt, shorts or socks take the kit colors.` : 'No model yet.'));
+                    : this.model ? t('editor.model.summary', { label: this.model.label, bones: this.model.bones.length, size: formatBytes(this.model.bytes.byteLength) }) : t('editor.model.none')));
             if (this.model) {
-                parts.push(h('details', { class: 'joints-box' }, h('summary', {}, 'Joint mapping'), this.jointTable()));
+                parts.push(h('details', { class: 'joints-box' }, h('summary', {}, t('editor.joints.summary')), this.jointTable()));
             }
             if (this.team.model || this.model) {
                 parts.push(h('button', {
@@ -1063,12 +1058,12 @@ export class TeamEditor {
                         this.invalidate('model', 'kit', 'roster', 'celebrations');
                         this.refreshPreview();
                     },
-                }, 'Remove model'));
+                }, t('editor.model.remove')));
             }
         }
         parts.push(this.colorsBlock());
         const wrap = h('div', { class: 'sec-body' }, parts);
-        queueMicrotask(() => enhanceSelect(pick, { label: 'Team model', className: 'wide' }));
+        queueMicrotask(() => enhanceSelect(pick, { label: t('editor.model.team'), className: 'wide' }));
         return wrap;
     }
 
@@ -1082,13 +1077,13 @@ export class TeamEditor {
     // shorts or socks, or keeps the model's own color, and the team may give any of them a color
     // of its own. A pair of a color to itself keeps that color where the kit would replace it.
     colorsBlock() {
-        const box = h('div', { class: 'colors-block' }, h('h4', {}, 'Colors of the model'));
+        const box = h('div', { class: 'colors-block' }, h('h4', {}, t('editor.colors.heading')));
         const models = this.recolorable();
         this.swatchUpdates = [];
         if (!models.length) {
             box.append(h('p', { class: 'muted small' }, this.style.model === 'custom'
-                ? 'Upload a model to list its colors.'
-                : 'GRF\'s player takes its colors from the Kit section. Choose another model to list and change its colors.'));
+                ? t('editor.colors.upload')
+                : t('editor.colors.grf')));
             return box;
         }
         if (!models.includes(this.colorModel)) {
@@ -1097,28 +1092,29 @@ export class TeamEditor {
         }
         const key = this.colorModel;
         const wearers = this.style.players.filter((p, i) => this.playerModel(i) === key).length;
-        const worn = `Worn by ${wearers === this.style.players.length ? 'the whole team' : `${wearers} ${wearers === 1 ? 'player' : 'players'}`}, shown in the preview.`;
+        const worn = wearers === this.style.players.length ? t('editor.colors.wornAll') : t('editor.colors.worn', { count: wearers });
+        const whichLabel = t('editor.colors.which');
         if (models.length > 1) {
-            const which = h('select', { 'aria-label': 'Model to recolor' }, models.map((m) => h('option', { value: m, selected: m === key }, this.modelName(m))));
+            const which = h('select', { 'aria-label': whichLabel }, models.map((m) => h('option', { value: m, selected: m === key }, this.modelName(m))));
             which.addEventListener('change', () => {
                 this.colorModel = which.value;
                 this.invalidate('model');
                 // The rebuilt list keeps the focus on its own select.
-                const again = this.formHost.querySelector('select[aria-label="Model to recolor"]');
+                const again = [...this.formHost.querySelectorAll('select')].find((el) => el.getAttribute('aria-label') === whichLabel);
                 if (again) {
                     again.focus();
                 }
             });
-            box.append(h('label', { class: 'field' }, 'Colors of', which), h('p', { class: 'muted small' }, worn));
+            box.append(h('label', { class: 'field' }, t('editor.colors.of'), which), h('p', { class: 'muted small' }, worn));
         } else {
-            box.append(h('p', { class: 'small' }, `${this.modelName(key)}. ${worn}`));
+            box.append(h('p', { class: 'small' }, t('editor.colors.single', { model: this.modelName(key), worn })));
         }
         this.showColorModel();
         const pairsOf = () => this.style.colors[key] || (this.style.colors[key] = {});
         const follow = h('input', { type: 'checkbox' });
-        const resetAll = h('button', { type: 'button', class: 'btn small ghost' }, 'Reset all to the kit');
+        const resetAll = h('button', { type: 'button', class: 'btn small ghost' }, t('editor.colors.resetAll'));
         const tools = h('div', { class: 'row colors-tools' },
-            h('label', { class: 'check' }, follow, ' Dress the model in the kit colors'), resetAll);
+            h('label', { class: 'check' }, follow, ` ${t('editor.colors.follow')}`), resetAll);
         // The shirt numbers ride the back of the model, and a team turns them off on a model where
         // they do not fit.
         const numbered = h('input', { type: 'checkbox', checked: !(this.style.hidden_numbers || []).includes(key) });
@@ -1132,11 +1128,10 @@ export class TeamEditor {
             this.style.hidden_numbers = [...hidden];
             this.refreshPreview();
         });
-        tools.append(h('label', { class: 'check' }, numbered, ' Shirt numbers on the back'));
-        const host = h('div', { class: 'model-colors', role: 'list', 'aria-label': `Colors of ${this.modelName(key)}` },
-            h('p', { class: 'muted small' }, 'Reading the colors of the model'));
-        box.append(tools, host, h('p', { class: 'muted small' },
-            'Each color of the model follows a part of the kit, or keeps the model\'s own color, as skin, bone, faces, eyes and metal do. Picking a color makes it the team\'s own, Reset returns it to the kit, and a color picked, focused or pointed at blinks on the preview. The goalkeeper wears the same parts in the goalkeeper\'s colors, and the away kit takes the place of the kit when the two teams look alike.'));
+        tools.append(h('label', { class: 'check' }, numbered, ` ${t('editor.colors.numbers')}`));
+        const host = h('div', { class: 'model-colors', role: 'list', 'aria-label': t('editor.colors.listLabel', { model: this.modelName(key) }) },
+            h('p', { class: 'muted small' }, t('editor.colors.reading')));
+        box.append(tools, host, h('p', { class: 'muted small' }, t('editor.colors.note')));
         let colors = [];
         const syncTools = () => {
             const roles = colors.filter((c) => c.role);
@@ -1175,7 +1170,7 @@ export class TeamEditor {
             }
             const list = modelColorsOf(rig);
             if (!list) {
-                host.replaceChildren(h('p', { class: 'muted small' }, rig ? 'The colors of this model cannot be read yet.' : 'This model could not be loaded.'));
+                host.replaceChildren(h('p', { class: 'muted small' }, rig ? t('editor.colors.unreadable') : t('editor.colors.notLoaded')));
                 return;
             }
             colors = list;
@@ -1276,11 +1271,11 @@ export class TeamEditor {
 
     colorSwatch(key, c, i, changed) {
         const pairsOf = () => this.style.colors[key] || (this.style.colors[key] = {});
-        const name = i < 2 ? `Main ${i + 1}` : `${Math.max(1, Math.round(c.weight * 100))} percent`;
+        const name = i < 2 ? t('editor.colors.main', { n: i + 1 }) : t('editor.colors.percent', { n: Math.max(1, Math.round(c.weight * 100)) });
         const input = h('input', { type: 'color', value: c.hex });
         const state = h('span', { class: 'color-state small' });
-        const reset = h('button', { type: 'button', class: 'link small' }, 'Reset');
-        const original = h('span', { class: 'orig-chip', style: `background:${c.hex}`, title: `The model's own color, ${c.hex}` });
+        const reset = h('button', { type: 'button', class: 'link small' }, t('editor.colors.reset'));
+        const original = h('span', { class: 'orig-chip', style: `background:${c.hex}`, title: t('editor.colors.original', { hex: c.hex }) });
         const row = h('div', { class: `model-color${i < 2 ? ' main' : ''}`, role: 'listitem' },
             h('label', { class: 'swatch' }, input, h('span', {}, name)),
             h('span', { class: 'color-meta' }, original, state, reset));
@@ -1293,22 +1288,22 @@ export class TeamEditor {
             if (document.activeElement !== input) {
                 input.value = shown;
             }
-            let text = c.role ? 'Model color, kit off' : 'Model color';
+            let text = c.role ? t('editor.colors.state.off') : t('editor.colors.state.model');
             if (custom) {
-                text = 'Custom';
+                text = t('editor.colors.state.custom');
             } else if (follows) {
-                text = `${ROLE_LABELS[c.role]}, follows the kit`;
+                text = t('editor.colors.state.kit', { part: ROLE_LABELS[c.role] });
             }
             state.textContent = text;
             row.dataset.state = custom ? 'custom' : follows ? 'kit' : 'model';
             reset.hidden = own === undefined;
-            reset.textContent = c.role ? 'Reset to the kit' : 'Reset';
-            input.setAttribute('aria-label', `${name}, ${text}, originally ${c.hex}`);
+            reset.textContent = c.role ? t('editor.colors.resetKit') : t('editor.colors.reset');
+            input.setAttribute('aria-label', t('editor.colors.swatchLabel', { name, state: text, hex: c.hex }));
         };
         input.addEventListener('input', () => {
             const map = pairsOf();
             if (!(c.hex in map) && Object.keys(map).length >= MAX_RECOLORS) {
-                this.app.hud.toast(`A model takes at most ${MAX_RECOLORS} color changes.`, 'error');
+                this.app.hud.toast(t('editor.colors.max', { max: MAX_RECOLORS }), 'error');
                 update();
                 return;
             }
@@ -1336,7 +1331,7 @@ export class TeamEditor {
         const joints = this.model.joints;
         const rows = NODE_NAMES.map((node) => {
             const select = h('select', {},
-                h('option', { value: '' }, node === 'player' ? 'Skeleton root' : 'Unmapped'),
+                h('option', { value: '' }, node === 'player' ? t('editor.joints.root') : t('editor.joints.unmapped')),
                 this.model.bones.map((b) => h('option', { value: b, selected: joints[node] === b }, b)));
             select.addEventListener('change', () => {
                 if (select.value) {
@@ -1348,20 +1343,20 @@ export class TeamEditor {
                 this.customRig = null;
                 const req = select.closest('tr').querySelector('.req');
                 if (node === 'body' && req) {
-                    req.textContent = joints.body ? ' required' : ' required, choose the pelvis';
+                    req.textContent = ` ${joints.body ? t('editor.joints.required') : t('editor.joints.requiredPelvis')}`;
                 }
                 this.refreshPreview();
             });
-            return h('tr', {}, h('td', {}, node.replace('_', ' '), node === 'body' ? h('span', { class: 'req' }, joints.body ? ' required' : ' required, choose the pelvis') : null), h('td', {}, select));
+            return h('tr', {}, h('td', {}, t(`editor.joints.node.${node}`), node === 'body' ? h('span', { class: 'req' }, ` ${joints.body ? t('editor.joints.required') : t('editor.joints.requiredPelvis')}`) : null), h('td', {}, select));
         });
         return h('div', { class: 'joints' },
-            h('p', { class: 'muted small' }, 'Map joints to bones. Body is required.'),
+            h('p', { class: 'muted small' }, t('editor.joints.note')),
             h('table', {}, h('tbody', {}, rows)));
     }
 
     fansSection() {
         const s = this.style;
-        const strip = h('canvas', { class: 'stands', width: '640', height: '96', 'aria-label': 'Stands in the colors of the fans', role: 'img' });
+        const strip = h('canvas', { class: 'stands', width: '640', height: '96', 'aria-label': t('editor.fans.standsLabel'), role: 'img' });
         const list = h('div', { class: 'fan-colors' });
         const status = h('p', { class: 'muted small' });
         // The canvas takes the width it shows at, so the fans keep their shape.
@@ -1376,24 +1371,24 @@ export class TeamEditor {
         const fill = () => {
             const colors = s.crowd.colors;
             list.replaceChildren(...colors.map((c, i) => {
-                const input = h('input', { type: 'color', value: hex(c), 'aria-label': `Fan color ${i + 1}` });
+                const input = h('input', { type: 'color', value: hex(c), 'aria-label': t('editor.fans.colorLabel', { n: i + 1 }) });
                 input.addEventListener('input', () => {
                     colors[i] = fromHex(input.value);
                     this.crowdFollowsKit = false;
-                    status.textContent = 'The fans wear their own colors.';
+                    status.textContent = t('editor.fans.own');
                     draw();
                 });
                 return h('div', { class: 'fan-color' },
-                    h('label', { class: 'swatch' }, input, h('span', {}, `Color ${i + 1}`)),
+                    h('label', { class: 'swatch' }, input, h('span', {}, t('editor.fans.color', { n: i + 1 }))),
                     colors.length > 1 ? h('button', {
-                        type: 'button', class: 'link small danger', 'aria-label': `Remove fan color ${i + 1}`,
+                        type: 'button', class: 'link small danger', 'aria-label': t('editor.fans.removeLabel', { n: i + 1 }),
                         onclick: () => {
                             colors.splice(i, 1);
                             this.crowdFollowsKit = false;
                             fill();
                             this.markDirty();
                         },
-                    }, 'Remove') : null);
+                    }, t('editor.remove')) : null);
             }), ...(colors.length < 4 ? [h('button', {
                 type: 'button', class: 'btn small add-color',
                 onclick: () => {
@@ -1402,13 +1397,13 @@ export class TeamEditor {
                     fill();
                     this.markDirty();
                 },
-            }, '+ Add a color')] : []));
-            status.textContent = this.crowdFollowsKit ? 'The fans wear the kit\'s shirt and trim colors and follow the kit as it changes.' : 'The fans wear their own colors.';
+            }, t('editor.fans.add'))] : []));
+            status.textContent = this.crowdFollowsKit ? t('editor.fans.followsKit') : t('editor.fans.own');
             draw();
         };
         fill();
         return h('div', { class: 'sec-body' },
-            h('p', { class: 'muted small' }, 'Choose up to four fan colors.'),
+            h('p', { class: 'muted small' }, t('editor.fans.note')),
             strip, list, status,
             h('button', {
                 type: 'button', class: 'btn ghost',
@@ -1417,7 +1412,7 @@ export class TeamEditor {
                     this.crowdFollowsKit = true;
                     this.invalidate('fans');
                 },
-            }, 'Use the kit colors'));
+            }, t('editor.fans.useKit')));
     }
 
     // A strip of stands with seated fans in the given colors, a rough sketch of the crowd.
@@ -1469,7 +1464,7 @@ export class TeamEditor {
             const clips = (this.lastClips || []).map((c) => `clip:${c}`);
             const all = [...names, ...clips, ...clipMoves(this)];
             if (!all.length) {
-                host.replaceChildren(h('p', { class: 'muted small' }, 'Loading celebrations.'));
+                host.replaceChildren(h('p', { class: 'muted small' }, t('editor.celebrations.loading')));
                 return;
             }
             host.replaceChildren(...all.map((name) => {
@@ -1479,7 +1474,7 @@ export class TeamEditor {
                     if (box.checked && !s.celebrations.includes(name)) {
                         if (s.celebrations.length >= 32) {
                             box.checked = false;
-                            this.app.hud.toast('A team keeps at most 32 celebrations.', 'error');
+                            this.app.hud.toast(t('editor.celebrations.max'), 'error');
                             return;
                         }
                         s.celebrations.push(name);
@@ -1490,16 +1485,16 @@ export class TeamEditor {
                 });
                 const own = clipMoveLabel(this, name);
                 const label = own || celebrationLabel(name);
-                const hint = own ? ' clip of the team' : name.startsWith('clip:') ? ' clip of the model' : null;
+                const hint = own ? ` ${t('editor.celebrations.teamClip')}` : name.startsWith('clip:') ? ` ${t('editor.celebrations.modelClip')}` : null;
                 return h('div', { class: `move${name.startsWith('clip:') || own ? ' clip' : ''}` },
                     box,
                     h('label', { for: id }, label, hint ? h('span', { class: 'muted small' }, hint) : null),
-                    h('button', { type: 'button', class: 'btn small ghost', 'aria-label': `Play ${label} in the preview`, onclick: () => this.playCelebration(name) }, icon('play'), 'Play'));
+                    h('button', { type: 'button', class: 'btn small ghost', 'aria-label': t('editor.celebrations.playLabel', { name: label }), onclick: () => this.playCelebration(name) }, icon('play'), t('editor.play')));
             }));
         };
         const summaryText = () => (s.celebrations.length
-            ? `${s.celebrations.length} ${s.celebrations.length === 1 ? 'move' : 'moves'} ticked, the scorer picks among them.`
-            : 'None ticked, the scorer picks among every move.');
+            ? t('editor.celebrations.ticked', { count: s.celebrations.length })
+            : t('editor.celebrations.none'));
         const summary = h('p', { class: 'small celebration-summary' }, summaryText());
         fill();
         if (!celebrationNames().length) {
@@ -1519,7 +1514,7 @@ export class TeamEditor {
             }
         });
         return h('div', { class: 'sec-body' },
-            h('p', { class: 'muted small' }, 'Choose goal celebrations. Play previews a move.'),
+            h('p', { class: 'muted small' }, t('editor.celebrations.note')),
             summary, host, clipsPanel(this));
     }
 
@@ -1532,7 +1527,7 @@ export class TeamEditor {
     soundsSection() {
         const rows = SOUND_SLOTS.map((slot) => this.soundRow(slot));
         return h('div', { class: 'sec-body' },
-            h('p', { class: 'muted small' }, 'Upload Ogg, MP3 or WAV, up to 2 MB. Sounds save immediately.'),
+            h('p', { class: 'muted small' }, t('editor.sounds.note')),
             h('ul', { class: 'sound-list' }, rows));
     }
 
@@ -1549,11 +1544,11 @@ export class TeamEditor {
         });
         const li = h('li', { class: `sound-row${has ? ' has' : ''}`, 'data-slot': slot },
             h('span', { class: 'sound-icon', 'aria-hidden': 'true' }, has ? '♪' : '·'),
-            h('span', { class: 'sound-text' }, h('span', { class: 'sound-label' }, label), h('span', { class: 'muted small' }, has ? `${hint}, uploaded` : hint)),
+            h('span', { class: 'sound-text' }, h('span', { class: 'sound-label' }, label), h('span', { class: 'muted small' }, has ? t('editor.sounds.uploaded', { hint }) : hint)),
             h('span', { class: 'row sound-actions' },
-                has ? h('button', { type: 'button', class: 'btn small', 'aria-label': `Play the ${label.toLowerCase()} sound`, onclick: () => this.playSound(slot) }, icon('play'), 'Play') : null,
-                h('button', { type: 'button', class: 'btn small', onclick: () => file.click() }, has ? 'Replace' : 'Upload'),
-                has ? h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.removeSound(slot) }, 'Remove') : null,
+                has ? h('button', { type: 'button', class: 'btn small', 'aria-label': t('editor.sounds.playLabel', { name: label.toLowerCase() }), onclick: () => this.playSound(slot) }, icon('play'), t('editor.play')) : null,
+                h('button', { type: 'button', class: 'btn small', onclick: () => file.click() }, has ? t('editor.sounds.replace') : t('editor.sounds.upload')),
+                has ? h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.removeSound(slot) }, t('editor.remove')) : null,
                 file));
         li.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -1584,18 +1579,18 @@ export class TeamEditor {
 
     async uploadSound(slot, f) {
         if (!/\.(ogg|oga|mp3|wav)$/i.test(f.name) && !/^audio\/(ogg|mpeg|mp3|wav|x-wav|wave)$/.test(f.type)) {
-            this.app.hud.toast('Choose an Ogg, MP3 or WAV sound.', 'error');
+            this.app.hud.toast(t('editor.sounds.wrongType'), 'error');
             return;
         }
         if (f.size > MAX_SOUND_BYTES) {
-            this.app.hud.toast(`This sound is ${formatBytes(f.size)}, the limit is 2 MB.`, 'error');
+            this.app.hud.toast(t('editor.sounds.tooLarge', { size: formatBytes(f.size) }), 'error');
             return;
         }
         const team = this.team;
         const token = this.token;
         try {
             await api.putSound(team.id, slot, f, f.type || 'application/octet-stream');
-            this.app.hud.toast(`${(SOUND_LABELS[slot] || [slot])[0]} sound saved.`);
+            this.app.hud.toast(t('editor.sounds.saved', { name: (SOUND_LABELS[slot] || [slot])[0] }));
             // The sound is stored at once, so the match on the page takes the new one now.
             this.app.teamsChanged();
             if (token !== this.token) {
@@ -1610,7 +1605,7 @@ export class TeamEditor {
     }
 
     async removeSound(slot) {
-        if (!confirm(`Remove the ${(SOUND_LABELS[slot] || [slot])[0].toLowerCase()} sound?`)) {
+        if (!confirm(t('editor.sounds.removeConfirm', { name: (SOUND_LABELS[slot] || [slot])[0].toLowerCase() }))) {
             return;
         }
         const team = this.team;
@@ -1634,7 +1629,7 @@ export class TeamEditor {
     async playSound(slot) {
         const settings = this.app.settings;
         if (settings.muted || !(settings.volume > 0)) {
-            this.app.hud.toast('The page is muted. Unmute with M or the speaker button to hear the sound.', 'info', 5000);
+            this.app.hud.toast(t('editor.sounds.muted'), 'info', 5000);
             return;
         }
         this.stopSound();
@@ -1664,7 +1659,7 @@ export class TeamEditor {
             src.start();
             this.soundSource = src;
         } catch (err) {
-            this.app.hud.toast(`The sound could not be played, ${err.message || err}.`, 'error');
+            this.app.hud.toast(t('editor.sounds.playFailed', { reason: err.message || err }), 'error');
         }
     }
 
@@ -1681,7 +1676,7 @@ export class TeamEditor {
 
     // The server's defaults of a new team, the built in AI keeping its own blue kit.
     resetDefaults() {
-        if (!confirm('Reset the kit, roster, colors, fans and celebrations to the defaults? Nothing is saved until you press Save.')) {
+        if (!confirm(t('editor.resetConfirm'))) {
             return;
         }
         const builtin = this.team.kind === 'builtin' || this.team.id === 'builtin';
@@ -1716,22 +1711,23 @@ export class TeamEditor {
         const keepSaved = !model && team.model && !removeModel;
         const usesCustom = style.model === 'custom' || style.players.some((p) => p.model === 'custom');
         if (usesCustom && !model && !keepSaved) {
-            this.app.hud.toast('Upload a model for this team, or choose GRF or a shipped model, before saving.', 'error', 7000);
+            this.app.hud.toast(t('editor.saveNeedsModel'), 'error', 7000);
             this.showSection('model');
             return;
         }
         if (model && usesCustom && !model.joints.body) {
-            this.app.hud.toast('Choose the pelvis bone for body before saving.', 'error');
+            this.app.hud.toast(t('editor.saveNeedsPelvis'), 'error');
             this.showSection('model');
             return;
         }
-        const changes = { name: this.name.trim() || team.name, format: this.format, style };
+        const typed = this.name.trim();
+        const changes = { name: !typed || typed === this.shownName ? team.name : typed, format: this.format, style };
         if (team.kind !== 'builtin') {
             changes.control = controlFromValue(this.control);
         }
         this.saving = true;
         this.saveBtn.disabled = true;
-        this.saveBtn.textContent = 'Saving';
+        this.saveBtn.textContent = t('editor.saving');
         try {
             if (removeModel && team.model) {
                 await api.deleteModel(team.id);
@@ -1741,7 +1737,7 @@ export class TeamEditor {
             }
             // Sending the whole style is a valid partial update, every field is present.
             await api.updateTeam(team.id, changes);
-            this.app.hud.toast(`${changes.name} saved.`);
+            this.app.hud.toast(t('editor.saved', { name: changes.name }));
             if (token === this.token) {
                 this.close(true);
             }
@@ -1751,7 +1747,7 @@ export class TeamEditor {
         } finally {
             this.saving = false;
             this.saveBtn.disabled = false;
-            this.saveBtn.textContent = 'Save';
+            this.saveBtn.textContent = t('editor.save');
         }
     }
 

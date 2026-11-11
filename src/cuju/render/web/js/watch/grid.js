@@ -8,6 +8,7 @@
 // between the tiles.
 
 import { api } from '../core/api.js';
+import { t } from '../core/i18n.js';
 import { drawPitch, drawScene, formatClock, pitchTransform, teamPaint } from './pitch2d.js';
 
 // The sizes of the grid, square numbers of tiles up to the most that a request may ask for.
@@ -75,6 +76,21 @@ export function sceneFromTile(tile) {
     };
 }
 
+// What the tile of an environment shows after an answer of the source. A tile that the source
+// answered with shows as it is. When the source answered none, the last tile it gave for the
+// environment stays and is marked as refreshing, and without one the environment waits for its
+// first picture. The label names what the tile shows, for screen readers.
+export function tileState(environment, answered, held) {
+    const tile = answered || held || null;
+    if (!tile) {
+        return { tile: null, refreshing: false, label: t('grid.tile.waiting.label', { environment }) };
+    }
+    const refreshing = !answered;
+    const clock = formatClock(tile.clock);
+    const label = t('grid.tile.label', { environment, left: tile.score[0], right: tile.score[1], clock });
+    return { tile, refreshing, clock, label: refreshing ? t('grid.tile.label.refreshing', { label }) : label };
+}
+
 function load(key, fallback) {
     try {
         const v = localStorage.getItem(`cuju.${key}`);
@@ -113,6 +129,8 @@ export class EnvironmentGrid {
         this.open = false;
         this.timer = null;
         this.tiles = [];
+        // The last tile that the source gave for each environment, while the grid shows its source.
+        this.held = new Map();
         this.first = 0;
         this.size = load('gridSize', 9);
         this.sourceId = null;
@@ -132,26 +150,26 @@ export class EnvironmentGrid {
     }
 
     build() {
-        this.title = el('h3', { class: 'panel-title', id: 'env-grid-title', text: 'Environments' });
-        this.sizeSelect = el('select', { id: 'env-grid-size', 'aria-label': 'Tiles in the grid' });
+        this.title = el('h3', { class: 'panel-title', id: 'env-grid-title', text: t('grid.title') });
+        this.sizeSelect = el('select', { id: 'env-grid-size', 'aria-label': t('grid.size.label') });
         this.sizeSelect.addEventListener('change', () => {
             this.size = Number(this.sizeSelect.value);
             save('gridSize', this.size);
             this.first = Math.floor(this.current() / this.size) * this.size;
             this.layout(true);
         });
-        this.previous = el('button', { type: 'button', class: 'btn small', text: 'Previous' });
+        this.previous = el('button', { type: 'button', class: 'btn small', text: t('grid.previous') });
         this.previous.addEventListener('click', () => this.page(-1));
-        this.next = el('button', { type: 'button', class: 'btn small', text: 'Next' });
+        this.next = el('button', { type: 'button', class: 'btn small', text: t('grid.next') });
         this.next.addEventListener('click', () => this.page(1));
-        const close = el('button', { type: 'button', class: 'btn small', text: 'Close' });
+        const close = el('button', { type: 'button', class: 'btn small', text: t('grid.close') });
         close.addEventListener('click', () => this.hide());
         this.range = el('span', { class: 'env-grid-range muted' });
         this.status = el('p', { class: 'env-grid-status muted small', role: 'status' });
-        this.body = el('div', { class: 'env-grid-tiles', role: 'group', 'aria-label': 'Environments, the arrow keys move between them' });
+        this.body = el('div', { class: 'env-grid-tiles', role: 'group', 'aria-label': t('grid.tiles.label') });
         this.body.addEventListener('keydown', (e) => this.onKey(e));
         const head = el('div', { class: 'env-grid-head' }, this.title, this.range,
-            el('label', { class: 'env-grid-size' }, el('span', { text: 'Tiles' }), this.sizeSelect),
+            el('label', { class: 'env-grid-size' }, el('span', { text: t('grid.size') }), this.sizeSelect),
             this.previous, this.next, close);
         this.panel = el('div', { id: 'env-grid', role: 'dialog', 'aria-labelledby': 'env-grid-title', 'data-prompt': '' },
             head, this.status, this.body);
@@ -178,8 +196,8 @@ export class EnvironmentGrid {
         if (!this.eligible()) {
             return [];
         }
-        return [menuItem('Grid of environments', {
-            hint: `Small views of the ${this.app.source.header.environment_count} environments of the batch`,
+        return [menuItem(t('grid.menu'), {
+            hint: t('grid.menu.hint', { count: this.app.source.header.environment_count }),
             onSelect: () => setTimeout(() => this.show(), 0),
         })];
     }
@@ -201,10 +219,13 @@ export class EnvironmentGrid {
 
     show() {
         if (!this.eligible()) {
-            this.app.hud.toast('The grid shows the environments of a live source with several of them.', 'info');
+            this.app.hud.toast(t('grid.ineligible'), 'info');
             return;
         }
         const source = this.app.source;
+        if (source.id !== this.sourceId) {
+            this.held = new Map();
+        }
         this.sourceId = source.id;
         this.count = source.header.environment_count;
         const sizes = gridSizes(this.count);
@@ -218,7 +239,7 @@ export class EnvironmentGrid {
         this.app.releasePointer();
         this.open = true;
         this.panel.hidden = false;
-        this.status.textContent = 'Asking the source for its environments.';
+        this.status.textContent = t('grid.asking');
         this.layout(true);
     }
 
@@ -262,7 +283,6 @@ export class EnvironmentGrid {
                 class: 'env-tile',
                 tabindex: '-1',
                 'data-environment': String(environment),
-                'aria-label': `Environment ${environment}, waiting for its first picture`,
             }, canvas, el('span', { class: 'env-tile-label', text: `${environment}` }));
             if (environment === current) {
                 tile.setAttribute('aria-current', 'true');
@@ -277,7 +297,7 @@ export class EnvironmentGrid {
             this.tiles.push(tile);
         }
         this.body.replaceChildren(...this.tiles);
-        this.range.textContent = `${this.first} to ${this.first + shown - 1} of ${this.count}`;
+        this.range.textContent = t('grid.range', { first: this.first, last: this.first + shown - 1, count: this.count });
         this.previous.disabled = this.first === 0;
         this.next.disabled = this.first + this.size >= this.count;
         const start = current >= this.first && current < this.first + shown ? current - this.first : 0;
@@ -288,6 +308,7 @@ export class EnvironmentGrid {
                 this.tiles[start].focus();
             }
         }
+        // A tile read before shows at once, refreshing until the source answers for it.
         for (const tile of this.tiles) {
             this.drawTile(tile, null);
         }
@@ -336,9 +357,12 @@ export class EnvironmentGrid {
             }
             const waiting = document_.tiles.filter((tile) => !tile).length;
             this.status.textContent = waiting
-                ? `${waiting} of ${document_.tiles.length} environments wait for the next steps of the batch.`
-                : 'Each tile shows its environment a moment ago, a click or Enter shows it here.';
+                ? t('grid.status.waiting', { waiting, total: document_.tiles.length })
+                : t('grid.status.ready');
             document_.tiles.forEach((tile, i) => {
+                if (tile) {
+                    this.held.set(first + i, tile);
+                }
                 if (this.tiles[i]) {
                     this.drawTile(this.tiles[i], tile);
                 }
@@ -348,8 +372,8 @@ export class EnvironmentGrid {
                 return;
             }
             this.status.textContent = err.status === 404
-                ? `The grid is unavailable. ${err.message}`
-                : `The source did not answer, the grid tries again. ${err.message}`;
+                ? t('grid.error.unavailable', { error: err.message })
+                : t('grid.error.retry', { error: err.message });
             if (err.status === 404) {
                 return;
             }
@@ -359,7 +383,9 @@ export class EnvironmentGrid {
         }
     }
 
-    drawTile(node, tile) {
+    // Draws the tile of an answer, or the last tile of its environment, which then shows dimmed
+    // and marked as refreshing, or the wait for a first picture.
+    drawTile(node, answered) {
         const canvas = node.querySelector('canvas');
         const ratio = Math.min(2, window.devicePixelRatio || 1);
         const w = Math.max(40, canvas.clientWidth || 160);
@@ -371,22 +397,29 @@ export class EnvironmentGrid {
         const ctx = canvas.getContext('2d');
         ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
         const strip = Math.max(10, Math.min(16, Math.round(h * 0.09))) + 8;
-        const t = pitchTransform(w, h, { top: strip, side: 2, bottom: 2 });
-        drawPitch(ctx, t);
+        const transform = pitchTransform(w, h, { top: strip, side: 2, bottom: 2 });
+        drawPitch(ctx, transform);
         const environment = Number(node.dataset.environment);
+        const { tile, refreshing, clock, label } = tileState(environment, answered, this.held.get(environment));
+        node.setAttribute('aria-label', label);
+        node.toggleAttribute('data-refreshing', refreshing);
         if (!tile) {
-            drawScene(ctx, t, { players: [], ball: null }, [], { scoreboard: `${environment}   waiting` });
+            delete node.dataset.step;
+            drawScene(ctx, transform, { players: [], ball: null }, [], { scoreboard: t('grid.tile.waiting', { environment }) });
             return;
         }
         const header = this.app.source && this.app.source.header;
         const paint = teamPaint(header, this.app.styles);
-        const clock = formatClock(tile.clock);
-        drawScene(ctx, t, sceneFromTile(tile), paint, {
-            numbers: false,
-            scoreboard: `${environment}   ${tile.score[0]} : ${tile.score[1]}   ${clock}`,
-        });
+        const scoreboard = `${environment}   ${tile.score[0]} : ${tile.score[1]}   ${clock}`;
+        if (refreshing) {
+            ctx.globalAlpha = 0.45;
+            drawScene(ctx, transform, sceneFromTile(tile), paint, { numbers: false });
+            ctx.globalAlpha = 1;
+            drawScene(ctx, transform, { players: [], ball: null }, paint, { scoreboard: t('grid.tile.refreshing', { scoreboard }) });
+        } else {
+            drawScene(ctx, transform, sceneFromTile(tile), paint, { numbers: false, scoreboard });
+        }
         node.dataset.step = String(tile.step);
-        node.setAttribute('aria-label', `Environment ${environment}, ${tile.score[0]} to ${tile.score[1]}, clock ${clock}`);
     }
 
     // Shows an environment in the main view, through the switch of the live source.

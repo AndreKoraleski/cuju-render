@@ -183,7 +183,8 @@ export function compiled(renderer, material) {
 
 // Compiles a material on a throwaway mesh, and returns whether it compiled. A WebGL context lost
 // on the way, or a renderer without compile, counts as compiled, and the page tries again later.
-export function tryCompile(renderer, material, camera, skinned = null) {
+// The compiler's messages of a failure go into logs when the caller passes a list.
+export function tryCompile(renderer, material, camera, skinned = null, logs = null) {
     if (!renderer || typeof renderer.compile !== 'function') {
         return true;
     }
@@ -197,8 +198,16 @@ export function tryCompile(renderer, material, camera, skinned = null) {
     renderer.debug.checkShaderErrors = true;
     let ok = true;
     const report = renderer.debug.onShaderError;
-    renderer.debug.onShaderError = () => {
+    renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
         ok = false;
+        if (logs && gl) {
+            for (const shader of [vertex, fragment]) {
+                const text = shader ? gl.getShaderInfoLog(shader) : '';
+                if (text && text.trim()) {
+                    logs.push(text.trim().slice(0, 600));
+                }
+            }
+        }
     };
     try {
         renderer.compile(scene, camera);

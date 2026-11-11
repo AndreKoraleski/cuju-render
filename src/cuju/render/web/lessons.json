@@ -12,7 +12,7 @@
                 "check": "recording",
                 "goal": "The library holds a recording outside the Trash.",
                 "steps": [
-                    {"say": "Add the five a side sample to the library.", "run": "cuju render sample sample-5v5"},
+                    {"say": "Add the five a side sample to the library.", "run": "cuju render sample 5v5"},
                     {"say": "List the recordings of the library with the server running.", "http": "GET /api/matches"},
                     {"say": "Open it in the browser, which a person sees.", "run": "cuju render open sample-5v5"}
                 ]
@@ -56,7 +56,7 @@
             "title": "Follow a player",
             "page": "watch",
             "needs": "recording",
-            "ask": "Follow one player. A number key from 1 to 0 picks a player of the left team, P follows the player on the ball, and the View menu has Follow player.",
+            "ask": "Follow one player. A number key from 1 to 0 puts the view on a player of the left team, over the shoulder, P follows the player on the ball, and the View menu has Follow player.",
             "praise": "The camera stays with the player. Esc returns to the broadcast camera.",
             "agent": {
                 "check": "page",

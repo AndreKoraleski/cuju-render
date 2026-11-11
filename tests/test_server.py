@@ -31,6 +31,7 @@ from cuju.render._store import library as _library
 from cuju.render._watch import live as _live
 from support.common import (
     _CRASH,
+    _OGG,
     _achievement_frames,
     _achievement_header,
     _challenge_frames,
@@ -40,8 +41,11 @@ from support.common import (
     _help_server,
     _package_team,
     _person_recording,
+    _play_to_end,
     _send,
+    _shipped_language,
     _toy_team,
+    _until,
 )
 
 
@@ -149,7 +153,7 @@ def test_server_api(render_home):
         team = _send(address, f'/api/teams/{team["id"]}/images/shirt-front', png, 'PUT')
         assert team['images'] == ['shirt-front']
         assert _get(address, f'/api/teams/{team["id"]}/images/shirt-front')[1] == png
-        sound = b'OggS' + bytes(60)
+        sound = _OGG + bytes(60)
         team = _send(address, f'/api/teams/{team["id"]}/sounds/goal', sound, 'PUT')
         assert team['sounds'] == ['goal']
         assert _get(address, f'/api/teams/{team["id"]}/sounds/goal')[1] == sound
@@ -425,6 +429,67 @@ def test_game_through_the_server(render_home, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_game_starts_in_a_new_process_when_the_warm_one_cannot(render_home, monkeypatch):
+    """A kept process that died, or whose environment changed, gives way to a new process."""
+    monkeypatch.setattr(_server, '_GAME_PACE', 400)
+    games = _server._Games(warm=True)
+    try:
+        start = ('5_vs_5', [True, False], [None, None], 2, False, ['builtin', 'builtin'], 50)
+        assert _play_to_end(games, games.start(*start))['state'] == 'ended'
+        dead = games._spare
+        dead.kill()
+        dead.wait()
+        game = games.start(*start)
+        assert games._process is not dead and games._process.pid != dead.pid
+        assert _play_to_end(games, game)['state'] == 'ended'
+        kept = games._spare
+        assert kept is not None and kept.poll() is None
+        monkeypatch.setenv('CUJU_RENDER_TEST_MARK', 'changed')
+        game = games.start(*start)
+        assert games._process is not kept and kept.poll() is not None
+        ended = _play_to_end(games, game)
+        assert ended['state'] == 'ended' and ended['step'] > 0, ended
+    finally:
+        games.close()
+
+
+def test_game_warm_process_ends_with_the_server(render_home, monkeypatch):
+    """The kept process ends with the server, after its idle time, and when its input closes."""
+    made, spares = [], []
+
+    class Kept(_server._Games):
+        def __init__(self, *arguments, **options):
+            super().__init__(*arguments, **options)
+            made.append(self)
+
+    def stop(server):
+        made[0]._prepare()
+        spares.append(made[0]._spare)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_server, '_Games', Kept)
+    monkeypatch.setattr(_server.http.server.ThreadingHTTPServer, 'serve_forever', stop)
+    _server.serve(0)
+    assert made[0]._warm and spares[0] is not None
+    assert spares[0].poll() is not None and made[0]._spare is None
+    # A kept process ends after its idle time without a game.
+    monkeypatch.setattr(_server, '_WARM_IDLE_SECONDS', 1)
+    games = Kept(warm=True)
+    try:
+        games._prepare()
+        idle = games._spare
+        assert _until(lambda: games._spare is None and idle.poll() is not None, 30)
+    finally:
+        games.close()
+    # A server that ends without closing it, killed for one, closes its input, and it ends too.
+    orphan = _server._Games._spawn(['--warm'])
+    orphan.stdin.close()
+    assert orphan.wait(timeout=120) == 0
+    assert orphan.stdout.read() == ''
+    orphan.stdout.close()
+    orphan.stderr.close()
 
 
 def test_cancel_during_child_start(monkeypatch, render_home):
@@ -1198,9 +1263,13 @@ def test_presentation_routes_and_sandbox_policy(render_home):
         served = json.loads(body)
         assert status == 200 and served['manifest']['name'] == 'Test package'
         prefix = f'{address}/api/teams/{team["id"]}/presentation'
+        # The worker goes out as text, which no page runs by its address, the worklet that the
+        # page loads by its address as JavaScript.
         with urllib.request.urlopen(f'{prefix}/worker.js', timeout=10) as response:
-            assert response.headers['Content-Type'] == 'text/javascript'
+            assert response.headers['Content-Type'] == 'text/plain; charset=utf-8'
             assert b'export function frame' in response.read()
+        with urllib.request.urlopen(f'{prefix}/audio/hum.js', timeout=10) as response:
+            assert response.headers['Content-Type'] == 'text/javascript'
         with urllib.request.urlopen(f'{prefix}/models/halo.glb', timeout=10) as response:
             assert response.headers['Content-Type'] == 'model/gltf-binary'
         for path in ('presentation/missing.js', 'presentation/..%2Fteam.json', 'presentation/../x'):
@@ -1218,6 +1287,10 @@ def test_presentation_routes_and_sandbox_policy(render_home):
             framing = reply.headers.get('X-Frame-Options')
         assert len(policy) == 1 and framing is None
         assert "connect-src 'none'" in policy[0]
+        # Opened as a whole window, the sandbox still has an opaque origin and no opener.
+        assert policy[0].startswith('sandbox allow-scripts;')
+        assert reply.headers.get('Cross-Origin-Opener-Policy') == 'same-origin'
+        assert "self.origin !== 'null'" in page and 'e.source !== window.parent' in page
         # A viewer in the frame of a notebook starts its sandbox there too.
         assert f'frame-ancestors {_launch.FRAME_ANCESTORS};' in policy[0]
         script = page.split('<script>', 1)[1].rsplit('</script>', 1)[0]
@@ -1227,6 +1300,16 @@ def test_presentation_routes_and_sandbox_policy(render_home):
         with urllib.request.urlopen(f'{address}/js/presentation/host.js', timeout=10) as reply:
             assert reply.headers.get('X-Frame-Options') == 'DENY'
             assert reply.headers.get_all('Content-Security-Policy') == ["frame-ancestors 'none'"]
+        with urllib.request.urlopen(f'{address}/', timeout=10) as reply:
+            assert reply.headers.get('Cross-Origin-Opener-Policy') == 'same-origin'
+        # The service worker carries the digest of each file as the server serves it.
+        with urllib.request.urlopen(f'{address}/sw.js?build=x', timeout=10) as reply:
+            worker = reply.read().decode()
+        assert 'const DIGESTS = null;' not in worker
+        filled = json.loads(worker.split('const DIGESTS = ', 1)[1].split(';' + chr(10), 1)[0])
+        for name in ('index.html', 'js/main.js'):
+            with urllib.request.urlopen(f'{address}/{name}', timeout=10) as reply:
+                assert filled[name] == hashlib.sha256(reply.read()).hexdigest(), name
         request = urllib.request.Request(
             f'{address}/api/teams/{team["id"]}/presentation', headers={'Host': 'example.com'}
         )
@@ -1291,6 +1374,31 @@ def test_engine_outputs_stay_identical_while_a_package_plays(render_home):
         server.shutdown()
         server.server_close()
     assert outputs[0] == outputs[1]
+
+
+def test_page_preview_panel_speaks_the_page_language():
+    """Every level, status, rung, budget and event of the preview panel has a message."""
+    scripts = _server._WEB / 'js' / 'presentation'
+    preview = (scripts / 'preview.js').read_text()
+    budget = (scripts / 'budget.js').read_text()
+    assert 'formatNumber' in preview and '.toFixed(' not in preview
+    ladder = re.search(r'export const LADDER = \[([^\]]*)\]', budget).group(1)
+    kinds = re.search(r'const KINDS = \[([^\]]*)\]', preview).group(1)
+    events = re.search(r'export const EVENTS = \[([^\]]*)\]', preview).group(1)
+
+    def names(text):
+        return re.findall(r"'([^']+)'", text)
+
+    wanted = [f'rung.{k}' for k in names(ladder)] + [f'kind.{k}' for k in names(kinds)]
+    wanted += [f'event.{k}' for k in names(events)]
+    wanted += [f'level.{k}' for k in ('worker', 'manifest', 'stock')]
+    wanted += [f'status.{k}' for k in ('none', 'starting', 'ready', 'restarting', 'stopped')]
+    wanted += [f'status.{k}' for k in ('failed', 'disposed')]
+    for code in ('en', 'pt'):
+        messages = json.loads((_server._WEB / 'languages' / f'{code}.json').read_text('utf-8'))
+        missing = [k for k in wanted if f'presentation.preview.{k}' not in messages]
+        assert missing == [], (code, missing)
+    assert 'presentation.notice.workerResting' in messages
 
 
 def test_challenge_server_routes(render_home, tmp_path):
@@ -1384,6 +1492,62 @@ def test_challenge_server_routes(render_home, tmp_path):
         server.server_close()
 
 
+def test_challenge_group_routes(render_home):
+    from cuju.render._playing import challenges as _challenges
+
+    challenge = _challenges.find('one_on_one')
+    matches = [
+        _person_recording(challenge, 0, _challenge_frames(goal_at=12, length=30)),
+        _person_recording(challenge, 1, _challenge_frames()),
+        None,
+    ]
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+    try:
+        run = json.dumps({'person': 'Ana', 'matches': matches}).encode()
+        group = _send(address, '/api/challenges/one_on_one/runs', run)['group']
+        listed = json.loads(_get(address, '/api/matches')[1])
+        assert {entry['group']['id'] for entry in listed if 'group' in entry} == {group}
+        members = json.loads(_get(address, f'/api/matches?group={group}')[1])
+        assert [entry['id'] for entry in members] == matches[:2]
+        trashed = _send(address, f'/api/groups/{group}', None, method='DELETE')
+        assert trashed['group'] == group and sorted(trashed['trashed']) == sorted(matches[:2])
+        assert json.loads(_get(address, f'/api/matches?group={group}')[1]) == []
+        assert len(json.loads(_get(address, f'/api/trash?group={group}')[1])) == 2
+        for method, path in (
+            ('DELETE', f'/api/groups/{group}'),
+            ('POST', '/api/groups/g-x/restore'),
+        ):
+            with pytest.raises(urllib.error.HTTPError) as refused:
+                _send(address, path, b'' if method == 'POST' else None, method=method)
+            assert refused.value.code == 404
+        restored = _send(address, f'/api/groups/{group}/restore', b'')
+        assert sorted(restored['restored']) == sorted(matches[:2])
+        # A person's run without recordings and a left run, over HTTP.
+        again = [
+            _person_recording(challenge, 0, _challenge_frames(goal_at=12, length=30)),
+            None,
+            None,
+        ]
+        body = {'person': 'Ana', 'matches': again, 'keep_recordings': False}
+        outcome = _send(address, '/api/challenges/one_on_one/runs', json.dumps(body).encode())
+        assert outcome['group'] is None and _library.path_of(again[0]) is None
+        left = [_person_recording(challenge, 0, _challenge_frames())]
+        body = {'person': 'Ana', 'matches': left}
+        answer = _send(address, '/api/challenges/one_on_one/leave', json.dumps(body).encode())
+        assert answer['group'] and answer['removed'] == []
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            body = {'person': 'Ana', 'matches': left, 'keep_recordings': 'yes'}
+            _send(address, '/api/challenges/one_on_one/leave', json.dumps(body).encode())
+        assert refused.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_achievements_through_the_server(render_home):
     from cuju.render._playing import achievements as _achievements
 
@@ -1443,6 +1607,423 @@ def test_installable_page_files_build_and_routes(render_home, tmp_path, monkeypa
             assert b'cuju-page-' in response.read()
         with urllib.request.urlopen(address + '/index.html', timeout=10) as response:
             assert response.headers.get('Cache-Control') is None
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_stale_server_file_goes_once_its_process_ended(render_home):
+    render_home.mkdir(parents=True, exist_ok=True)
+    path = render_home / _launch.SERVER_FILE
+    dead = subprocess.run(
+        [sys.executable, '-c', 'import os; print(os.getpid())'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    path.write_text(json.dumps({'port': 8999, 'pid': int(dead.stdout), 'key': 'k'}))
+    assert _launch.running() is None
+    assert not path.exists()
+
+
+def test_server_error_answers_carry_message_ids(render_home):
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+
+    def refused(path, data=None, method='GET'):
+        request = urllib.request.Request(address + path, data=data, method=method)
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        return caught.value.code, json.loads(caught.value.read())
+
+    try:
+        assert refused('/api/nothing') == (
+            404,
+            {'error': 'no such resource', 'error_id': 'server.no_resource', 'error_values': {}},
+        )
+        status, body = refused('/api/requests', b'{"scenario": "nowhere"}', 'POST')
+        assert status == 400 and body == {
+            'error': "expected a shipped scenario, found 'nowhere'",
+            'error_id': 'server.scenario',
+            'error_values': {'scenario': "'nowhere'"},
+        }
+        status, body = refused('/api/matches/zzz', b'{"title": "x"}', 'PATCH')
+        assert status == 400 and body['error'] == "expected a recording of the library, found 'zzz'"
+        assert (body['error_id'], body['error_values']) == (
+            'server.library.unknown',
+            {'identifier': "'zzz'"},
+        )
+        status, body = refused('/api/requests/r-none', method='DELETE')
+        assert (status, body['error'], body['error_id']) == (404, 'no such item', 'server.no_item')
+        # An answer of the form `Kind: message` keeps its text and names the message within.
+        status, body = refused('/api/search?limit=x')
+        assert status == 400 and 'error_id' not in body
+        status, body = refused('/api/help/samples', b'{"names": 3}', 'POST')
+        assert status == 400 and body == {
+            'error': 'expected names as a list of samples, found 3',
+            'error_id': 'server.help.sample_names',
+            'error_values': {'names': '3'},
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_interrupted_requests_carry_message_ids(render_home):
+    folder = _home.folder('requests')
+    base = {
+        'left': 'builtin',
+        'right': 'builtin',
+        'scenario': '11_vs_11_kaggle',
+        'seed': 1,
+        'ability': [None, None],
+        'progress': 0.0,
+        'match': None,
+        'error': None,
+        'created': 1.0,
+        'started': None,
+        'finished': None,
+    }
+    # A request of an earlier version lacks the id fields and loads all the same.
+    (folder / 'r-old.json').write_text(json.dumps({**base, 'id': 'r-old', 'state': 'queued'}))
+    done = {**base, 'id': 'r-done', 'state': 'failed', 'error': 'cancelled', 'created': 2.0}
+    (folder / 'r-done.json').write_text(json.dumps(done))
+    entries = {entry['id']: entry for entry in _server._Requests().entries()}
+    assert entries['r-old']['error'] == 'interrupted by a server restart'
+    assert (entries['r-old']['error_id'], entries['r-old']['error_values']) == (
+        'server.requests.interrupted',
+        {},
+    )
+    assert entries['r-done']['error'] == 'cancelled'
+    assert (entries['r-done']['error_id'], entries['r-done']['error_values']) == (None, None)
+    stored = json.loads((folder / 'r-old.json').read_text())
+    assert stored['error_id'] == 'server.requests.interrupted'
+    assert _server._stored_request(folder / 'r-old.json')['error_values'] == {}
+
+
+# The languages of the page.
+
+_LITERAL = r"(?:'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`(?:[^`\\\n]|\\.)*`)"
+# The places of a module where a literal reaches people, its text, title, label, placeholder,
+# a toast or a child of an element made by the element helpers.
+_SHOWN = [
+    re.compile(pattern)
+    for pattern in (
+        rf'\.(?:textContent|innerText|title|placeholder|ariaLabel|alt)\s*=\s*({_LITERAL})',
+        rf"setAttribute\(\s*'(?:aria-label|title|placeholder|alt|aria-description)'\s*,\s*({_LITERAL})",
+        rf"['\"]?(?:aria-label|title|placeholder|alt|text|label|hint|note|tip)['\"]?\s*:\s*({_LITERAL})",
+        rf'\b(?:toast|alert|confirm|announce|setWaiting|showLoading|notice)\(\s*({_LITERAL})',
+        rf'\b(?:h|el|menuItem|menuHeading)\(\s*{_LITERAL}\s*,\s*(?:\{{[^}}]*\}}|null)\s*,\s*({_LITERAL})',
+    )
+]
+# The literals that stay as they are, each a value whose shown text comes from a message by its
+# id, or a text that no person reads, by file and the start of the literal.
+_UNTRANSLATED = {
+    'js/export/photo-core.js': ('Off', 'Rule of', 'Golden', 'Center', 'Crop', 'Window size'),
+    'js/export/sizes.js': ('Square', 'Portrait', 'Vertical'),
+    'js/broadcast/show.js': ('Goal',),
+    'js/presentation/host.js': ('Team presentation sandbox',),
+}
+
+
+def _shown_literal(literal):
+    """Returns whether a literal reads as words for people, not as a value, an id or code."""
+    body = re.sub(r'\$\{[^}]*\}', ' ', literal[1:-1]).strip()
+    if 't(' in literal or re.fullmatch(r'[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+', body):
+        return False
+    if re.fullmatch(r'[a-z0-9 _=:./-]+', body):
+        return False
+    return bool(re.search(r'\b[A-Za-z][a-z]{2,}', body))
+
+
+def _untranslated_literals(web):
+    found = []
+    for path in sorted((web / 'js').rglob('*.js')):
+        name = path.relative_to(web).as_posix()
+        for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+            if re.match(r'\s*(//|\*|/\*)', line) or 'console.' in line:
+                continue
+            for pattern in _SHOWN:
+                for match in pattern.finditer(line):
+                    literal = match.group(1)
+                    if not _shown_literal(literal):
+                        continue
+                    if literal[1:].startswith(_UNTRANSLATED.get(name, ())):
+                        continue
+                    found.append(f'{name}:{number} {literal}')
+    return found
+
+
+def _untranslated_markup(markup):
+    """Returns the texts and attributes of a page that carry no message id."""
+    import html.parser
+
+    found = []
+
+    class Parser(html.parser.HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+
+        def handle_starttag(self, tag, attributes):
+            attributes = dict(attributes)
+            for name in ('title', 'aria-label', 'placeholder', 'alt'):
+                value = attributes.get(name)
+                if (
+                    value
+                    and re.search(r'[A-Za-z]{2}', value)
+                    and not attributes.get(f'data-i18n-{name}')
+                ):
+                    if not (tag == 'img' and value == ''):
+                        found.append(f'<{tag}> {name}={value!r}')
+            if tag not in ('meta', 'link', 'input', 'img', 'br', 'use', 'path', 'source'):
+                self.stack.append((tag, 'data-i18n' in attributes))
+
+        def handle_endtag(self, tag):
+            while self.stack:
+                if self.stack.pop()[0] == tag:
+                    break
+
+        def handle_data(self, data):
+            text = data.strip()
+            inside = [tag for tag, _ in self.stack]
+            if not text or {'script', 'style', 'title', 'symbol', 'svg'} & set(inside):
+                return
+            if any(translated for _, translated in self.stack):
+                return
+            # Key letters and symbols, such as V, Ctrl or the arrows, read the same everywhere.
+            if re.fullmatch(r'[A-Z0-9]?|[^A-Za-z]*|[A-Z][a-z]?|0:00|00:00', text) or inside[
+                -1:
+            ] == ['kbd']:
+                return
+            found.append(f'<{inside[-1] if inside else "?"}> {text!r}')
+
+    Parser().feed(markup)
+    return found
+
+
+def test_page_texts_come_from_the_language_files():
+    web = _server._WEB
+    assert _untranslated_literals(web) == []
+    assert _untranslated_markup((web / 'index.html').read_text(encoding='utf-8')) == []
+    assert _untranslated_markup((web / 'feed.html').read_text(encoding='utf-8')) == []
+
+
+def test_page_message_ids_are_in_english():
+    web = _server._WEB
+    english = _shipped_language('en')
+    called = re.compile(r"\b(?:t|tn|tOr)\(\s*'([A-Za-z0-9_.-]+)'")
+    marked = re.compile(r'data-i18n(?:-[a-z-]+)?="([^"]+)"')
+    ids = set()
+    for path in [*(web / 'js').rglob('*.js'), web / 'index.html', web / 'feed.html']:
+        text = path.read_text(encoding='utf-8')
+        ids.update(called.findall(text))
+        ids.update(marked.findall(text))
+    tolerated = {
+        key for key in ids if not key.startswith(('lesson.', 'challenge.', 'achievement.'))
+    }
+    assert sorted(key for key in tolerated if key not in english) == []
+
+
+def test_language_routes(render_home):
+    server = _server.http.server.ThreadingHTTPServer(
+        ('127.0.0.1', 0), _server.make_handler(_server._Requests())
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f'http://127.0.0.1:{server.server_address[1]}'
+
+    def call(path, data=None, method='GET', headers=None):
+        request = urllib.request.Request(
+            address + path, data=data, method=method, headers=headers or {}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+
+    try:
+        # The page and the feed carry the shipped languages, so they start without asking.
+        for path in ('/', '/feed'):
+            with urllib.request.urlopen(address + path, timeout=10) as response:
+                page = response.read().decode('utf-8')
+            start = page.index('<script type="application/json" id="cuju-languages">') + 52
+            block = page[start : page.index('</script>', start)]
+            assert '<' not in block
+            shipped = json.loads(block)
+            assert sorted(shipped) == ['en', 'pt'] and shipped['pt'] == _shipped_language('pt')
+        status, body = call('/api/languages')
+        assert status == 200
+        assert [(e['code'], e['source'], e['usable']) for e in body['languages']] == [
+            ('en', 'shipped', True),
+            ('pt', 'shipped', True),
+        ]
+        assert call('/api/languages/pt')[1]['@language']['locale'] == 'pt-BR'
+        status, body = call('/api/languages/xx')
+        assert (status, body['error_id'], body['error']) == (
+            404,
+            'server.language.none',
+            'no language xx',
+        )
+        assert call('/api/languages/..%2Fen')[0] == 400
+        own = {
+            '@language': {'code': 'pt-x-test', 'name': 'Teste', 'plurals': ['one', 'many', 'other']}
+        }
+        own['html.nav.watch'] = 'Assistir aqui'
+        data = json.dumps(own).encode()
+        # Another site may not store a language.
+        assert call('/api/languages', data, 'POST', {'Origin': 'https://example.com'})[0] == 403
+        status, body = call('/api/languages', data, 'POST')
+        assert status == 201 and (body['code'], body['source'], body['usable']) == (
+            'pt-x-test',
+            'home',
+            True,
+        )
+        assert body['missing'] == len(_shipped_language('en')) - 2
+        assert call('/api/languages/pt-x-test')[1]['html.nav.watch'] == 'Assistir aqui'
+        assert [e['code'] for e in call('/api/languages')[1]['languages']] == [
+            'en',
+            'pt',
+            'pt-x-test',
+        ]
+        bad = dict(own, **{'api.status': 'Resposta {code}'})
+        status, body = call('/api/languages', json.dumps(bad).encode(), 'POST')
+        assert status == 400 and body['error_id'] == 'server.language.malformed'
+        assert (
+            body['error_values']['first']
+            == 'api.status, expected the placeholders of English, found {code}'
+        )
+        shipped = dict(own, **{'@language': dict(own['@language'], code='pt')})
+        status, body = call('/api/languages', json.dumps(shipped).encode(), 'POST')
+        assert (status, body['error_id']) == (400, 'server.language.shipped')
+        assert call('/api/languages', b'{', 'POST')[1]['error_id'] == 'server.language.json'
+        # A file dropped into the folder by hand that is malformed lists as refused.
+        (_home.home() / 'languages' / 'zz.json').write_text('{"@language": {"code": "zz"}}')
+        listed = {e['code']: e for e in call('/api/languages')[1]['languages']}
+        assert listed['zz']['usable'] is False and listed['zz']['problems']
+        assert call('/api/languages/pt', method='DELETE')[1]['error_id'] == 'server.language.keep'
+        assert call('/api/languages/pt-x-test', method='DELETE') == (
+            200,
+            {'code': 'pt-x-test', 'removed': True},
+        )
+        assert call('/api/languages/pt-x-test')[0] == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_loopback_server_reuses_its_threads():
+    import http.server
+    import socket
+
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *arguments):
+            pass
+
+        def do_GET(self):
+            seen.append(threading.get_ident())
+            if self.path == '/slow':
+                time.sleep(0.4)
+            self.send_response(200)
+            self.send_header('Content-Length', '2')
+            self.end_headers()
+            self.wfile.write(b'ok')
+
+    server = _launch.LoopbackServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+
+    def get(path='/'):
+        with socket.create_connection(('127.0.0.1', port), timeout=10) as connection:
+            connection.sendall(f'GET {path} HTTP/1.0\r\n\r\n'.encode())
+            data = b''
+            while chunk := connection.recv(65536):
+                data += chunk
+        return data
+
+    try:
+        for _ in range(10):
+            assert get().endswith(b'ok')
+        # One request at a time runs on the threads that already wait.
+        assert len(set(seen)) <= 2
+        # Requests that wait run side by side, each on a thread of its own.
+        start = time.monotonic()
+        threads = [threading.Thread(target=get, args=('/slow',)) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert time.monotonic() - start < 2.0
+        assert _server.make_handler(_server._Requests()).disable_nagle_algorithm is True
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_serve_remote_on_a_port_of_cuju_prints_the_ssh_command(render_home, monkeypatch):
+    import errno
+
+    busy = OSError(errno.EADDRINUSE, 'in use')
+    own = _launch.Server(8790, os.getpid(), 'key', render_home)
+    monkeypatch.setattr(_launch, 'running', lambda: own)
+    assert 'ssh -N -L 8790:127.0.0.1:8790' in str(_launch.port_error(8790, busy, True))
+    assert 'ssh' not in str(_launch.port_error(8790, busy))
+    monkeypatch.setattr(_launch, 'running', lambda: None)
+    monkeypatch.setattr(_launch, 'answers', lambda port, timeout=2.0: '0.2.1')
+    shown = str(_launch.port_error(8790, busy, True))
+    assert 'another cuju render server' in shown and 'ssh -N -L 8790:127.0.0.1:8790' in shown
+    monkeypatch.setattr(_launch, 'answers', lambda port, timeout=2.0: None)
+    shown = str(_launch.port_error(8790, busy, True))
+    assert 'another program' in shown and 'ssh' not in shown
+
+
+def test_loopback_server_takes_a_burst_of_connections():
+    import http.server
+    import socket
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *arguments):
+            pass
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-Length', '2')
+            self.end_headers()
+            self.wfile.write(b'ok')
+
+    # Windows refuses a connection beyond the queue, which lost a module of the page.
+    assert _launch.LoopbackServer.request_queue_size >= 128
+    server = _launch.LoopbackServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    count = 80
+    barrier = threading.Barrier(count)
+    answers = []
+
+    def get():
+        barrier.wait()
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=20) as connection:
+                connection.sendall(b'GET / HTTP/1.0\r\n\r\n')
+                data = b''
+                while chunk := connection.recv(65536):
+                    data += chunk
+            answers.append(data.endswith(b'ok'))
+        except OSError as error:
+            answers.append(type(error).__name__)
+
+    try:
+        threads = [threading.Thread(target=get) for _ in range(count)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert answers == [True] * count
     finally:
         server.shutdown()
         server.server_close()

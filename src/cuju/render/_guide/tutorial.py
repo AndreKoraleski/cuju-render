@@ -16,6 +16,7 @@ lesson ends when its check holds.
   keeps a run.
 - `page` holds once a page has reported the lesson done, as the page does for every lesson it
   sees done, so an agent that drives the page through `window.cuju` learns those lessons there.
+  The page watches these lessons whether or not one was started, so the printed steps alone do.
 
 The page reports its lessons to `POST /api/help/tutorial`, which keeps them in `tutorial.json` of
 the home folder, and the reset of the tutorial clears that file.
@@ -33,6 +34,8 @@ from cuju.errors import ArgumentError
 from .._registry import teams as _teams
 from .._store import home as _home
 from .._store import library as _library
+from .._text import messages as _messages
+from .._text.messages import MessageError
 
 _CATALOG = Path(__file__).parents[1] / 'web' / 'lessons.json'
 # The file of the home folder that keeps the lessons a page reported done.
@@ -84,10 +87,10 @@ def report(done: Any) -> dict[str, Any]:
     """
     known = _ids()
     if not isinstance(done, list) or not all(isinstance(item, str) for item in done):
-        raise ArgumentError(f'expected done as a list of lessons from {known}, found {done!r}')
+        raise MessageError('server.tutorial.done', known=known, done=repr(done))
     unknown = [item for item in done if item not in known]
     if unknown:
-        raise ArgumentError(f'expected lessons from {known}, found {unknown}')
+        raise MessageError('server.tutorial.unknown', known=known, unknown=unknown)
     progress = page_progress()
     stamp = time.strftime('%Y-%m-%dT%H:%M:%S')
     for item in done:
@@ -175,7 +178,7 @@ def lesson_state(identifier: str) -> dict[str, Any]:
     for entry in state()['lessons']:
         if entry['id'] == identifier:
             return entry
-    raise ArgumentError(f'expected a lesson from {_ids()}, found {identifier!r}')
+    raise MessageError('server.tutorial.lesson', lessons=_ids(), identifier=repr(identifier))
 
 
 def _step_line(step: dict[str, Any]) -> str:
@@ -221,14 +224,14 @@ def get(parts: list[str], query: dict[str, str]) -> tuple[Any, int]:
         try:
             return lesson_state(parts[0]), 200
         except ArgumentError as error:
-            return {'error': str(error)}, 404
-    return {'error': 'no such resource'}, 404
+            return _messages.error_fields(error), 404
+    return _messages.fields('server.no_resource'), 404
 
 
 def post(parts: list[str], document: dict[str, Any]) -> tuple[Any, int]:
     """Answers `POST /api/help/tutorial`, with `done` to report lessons or `reset` to clear them."""
     if parts:
-        return {'error': 'no such resource'}, 404
+        return _messages.fields('server.no_resource'), 404
     if document.get('reset') is True:
         return reset(), 200
     return report(document.get('done')), 200

@@ -4,48 +4,50 @@
 // A friendlier first run. A short tip on each page points to the next thing to try, until it is
 // dismissed, and the settings turn the tips off or bring them back. The main controls carry a
 // line of help, which shows on keyboard focus, and on hover for a control without a title of its
-// own. The empty Watch page also points to the demo and the samples. The browser keeps every
+// own. The empty Watch page also points to the demo and the samples. A tip takes the first corner
+// of the window where it covers no control of the page and no notice. The browser keeps every
 // dismissal, and the rules at the top of the file touch nothing of the page.
+
+import { t, tn } from '../core/i18n.js';
 
 export const TIPS_KEY = 'cuju.tips';
 
-// The tip of each page, shown once until dismissed. The tip of Watch waits for a match.
-export const TIPS = {
-    home: 'Ctrl K opens the command palette, which reaches every page, recording and setting.',
-    watch: 'V cycles the cameras, R replays the last goal, and the Match menu lists the goals.',
-    recordings: 'Details keeps a favorite mark, tags and notes on the selected recording.',
-    matches: 'An agent added on the Teams page joins the team lists here.',
-    tournaments: 'New tournament starts from a preset, and Stages holds every setting of each stage.',
-    teams: 'Choose a team to dress it, with a kit, a model, celebrations, sounds and sponsors.',
-    play: 'A controller plays too, and Input settings change the keys and the dead zone.',
-    field: 'A preset sets the arena, the grass, the hour and the weather at once.',
-};
+// The tip of each page, shown once until dismissed, the message firstrun.tip.<page>. The tip of
+// Watch waits for a match.
+export const TIPS = Object.fromEntries(['home', 'watch', 'recordings', 'matches', 'tournaments', 'teams', 'play', 'field']
+    .map((page) => [page, t(`firstrun.tip.${page}`)]));
 
-// The line of help of each main control.
-export const HELP_TEXT = {
-    'home-btn': 'Home, the way into every page',
-    'open-palette': 'Search every page, recording and setting, Ctrl K',
-    'open-settings': 'Presets, presentation, sound levels, motion and theme',
-    fullscreen: 'Fill the screen, F',
-    'match-menu-btn': 'Open a recording, a live source or a goal of the match',
-    'view-menu-btn': 'Camera, time of day, weather, arena, quality and theme',
-    'address-input': 'The id of a live source or a recording, then Enter',
-    timeline: 'Seek with a click or a drag, the arrows step 5 seconds',
-    speed: 'Playback speed, the Up and Down arrows change it',
-    mute: 'Sound starts muted, M turns it on and off',
-    volume: 'Volume of every sound of the page',
-    'live-env-index': 'Show another environment of the batch',
-};
-const TAB_HELP = {
-    watch: 'Watch a recording or a live source',
-    play: 'Play a game against the built-in AI',
-    recordings: 'The library of saved matches',
-    matches: 'Request a match between two teams',
-    tournaments: 'Cups, leagues and more for agents and people',
-    teams: 'Add agents and dress their teams',
-    field: 'The arena, the grass, the sky and the crowd',
-    help: 'Keys, controls and guides',
-};
+// The line of help of each main control by its id, the message firstrun.help.<id>.
+export const HELP_TEXT = Object.fromEntries([
+    'home-btn', 'open-palette', 'open-settings', 'fullscreen', 'match-menu-btn', 'view-menu-btn',
+    'address-input', 'timeline', 'speed', 'mute', 'volume', 'live-env-index',
+].map((id) => [id, t(`firstrun.help.${id}`)]));
+// The line of help of each page's tab, the message firstrun.tab.<page>.
+const TAB_HELP = Object.fromEntries(['watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help']
+    .map((page) => [page, t(`firstrun.tab.${page}`)]));
+
+// The corners a tip may take, in the order it tries them, the lower left first.
+export const TIP_SPOTS = ['bottom-left', 'bottom-right', 'top-right', 'top-left'];
+
+// The spot to take, given how many controls each spot would cover. The spot the tip holds stays
+// while it covers nothing, else the first clear spot in order, else the one that covers least.
+export function chooseSpot(current, covers) {
+    const order = TIP_SPOTS.includes(current) ? [current, ...TIP_SPOTS.filter((spot) => spot !== current)] : TIP_SPOTS;
+    let best = order[0];
+    for (const spot of order) {
+        const count = covers(spot);
+        if (count === 0) {
+            return spot;
+        }
+        if (count < covers(best)) {
+            best = spot;
+        }
+    }
+    return best;
+}
+
+// The controls of the page that a click or a press would reach.
+const CONTROL = 'button, a[href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"]), tbody tr, [role="row"], .challenge-item';
 
 // The stored state of the tips, the pages whose tip was dismissed and whether tips are off.
 export function tipState(stored) {
@@ -92,13 +94,20 @@ export class FirstRun {
         this.app = app;
         this.state = loadState();
         this.page = null;
-        this.tip = h('aside', { id: 'tip', class: 'tip', 'aria-label': 'Tip', hidden: true },
+        this.tip = h('aside', { id: 'tip', class: 'tip', 'aria-label': t('firstrun.tip.label'), hidden: true },
             this.tipText = h('p', { class: 'tip-text' }),
             h('div', { class: 'tip-actions' },
-                h('button', { type: 'button', class: 'btn small', onclick: () => this.dismiss() }, 'Got it'),
-                h('button', { type: 'button', class: 'link small', onclick: () => this.setOff(true) }, 'No more tips')));
+                h('button', { type: 'button', class: 'btn small', onclick: () => this.dismiss() }, t('firstrun.gotIt')),
+                h('button', { type: 'button', class: 'link small', onclick: () => this.setOff(true) }, t('firstrun.noMore'))));
         this.tooltip = h('div', { id: 'help-tip', class: 'help-tip', role: 'tooltip', hidden: true });
-        (document.getElementById('app') || document.body).append(this.tip, this.tooltip);
+        // The tip comes right after the top bar in the order of the Tab key, before the page.
+        const pages = document.getElementById('pages');
+        if (pages) {
+            pages.before(this.tip);
+            pages.after(this.tooltip);
+        } else {
+            (document.getElementById('app') || document.body).append(this.tip, this.tooltip);
+        }
         this.bindSetting();
         this.bindHelp();
         this.bindWatchEmpty();
@@ -133,19 +142,71 @@ export class FirstRun {
         const shown = (node) => node.getClientRects().length > 0;
         // A game on Play keeps the picture clear, so its tip waits on the setup card.
         const game = page === 'play' && app.play && app.play.stage && !app.play.stage.hidden;
-        const busy = app.tvMode || game || (page === 'watch' && !app.source)
+        const busy = app.tvMode || game || (page === 'watch' && !app.source) || !!(app.photo && app.photo.isOpen)
             || [...document.querySelectorAll('dialog[open], [role="dialog"], .dd-panel.open')].some(shown);
         const show = !!text && !busy && performance.now() - this.since > 1200;
         if (this.tip.dataset.page !== page) {
             this.tip.hidden = true;
         }
-        if (show && this.tipText.textContent !== `Tip. ${text}`) {
-            this.tipText.textContent = `Tip. ${text}`;
+        const line = text ? t('firstrun.tip.line', { text }) : '';
+        if (show && this.tipText.textContent !== line) {
+            this.tipText.textContent = line;
         }
         if (this.tip.hidden === show) {
             this.tip.hidden = !show;
             this.tip.dataset.page = page;
         }
+        if (show) {
+            this.place();
+        }
+    }
+
+    // Moves the tip to a corner where it covers no control and no notice that shows.
+    place() {
+        const tip = this.tip;
+        const toast = document.getElementById('toast');
+        const counts = {};
+        const covers = (spot) => {
+            if (!(spot in counts)) {
+                tip.dataset.spot = spot;
+                counts[spot] = this.covered(tip.getBoundingClientRect(), toast);
+            }
+            return counts[spot];
+        };
+        const spot = chooseSpot(tip.dataset.spot, covers);
+        tip.dataset.spot = spot;
+    }
+
+    // How many controls of the page lie under a box, a notice that shows counting as one.
+    covered(box, toast) {
+        if (!box.width) {
+            return 0;
+        }
+        const found = new Set();
+        const pages = document.getElementById('pages');
+        for (let x = box.left + 6; x < box.right; x += Math.max(20, (box.width - 12) / 6)) {
+            for (let y = box.top + 6; y < box.bottom; y += Math.max(14, (box.height - 12) / 4)) {
+                for (const node of document.elementsFromPoint(x, y)) {
+                    const control = node.closest(CONTROL);
+                    if (control && !this.tip.contains(control) && (!pages || pages.contains(control))) {
+                        found.add(control);
+                    }
+                }
+            }
+        }
+        // A region that holds the whole tip, such as a scrolling list, is no control under it.
+        const holds = (node) => {
+            const r = node.getBoundingClientRect();
+            return r.left <= box.left && r.right >= box.right && r.top <= box.top && r.bottom >= box.bottom;
+        };
+        let count = [...found].filter((node) => !holds(node)).length;
+        if (toast && toast.classList.contains('show') && toast.textContent) {
+            const t = toast.getBoundingClientRect();
+            if (t.left < box.right && t.right > box.left && t.top < box.bottom && t.bottom > box.top) {
+                count += 1;
+            }
+        }
+        return count;
     }
 
     dismiss() {
@@ -184,7 +245,7 @@ export class FirstRun {
         this.box.checked = !this.state.off;
         this.box.addEventListener('change', () => this.setOff(!this.box.checked));
         const help = anchor.nextElementSibling && anchor.nextElementSibling.matches('p') ? anchor.nextElementSibling : anchor;
-        help.after(h('label', { class: 'check' }, this.box, ' Tips for new visitors, on again brings back every tip'));
+        help.after(h('label', { class: 'check' }, this.box, ` ${t('firstrun.setting')}`));
     }
 
     // The line of help of a control shows on keyboard focus, and on hover when the control has no
@@ -274,10 +335,10 @@ export class FirstRun {
             return;
         }
         const offline = empty.querySelector('.offline-note');
-        empty.insertBefore(h('p', { class: 'muted small watch-next' },
-            'New here? The command ', h('code', {}, 'cuju render demo'), ' streams a live match, and ',
-            h('button', { type: 'button', class: 'link', onclick: () => this.openSample() }, 'a sample match'),
-            ' opens at once.'), offline);
+        empty.insertBefore(h('p', { class: 'muted small watch-next' }, tn('firstrun.watch.next', {
+            command: h('code', {}, 'cuju render demo'),
+            sample: h('button', { type: 'button', class: 'link', onclick: () => this.openSample() }, t('firstrun.watch.sample')),
+        })), offline);
     }
 
     async openSample() {
@@ -293,7 +354,7 @@ export class FirstRun {
         } catch {
             // The Recordings page says what is wrong with the library.
         }
-        app.hud.toast('The library holds no recording yet. The command cuju render sample adds the samples.', 'info', 5000);
+        app.hud.toast(t('firstrun.noRecording'), 'info', 5000);
         app.showPage('recordings');
     }
 

@@ -5,6 +5,7 @@
 // docs/rendering.md describes it.
 
 import { ANNOTATIONS_TAG, FRAMES_TAG, decodeFrames, sectionBytes } from './codec.js';
+import { t } from '../core/i18n.js';
 
 export const MAGIC = 'CUJREC1\n';
 export const NODE_COUNT = 14;
@@ -21,10 +22,20 @@ export const NODE_NAMES = [
 export const NODE_PARENTS = [-1, 0, 1, 2, 2, 4, 2, 6, 1, 8, 9, 1, 11, 12];
 
 export const GAME_MODES = [
-    'Play', 'Kick-off', 'Goal kick', 'Free kick', 'Corner', 'Throw-in', 'Penalty',
+    t('format.mode.play'), t('format.mode.kickoff'), t('format.mode.goal_kick'), t('format.mode.free_kick'),
+    t('format.mode.corner'), t('format.mode.throw_in'), t('format.mode.penalty'),
 ];
 
-export class FormatError extends Error {}
+// A recording or a stream that the viewer cannot read, with a message for people. The error keeps
+// the id and the values of its message, so the decoding worker hands them to the page, which
+// shows the message in the page's language.
+export class FormatError extends Error {
+    constructor(messageId, messageValues) {
+        super(t(messageId, messageValues));
+        this.messageId = messageId;
+        this.messageValues = messageValues;
+    }
+}
 
 // Each node is stored as seven int16, the position in steps of POSITION_UNIT meters and the
 // quaternion in steps of 1 over 32767, which halves the bytes and lets gzip find more repetition.
@@ -77,7 +88,7 @@ export async function gunzip(bytes, limit = MAX_DECOMPRESSED_BYTES) {
         total += value.length;
         if (total > limit) {
             await reader.cancel();
-            throw new FormatError(`The recording decompresses to more than ${Math.round(limit / 1048576)} MB.`);
+            throw new FormatError('format.error.too_large', { mb: Math.round(limit / 1048576) });
         }
         chunks.push(value);
     }
@@ -98,14 +109,14 @@ export function parseHeader(bytes) {
     }
     for (let i = 0; i < 8; i++) {
         if (bytes[i] !== MAGIC.charCodeAt(i)) {
-            throw new FormatError('This is not a cuju recording, the file does not start with CUJREC1.');
+            throw new FormatError('format.error.magic');
         }
     }
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const length = view.getUint32(8, true);
     // A header of 22 players takes a few kilobytes, a megabyte is plenty.
     if (length > 1024 * 1024) {
-        throw new FormatError('The recording header is implausibly large.');
+        throw new FormatError('format.error.header_large');
     }
     if (bytes.length < 12 + length) {
         return null;
@@ -114,7 +125,7 @@ export function parseHeader(bytes) {
     try {
         header = JSON.parse(new TextDecoder().decode(bytes.subarray(12, 12 + length)));
     } catch (err) {
-        throw new FormatError(`The recording header is not valid JSON, ${err.message}.`);
+        throw new FormatError('format.error.header_json', { error: err.message });
     }
     validateHeader(header);
     return { header, offset: 12 + length };
@@ -122,28 +133,28 @@ export function parseHeader(bytes) {
 
 export function validateHeader(header) {
     if (header.stream_sequence !== undefined && header.stream_sequence !== 1) {
-        throw new FormatError('This live stream numbers its frames in a format this viewer does not read.');
+        throw new FormatError('format.error.stream_numbering');
     }
     if (header.version !== 1 && header.version !== 2) {
-        throw new FormatError(`Recording version ${header.version} is not supported, this viewer reads versions 1 and 2.`);
+        throw new FormatError('format.error.version', { version: String(header.version) });
     }
     if (header.version === 2 && (!Number.isInteger(header.frame_count) || header.frame_count < 0
         || !Number.isInteger(header.keyframe_interval) || header.keyframe_interval < 1)) {
-        throw new FormatError('The recording header gives no valid frame count or keyframe interval.');
+        throw new FormatError('format.error.frame_count');
     }
     if (!Array.isArray(header.players) || header.players.length === 0) {
-        throw new FormatError('The recording header lists no players.');
+        throw new FormatError('format.error.no_players');
     }
     if (Array.isArray(header.nodes) && header.nodes.length !== NODE_COUNT) {
-        throw new FormatError(`The recording has ${header.nodes.length} skeleton nodes, the viewer expects ${NODE_COUNT}.`);
+        throw new FormatError('format.error.nodes', { nodes: header.nodes.length, expected: NODE_COUNT });
     }
     const expected = frameBytes(header.players.length);
     const n = header.players.length;
     if (header.frame_bytes === 60 + n * 196 + paddedPlayers(n) || header.frame_bytes === 60 + n * 196 + 3 * paddedPlayers(n)) {
-        throw new FormatError('This recording comes from an older cuju whose frames carry no actions, touches or referee calls, record it again to watch it here.');
+        throw new FormatError('format.error.old');
     }
     if (header.frame_bytes !== expected) {
-        throw new FormatError(`The header says frames are ${header.frame_bytes} bytes, ${header.players.length} players need ${expected}.`);
+        throw new FormatError('format.error.frame_bytes', { bytes: String(header.frame_bytes), players: header.players.length, expected });
     }
     if (!Array.isArray(header.teams) || header.teams.length < 2) {
         header.teams = [
@@ -198,12 +209,12 @@ export async function parseRecording(input) {
         try {
             bytes = await gunzip(bytes);
         } catch (err) {
-            throw new FormatError(`The recording could not be decompressed, ${err.message}.`);
+            throw new FormatError('format.error.gunzip', { error: err.message });
         }
     }
     const parsed = parseHeader(bytes);
     if (!parsed) {
-        throw new FormatError('The recording is truncated inside its header.');
+        throw new FormatError('format.error.truncated_header');
     }
     const { header, offset } = parsed;
     const size = header.frame_bytes;
@@ -215,7 +226,7 @@ export async function parseRecording(input) {
         const coded = sections.get(FRAMES_TAG);
         count = header.frame_count;
         if (!coded || coded.length !== sectionBytes(header.players.length, count)) {
-            throw new FormatError('The recording is truncated or its frames section is malformed.');
+            throw new FormatError('format.error.frames_section');
         }
         aligned = decodeFrames(coded, header.players.length, count, header.keyframe_interval);
         annotations = readAnnotations(sections.get(ANNOTATIONS_TAG));
@@ -258,7 +269,7 @@ export function readSections(bytes, offset) {
         const tag = String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
         const length = view.getUint32(at + 4, true);
         if (at + 8 + length > bytes.length) {
-            throw new FormatError('The recording is truncated inside a section.');
+            throw new FormatError('format.error.truncated_section');
         }
         if (!sections.has(tag)) {
             sections.set(tag, bytes.subarray(at + 8, at + 8 + length));
@@ -338,7 +349,7 @@ export class StreamParser {
                 }
                 const length = view.getUint32(start + 8, true);
                 if (length > MAX_NOTES_BYTES) {
-                    throw new FormatError('The live stream sent implausibly large annotations.');
+                    throw new FormatError('format.error.notes_large');
                 }
                 if (this.length - start < 12 + length) {
                     break;
@@ -354,7 +365,7 @@ export class StreamParser {
                 break;
             }
             if (serial !== null && serial > BigInt(Number.MAX_SAFE_INTEGER)) {
-                throw new FormatError('A live frame carries a serial number beyond what this viewer counts.');
+                throw new FormatError('format.error.serial');
             }
             const copy = this.buffer.slice(start + prefix, start + size).buffer;
             const frame = makeFrame(copy, 0, this.header);

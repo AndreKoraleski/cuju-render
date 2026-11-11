@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { t } from '../core/i18n.js';
 
 const PACKS = ['general', 'movementbasic', 'movementadvanced', 'simulation', 'special', 'combatmelee'];
 const URL_OF = (pack) => `assets/animations/kaykit-rig-medium-${pack}.glb`;
@@ -123,20 +124,20 @@ export const KAYKIT_CELEBRATIONS = [
 
 // The KayKit clips the team editor offers as celebrations, with their names in the editor.
 export const KAYKIT_MENU = [
-    ['Cheering', 'Cheering'],
-    ['Waving', 'Waving to the fans'],
-    ['Jump_Full_Short', 'Jump'],
-    ['Jump_Full_Long', 'Big jump'],
-    ['Skeletons_Taunt', 'Taunt'],
-    ['Skeletons_Taunt_Longer', 'Long taunt'],
-    ['Push_Ups', 'Push ups'],
-    ['Sit_Ups', 'Sit ups'],
-    ['Melee_Unarmed_Attack_Punch_A', 'Air punch'],
-    ['Melee_Unarmed_Attack_Kick', 'Kick at the air'],
-    ['Dodge_Forward', 'Forward roll'],
-    ['Sit_Floor_Down>Sit_Floor_Idle', 'Sit on the grass'],
-    ['Lie_Down>Lie_Idle', 'Lie on the grass'],
-    ['Idle_B', 'Stand cool'],
+    ['Cheering', t('kaykit.cheering')],
+    ['Waving', t('kaykit.waving')],
+    ['Jump_Full_Short', t('kaykit.jump')],
+    ['Jump_Full_Long', t('kaykit.big_jump')],
+    ['Skeletons_Taunt', t('kaykit.taunt')],
+    ['Skeletons_Taunt_Longer', t('kaykit.long_taunt')],
+    ['Push_Ups', t('kaykit.push_ups')],
+    ['Sit_Ups', t('kaykit.sit_ups')],
+    ['Melee_Unarmed_Attack_Punch_A', t('kaykit.air_punch')],
+    ['Melee_Unarmed_Attack_Kick', t('kaykit.air_kick')],
+    ['Dodge_Forward', t('kaykit.forward_roll')],
+    ['Sit_Floor_Down>Sit_Floor_Idle', t('kaykit.sit')],
+    ['Lie_Down>Lie_Idle', t('kaykit.lie')],
+    ['Idle_B', t('kaykit.stand_cool')],
 ];
 
 const LABELS = new Map(KAYKIT_MENU);

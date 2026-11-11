@@ -36,6 +36,8 @@ from .._format import recording as _recording
 from .._registry import teams as _teams
 from .._store import home as _home
 from .._store import library as _library
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from . import tournament as rules
 
 _LOGGER = logging.getLogger('cuju')
@@ -44,6 +46,8 @@ _STATES = ('running', 'stopped', 'done', 'cancelled')
 MATCH_SECONDS = 30 * 60
 _SCORE = struct.Struct('<2i')
 _FILE_VERSION = 1
+# How long a change waits for the process that runs its tournament to apply it, in seconds.
+_ASK_SECONDS = 10.0
 
 
 def folder() -> Path:
@@ -90,13 +94,15 @@ def length_scenario(scenario: str, length: int) -> str:
     two halves.
     """
     if not rules.MIN_LENGTH <= int(length) <= rules.MAX_LENGTH:
-        raise ArgumentError(
-            f'expected a length from {rules.MIN_LENGTH} to {rules.MAX_LENGTH} steps, '
-            f'found {length!r}'
+        raise MessageError(
+            'server.tournament.length',
+            lowest=rules.MIN_LENGTH,
+            highest=rules.MAX_LENGTH,
+            length=repr(length),
         )
     source = _teams.scenario_path(scenario)
     if not source.is_file():
-        raise ArgumentError(f'expected a shipped scenario, found {scenario!r}')
+        raise MessageError('server.scenario', scenario=repr(scenario))
     target = _home.folder('scenarios') / f'{scenario}_steps_{int(length)}.py'
     text = (
         f'"""GRF\'s scenario `{scenario}` for {int(length)} steps, written by cuju render."""\n\n'
@@ -124,8 +130,12 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def fits(entrant: dict[str, Any], scenario: str) -> str | None:
-    """Returns why an entrant cannot play a scenario on either side, or `None` when it can."""
+def fits(entrant: dict[str, Any], scenario: str) -> str | dict[str, Any] | None:
+    """Returns why an entrant cannot play a scenario on either side, or `None` when it can.
+
+    The reason is a label of its server message when it has one, so the page shows the whole of
+    the refusal in its own language, else its text.
+    """
     builtin = _teams.entry(_teams.BUILTIN)
     try:
         team = _teams.entry(entrant['team'])
@@ -137,8 +147,19 @@ def fits(entrant: dict[str, Any], scenario: str) -> str | None:
             _teams.check_scenario([team, builtin], scenario)
             _teams.check_scenario([builtin, team], scenario)
     except ArgumentError as error:
-        return str(error)
+        return _error_label(str(error), _messages.id_fields(error))
     return None
+
+
+def _error_label(error: str, ids: dict[str, Any] | None) -> str | dict[str, Any]:
+    """Returns an error as a label of its message, the value of another message, else its text.
+
+    The label passes on only with the values that its message names, as a report of a child
+    process does, so an error of a file of before stays its text.
+    """
+    ids = ids if isinstance(ids, dict) else {}
+    found = {'id': ids.get('error_id'), 'text': error, 'values': ids.get('error_values')}
+    return found if _messages.valid_label(found) else error
 
 
 def scenarios() -> list[str]:
@@ -156,14 +177,14 @@ def recording_result(identifier: str) -> dict[str, Any]:
     """
     path = _library.path_of(identifier)
     if path is None:
-        raise ArgumentError(f'expected a recording of the library, found {identifier!r}')
+        raise MessageError('server.library.unknown', identifier=repr(identifier))
     header = _recording.read_header(path)
     last = None
     # A recording of version 2 decodes its last frame from the keyframe before it.
     for frame in _recording.frames(path, start=max(0, (header.get('frame_count') or 0) - 1)):
         last = frame
     if last is None:
-        raise ArgumentError(f'the recording {identifier} holds no frame')
+        raise MessageError('server.tournament.no_frame', identifier=identifier)
     players = header['players']
     offset = _recording._FRAME_HEAD.size + len(players) * len(_recording.NODES) * 14
     cards = [[0, 0], [0, 0]]
@@ -217,14 +238,11 @@ def save_preset(name: str, preset: Any) -> dict[str, Any]:
             preset is invalid.
     """
     if not isinstance(name, str) or not _home.valid_identifier(name) or name in rules.PRESETS:
-        raise ArgumentError(
-            f'expected a preset name of small letters, digits, dashes and underscores that '
-            f'names no shipped preset, found {name!r}'
-        )
+        raise MessageError('server.tournament.preset_name', name=repr(name))
     try:
         checked = rules.check_preset(preset)
     except rules.TournamentError as error:
-        raise ArgumentError(str(error)) from error
+        raise _messages.argument_error(error) from error
     path = folder() / 'presets.json'
     own = _read(path, {})
     own = own if isinstance(own, dict) else {}
@@ -260,12 +278,12 @@ def check_config(config: Any) -> dict[str, Any]:
         try:
             base = rules.preset_config(config['preset'], presets())
         except rules.TournamentError as error:
-            raise ArgumentError(str(error)) from error
+            raise _messages.argument_error(error) from error
         config = {**base, **config}
     try:
         return rules.check(config, _teams.teams(), fits, _rating_values(), scenarios())
     except rules.TournamentError as error:
-        raise ArgumentError(str(error)) from error
+        raise _messages.argument_error(error) from error
 
 
 def preview(config: Any) -> dict[str, Any]:
@@ -277,7 +295,10 @@ def preview(config: Any) -> dict[str, Any]:
     checked = check_config(config)
     view = rules.evaluate(checked, {})
     stages = [
-        {key: stage[key] for key in ('name', 'format', 'entrants', 'advance', 'rounds', 'tables')}
+        {
+            **{key: stage[key] for key in ('format', 'entrants', 'advance', 'rounds', 'tables')},
+            **rules.named_from('name', stage),
+        }
         for stage in view['stages']
     ]
     return {'config': checked, 'stages': stages, 'matches': len(view['matches'])}
@@ -318,7 +339,10 @@ def _stored(path: Path) -> dict[str, Any] | None:
         return None
     for key, kind, default in (
         ('error', str, None),
+        ('error_id', str, None),
+        ('error_values', dict, None),
         ('failures', dict, {}),
+        ('failure_ids', dict, {}),
         ('games', dict, {}),
         ('notes', dict, {}),
         ('created', (int, float), time.time()),
@@ -326,7 +350,24 @@ def _stored(path: Path) -> dict[str, Any] | None:
     ):
         if not isinstance(entry.get(key), kind):
             entry[key] = default
+    # The id of the error's message passes on only with the error and the values it names.
+    if entry['error'] is None or entry['error_id'] not in _messages.MESSAGES:
+        entry['error_id'] = entry['error_values'] = None
+    elif entry['error_values'] is None:
+        entry['error_id'] = None
     return entry
+
+
+def _note(name: str, **values: Any) -> dict[str, Any]:
+    """Returns a note of a match, such as a game that ended without a result, as a label."""
+    return _messages.label(f'server.tournament.note.{name}', **values)
+
+
+def _stored_note(note: Any) -> str | dict[str, Any] | None:
+    """Returns a note that a file keeps, a label when it is a valid one, else its text."""
+    if _messages.valid_label(note):
+        return note
+    return note if isinstance(note, str) else None
 
 
 def _alive(pid: int) -> bool:
@@ -411,6 +452,74 @@ class Tournaments:
                     with contextlib.suppress(OSError):
                         marker.unlink()
                     self._cancel(record)
+            for request in self._folder.glob('*.request'):
+                self._answer(request)
+
+    # Changes that another process asks for.
+
+    def _answer(self, request: Path) -> None:
+        """Applies an award or a resume that another process asked for, and writes the answer.
+
+        The request names its tournament before its first dot, and the answer takes the same name
+        with `.answer` in place of `.request`, holding `ok` or the error fields of the refusal.
+        """
+        record = self._records.get(request.name.split('.', 1)[0])
+        if record is None or record['id'] not in self._owned:
+            return
+        try:
+            asked = json.loads(request.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            asked = None
+        with contextlib.suppress(OSError):
+            request.unlink()
+        if not isinstance(asked, dict) or asked.get('action') not in ('forfeit', 'resume'):
+            return
+        try:
+            if asked['action'] == 'forfeit':
+                self.forfeit(record['id'], str(asked.get('key')), asked.get('winner'))
+            else:
+                self.resume(record['id'])
+            answer: dict[str, Any] = {'ok': True}
+        except ArgumentError as error:
+            answer = {'ok': False, **_messages.error_fields(error)}
+        with contextlib.suppress(OSError):
+            _write(request.with_suffix('.answer'), answer)
+
+    def _ask_owner(self, identifier: str, action: dict[str, Any]) -> dict[str, Any]:
+        """Asks the process that runs a tournament for a change and returns the tournament after.
+
+        Raises:
+            ArgumentError: If that process refuses the change, or does not answer in time.
+        """
+        request = self._folder / f'{identifier}.{os.getpid()}-{time.monotonic_ns()}.request'
+        answer = request.with_suffix('.answer')
+        _write(request, action)
+        reply = None
+        deadline = time.monotonic() + _ASK_SECONDS
+        try:
+            while reply is None and time.monotonic() < deadline:
+                with contextlib.suppress(ValueError):
+                    found = json.loads(_read_text(answer) or 'null')
+                    reply = found if isinstance(found, dict) else None
+                if reply is None:
+                    time.sleep(0.05)
+        finally:
+            for path in (request, answer):
+                with contextlib.suppress(OSError):
+                    path.unlink()
+        if reply is None:
+            raise MessageError(
+                'server.tournament.other_process_silent',
+                owner=self.owner(identifier),
+                route=f'POST /api/tournaments/{identifier}/{action["action"]}',
+            )
+        if not reply.get('ok'):
+            reported = _messages.report_fields(reply)
+            if reported['error_id'] is not None:
+                raise MessageError(reported['error_id'], **reported['error_values'])
+            raise ArgumentError(reported['error'] or 'the process that runs it refused the change')
+        self._scan()
+        return self.get(identifier)
 
     def _forget(self, identifier: str) -> None:
         self._records.pop(identifier, None)
@@ -459,7 +568,7 @@ class Tournaments:
             # that an earlier process followed are gone, and their matches wait to be played.
             if record['games']:
                 for key in record['games']:
-                    record['notes'][key] = 'The game of this match ended without a result.'
+                    record['notes'][key] = _note('gone')
                 record['games'] = {}
                 self._persist(record)
             return True
@@ -507,22 +616,32 @@ class Tournaments:
         waiting = [m for m in rules.ready(view) if m['person']]
         return {
             'id': record['id'],
-            'name': config['name'],
+            **rules.named_from('name', config),
             'state': record['state'],
             'error': record['error'],
+            'error_id': record.get('error_id'),
+            'error_values': record.get('error_values'),
             'created': record['created'],
             'finished': record['finished'],
             'seed': config['seed'],
             'entrants': len(config['entrants']),
             'stages': [
-                {'name': stage['name'], 'format': stage['format'], 'scenario': stage['scenario']}
+                {
+                    **rules.named_from('name', stage),
+                    'format': stage['format'],
+                    'scenario': stage['scenario'],
+                }
                 for stage in config['stages']
             ],
             'played': view['played'],
             'scheduled': len(view['matches']),
             'running': running,
+            'failed': len(record['failures']),
             'people_waiting': len(waiting),
-            'champion': None if champion is None else config['entrants'][champion]['name'],
+            **_messages.named(
+                'champion',
+                None if champion is None else rules.label_of(config['entrants'][champion]),
+            ),
             'champion_color': None if champion is None else config['entrants'][champion]['color'],
             'owner': self.owner(record['id']) if record['id'] not in self._owned else None,
             'persistence_error': record.get('persistence_error'),
@@ -559,11 +678,13 @@ class Tournaments:
                         entry['score'] = current.get('score')
                 elif match['key'] in record['failures']:
                     entry['state'] = 'failed'
-                    entry['error'] = record['failures'][match['key']]
+                    entry.update(self._failure(record, match['key']))
                 else:
                     entry['state'] = 'person' if match['person'] else 'ready'
                 if match['key'] in record['notes']:
-                    entry['note'] = record['notes'][match['key']]
+                    entry.update(
+                        _messages.named('note', _stored_note(record['notes'][match['key']]))
+                    )
                 matches.append(entry)
             return {
                 **self._summary(record),
@@ -585,9 +706,9 @@ class Tournaments:
         """
         checked = check_config(config)
         with self._lock:
-            identifier = _home.new_identifier('t')
+            identifier = _home.new_identifier('cup')
             while identifier in self._records or self._path(identifier).exists():
-                identifier = _home.new_identifier('t')
+                identifier = _home.new_identifier('cup')
             record = {
                 'version': _FILE_VERSION,
                 'id': identifier,
@@ -596,8 +717,13 @@ class Tournaments:
                 'config': checked,
                 'results': {},
                 'state': 'running' if run else 'stopped',
-                'error': None if run else 'waiting for cuju render tournament run',
+                **(
+                    _messages.entry_fields(None)
+                    if run
+                    else _messages.fields('server.tournament.waiting')
+                ),
                 'failures': {},
+                'failure_ids': {},
                 'games': {},
                 'notes': {},
             }
@@ -611,9 +737,8 @@ class Tournaments:
         if record is None:
             raise KeyError(identifier)
         if not self._claim(record):
-            raise ArgumentError(
-                f'the tournament runs in another process, {self.owner(identifier)}, which can '
-                'change it'
+            raise MessageError(
+                'server.tournament.other_process_change', owner=self.owner(identifier)
             )
         return record
 
@@ -621,11 +746,16 @@ class Tournaments:
         """Cancels a tournament, ending its matches, and returns whether it existed.
 
         A tournament that another process runs gets a cancel marker, which that process applies.
+
+        Raises:
+            ArgumentError: If the tournament has already ended, done or cancelled.
         """
         with self._lock:
             record = self._records.get(identifier)
             if record is None:
                 return False
+            if record['state'] in ('done', 'cancelled'):
+                raise MessageError('server.tournament.cancel_state', state=record['state'])
             if not self._claim(record):
                 (self._folder / f'{identifier}.cancel').write_text('', encoding='utf-8')
                 return True
@@ -635,7 +765,9 @@ class Tournaments:
     def _cancel(self, record: dict[str, Any]) -> None:
         if record['state'] in ('done', 'cancelled'):
             return
-        record.update(state='cancelled', error=None, finished=time.time(), games={})
+        record.update(
+            state='cancelled', finished=time.time(), games={}, **_messages.entry_fields(None)
+        )
         for key, running in list(self._running.items()):
             if key[0] == record['id'] and running.get('process') is not None:
                 with contextlib.suppress(OSError):
@@ -644,12 +776,31 @@ class Tournaments:
         self._release(record['id'])
 
     def resume(self, identifier: str) -> dict[str, Any]:
-        """Runs a stopped tournament again, retrying the matches that failed."""
+        """Runs a stopped tournament again, retrying the matches that failed.
+
+        A running tournament with failed matches, which plays on while people play theirs, also
+        retries them.
+        """
+        with self._lock:
+            record = self._records.get(identifier)
+            if record is None:
+                raise KeyError(identifier)
+            if record['state'] != 'stopped' and not (
+                record['state'] == 'running' and record['failures']
+            ):
+                raise MessageError('server.tournament.stopped', state=record['state'])
+            asked = not self._claim(record)
+        if asked:
+            return self._ask_owner(identifier, {'action': 'resume'})
         with self._lock:
             record = self._record(identifier)
-            if record['state'] != 'stopped':
-                raise ArgumentError(f'expected a stopped tournament, found it {record["state"]}')
-            record.update(state='running', error=None, failures={})
+            if record['state'] != 'stopped' and not (
+                record['state'] == 'running' and record['failures']
+            ):
+                raise MessageError('server.tournament.stopped', state=record['state'])
+            record.update(
+                state='running', failures={}, failure_ids={}, **_messages.entry_fields(None)
+            )
             self._persist(record)
             return self._summary(record)
 
@@ -660,9 +811,9 @@ class Tournaments:
             if record is None:
                 return False
             if record['state'] == 'running':
-                raise ArgumentError('expected a tournament that has ended, cancel it first')
+                raise MessageError('server.tournament.ended')
             if not self._claim(record):
-                raise ArgumentError('the tournament belongs to another process')
+                raise MessageError('server.tournament.other_process')
             self._path(identifier).unlink(missing_ok=True)
             self._forget(identifier)
             return True
@@ -671,11 +822,14 @@ class Tournaments:
         view = self._view(record)
         match = next((m for m in view['matches'] if m['key'] == key), None)
         if match is None or match['result'] is not None:
-            raise ArgumentError(f'expected a match of the tournament still to play, found {key!r}')
+            raise MessageError('server.tournament.match_key', key=repr(key))
         return match
 
     def forfeit(self, identifier: str, key: str, side: Any) -> dict[str, Any]:
         """Awards a match to one side, by the forfeit score, and returns the tournament.
+
+        An awarded match leaves the ratings as they are. A tournament that stopped on failed
+        matches runs again when the award leaves a match that can play.
 
         Args:
             identifier: The tournament.
@@ -683,17 +837,40 @@ class Tournaments:
             side: The side that wins, `home` or `away`.
         """
         if side not in ('home', 'away'):
-            raise ArgumentError(f'expected the winning side as home or away, found {side!r}')
+            raise MessageError('server.tournament.winner', side=repr(side))
+        with self._lock:
+            record = self._records.get(identifier)
+            if record is None:
+                raise KeyError(identifier)
+            # The key is checked first, so a wrong one reads as such whichever process runs it.
+            self._match(record, key)
+            asked = not self._claim(record)
+        if asked:
+            return self._ask_owner(identifier, {'action': 'forfeit', 'key': key, 'winner': side})
         with self._lock:
             record = self._record(identifier)
             match = self._match(record, key)
             if (identifier, key) in self._running or key in record['games']:
-                raise ArgumentError('the match is playing now')
+                raise MessageError('server.tournament.playing')
             goals = record['config']['forfeit_score']
             score = [goals, 0] if side == 'home' else [0, goals]
+            held = record['state'] == 'stopped' and bool(record['failures'])
             self._finish(
                 record, match, {'score': score, 'cards': [[0, 0], [0, 0]], 'forfeit': True}
             )
+            if record['state'] == 'stopped' and (held or self._view(record)['complete']):
+                view = self._view(record)
+                if view['complete']:
+                    record.update(
+                        state='done', finished=time.time(), **_messages.entry_fields(None)
+                    )
+                elif self._playable(record, view):
+                    record.update(state='running', **_messages.entry_fields(None))
+                else:
+                    record.update(self._failure_fields(record, view))
+                self._persist(record)
+                if record['state'] == 'done':
+                    self._release(record['id'])
         return self.get(identifier)
 
     def play(self, identifier: str, key: str) -> dict[str, Any]:
@@ -704,19 +881,18 @@ class Tournaments:
             GameBusyError: If another game plays.
         """
         if self._games is None:
-            raise ArgumentError('the matches of people play on the page of the server')
+            raise MessageError('server.tournament.people_page')
         with self._lock:
             record = self._record(identifier)
             if record['state'] != 'running':
-                raise ArgumentError(f'expected a running tournament, found it {record["state"]}')
+                raise MessageError('server.tournament.running', state=record['state'])
             match = self._match(record, key)
             if not match['person']:
-                raise ArgumentError('expected a match of a person')
+                raise MessageError('server.tournament.person_match')
             if key in record['games']:
-                raise ArgumentError('the match is playing now')
+                raise MessageError('server.tournament.playing')
             entrants = record['config']['entrants']
             sides = [entrants[match['home']], entrants[match['away']]]
-            names = [side['name'] if side['kind'] == 'person' else None for side in sides]
             entry = self._games.start(
                 match['scenario'],
                 match['persons'],
@@ -725,7 +901,7 @@ class Tournaments:
                 True,
                 [side['team'] for side in sides],
                 length=match['length'],
-                tournament=self._provenance(record, match, names),
+                tournament=self._provenance(record, match),
             )
             record['games'][key] = entry['id']
             record['notes'].pop(key, None)
@@ -733,35 +909,46 @@ class Tournaments:
             return entry
 
     @staticmethod
-    def _provenance(
-        record: dict[str, Any], match: dict[str, Any], names: list[str | None] | None = None
-    ) -> dict[str, Any]:
+    def _provenance(record: dict[str, Any], match: dict[str, Any]) -> dict[str, Any]:
+        """Returns what a match's recording keeps of its tournament.
+
+        The names are those of the two entrants, home first, as the tournament shows them, so a
+        renamed team or a built-in AI at an ability keeps its name on Watch, in feeds and videos.
+        """
         stage = record['config']['stages'][match['stage']]
-        provenance = {
+        entrants = record['config']['entrants']
+        sides = [entrants[match['home']], entrants[match['away']]]
+        return {
             'id': record['id'],
-            'name': record['config']['name'],
-            'stage': stage['name'],
-            'label': match['label'],
+            **rules.named_from('name', record['config']),
+            **rules.named_from('stage', stage),
+            **rules.named_from('label', match, 'label'),
             'key': match['key'],
+            'names': [side['name'] for side in sides],
+            # The names again as labels where the rules made them, for the title of the recording.
+            'labels': [rules.label_of(side) for side in sides],
         }
-        if names is not None:
-            provenance['names'] = names
-        return provenance
 
     def _finish(
         self, record: dict[str, Any], match: dict[str, Any], result: dict[str, Any]
     ) -> None:
-        """Keeps a match's result, moves the ratings, and ends a tournament that is complete."""
-        record['results'][match['key']] = rules.check_result(result)
+        """Keeps a match's result, moves the ratings, and ends a tournament that is complete.
+
+        A match awarded by forfeit was never played, so it leaves the ratings as they are.
+        """
+        checked = rules.check_result(result)
+        record['results'][match['key']] = checked
         record['failures'].pop(match['key'], None)
+        record['failure_ids'].pop(match['key'], None)
         record['games'].pop(match['key'], None)
         entrants = record['config']['entrants']
         try:
-            table = ratings()
-            rules.update_ratings(
-                table, entrants[match['home']], entrants[match['away']], result['score']
-            )
-            _write(folder() / 'ratings.json', table)
+            if not checked['forfeit']:
+                table = ratings()
+                rules.update_ratings(
+                    table, entrants[match['home']], entrants[match['away']], checked['score']
+                )
+                _write(folder() / 'ratings.json', table)
         except OSError as error:
             _LOGGER.warning('cuju render could not save the ratings, %s', error)
         self._versions[record['id']] += 1
@@ -772,6 +959,50 @@ class Tournaments:
             self._release(record['id'])
 
     # Running.
+
+    def _playable(self, record: dict[str, Any], view: dict[str, Any]) -> bool:
+        """Returns whether a match of a tournament plays now or can start, besides failed ones."""
+        if record['games'] or any(key[0] == record['id'] for key in self._running):
+            return True
+        return any(match['key'] not in record['failures'] for match in rules.ready(view))
+
+    @staticmethod
+    def _failure(record: dict[str, Any], key: str) -> dict[str, Any]:
+        """Returns the error fields of a failed match, with the id of its message when it has one.
+
+        The id passes on only with a text and the values that its message names, as a report of a
+        child process does, so a file of an earlier version leaves the error without one.
+        """
+        ids = record.get('failure_ids', {}).get(key)
+        ids = ids if isinstance(ids, dict) else {}
+        return _messages.report_fields({'error': record['failures'][key], **ids})
+
+    @staticmethod
+    def _failure_fields(record: dict[str, Any], view: dict[str, Any]) -> dict[str, Any]:
+        """Returns the error fields of a tournament with failed matches, the first named in full.
+
+        The match and its error travel as labels, so the page shows the whole line in its own
+        language.
+        """
+        labels = {match['key']: rules.label_of(match, 'label') for match in view['matches']}
+        first, *others = record['failures']
+        error = _error_label(record['failures'][first], record['failure_ids'].get(first))
+        values = {'label': labels.get(first, first), 'error': error}
+        if not others:
+            return _messages.fields('server.tournament.match_failed', **values)
+        if len(others) == 1:
+            return _messages.fields('server.tournament.match_failed_one_more', **values)
+        return _messages.fields('server.tournament.match_failed_more', **values, count=len(others))
+
+    def _halt(self, record: dict[str, Any], view: dict[str, Any]) -> None:
+        """Stops a tournament that only failed matches hold up, until an award or a retry.
+
+        The stopped tournament is free for any process to change, so an award or a resume from
+        the command line reaches it while the server runs.
+        """
+        record.update(state='stopped', **self._failure_fields(record, view))
+        self._persist(record)
+        self._release(record['id'])
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval):
@@ -810,6 +1041,8 @@ class Tournaments:
                     threading.Thread(
                         target=self._run_match, args=(record['id'], dict(match)), daemon=True
                     ).start()
+                if record['failures'] and not self._playable(record, view):
+                    self._halt(record, view)
 
     def _follow_games(self, record: dict[str, Any]) -> None:
         """Takes the result of a person's game that ended, or frees a match whose game is gone."""
@@ -820,7 +1053,7 @@ class Tournaments:
         for key, game in list(record['games'].items()):
             if current is None or current.get('id') != game:
                 record['games'].pop(key)
-                record['notes'][key] = 'The game of this match ended without a result.'
+                record['notes'][key] = _note('gone')
                 self._persist(record)
                 continue
             if current.get('state') not in ('ended', 'failed'):
@@ -832,17 +1065,26 @@ class Tournaments:
                     self._finish(record, match, recording_result(current['match']))
                     continue
                 except (ArgumentError, OSError, ValueError) as error:
-                    record['notes'][key] = f'The result could not be read, {error}'
+                    found = _error_label(str(error), _messages.id_fields(error))
+                    record['notes'][key] = _note('unreadable', error=found)
+            elif isinstance(current.get('error'), str) and current['error']:
+                # A game that a policy or its process ended names the failure, and Award settles
+                # the match as well as another game does.
+                ids = {k: current.get(k) for k in ('error_id', 'error_values')}
+                if match is not None:
+                    error, ids = self._entrant_failure(record, match, current['error'], ids)
+                    found = _error_label(error, ids)
+                else:
+                    found = _error_label(current['error'], ids)
+                record['notes'][key] = _note('failed', error=found)
             else:
-                record['notes'][key] = (
-                    'The game ended before full time, so the match waits to be played again.'
-                )
+                record['notes'][key] = _note('early')
             record['games'].pop(key, None)
             self._persist(record)
 
     def _run_match(self, identifier: str, match: dict[str, Any]) -> None:
         key = (identifier, match['key'])
-        result, error = None, None
+        result, error, ids = None, None, {}
         try:
             with self._lock:
                 record = self._records[identifier]
@@ -853,11 +1095,10 @@ class Tournaments:
                 match, teams, provenance, lambda share: self._progress(key, share)
             )
         except Exception as failure:
-            error = (
-                f'{type(failure).__name__}: {failure}'
-                if not isinstance(failure, (ArgumentError, RuntimeError))
-                else str(failure)
-            )
+            if isinstance(failure, (ArgumentError, RuntimeError)):
+                error, ids = str(failure), _messages.id_fields(failure)
+            else:
+                error = _messages.described(failure)
         with self._lock:
             self._running.pop(key, None)
             record = self._records.get(identifier)
@@ -868,10 +1109,52 @@ class Tournaments:
                     self._finish(record, match, result)
                     return
                 except rules.TournamentError as failure:
-                    error = str(failure)
-            record['failures'][match['key']] = error or 'the match gave no result'
-            record.update(state='stopped', error=f'{match["label"]} failed, {error}')
+                    error, ids = str(failure), _messages.id_fields(failure)
+            if not error:
+                found = _messages.fields('server.tournament.no_result')
+                error, ids = found.pop('error'), found
+            error, ids = self._entrant_failure(record, match, error, ids)
+            # A failed match waits for an award or a retry, and the matches that do not
+            # depend on it play on. The tournament stops once nothing else can play. Its error
+            # keeps the id of its message beside it, as a requested match's does.
+            record['failures'][match['key']] = error
+            record['failure_ids'].pop(match['key'], None)
+            if ids:
+                record['failure_ids'][match['key']] = ids
             self._persist(record)
+            view = self._view(record)
+            if not self._playable(record, view):
+                self._halt(record, view)
+
+    @staticmethod
+    def _entrant_failure(
+        record: dict[str, Any], match: dict[str, Any], error: str, ids: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """Returns a failure that names the player of a policy as its entrant, with its ids.
+
+        A match plays a team of the registry under the name of its entrant, so the failure of
+        the team Crashers entered as Crash FC reads as the policy of Crash FC.
+        """
+        values = ids.get('error_values') if isinstance(ids, dict) else None
+        if not isinstance(values, dict) or not isinstance(values.get('player'), str):
+            return error, ids
+        entrants = record['config']['entrants']
+        for side in (match['home'], match['away']):
+            entrant = entrants[side]
+            if entrant['kind'] != 'team':
+                continue
+            try:
+                team = _teams.entry(entrant['team'])
+            except (ArgumentError, KeyError, OSError, ValueError):
+                continue
+            if team.get('name') == values['player'] and entrant['name'] != values['player']:
+                named = {**values, 'player': rules.label_of(entrant)}
+                try:
+                    text = _messages.text(ids['error_id'], **named)
+                except KeyError:
+                    return error, ids
+                return text, {**ids, 'error_values': named}
+        return error, ids
 
     def _progress(self, key: tuple[str, str], share: float, process: Any = None) -> None:
         with self._lock:
@@ -933,7 +1216,7 @@ class Tournaments:
         timer = threading.Timer(MATCH_SECONDS, process.kill)
         timer.daemon = True
         timer.start()
-        saved, failure = None, None
+        saved, failure, reported = None, None, {}
         try:
             for line in process.stdout:
                 try:
@@ -947,15 +1230,21 @@ class Tournaments:
                 if isinstance(report.get('match'), str):
                     saved = report['match']
                 if isinstance(report.get('error'), str):
-                    failure = report['error']
+                    failure, reported = report['error'], report
             code = process.wait()
         finally:
             timer.cancel()
         if code != 0 or saved is None:
-            tail = ''.join(stderr).strip()
-            raise RuntimeError(
-                failure or f'the match ended with exit code {code}' + (f', {tail}' if tail else '')
+            # The error that the match reported, or its exit code, with the id of its message.
+            found = (
+                _messages.report_fields(reported)
+                if failure
+                else _messages.exit_fields('server.requests.exit', code, ''.join(stderr).strip())
             )
+            error = RuntimeError(found['error'])
+            if found['error_id'] is not None:
+                error.message_id, error.values = found['error_id'], found['error_values']
+            raise error
         return recording_result(saved)
 
     def run(self, identifier: str, report: Callable[[str], None] = print) -> str:
@@ -967,13 +1256,17 @@ class Tournaments:
         with self._lock:
             record = self._records.get(identifier)
             if record is None:
-                raise ArgumentError(f'expected a tournament, found {identifier!r}')
+                raise MessageError(
+                    'server.tournament.unknown_identifier', identifier=repr(identifier)
+                )
             if not self._claim(record):
-                raise ArgumentError(
-                    f'the tournament runs in another process, {self.owner(identifier)}'
+                raise MessageError(
+                    'server.tournament.other_process_runs', owner=self.owner(identifier)
                 )
             if record['state'] == 'stopped':
-                record.update(state='running', error=None, failures={})
+                record.update(
+                    state='running', failures={}, failure_ids={}, **_messages.entry_fields(None)
+                )
                 self._persist(record)
         played = -1
         while True:
@@ -992,6 +1285,9 @@ class Tournaments:
                 if state == 'stopped':
                     report(record['error'] or 'stopped')
                 return state
-            if not busy and all(m['person'] for m in rules.ready(view)) and rules.ready(view):
+            waiting = [m for m in rules.ready(view) if m['key'] not in record['failures']]
+            if not busy and waiting and all(m['person'] for m in waiting):
+                if record['failures']:
+                    report(self._failure_fields(record, view)['error'])
                 return 'people'
             time.sleep(self._interval)

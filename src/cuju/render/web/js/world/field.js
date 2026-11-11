@@ -6,6 +6,7 @@
 
 import { ARENAS } from './arenas.js';
 import { PRESET_HOURS, WEATHER } from './sky.js';
+import { t } from '../core/i18n.js';
 
 const KEY = 'cuju.field';
 
@@ -114,7 +115,7 @@ export function saveField(field) {
         localStorage.setItem(KEY, JSON.stringify(field));
         return null;
     } catch (err) {
-        return `The field could not be stored in this browser, ${err.name === 'QuotaExceededError' ? 'its images are too large' : err.message}. Export it to keep it.`;
+        return t('field.store.failed', { reason: err.name === 'QuotaExceededError' ? t('field.store.tooLarge') : err.message });
     }
 }
 
@@ -153,11 +154,14 @@ const CHECKS = {
     wind: (v) => typeof v === 'number' && v >= 0 && v <= 1,
     arena: (v) => ARENAS.includes(v),
 };
+// The names of the settings in the messages of a refused import, the keys stay English.
 const NAMES = {
-    grass: 'grass color', lines: 'line color', net: 'net color', mowing: 'mowing', stripeWidth: 'band width',
-    boards: 'boards', customBoards: 'board pictures', crowd: 'crowd', crowdColors: 'crowd colors',
-    crowdDensity: 'crowd density', time: 'time of day', weather: 'weather', weatherAmount: 'weather strength',
-    wind: 'wind', arena: 'arena', version: 'version',
+    grass: t('field.setting.grass'), lines: t('field.setting.lines'), net: t('field.setting.net'),
+    mowing: t('field.setting.mowing'), stripeWidth: t('field.setting.stripeWidth'), boards: t('field.setting.boards'),
+    customBoards: t('field.setting.customBoards'), crowd: t('field.setting.crowd'), crowdColors: t('field.setting.crowdColors'),
+    crowdDensity: t('field.setting.crowdDensity'), time: t('field.setting.time'), weather: t('field.setting.weather'),
+    weatherAmount: t('field.setting.weatherAmount'), wind: t('field.setting.wind'), arena: t('field.setting.arena'),
+    version: t('field.setting.version'),
 };
 
 // Checks a parsed export against the current field. Returns the field to apply and notes for
@@ -165,19 +169,19 @@ const NAMES = {
 // their current values, so a file without boards keeps the boards already drawn.
 export function validateImport(raw, current) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-        throw new Error('This file is not a field export.');
+        throw new Error(t('field.import.notExport'));
     }
     const known = Object.keys(raw).filter((k) => k in CHECKS);
     if (!('version' in raw) || known.length < 2) {
-        throw new Error('This file is not a field export, it holds none of the field settings.');
+        throw new Error(t('field.import.noSettings'));
     }
     if (typeof raw.version === 'number' && raw.version > FIELD_VERSION) {
-        throw new Error('This field was exported by a newer version of cuju. Update cuju to import it.');
+        throw new Error(t('field.import.newer'));
     }
     const bad = known.filter((k) => !CHECKS[k](raw[k]));
     if (bad.length) {
         const list = bad.map((k) => NAMES[k] || k).join(', ');
-        throw new Error(`This field export is damaged, its ${list} ${bad.length > 1 ? 'are' : 'is'} not valid. Nothing was changed.`);
+        throw new Error(t('field.import.damaged', { count: bad.length, settings: list }));
     }
     const notes = [];
     const merged = { ...current };
@@ -186,27 +190,26 @@ export function validateImport(raw, current) {
     }
     if (Array.isArray(raw.customBoards) && raw.customBoards.length > MAX_BOARDS) {
         const left = raw.customBoards.length - MAX_BOARDS;
-        const which = left === 1 ? 'the last one was' : `the last ${left} were`;
-        notes.push(`The file holds ${raw.customBoards.length} boards and the field keeps ${MAX_BOARDS}, so ${which} left out.`);
+        notes.push(t('field.import.boardsLeft', { count: left, total: raw.customBoards.length, max: MAX_BOARDS }));
     }
     const unknown = Object.keys(raw).filter((k) => !(k in CHECKS));
     if (unknown.length) {
-        const more = unknown.length > 4 ? ' and more' : '';
-        notes.push(`Settings this version does not know were skipped, ${unknown.slice(0, 4).join(', ')}${more}.`);
+        const names = unknown.slice(0, 4).join(', ');
+        notes.push(unknown.length > 4 ? t('field.import.unknownMore', { names }) : t('field.import.unknown', { names }));
     }
     return { field: cleanField(merged), notes };
 }
 
 export async function importField(file, current = DEFAULT_FIELD) {
     if (file.size > MAX_IMPORT_BYTES) {
-        throw new Error(`This file is ${Math.ceil(file.size / 1024 / 1024)} MB, a field export is at most 8 MB.`);
+        throw new Error(t('field.import.tooLarge', { size: Math.ceil(file.size / 1024 / 1024), max: MAX_IMPORT_BYTES / 1024 / 1024 }));
     }
     const text = await file.text();
     let raw;
     try {
         raw = JSON.parse(text);
     } catch {
-        throw new Error('This file is not a field export, it is not JSON.');
+        throw new Error(t('field.import.notJson'));
     }
     return validateImport(raw, current);
 }

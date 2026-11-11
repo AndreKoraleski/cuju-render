@@ -7,6 +7,7 @@
 // their terms to it. A result opens Watch a few seconds before its moment.
 
 import { formatDate } from '../core/api.js';
+import { serverText, t } from '../core/i18n.js';
 import { enhanceSelect } from '../core/menu.js';
 import { composeQuery, looksLikeMoments as looksMoments } from '../recording/moments-query.js';
 
@@ -19,22 +20,15 @@ function daysAgo(days) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-const KIND_CHOICES = [
-    ['', 'Every kind'], ['goal', 'Goals'], ['shot', 'Shots'], ['save', 'Saves'], ['block', 'Blocks'],
-    ['pass', 'Passes'], ['tackle', 'Tackles'], ['card', 'Cards'], ['foul', 'Fouls'], ['offside', 'Offsides'],
-    ['set-piece', 'Set pieces'], ['corner', 'Corners'], ['free-kick', 'Free kicks'], ['penalty', 'Penalties'],
-    ['throw-in', 'Throw ins'], ['possession', 'Changes of possession'], ['woodwork', 'Woodwork'],
-];
-const TIME_CHOICES = [
-    ['', 'Any time'], ['before:45', 'First half'], ['after:45', 'Second half'], ['after:75', 'Last 15 minutes'],
-    ['before:15', 'First 15 minutes'],
-];
-const SCORE_CHOICES = [['', 'Any score'], ['leading', 'Leading'], ['level', 'Level'], ['trailing', 'Trailing']];
-const SOURCE_CHOICES = [
-    ['', 'Every source'], ['requested', 'Requested matches'], ['game', 'Played games'], ['tournament', 'Tournaments'],
-    ['challenge', 'Challenges'], ['recorder', 'Recorders'], ['live', 'Live sources'],
-];
-const DATE_CHOICES = [['', 'Any date'], ['0', 'Today'], ['7', 'Last 7 days'], ['30', 'Last 30 days']];
+// The choices of each filter, each a value of the query language with the message of its label,
+// whose id ends in the value with its colons as dots, or in any for the empty value.
+const choices = (group, values) => values.map((v) => [v, t(`moments.${group}.${v.replace(/:/g, '.') || 'any'}`)]);
+const KIND_CHOICES = choices('kind', ['', 'goal', 'shot', 'save', 'block', 'pass', 'tackle', 'card', 'foul', 'offside',
+    'set-piece', 'corner', 'free-kick', 'penalty', 'throw-in', 'possession', 'woodwork']);
+const TIME_CHOICES = choices('time', ['', 'before:45', 'after:45', 'after:75', 'before:15']);
+const SCORE_CHOICES = choices('score', ['', 'leading', 'level', 'trailing']);
+const SOURCE_CHOICES = choices('source', ['', 'requested', 'game', 'tournament', 'challenge', 'recorder', 'live']);
+const DATE_CHOICES = choices('date', ['', '0', '7', '30']);
 
 function el(tag, attributes = {}, ...children) {
     const node = document.createElement(tag);
@@ -53,7 +47,7 @@ async function fetchSearch(query, limit, signal = undefined) {
     const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { cache: 'no-store', signal });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-        throw new Error(body.error || `The server answered ${res.status}.`);
+        throw new Error(body.error ? serverText(body) : t('moments.serverStatus', { status: res.status }));
     }
     return body;
 }
@@ -110,10 +104,10 @@ export class MomentSearch {
         this.toggle = el('button', {
             type: 'button', class: 'btn', id: 'moments-toggle', 'aria-expanded': this.open ? 'true' : 'false',
             'aria-controls': 'moments-panel', onclick: () => this.setOpen(!this.open),
-        }, 'Search moments');
+        }, t('moments.toggle'));
         this.input = el('input', {
             type: 'search', id: 'moments-query', class: 'search', value: this.text, spellcheck: 'false',
-            'aria-label': 'Search moments', placeholder: 'Moments, such as goal team:Greens after:60',
+            'aria-label': t('moments.query.label'), placeholder: t('moments.query.placeholder'),
             'aria-describedby': 'moments-help',
         });
         this.input.addEventListener('input', () => {
@@ -135,32 +129,33 @@ export class MomentSearch {
         };
         const player = el('input', {
             type: 'text', id: 'moments-player', class: 'small-input', value: this.filters.player,
-            'aria-label': 'Player number or name', placeholder: 'Player number or name', spellcheck: 'false',
+            'aria-label': t('moments.player'), placeholder: t('moments.player'), spellcheck: 'false',
         });
         player.addEventListener('input', () => {
             this.filters.player = player.value;
             this.schedule();
         });
         const filters = el('div', { class: 'filter-bar moments-filters' },
-            this.select('Kind', KIND_CHOICES, this.filters.kind, pick('kind')),
-            this.select('Team', [['', 'Either team'], ['left', 'Left team'], ['right', 'Right team'],
-                ...teams.map((t) => [t, t])], this.filters.team, pick('team')),
+            this.select(t('moments.filter.kind'), KIND_CHOICES, this.filters.kind, pick('kind')),
+            this.select(t('moments.filter.team'), [['', t('moments.team.any')], ['left', t('moments.team.left')],
+                ['right', t('moments.team.right')], ...teams.map((name) => [name, name])], this.filters.team, pick('team')),
             player,
-            this.select('Time', TIME_CHOICES, this.filters.time, pick('time')),
-            this.select('Score', SCORE_CHOICES, this.filters.score, pick('score')),
-            this.select('Scenario', [['', 'Every scenario'], ...scenarios.map(([v, t]) => [v, t])], this.filters.scenario, pick('scenario')),
-            this.select('Source', SOURCE_CHOICES, this.filters.source, pick('source')),
-            this.select('Date', DATE_CHOICES, this.date, (v) => {
+            this.select(t('moments.filter.time'), TIME_CHOICES, this.filters.time, pick('time')),
+            this.select(t('moments.filter.score'), SCORE_CHOICES, this.filters.score, pick('score')),
+            this.select(t('moments.filter.scenario'), [['', t('moments.scenario.any')], ...scenarios.map(([v, name]) => [v, name])],
+                this.filters.scenario, pick('scenario')),
+            this.select(t('moments.filter.source'), SOURCE_CHOICES, this.filters.source, pick('source')),
+            this.select(t('moments.filter.date'), DATE_CHOICES, this.date, (v) => {
                 this.date = v;
                 this.run();
             }));
         this.status = el('p', { class: 'muted small moments-status', role: 'status', 'aria-live': 'polite' });
-        this.list = el('ul', { class: 'moments-list', id: 'moments-results', 'aria-label': 'Moments found' });
+        this.list = el('ul', { class: 'moments-list', id: 'moments-results', 'aria-label': t('moments.results') });
         this.list.addEventListener('keydown', (e) => this.onListKey(e));
-        this.panel = el('section', { id: 'moments-panel', class: 'moments-panel', 'aria-label': 'Search moments', hidden: !this.open },
+        this.panel = el('section', { id: 'moments-panel', class: 'moments-panel', 'aria-label': t('moments.panel'), hidden: !this.open },
             el('div', { class: 'toolbar' }, this.input, filters),
             el('p', { id: 'moments-help', class: 'muted small' },
-                'Words name kinds, such as goal, shot, save, pass, tackle, card, corner or penalty. Filters such as team:, player:, after:, before:, score: and source: narrow them, and a minus sign excludes.'),
+                t('moments.help')),
             this.status, this.list);
         host.replaceChildren(this.panel);
         this.renderResults();
@@ -219,12 +214,12 @@ export class MomentSearch {
             this.error = null;
             this.renderResults();
             if (this.status) {
-                this.status.textContent = 'Type a kind such as goal or corner, or choose a filter';
+                this.status.textContent = t('moments.status.empty');
             }
             return;
         }
         if (this.status) {
-            this.status.textContent = 'Searching';
+            this.status.textContent = t('moments.status.searching');
         }
         // A newer query cancels the request of an older one, which frees its connection.
         if (this.request) {
@@ -264,14 +259,15 @@ export class MomentSearch {
             return;
         }
         const shown = found.results.length;
-        this.status.textContent = found.total === 0 ? `No moments found in ${found.recordings} recordings`
-            : `${found.total} ${found.total === 1 ? 'moment' : 'moments'} in ${found.recordings} recordings${shown < found.total ? `, the first ${shown} shown` : ''}`;
+        const recordings = t('moments.status.recordings', { count: found.recordings });
+        this.status.textContent = found.total === 0 ? t('moments.status.none', { recordings })
+            : t(shown < found.total ? 'moments.status.foundFirst' : 'moments.status.found', { count: found.total, recordings, shown });
         this.list.replaceChildren(...found.results.map((r) => el('li', {
             class: 'moment-row', tabindex: '-1', role: 'button', 'data-match': r.match, 'data-kind': r.kind,
-            'aria-label': `${r.text}, minute ${r.minute}, ${r.title}`,
+            'aria-label': t('moments.result', { text: serverText(r, 'text'), minute: r.minute, title: r.title }),
             onclick: () => openMoment(this.app, r),
         }, el('span', { class: 'moment-minute' }, r.minute),
-        el('span', { class: 'moment-text' }, r.text),
+        el('span', { class: 'moment-text' }, serverText(r, 'text')),
         el('span', { class: 'moment-match muted small' }, [r.title, formatDate(r.created)].filter(Boolean).join(', ')))));
         const first = this.list.firstElementChild;
         if (first) {
@@ -322,9 +318,9 @@ export class MomentSearch {
             return [];
         }
         const text = query.trim();
-        const keywords = `${text} moment search find`;
+        const keywords = `${text} ${t('moments.palette.keywords')}`;
         const list = [{
-            group: 'Moments', title: `Search moments, ${text}`, keywords, hint: 'Recordings',
+            group: t('moments.palette.group'), title: t('moments.palette.search', { query: text }), keywords, hint: t('moments.palette.hint'),
             run: () => this.show(text),
         }];
         const state = this.palette;
@@ -343,7 +339,7 @@ export class MomentSearch {
         }
         for (const r of state.results) {
             list.push({
-                group: 'Moments', title: `${r.minute}  ${r.text}`, keywords, hint: r.title,
+                group: t('moments.palette.group'), title: `${r.minute}  ${serverText(r, 'text')}`, keywords, hint: r.title,
                 run: () => openMoment(this.app, r),
             });
         }

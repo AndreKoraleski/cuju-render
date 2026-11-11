@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import threading
+import time
 import urllib.request
 
 import pytest
@@ -21,15 +22,23 @@ from cuju.render._store import home as _home
 from cuju.render._store import library as _library
 from support.common import (
     _SAMPLES,
+    _SINGLE,
+    _challenge_frames,
+    _FeedRequests,
+    _FeedTournaments,
     _filtered_episodes,
     _get,
     _goals,
     _help_json,
     _help_server,
     _library_ids,
+    _names_lineup,
     _one_second,
+    _person_recording,
     _sample_head,
     _serve_once,
+    _short_challenges,
+    _toy_team,
 )
 
 
@@ -225,6 +234,153 @@ def test_recorder_writes_on_a_thread_and_reports_failures(render_home, monkeypat
     assert recorder._pending == 0 and len(recorder.saved) == 2
 
 
+def _without_recordings(outcome):
+    """Returns a run's result without what names its recordings or the time of its best run."""
+
+    def attempts(results):
+        return [{key: value for key, value in item.items() if key != 'match'} for item in results]
+
+    best = outcome.get('personal_best')
+    if best is not None:
+        best = {key: value for key, value in best.items() if key != 'time'}
+        best['attempts'] = attempts(best['attempts'])
+    plain = {key: value for key, value in outcome.items() if key != 'group'}
+    return {**plain, 'attempts': attempts(outcome['attempts']), 'personal_best': best}
+
+
+def _clear_boards(render_home):
+    """Removes every leaderboard and achievement, so a run of the same competitor ranks afresh."""
+    for folder in ('challenges', 'achievements'):
+        for path in (render_home / folder).glob('*.json'):
+            path.unlink()
+
+
+def test_challenge_runs_group_their_recordings(render_home, tmp_path, monkeypatch, capsys):
+    from cuju.render import __main__ as command
+
+    team = _toy_team(tmp_path, 'toy', _SINGLE, '11v11')
+    _short_challenges(monkeypatch, 6)
+    outcome = cuju.render.challenge('empty_goal_close', team=team['id'], attempts=2)
+    group = outcome['group']
+    members = cuju.render.recordings(group=group)
+    assert [member['id'] for member in members] == [r['match'] for r in outcome['attempts']]
+    for index, member in enumerate(members):
+        fields = member['group']
+        assert (fields['id'], fields['attempt'], fields['attempts']) == (group, index, 2)
+        assert fields['challenge'] == 'empty_goal_close' and fields['state'] == 'done'
+        assert fields['title_id'] == 'server.names.challenge_run'
+        assert fields['title'] == 'Empty goal from close range, toy'
+        assert fields['title_values']['challenge']['kind'] == 'challenge'
+        assert fields['result_id'] == 'server.names.run_practice' and fields['practice']
+        assert fields['value'] == outcome['value'] and fields['competitor'] == 'toy'
+    # Every summary of the library names its group, and another run makes a group of its own.
+    listed = {entry['id']: entry for entry in cuju.render.recordings()}
+    assert all(listed[member['id']]['group']['id'] == group for member in members)
+    other = cuju.render.challenge('one_on_one', team='builtin', attempts=1)
+    assert other['group'] != group and len(cuju.render.recordings(group=other['group'])) == 1
+    other_fields = cuju.render.recordings(group=other['group'])[0]['group']
+    assert other_fields['competitor_id'] == 'server.names.builtin'
+    # Deleting a group moves all its recordings to the Trash at once, each restorable.
+    ids = [member['id'] for member in members]
+    assert sorted(cuju.render.delete_group(group)) == sorted(ids)
+    assert cuju.render.recordings(group=group) == []
+    assert [entry['id'] for entry in cuju.render.recordings(group=group, trash=True)] == ids
+    assert cuju.render.delete_group(group) == [] and cuju.render.delete_group('g-none') == []
+    assert _library.trash(ids[0], restore=True)
+    assert cuju.render.restore_group(group) == [ids[1]]
+    assert [entry['id'] for entry in cuju.render.recordings(group=group)] == ids
+    # The command line lists the groups, one group, and moves a group to the Trash and back.
+    assert command.main(['recordings']) == 0
+    out = capsys.readouterr().out
+    assert f'{group}  Empty goal from close range, toy, ' in out and '2 recordings' in out
+    assert f'    {ids[1]}  attempt 2' in out
+    assert command.main(['recordings', '--group', group, '--json']) == 0
+    assert [entry['id'] for entry in json.loads(capsys.readouterr().out)] == ids
+    assert command.main(['recordings', '--delete-group', group]) == 0
+    assert 'moved 2 recordings' in capsys.readouterr().out
+    assert command.main(['recordings', '--restore-group', group, '--json']) == 0
+    assert sorted(json.loads(capsys.readouterr().out)['restored']) == sorted(ids)
+    assert command.main(['recordings', '--group', 'g-none']) == 1
+    # A group of a hand edited summary that does not fit is left out, and the rest stays.
+    path = render_home / 'matches' / f'{ids[0]}.json'
+    summary = json.loads(path.read_text())
+    summary['group'] = {'id': '../evil', 'title': 'x'}
+    path.write_text(json.dumps(summary))
+    assert 'group' not in _library.details(ids[0])
+    summary['group'] = {'id': group, 'attempt': 'first', 'practice': 1, 'title': 7}
+    path.write_text(json.dumps(summary))
+    assert _library.details(ids[0])['group'] == {
+        'id': group,
+        'title': group,
+        'competitor': '',
+        'result': '',
+    }
+
+
+def test_challenge_without_recordings_scores_the_same(render_home, tmp_path, monkeypatch, capsys):
+    from cuju.render import __main__ as command
+    from cuju.render._playing import challenges as _challenges
+
+    team = _toy_team(tmp_path, 'toy', _SINGLE, '11v11')
+    _short_challenges(monkeypatch, 8)
+    kept = cuju.render.challenge('one_on_one', team=team['id'])
+    _clear_boards(render_home)
+    before = {entry['id'] for entry in cuju.render.recordings()}
+    bare = cuju.render.challenge('one_on_one', team=team['id'], keep_recordings=False)
+    assert bare['group'] is None and all(r['match'] is None for r in bare['attempts'])
+    assert _without_recordings(bare) == _without_recordings(kept)
+    assert {entry['id'] for entry in cuju.render.recordings()} == before
+    assert cuju.render.recordings(trash=True) == []
+    board = _challenges.board('one_on_one')
+    assert [attempt['match'] for attempt in board[0]['attempts']] == [None, None, None]
+    with pytest.raises(cuju.errors.ArgumentError, match='keep_recordings'):
+        cuju.render.challenge('corner', team='builtin', keep_recordings='no')
+    with pytest.raises(cuju.errors.ArgumentError, match='keep_recordings'):
+        _challenges.post(['corner', 'runs'], {'team': 'builtin', 'keep_recordings': 0})
+    options = ['--team', team['id'], '--attempts', '1', '--no-recordings']
+    assert command.main(['challenge', 'corner', *options]) == 0
+    out = capsys.readouterr().out
+    assert 'no recording kept' in out and 'group ' not in out
+    assert {entry['id'] for entry in cuju.render.recordings()} == before
+    # A person's run without recordings scores the same, then removes its recordings for good.
+    challenge = _challenges.find('one_on_one')
+
+    def attempts():
+        return [
+            _person_recording(challenge, 0, _challenge_frames(goal_at=12, length=30)),
+            _person_recording(challenge, 1, _challenge_frames(goal_at=20, against_at=25)),
+            None,
+        ]
+
+    _clear_boards(render_home)
+    first = attempts()
+    shown = _challenges.person_run('one_on_one', 'Ana', first)
+    fields = cuju.render.recordings(group=shown['group'])[0]['group']
+    assert fields['result_id'] == 'server.names.run_medal' and fields['medal'] == 'bronze'
+    assert fields['result'] == 'goal difference +1, bronze medal' and fields['competitor'] == 'Ana'
+    _clear_boards(render_home)
+    second = attempts()
+    hidden = _challenges.person_run('one_on_one', 'Ana', second, keep_recordings=False)
+    assert hidden['group'] is None and (hidden['value'], hidden['medal']) == (1, 'bronze')
+    assert _without_recordings(hidden) == _without_recordings(shown)
+    assert all(_library.path_of(match, include_trash=True) is None for match in second[:2])
+    # A run that a person leaves keeps its attempts as a group, or removes them.
+    third = attempts()[:2]
+    left = _challenges.leave_run('one_on_one', 'Ana', third)
+    fields = cuju.render.recordings(group=left['group'])[1]['group']
+    assert fields['state'] == 'left' and fields['result'] == 'left after 2 of 3'
+    fourth = attempts()[:1]
+    gone = _challenges.leave_run('one_on_one', 'Ana', fourth, keep_recordings=False)
+    assert gone == {'challenge': 'one_on_one', 'group': None, 'removed': fourth}
+    assert _library.path_of(fourth[0], include_trash=True) is None
+    wrong = _person_recording(challenge, 1, _challenge_frames(), seed=5)
+    with pytest.raises(cuju.errors.ArgumentError, match='seed'):
+        _challenges.leave_run('one_on_one', 'Ana', [None, wrong], keep_recordings=False)
+    assert _library.path_of(wrong) is not None
+    with pytest.raises(cuju.errors.ArgumentError):
+        _challenges.leave_run('one_on_one', 'Ana', [])
+
+
 def test_tutorial_checks_each_lesson_from_the_home_folder(render_home, monkeypatch):
     from cuju.render._guide import tutorial as _tutorial
     from cuju.render._store import samples as _samples
@@ -265,7 +421,7 @@ def test_doctor_through_the_server_and_the_command_line(render_home, capsys, mon
     from cuju.render.__main__ import main
     from cuju.render._guide import doctor as _doctor
 
-    def broken(trash=False):
+    def broken(trash=False, group=None):
         raise RuntimeError('the library broke')
 
     server, address = _help_server()
@@ -331,25 +487,6 @@ def test_moment_index_follows_the_library(render_home, monkeypatch):
     assert _search.sync()['built'] == 3
 
 
-class _FeedRequests:
-    def __init__(self, entries):
-        self.listed = entries
-
-    def entries(self):
-        return list(self.listed)
-
-
-class _FeedTournaments:
-    def __init__(self, full):
-        self.full = full
-
-    def entries(self):
-        return [{key: self.full[key] for key in ('id', 'name')}]
-
-    def get(self, identifier):
-        return self.full if identifier == self.full['id'] else None
-
-
 def test_feed_route_and_resolve(render_home):
     from cuju.render._store import library as _library
 
@@ -377,11 +514,14 @@ def test_feed_route_and_resolve(render_home):
         assert found['X-Frame-Options'] == 'SAMEORIGIN'
         assert found['Content-Security-Policy'] == "frame-ancestors 'self'"
         assert headers('/')[0]['X-Frame-Options'] == 'DENY'
+        # The message of a slate comes with its id, so the page shows it in its language.
         assert resolve('auto') == {
             'kind': 'none',
             'id': '',
             'title': '',
             'message': 'The library holds no recording yet',
+            'message_id': 'server.feed.no_recordings',
+            'message_values': {},
         }
         assert resolve('live')['message'] == 'No live source streams now'
         added = sorted(path.stem for path in _library.add_samples())
@@ -424,8 +564,68 @@ def test_feed_route_and_resolve(render_home):
         listed = json.loads(_get(address, '/api/feed')[1])
         sources = [row['source'] for row in listed]
         assert sources[:5] == ['auto', 'latest', 'live', 'queue', 'tournament']
-        assert 'live:live-20261110-101500-aaaa' in sources and 'tournament:t-1' in sources
+        assert 'live:Evaluation' in sources and 'tournament:t-1' in sources
         assert all(row['url'].startswith(f'{address}/feed?source=') for row in listed)
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_feed_command_refuses_a_recording_outside_the_library(render_home, capsys):
+    from cuju.render.__main__ import main
+    from cuju.render._store import library as _library
+
+    assert main(['feed', 'nosuchthing']) == 1
+    err = capsys.readouterr().err
+    assert 'expected a recording of the library, found none named nosuchthing' in err
+    assert 'Traceback' not in err and len(err.strip().splitlines()) == 1
+    identifier = sorted(path.stem for path in _library.add_samples())[0]
+    assert main(['feed', identifier]) == 0
+    assert capsys.readouterr().out.strip().endswith(f'source=recording:{identifier}&size=1080p')
+    # A live source may start later, so its name passes.
+    assert main(['feed', 'live:Later']) == 0
+
+
+def test_samples_date_from_their_files_and_list_five_a_side_first(render_home):
+    assert _library.samples() == ['sample-5v5', 'sample-11v11']
+    _library.add_samples()
+    dates = {entry['id']: entry['created'] for entry in _library.matches()}
+    shipped = time.localtime((_library._SAMPLES / 'sample-5v5.cjr').stat().st_mtime)
+    assert dates['sample-5v5'] == time.strftime('%Y-%m-%dT%H:%M:%S', shipped)
+
+
+def test_names_reach_the_library_summary_and_a_new_title_drops_them(render_home):
+    from cuju.render._text import messages as _messages
+
+    title = _messages.label('server.names.demo')
+    head = _recording.header(title, '5_vs_5', _names_lineup())
+    frame = bytes(_recording.frame_bytes(2))
+    path = _library.save(head, [frame])
+    summary = _library.details(path.stem)
+    assert summary['title'] == 'Demo, the built-in AI against itself'
+    assert summary['title_id'] == 'server.names.demo' and summary['title_values'] == {}
+    assert summary['teams'] == ['Left', 'Right']
+    assert [label['id'] for label in summary['team_labels']] == [
+        'server.names.left',
+        'server.names.right',
+    ]
+    # The stored summary keeps the label, so a list read from the files shows it again.
+    stored = json.loads(path.with_suffix('.json').read_text())
+    assert stored['title_id'] == 'server.names.demo'
+    renamed = _library.update(path.stem, title='Our demo')
+    assert renamed['title'] == 'Our demo' and 'title_id' not in renamed
+    assert 'title_id' not in _library.details(path.stem)
+    # A summary made again from the header keeps the labels too.
+    path.with_suffix('.json').unlink()
+    assert _library.details(path.stem)['title_id'] == 'server.names.demo'
+
+
+def test_names_of_the_samples_come_by_their_name(render_home):
+    _library.add_samples(['sample-5v5'])
+    summary = _library.details('sample-5v5')
+    assert summary['title'] == 'Sample match, 5 vs 5'
+    assert summary['title_id'] == 'server.names.sample_5v5'
+    # The teams of a sample have names of their own, which stay text.
+    assert summary['team_labels'] == [None, None]
+    _library.update('sample-5v5', title='Five')
+    assert 'title_id' not in _library.details('sample-5v5')

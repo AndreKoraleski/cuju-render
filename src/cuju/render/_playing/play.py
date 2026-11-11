@@ -6,7 +6,11 @@
 The server runs this module in a process of its own for each requested match, so a submission that
 fails ends only that process, and the server ends one that runs past its time. Progress goes to the
 server as one JSON line at a time on a channel of its own, while whatever a submission prints goes
-to standard error, so no submission can forge a report.
+to standard error, so no submission can forge a report. A match played in the caller's process,
+from `cuju render play` or `cuju.render.play`, reports progress only to a function it is given.
+
+A policy that fails raises `PolicyError` with a one-line reason. The variable `CUJU_RENDER_DEBUG`,
+set to `on`, also prints the full traceback of the policy's error to standard error.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import json
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -27,7 +32,6 @@ from typing import Any, TextIO
 import torch
 
 from cuju import BatchEnvironment, bundled_scenarios
-from cuju.errors import ArgumentError
 from cuju.kaggle import (
     AgentRunner,
     accepts_configuration,
@@ -39,10 +43,16 @@ from cuju.kaggle import (
 from .._format import recording as _recording
 from .._registry import teams as _teams
 from .._store import library as _library
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from . import achievements as _achievements
+from .errors import PolicyError
 
-# The channel of the reports, standard output until `main` moves the submissions' prints away.
-_reports: TextIO = sys.stdout
+# The channel of the reports, which `main` opens on standard output once it has moved the
+# submissions' prints away, and `None` for a match played in the caller's process.
+_reports: TextIO | None = None
+# The variable that prints the traceback of a policy's error, as `on`.
+DEBUG_VARIABLE = 'CUJU_RENDER_DEBUG'
 # GRF: a full match of the shipped scenarios lasts 3000 steps, so it takes 3001 frames.
 _FRAMES = 3001
 # The v2 action that hands a player to the builtin AI for one step.
@@ -50,9 +60,75 @@ _BUILTIN_AI = 19
 
 
 def _report(**entries: Any) -> None:
-    """Writes one line of progress for the server."""
+    """Writes one line of progress for the server, when a server reads them."""
+    if _reports is None:
+        return
     _reports.write(json.dumps(entries) + '\n')
     _reports.flush()
+
+
+def debugging() -> bool:
+    """Returns whether `CUJU_RENDER_DEBUG` asks for the tracebacks of policy errors."""
+    return os.environ.get(DEBUG_VARIABLE, '').strip().lower() not in ('', '0', 'off', 'no')
+
+
+def _action_values(error: BaseException) -> dict[str, str] | None:
+    """Returns the answer and action set of an error for an action outside the set, or `None`."""
+    found = re.fullmatch(r'expected an action from -(\d+) to (\d+), found (.+)', str(error))
+    if isinstance(error, IndexError) and found:
+        count, last, value = found.groups()
+        return {'value': value, 'count': count, 'last': last}
+    return None
+
+
+def _reason(error: BaseException) -> str:
+    """Returns the reason of a policy's error in one line, with the action set in words."""
+    values = _action_values(error)
+    if values is not None:
+        return (
+            f'it answered the action {values["value"]}, outside its action set of '
+            f'{values["count"]} actions, 0 to {values["last"]}'
+        )
+    return f'{type(error).__name__}: {error}'
+
+
+def _policy_error(error: BaseException, player: str | None = None) -> PolicyError:
+    """Returns the `PolicyError` of a policy's error, which names the player when it is given.
+
+    Its text is that of `_reason` after the policy, and an action outside the set has a message
+    of its own, so the page shows that reason in its own language too.
+    """
+    named = {} if player is None else {'player': player}
+    message_id = 'server.policy.error' if player is None else 'server.policy.failed'
+    values = _action_values(error)
+    if values is not None:
+        return PolicyMessageError(f'{message_id}_action', **named, **values)
+    return PolicyMessageError(message_id, **named, reason=_reason(error))
+
+
+def game_title(names: list[Any], tournament: dict[str, Any] | None) -> dict[str, Any]:
+    """Returns the title of a match as a label, its two sides by name, after its tournament match.
+
+    Args:
+        names: The name of each side, text or a label.
+        tournament: What the recording keeps of its tournament, whose name and match label come
+            before the sides, or `None`.
+    """
+    if tournament is not None:
+        from .._tournaments.tournament import match_title
+
+        return match_title(tournament, names[0], names[1])
+    return _messages.label('server.names.against', left=names[0], right=names[1])
+
+
+def side_names(tournament: dict[str, Any] | None) -> list[Any]:
+    """Returns the name of each side that a tournament gives, a label where its rules made one,
+    or `None` for each side outside a tournament."""
+    tournament = tournament or {}
+    labels = tournament.get('labels')
+    if isinstance(labels, list) and len(labels) == 2:
+        return labels
+    return tournament.get('names') or [None, None]
 
 
 def play(
@@ -60,11 +136,13 @@ def play(
     right: str,
     scenario: str = '11_vs_11_kaggle',
     seed: int | None = None,
-    title: str | None = None,
+    title: str | dict[str, Any] | None = None,
     device: str = 'cpu',
     ability: tuple[float | None, float | None] = (None, None),
     length: int | None = None,
     tournament: dict[str, Any] | None = None,
+    progress: Callable[[float], None] | None = None,
+    policy_errors: bool = False,
 ) -> Path:
     """Plays a match between two teams of the registry, saves it and returns the recording.
 
@@ -73,7 +151,8 @@ def play(
         right: The team of the right side.
         scenario: A shipped scenario, without agent counts, which the teams decide.
         seed: The seed of the match, or `None` for one drawn from the clock.
-        title: The title of the recording.
+        title: The title of the recording, text or a label of `_messages.label`, by default the
+            two sides by name, after the tournament match.
         device: `cpu` or `cuda`.
         ability: The ability of the built-in AI on the left and on the right, each from 0 to 1, or
             `None` for the scenario's. It is GRF's team difficulty, which steers every player that
@@ -82,6 +161,10 @@ def play(
         length: The steps the match lasts, or `None` for the scenario's own duration.
         tournament: The tournament, stage and match that the match belongs to, which its
             provenance keeps, or `None`.
+        progress: A function called with the share of the match played, from 0 to 1, every 50
+            steps, or `None`.
+        policy_errors: Whether a submission that fails raises `PolicyError`, which names the team
+            and the reason in one line, in place of the submission's own error.
 
     Returns:
         The path of the recording in the renderer's folder.
@@ -89,12 +172,11 @@ def play(
     Raises:
         ArgumentError: If a team is unknown, plays another format than the scenario's, or an
             ability lies outside 0 to 1.
+        PolicyError: If a submission fails and `policy_errors` asks for it.
     """
     ability = _teams.check_ability(ability)
     if scenario not in [*bundled_scenarios(), *_teams.renderer_scenarios()]:
-        raise ArgumentError(
-            f'expected a scenario from the renderer scenario list, found {scenario!r}'
-        )
+        raise MessageError('server.play.scenario', scenario=repr(scenario))
     sides = [_teams.entry(left), _teams.entry(right)]
     _teams.check_scenario(sides, scenario)
     agents = [_teams.agent_count(team, scenario, side) for side, team in enumerate(sides)]
@@ -139,24 +221,38 @@ def play(
                 answers = policies.decide(parts)
             except PolicyError as error:
                 # A requested match raises the submission's own error, as it always has.
+                if policy_errors:
+                    raise
                 raise (error.__cause__ or error) from None
             actions = policies.actions(parts, answers)
             _, _, finished, _ = batch.step(actions)
             done = bool(finished[0])
             frames.append(reader.frame(batch.get_state(0), 1 if done else 0))
-            if len(frames) % 50 == 0:
-                _report(progress=min(len(frames) / _FRAMES, 0.99))
+            if len(frames) % 50 == 0 and progress is not None:
+                progress(min(len(frames) / _FRAMES, 0.99))
         difficulty = batch.difficulty[0].tolist()
     finally:
         batch.close()
-    names = [team['name'] for team in sides]
-    title = title or f'{names[0]} against {names[1]}'
-    if tournament is not None and not title.startswith(str(tournament.get('name'))):
+    # A tournament's match names its sides as the tournament's entrants, such as a renamed team.
+    # A name or title that cuju makes travels as a label, and a person's as text.
+    entrants = side_names(tournament)
+    names = [entrants[side] or _teams.shown_name(team) for side, team in enumerate(sides)]
+    if not title:
+        title = game_title(names, tournament)
+    elif (
+        isinstance(title, str)
+        and tournament is not None
+        and not title.startswith(str(tournament.get('name')))
+    ):
         title = f'{tournament.get("name")}, {tournament.get("label")}, {title}'
     # The ability that played, the scenario's where none was given, goes with each team.
     played = [round(float(value), 4) for value in difficulty]
     teams = [
-        {**team, 'ability': played[side]}
+        {
+            **{key: value for key, value in team.items() if key not in ('name_id', 'name_values')},
+            **_messages.named('name', entrants[side] or _teams.shown_name(team)),
+            'ability': played[side],
+        }
         for side, team in enumerate(_teams.match_teams(left, right))
     ]
     provenance = {
@@ -182,8 +278,10 @@ def play(
     return path
 
 
-class PolicyError(Exception):
-    """Raised when a registered policy fails, or gives no answer within its allowance."""
+class PolicyMessageError(_messages.Message, PolicyError):
+    """A `PolicyError` whose text is a message of the server, which the page translates."""
+
+    _wrapper = True
 
 
 class Policies:
@@ -284,9 +382,7 @@ class Policies:
                 # Kaggle's single form for one player, and its multi agent form for several.
                 answers.append(player['runner'].act(obs, count))
             except Exception as error:
-                raise PolicyError(
-                    f'the policy of {player["name"]} failed, {type(error).__name__}: {error}'
-                ) from error
+                raise _policy_error(error, player['name']) from error
         return answers
 
     def actions(self, parts: list[Any] | None, answers: list[Any] | None) -> torch.Tensor:
@@ -304,7 +400,7 @@ class Policies:
             part = None if parts is None or answers is None else parts[index]
             if part is None or player['selected'] is not None:
                 if part is None and self.batch.action_count <= _BUILTIN_AI:
-                    raise PolicyError('expected the v2 action set to hand players to the AI')
+                    raise PolicyMessageError('server.policy.action_set')
                 actions[:, player['columns']] = _BUILTIN_AI
             if part is None:
                 continue
@@ -332,7 +428,8 @@ class _Job:
         except BaseException as error:
             # A policy may raise anything, even an exit, and the caller hears of it all.
             self.error = error
-            traceback.print_exc()
+            if debugging():
+                traceback.print_exc()
         finally:
             self.done.set()
 
@@ -341,7 +438,7 @@ class _Job:
         if isinstance(self.error, PolicyError):
             raise self.error
         if self.error is not None:
-            raise PolicyError(f'{type(self.error).__name__}: {self.error}') from self.error
+            raise _policy_error(self.error) from self.error
         return self.value
 
 
@@ -392,7 +489,7 @@ class PolicyRunner:
         """
         job = self._submit(factory)
         if not job.done.wait(timeout):
-            raise PolicyError(f'the policies did not load within {timeout:g} seconds')
+            raise PolicyMessageError('server.policy.load', seconds=f'{timeout:g}')
         self.policies = job.result()
 
     def _check(self) -> None:
@@ -405,7 +502,7 @@ class PolicyRunner:
                 job.result()
             return
         if self.hang is not None and time.monotonic() - job.started > self.hang:
-            raise PolicyError(f'the policy has not answered for {self.hang:g} seconds')
+            raise PolicyMessageError('server.policy.silent', seconds=f'{self.hang:g}')
 
     def request(self) -> None:
         """Reads the observations of the current step and starts the call of the policies.
@@ -539,9 +636,15 @@ def main(arguments: list[str] | None = None) -> None:
             (options.left_ability, options.right_ability),
             options.length,
             options.tournament,
+            lambda share: _report(progress=share),
+            # A tournament's failure names the team that failed, a requested match's stays.
+            policy_errors=options.tournament is not None,
         )
+    except PolicyError as error:
+        _report(error=str(error), **_messages.id_fields(error))
+        sys.exit(1)
     except Exception as error:
-        _report(error=f'{type(error).__name__}: {error}')
+        _report(error=_messages.described(error), **_messages.id_fields(error))
         sys.exit(1)
     _report(progress=1.0, match=path.stem)
 

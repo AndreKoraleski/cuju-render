@@ -11,7 +11,8 @@ source like any other, listed on the page while it runs.
 
 The match process reports the identifier of its source as one JSON line on standard output and
 stops when its standard input closes, so the command ends it cleanly on every platform, and its
-source withdraws its announcement on the way out.
+source withdraws its announcement on the way out. Ctrl+C ends the command, the match and the
+server within about a second.
 """
 
 from __future__ import annotations
@@ -27,17 +28,23 @@ import threading
 import time
 import urllib.error
 import urllib.request
-import webbrowser
 from typing import Any, TextIO
+
+from .._http import launch as _launch
+from .._text import messages as _messages
 
 # The scenario of each format, a short five a side match by default and eleven a side on request.
 SCENARIOS = {'5v5': '5_vs_5', '11v11': '11_vs_11_stochastic'}
-_TITLE = 'Demo, the built-in AI against itself'
+# The title of the match, a label that the page shows in its language, and its English text.
+_TITLE_LABEL = _messages.label('server.names.demo')
+_TITLE = _TITLE_LABEL['text']
 # How long the command waits for the server, and for the match to load and announce itself.
 _SERVER_WAIT = 30.0
 _MATCH_WAIT = 120.0
-# How long a match or server that was asked to stop may take before it is ended by force.
-_STOP_WAIT = 10.0
+# How long a match or server that was asked to stop may take before it is ended by force, and
+# how long a server that Ctrl+C reached too may take to end by itself before it is asked to.
+_STOP_WAIT = 1.0
+_SERVER_GRACE = 0.5
 
 
 def _info(address: str) -> dict[str, Any] | None:
@@ -90,20 +97,44 @@ def _next_line(lines: queue.Queue[str | None], process: subprocess.Popen, wait: 
     return ''
 
 
-def _stop(process: subprocess.Popen | None, gentle: bool = True) -> None:
-    """Stops a child, gently by closing its input, and by force when it takes too long."""
-    if process is None or process.poll() is not None:
+def _wait_all(processes: list[subprocess.Popen], seconds: float) -> None:
+    """Waits until every process ended or `seconds` passed, in short sleeps that Ctrl+C breaks."""
+    deadline = time.monotonic() + seconds
+    while any(process.poll() is None for process in processes) and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
+def _stop(
+    match: subprocess.Popen | None, server: subprocess.Popen | None, interrupted: bool
+) -> None:
+    """Stops the match and the server together, by force when they take too long.
+
+    Closing its input ends the match, which withdraws its source. The server ends on a terminate
+    signal, which it takes as Ctrl+C, and after a Ctrl+C that reached it as well it has a moment
+    to end by itself first. Another Ctrl+C on the way ends both at once.
+    """
+    running = [process for process in (match, server) if process is not None]
+    running = [process for process in running if process.poll() is None]
+    if not running:
         return
-    with contextlib.suppress(OSError):
-        if process.stdin is not None:
-            process.stdin.close()
     try:
-        process.wait(_STOP_WAIT if gentle else 0.5)
-    except subprocess.TimeoutExpired:
-        process.terminate()
-        try:
-            process.wait(_STOP_WAIT)
-        except subprocess.TimeoutExpired:
+        if match in running and match.stdin is not None:
+            with contextlib.suppress(OSError):
+                match.stdin.close()
+        if server in running:
+            if interrupted:
+                _wait_all([server], _SERVER_GRACE)
+            if server.poll() is None:
+                server.terminate()
+        _wait_all(running, _STOP_WAIT)
+        for process in running:
+            if process.poll() is None:
+                process.terminate()
+        _wait_all(running, _STOP_WAIT)
+    except KeyboardInterrupt:
+        pass
+    for process in running:
+        if process.poll() is None:
             process.kill()
             process.wait()
 
@@ -140,6 +171,7 @@ def demo(
     """
     address = f'http://127.0.0.1:{port}/'
     server = match = None
+    interrupted = False
     try:
         info = _info(address) if port else None
         if info is None:
@@ -193,17 +225,18 @@ def demo(
                 file=sys.stderr,
             )
         print(f'cuju render demo streams {scenario} at {page}, Ctrl+C stops it', flush=True)
-        if open_browser:
-            webbrowser.open(page)
-        match.wait()
+        if open_browser and not _launch.open_browser(page):
+            print(f'Open {page} in a browser.', flush=True)
+        # A wait in short sleeps, which Ctrl+C breaks on every platform.
+        while match.poll() is None:
+            time.sleep(0.1)
         return 0 if match.returncode == 0 else 1
     except KeyboardInterrupt:
+        interrupted = True
         print('cuju render demo stopped', flush=True)
         return 0
     finally:
-        _stop(match)
-        # The server keeps nothing that needs a clean end, so it stops at once.
-        _stop(server, gentle=False)
+        _stop(match, server, interrupted)
 
 
 def _input_closed(stop: threading.Event) -> None:
@@ -244,7 +277,7 @@ def play(scenario: str, seed: int | None, steps: int | None, stop: threading.Eve
         state = batch.get_state(0)
         lineup = reader.lineup(state)
         teams = _teams.match_teams('builtin', 'builtin')
-        source = _live.LiveSource(batch, 0, _TITLE, teams, scenario)
+        source = _live.LiveSource(batch, 0, _TITLE_LABEL, teams, scenario)
         source._timing = _recording.scenario_timing(state)
         source.push(reader.frame(state), lineup)
         print(json.dumps({'live': source.identifier}), flush=True)
@@ -275,6 +308,12 @@ def main(arguments: list[str] | None = None) -> None:
     threading.Thread(target=_input_closed, args=(stop,), daemon=True).start()
     with contextlib.suppress(KeyboardInterrupt):
         play(options.scenario, options.seed, options.steps, stop)
+    # The source and the batch are closed, so the process ends at once and skips the teardown of
+    # torch, which takes about a second.
+    with contextlib.suppress(Exception, KeyboardInterrupt):
+        sys.stdout.flush()
+        sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == '__main__':

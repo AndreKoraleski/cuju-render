@@ -2,29 +2,49 @@
 # SPDX-License-Identifier: Apache-2.0
 """The tournaments of the mock server, in memory, with the rules of the renderer's own module.
 
-The rules come from `src/cuju/render/_tournaments/tournament.py`, loaded from its file, since it
-uses the standard library alone. The matches of agents play at once with made up results whenever
-the page reads a tournament, one round of ready matches at a time, so a page check sees brackets and
-tables fill. Each result names a recording of the mock's library, so Watch opens it. The matches of
-people wait, and Play now answers that people play on the real server.
+The rules come from `src/cuju/render/_tournaments/tournament.py`, loaded from its file with the
+module it imports, `_text/messages.py`, as a package of their own, and with cuju's errors from the
+installed cuju, since all of them use the standard library alone. The matches of agents play at once
+with made up results whenever the page reads a tournament, one round of ready matches at a time, so
+a page check sees brackets and tables fill. Each result names a recording of the mock's library, so
+Watch opens it. The matches of people wait, and Play now answers that people play on the real
+server. A match of an entrant whose name starts with Failing fails, as a crashing team does on the
+real server, so the page shows a failed match, its Award buttons and a tournament that stops once
+only failed matches hold it up.
 """
 
 import hashlib
 import importlib.util
+import sys
 import time
+import types
 from pathlib import Path
 
-_SPEC = importlib.util.spec_from_file_location(
-    'cuju_render_tournament_rules',
-    Path(__file__).resolve().parents[1]
-    / 'src'
-    / 'cuju'
-    / 'render'
-    / '_tournaments'
-    / 'tournament.py',
+_CUJU = Path(__file__).resolve().parents[1] / 'src' / 'cuju'
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+for _name in (
+    'cuju_mock_rules',
+    'cuju_mock_rules.render',
+    'cuju_mock_rules.render._text',
+    'cuju_mock_rules.render._tournaments',
+):
+    _package = types.ModuleType(_name)
+    _package.__path__ = []
+    sys.modules[_name] = _package
+_load('cuju_mock_rules.render._text.messages', _CUJU / 'render' / '_text' / 'messages.py')
+rules = _load(
+    'cuju_mock_rules.render._tournaments.tournament',
+    _CUJU / 'render' / '_tournaments' / 'tournament.py',
 )
-rules = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(rules)
 
 
 def _fits(entrant, scenario):
@@ -59,13 +79,40 @@ class MockTournaments:
         shipped.update({name: {**p, 'shipped': False} for name, p in self._presets.items()})
         return shipped
 
+    @staticmethod
+    def _failing(record, match):
+        entrants = record['config']['entrants']
+        return next(
+            (
+                entrants[side]['name']
+                for side in (match['home'], match['away'])
+                if entrants[side]['name'].startswith('Failing')
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _playable(record, view):
+        return any(m['key'] not in record['failures'] for m in rules.ready(view))
+
+    def _failure_text(self, record, view):
+        labels = {m['key']: m['label'] for m in view['matches']}
+        first = next(iter(record['failures']))
+        return f'{labels.get(first, first)} failed, {record["failures"][first]}'
+
     def _advance(self, record):
         """Plays the ready matches of agents with results made up from their seeds."""
         if record['state'] != 'running':
             return
         view = rules.evaluate(record['config'], record['results'])
         for match in rules.ready(view):
-            if match['person']:
+            if match['person'] or match['key'] in record['failures']:
+                continue
+            failing = self._failing(record, match)
+            if failing:
+                record['failures'][match['key']] = (
+                    f'the policy of {failing} failed, RuntimeError: on purpose'
+                )
                 continue
             digest = hashlib.sha256(str(match['seed']).encode()).digest()
             record['results'][match['key']] = {
@@ -74,8 +121,12 @@ class MockTournaments:
                 'match': self._recording(),
                 'forfeit': False,
             }
-        if rules.evaluate(record['config'], record['results'])['complete']:
+        view = rules.evaluate(record['config'], record['results'])
+        if view['complete']:
             record['state'] = 'done'
+        elif record['failures'] and not self._playable(record, view):
+            record['state'] = 'stopped'
+            record['error'] = self._failure_text(record, view)
 
     def _summary(self, record):
         view = rules.evaluate(record['config'], record['results'])
@@ -85,7 +136,7 @@ class MockTournaments:
             'id': record['id'],
             'name': config['name'],
             'state': record['state'],
-            'error': None,
+            'error': record['error'],
             'created': record['created'],
             'finished': None,
             'seed': config['seed'],
@@ -97,6 +148,7 @@ class MockTournaments:
             'played': view['played'],
             'scheduled': len(view['matches']),
             'running': 0,
+            'failed': len(record['failures']),
             'people_waiting': sum(1 for m in rules.ready(view) if m['person']),
             'champion': None if champion is None else config['entrants'][champion]['name'],
             'champion_color': None,
@@ -111,6 +163,9 @@ class MockTournaments:
             entry = dict(match)
             if match['result'] is not None:
                 entry['state'] = 'done'
+            elif match['key'] in record['failures']:
+                entry['state'] = 'failed'
+                entry['error'] = record['failures'][match['key']]
             else:
                 entry['state'] = 'person' if match['person'] else 'ready'
             matches.append(entry)
@@ -151,13 +206,15 @@ class MockTournaments:
             if not rest:
                 checked = self._check(config)
                 self._count += 1
-                identifier = f't-mock-{self._count}'
+                identifier = f'cup-mock-{self._count}'
                 self._records[identifier] = {
                     'id': identifier,
                     'created': time.time(),
                     'config': checked,
                     'results': {},
                     'state': 'running',
+                    'error': None,
+                    'failures': {},
                 }
                 return 201, self._summary(self._records[identifier])
             if rest == ['check']:
@@ -177,10 +234,15 @@ class MockTournaments:
                 return 404, {'error': 'no such tournament'}
             action = rest[1] if len(rest) == 2 else None
             if action == 'cancel':
+                state = record['state']
+                if state in ('done', 'cancelled'):
+                    return 400, {
+                        'error': f'expected a tournament that runs or stopped, found it {state}'
+                    }
                 record['state'] = 'cancelled'
                 return 200, self._full(record)
             if action == 'resume':
-                record['state'] = 'running'
+                record.update(state='running', error=None, failures={})
                 return 200, self._summary(record)
             if action == 'forfeit':
                 view = rules.evaluate(record['config'], record['results'])
@@ -195,6 +257,12 @@ class MockTournaments:
                     'match': None,
                     'forfeit': True,
                 }
+                record['failures'].pop(key, None)
+                view = rules.evaluate(record['config'], record['results'])
+                if record['state'] == 'stopped' and view['complete']:
+                    record.update(state='done', error=None)
+                elif record['state'] == 'stopped' and self._playable(record, view):
+                    record.update(state='running', error=None)
                 return 200, self._full(record)
             if action == 'play':
                 return 400, {'error': 'the matches of people play on the real server'}

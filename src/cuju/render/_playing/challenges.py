@@ -13,10 +13,12 @@ seconds to score break ties, lower being better, and then the earlier run.
 
 Each attempt becomes a recording of the library, and one function, `score_attempt`, scores every
 attempt from the frames of its recording, so a person's game and an agent's run use the same code.
-An attempt that ends before its episode does counts its goals against and no goals for, so quitting
-never helps. A full run reaches the leaderboard of its challenge, a JSON file in the folder
-`challenges` of the renderer's home that keeps the best run of each competitor, and a run of fewer
-attempts is practice, scored and recorded but kept off the leaderboard.
+The recordings of one run form a group, which the Recordings page shows as one row, and a run that
+keeps no recordings scores the same frames and then leaves the library as it was. An attempt that
+ends before its episode does counts its goals against and no goals for, so quitting never helps.
+A full run reaches the leaderboard of its challenge, a JSON file in the folder `challenges` of the
+renderer's home that keeps the best run of each competitor, and a run of fewer attempts is
+practice, scored and recorded but kept off the leaderboard.
 
 The server hands its routes under `/api/challenges` to `get`, `post` and `delete`, and plays the
 headless runs that the page asks for in a child process each,
@@ -43,13 +45,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from cuju import BatchEnvironment, __version__
-from cuju.errors import ArgumentError
+from cuju import __version__
 
 from .._format import recording as _recording
 from .._registry import teams as _teams
 from .._store import home as _home
 from .._store import library as _library
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from . import achievements as _achievements
 
 _LOGGER = logging.getLogger('cuju')
@@ -72,6 +75,15 @@ _KEPT_JOBS = 20
 _SCORE = struct.Struct('<2i')
 _FLAGS = struct.Struct('<i')
 _ACADEMY = 'academy_'
+
+
+def __getattr__(name: str) -> Any:
+    """Returns `BatchEnvironment` on first use, so listing the challenges leaves PyTorch out."""
+    if name == 'BatchEnvironment':
+        from cuju import BatchEnvironment
+
+        return BatchEnvironment
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 def _academy(
@@ -223,9 +235,10 @@ def find(identifier: Any) -> dict[str, Any]:
                 'seeds': seeds(entry['id'], entry['attempts']),
                 'played_ability': _played_ability(entry['scenario'], tuple(entry['ability'])),
             }
-    raise ArgumentError(
-        f'expected a challenge, one of {", ".join(entry["id"] for entry in CATALOG)}, '
-        f'found {identifier!r}'
+    raise MessageError(
+        'server.challenges.unknown',
+        challenges=', '.join(entry['id'] for entry in CATALOG),
+        identifier=repr(identifier),
     )
 
 
@@ -476,18 +489,47 @@ def _competitor(entry: dict[str, Any]) -> tuple[str, str]:
     return (entry['kind'], entry['name'])
 
 
+def challenge_value(spec: dict[str, Any]) -> dict[str, Any]:
+    """Returns a challenge as a value of a message, which the page shows by its own title."""
+    return {'kind': 'challenge', 'name': spec['id'], 'text': spec['title']}
+
+
+def competitor_name(entry: dict[str, Any]) -> dict[str, Any] | str:
+    """Returns the name of a competitor as a message value, a label for a name that cuju made.
+
+    The built-in AI under its default name and a policy without a name of its own are labels,
+    which the page shows in its language, and any other name stays the text it is.
+    """
+    name = entry.get('name')
+    builtin = _messages.label('server.names.builtin')
+    made = entry.get('kind') == 'agent' and entry.get('team') == _teams.BUILTIN
+    if made and name == builtin['text']:
+        return builtin
+    if entry.get('kind') == 'agent' and entry.get('team') is None and name == POLICY_NAME:
+        return _messages.label('server.names.python_policy')
+    return str(name)
+
+
+def _named(entry: dict[str, Any]) -> dict[str, Any]:
+    """Returns an entry of a board or a run with `name_id` and `name_values` for a made name."""
+    return {**entry, **_messages.named('name', competitor_name(entry))}
+
+
 def board(identifier: str) -> list[dict[str, Any]]:
     """Returns the leaderboard of a challenge, best first, each entry with its rank."""
     find(identifier)
-    return [{**entry, 'rank': rank} for rank, entry in enumerate(_read_board(identifier), 1)]
+    return [
+        _named({**entry, 'rank': rank}) for rank, entry in enumerate(_read_board(identifier), 1)
+    ]
 
 
 def record(identifier: str, entry: dict[str, Any]) -> dict[str, Any]:
     """Adds a run to a challenge's board, which keeps each competitor's best run.
 
     Returns:
-        The competitor's best run with its rank, `None` for a rank outside the board, and whether
-        this run improved on the best one before it.
+        The competitor's best run with its rank, `None` for a rank outside the board, whether
+        this run improved on the best one before it, and whether it is the competitor's first run
+        on the board, which improves on nothing before it.
     """
     with _locked():
         entries = _read_board(identifier)
@@ -503,7 +545,12 @@ def record(identifier: str, entry: dict[str, Any]) -> dict[str, Any]:
         rank = next(
             (rank for rank, item in enumerate(entries, 1) if _competitor(item) == who), None
         )
-    return {'personal_best': {**best, 'rank': rank}, 'rank': rank, 'improved': improved}
+    return {
+        'personal_best': _named({**best, 'rank': rank}),
+        'rank': rank,
+        'improved': improved,
+        'first': before is None,
+    }
 
 
 def personal_bests(kind: str, name: str | None = None, team: str | None = None) -> dict[str, Any]:
@@ -536,7 +583,7 @@ def _summary(identifier: str, person: str | None) -> dict[str, Any]:
 
 def _short(entry: dict[str, Any]) -> dict[str, Any]:
     keys = ('rank', 'kind', 'name', 'team', 'value', 'seconds', 'medal')
-    return {key: entry[key] for key in keys}
+    return _named({key: entry[key] for key in keys})
 
 
 def _entry(
@@ -561,20 +608,32 @@ def _entry(
     }
 
 
+# The name of a policy whose function has no name of its own, such as a lambda.
+POLICY_NAME = 'Python policy'
+
+
+def _policy_name(policy: Any) -> str:
+    """Returns the default name of a policy, its function's name, or `Python policy` for none."""
+    name = getattr(policy, '__name__', None)
+    if not isinstance(name, str) or not name.isidentifier():
+        return POLICY_NAME
+    return name
+
+
 def _name(value: Any) -> str:
     """Returns a competitor's name, printable and trimmed, or raises `ArgumentError`."""
     if not isinstance(value, str):
-        raise ArgumentError(f'expected a name as text, found {value!r}')
+        raise MessageError('server.challenges.name_text', value=repr(value))
     name = ''.join(character for character in value if character.isprintable()).strip()
     if not 0 < len(name) <= NAME_LENGTH:
-        raise ArgumentError(f'expected a name of 1 to {NAME_LENGTH} characters, found {value!r}')
+        raise MessageError('server.challenges.name_length', most=NAME_LENGTH, value=repr(value))
     return name
 
 
 # People.
 
 
-class UnknownRecordingError(ArgumentError):
+class UnknownRecordingError(MessageError):
     """Raised for a recording that the library does not hold outside the Trash."""
 
 
@@ -586,7 +645,7 @@ def _recording_of(match: Any) -> tuple[dict[str, Any], list[bytes]]:
     """
     path = _library.path_of(match) if isinstance(match, str) else None
     if path is None:
-        raise UnknownRecordingError(f'expected a recording of the library, found {match!r}')
+        raise UnknownRecordingError('server.challenges.recording', match=repr(match))
     return _recording.read_header(path), list(_recording.frames(path))
 
 
@@ -643,32 +702,36 @@ def _attempt_index(challenge: dict[str, Any], attempt: Any) -> int:
     if isinstance(attempt, str) and attempt.isdigit():
         attempt = int(attempt)
     if not _whole(attempt) or not 0 <= attempt < challenge['attempts']:
-        raise ArgumentError(
-            f'expected an attempt from 0 to {challenge["attempts"] - 1}, found {attempt!r}'
+        raise MessageError(
+            'server.challenges.attempt', last=challenge['attempts'] - 1, attempt=repr(attempt)
         )
     return attempt
 
 
-def person_run(identifier: str, person: Any, matches: Any) -> dict[str, Any]:
+def person_run(
+    identifier: str, person: Any, matches: Any, keep_recordings: Any = True
+) -> dict[str, Any]:
     """Checks, scores and records a person's run, the recordings of its attempts in order.
 
     Every recording is scored again from its frames and must match its attempt, as
     `check_person` describes, and each one counts once. An attempt that a person left before its
-    first step has no recording, `None`, and counts as missed.
+    first step has no recording, `None`, and counts as missed. The recordings of the run become a
+    group, or with `keep_recordings` false leave the library for good once the run is scored, and
+    its attempts then name no recording.
 
     Raises:
         ArgumentError: If the name, the number of recordings or any recording does not fit.
     """
     challenge = find(identifier)
     name = _name(person)
+    keep = _keep_flag(keep_recordings)
     if not isinstance(matches, list) or len(matches) != challenge['attempts']:
-        raise ArgumentError(
-            f'expected the {challenge["attempts"]} recordings of the attempts in order, '
-            f'found {matches!r}'
+        raise MessageError(
+            'server.challenges.matches', count=challenge['attempts'], matches=repr(matches)
         )
     named = [match for match in matches if match is not None]
     if len(set(named)) != len(named):
-        raise ArgumentError('expected a distinct recording for each attempt')
+        raise MessageError('server.challenges.distinct')
     results, recordings = [], []
     for index, match in enumerate(matches):
         if match is None:
@@ -678,9 +741,16 @@ def person_run(identifier: str, person: Any, matches: Any) -> dict[str, Any]:
         header, frames = _recording_of(match)
         problem = check_person(challenge, index, header)
         if problem is not None:
-            raise ArgumentError(f'the recording {match} cannot be attempt {index + 1}, {problem}')
+            raise MessageError(
+                'server.challenges.attempt_recording',
+                match=match,
+                attempt=index + 1,
+                reason=problem,
+            )
         results.append(_attempt_result(challenge, index, match, score_attempt(header, frames)))
         recordings.append((header, frames))
+    if not keep:
+        results = [{**result, 'match': None} for result in results]
     totals = score_run(challenge, results)
     outcome = {
         'challenge': identifier,
@@ -695,7 +765,78 @@ def person_run(identifier: str, person: Any, matches: Any) -> dict[str, Any]:
     outcome['achievements'] = _achievements_of(
         lambda: _achievements.for_person_run(recordings, outcome)
     )
+    outcome['group'] = _end_person_run(challenge, name, matches, keep, 'done', outcome)
     return outcome
+
+
+def leave_run(
+    identifier: str, person: Any, matches: Any, keep_recordings: Any = True
+) -> dict[str, Any]:
+    """Keeps the attempts of a run that a person left as a group, or removes them for good.
+
+    Each recording must match its attempt, as `check_person` describes, so only the attempts of
+    the challenge leave the library.
+
+    Args:
+        identifier: The challenge.
+        person: The person's name.
+        matches: The recordings of the attempts played, in order, `None` for a missed one.
+        keep_recordings: Whether the library keeps them, as a group of a left run.
+
+    Returns:
+        The challenge, the group or `None`, and the recordings that left the library.
+
+    Raises:
+        ArgumentError: If the name, the recordings or any recording does not fit.
+    """
+    challenge = find(identifier)
+    name = _name(person)
+    keep = _keep_flag(keep_recordings)
+    if not isinstance(matches, list) or not 0 < len(matches) <= challenge['attempts']:
+        raise MessageError(
+            'server.challenges.left_matches', count=challenge['attempts'], matches=repr(matches)
+        )
+    named = [match for match in matches if match is not None]
+    if len(set(named)) != len(named):
+        raise MessageError('server.challenges.distinct')
+    for index, match in enumerate(matches):
+        if match is None:
+            continue
+        path = _library.path_of(match) if isinstance(match, str) else None
+        if path is None:
+            raise UnknownRecordingError('server.challenges.recording', match=repr(match))
+        problem = check_person(challenge, index, _recording.read_header(path))
+        if problem is not None:
+            raise MessageError(
+                'server.challenges.attempt_recording',
+                match=match,
+                attempt=index + 1,
+                reason=problem,
+            )
+    group = _end_person_run(challenge, name, matches, keep, 'left', None)
+    return {'challenge': identifier, 'group': group, 'removed': [] if keep else named}
+
+
+def _end_person_run(
+    challenge: dict[str, Any],
+    name: str,
+    matches: list[Any],
+    keep: bool,
+    state: str,
+    outcome: dict[str, Any] | None,
+) -> str | None:
+    """Groups the recordings of a person's run, or removes them for good, and returns the group."""
+    named = [match for match in matches if match is not None]
+    if not keep:
+        for match in named:
+            _library.remove(match)
+        return None
+    if not named:
+        return None
+    group = _home.new_identifier('g')
+    count = challenge['attempts']
+    _keep_group(_group(challenge, group, name, count, state, len(matches), outcome), matches)
+    return group
 
 
 def _achievements_of(award: Callable[[], list[str]]) -> list[str]:
@@ -705,6 +846,78 @@ def _achievements_of(award: Callable[[], list[str]]) -> list[str]:
     except Exception as error:
         _LOGGER.warning('cuju render could not read the achievements of a challenge, %s', error)
         return []
+
+
+# Groups of recordings, one for each run whose attempts the library keeps.
+
+
+def _keep_flag(value: Any) -> bool:
+    """Returns whether a run keeps its recordings, or raises `ArgumentError` for no boolean."""
+    if not isinstance(value, bool):
+        raise MessageError('server.challenges.keep_recordings', value=repr(value))
+    return value
+
+
+def _result_label(
+    spec: dict[str, Any], count: int, state: str, played: int, outcome: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Returns the result of a run as a label, its value and medal, or how far it went."""
+    if outcome is None:
+        message = {'playing': 'server.names.run_playing', 'left': 'server.names.run_left'}
+        return _messages.label(
+            message.get(state, 'server.names.run_stopped'), played=played, attempts=count
+        )
+    value = outcome['value']
+    if spec['measure'] == 'margin':
+        shown = _messages.label('server.names.run_margin', value=f'{value:+d}' if value else '0')
+    else:
+        shown = _messages.label('server.names.run_attempts', value=value, attempts=count)
+    if outcome['practice']:
+        return _messages.label('server.names.run_practice', value=shown)
+    if outcome['medal']:
+        medal = _messages.label(f'server.names.medal_{outcome["medal"]}')
+        return _messages.label('server.names.run_medal', value=shown, medal=medal)
+    return _messages.label('server.names.run_no_medal', value=shown)
+
+
+def _group(
+    spec: dict[str, Any],
+    identifier: str,
+    competitor: dict[str, Any] | str,
+    count: int,
+    state: str,
+    played: int,
+    outcome: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Returns the group of the recordings of a run, as the summaries of the library keep it.
+
+    The state is `playing` while a headless run plays, `done` once it is scored, `left` for a run
+    that a person left and `stopped` for a run that ended on a failure.
+    """
+    title = _messages.label(
+        'server.names.challenge_run', challenge=challenge_value(spec), competitor=competitor
+    )
+    return {
+        'id': identifier,
+        'kind': 'challenge',
+        'challenge': spec['id'],
+        **_messages.named('title', title),
+        **_messages.named('competitor', competitor),
+        **_messages.named('result', _result_label(spec, count, state, played, outcome)),
+        'state': state,
+        'attempts': count,
+        'value': None if outcome is None else outcome['value'],
+        'seconds': None if outcome is None else outcome['seconds'],
+        'medal': None if outcome is None else outcome['medal'],
+        'practice': False if outcome is None else outcome['practice'],
+    }
+
+
+def _keep_group(group: dict[str, Any], matches: list[Any]) -> None:
+    """Writes a group into the summaries of the recordings of its attempts, by attempt."""
+    members = {match: index for index, match in enumerate(matches) if match is not None}
+    if members:
+        _library.set_group(group, members)
 
 
 # Agents.
@@ -719,30 +932,37 @@ def run(
     attempts: int | None = None,
     device: str = 'cpu',
     progress: Callable[[dict[str, Any]], None] | None = None,
+    keep_recordings: bool = True,
 ) -> dict[str, Any]:
     """Plays a challenge headless with a team of the registry or a Python policy, and scores it.
 
     Each attempt plays in a batch of one environment, `{scenario}_l{agents}_r0` with the seed of
     the attempt and the challenge's abilities, as fast as the policy answers. A team of one
     dynamic agent therefore faces the very episode that a person faces on the Play page. Every
-    attempt is saved as a recording, and a full run reaches the leaderboard.
+    attempt is saved as a recording of the run's group, and a full run reaches the leaderboard.
 
     Args:
         challenge: The identifier of the challenge, such as `empty_goal_close`.
         team: A team of the registry, `builtin` for GRF's built-in AI on the whole side.
         policy: A Kaggle agent function, `agent(obs)` or `agent(obs, configuration)`, in place of
             a team.
-        name: The name of a policy on the leaderboard, by default the function's name.
+        name: The name of a policy on the leaderboard, by default the function's name, or
+            `Python policy` for a function without one, such as a lambda.
         control: The control of a policy, as a team's control settings, by default one player of
             dynamic assignment.
         attempts: The attempts to play, from 1 to the challenge's count, which is the default. A
             run of fewer attempts is practice and stays off the leaderboard.
         device: `cpu` or `cuda`.
         progress: A function called with the result of each attempt as it ends.
+        keep_recordings: Whether the library keeps the attempts as recordings. A run without
+            them scores, ranks and earns from the same frames, and its attempts name no
+            recording.
 
     Returns:
         The run, its value, seconds, medal, rank and best run on the leaderboard, the result and
-        recording of each attempt, and the achievements of a team.
+        recording of each attempt, the `group` of its recordings or `None`, and the achievements
+        that a team of the registry keeps, none for the built-in AI and for a Python policy, which
+        keep none.
 
     Raises:
         ArgumentError: If the challenge, the team, the control or the attempts do not fit.
@@ -755,11 +975,14 @@ def run(
 
     spec = find(challenge)
     scenario = spec['scenario']
+    keep = _keep_flag(keep_recordings)
     if (team is None) == (policy is None):
-        raise ArgumentError('expected either a team of the registry or a policy')
+        raise MessageError('server.challenges.team_or_policy')
     count = spec['attempts'] if attempts is None else attempts
     if not _whole(count) or not 1 <= count <= spec['attempts']:
-        raise ArgumentError(f'expected from 1 to {spec["attempts"]} attempts, found {attempts!r}')
+        raise MessageError(
+            'server.challenges.attempts', most=spec['attempts'], attempts=repr(attempts)
+        )
     builtin = _teams.entry(_teams.BUILTIN)
     if team is not None:
         side = _teams.entry(team)
@@ -767,8 +990,8 @@ def run(
         control = None if side['kind'] == 'builtin' else side.get('control')
     else:
         if not callable(policy):
-            raise ArgumentError(f'expected a policy function, found {policy!r}')
-        competitor = _name(name if name is not None else getattr(policy, '__name__', 'policy'))
+            raise MessageError('server.challenges.policy', policy=repr(policy))
+        competitor = _name(name if name is not None else _policy_name(policy))
         side = {'id': None, 'kind': 'policy', 'name': competitor, 'format': '11v11'}
         side['control'] = _teams.check_control(control, side['format'])
         control = side['control']
@@ -804,26 +1027,52 @@ def run(
         return policies
 
     runner = PolicyRunner(hang=HANG_SECONDS) if agents else None
-    results = []
+    kind_team = None if side['kind'] == 'policy' else side['id']
+    shown = competitor_name({'kind': 'agent', 'name': competitor, 'team': kind_team})
+    group = _home.new_identifier('g') if keep else None
+    results: list[dict[str, Any]] = []
+    recordings: list[tuple[dict[str, Any], list[bytes]]] = []
+
+    def keep_group(state: str, outcome: dict[str, Any] | None = None) -> None:
+        if group is not None:
+            entry = _group(spec, group, shown, count, state, len(results), outcome)
+            _keep_group(entry, [result['match'] for result in results])
+
     try:
         for index in range(count):
             match, header, frames = _play_attempt(
-                spec, index, side, competitor, agents, extended, ability, device, runner, factory
+                spec,
+                index,
+                side,
+                competitor,
+                agents,
+                extended,
+                ability,
+                device,
+                runner,
+                factory,
+                keep,
             )
             result = _attempt_result(spec, index, match, score_attempt(header, frames))
             results.append(result)
+            recordings.append((header, frames))
+            keep_group('playing')
             if progress is not None:
                 progress(dict(result))
+    except BaseException:
+        keep_group('stopped')
+        raise
     finally:
         if runner is not None:
             runner.close()
     totals = score_run(spec, results)
     practice = count < spec['attempts']
-    kind_team = None if side['kind'] == 'policy' else side['id']
     outcome: dict[str, Any] = {
         'challenge': challenge,
         'kind': 'agent',
-        'name': competitor,
+        **_messages.named(
+            'name', competitor_name({'kind': 'agent', 'name': competitor, 'team': kind_team})
+        ),
         'team': kind_team,
         'practice': practice,
         'attempts': results,
@@ -831,10 +1080,14 @@ def run(
     }
     if practice:
         # Practice keeps its value but wins no medal and stays off the board.
-        outcome.update(medal=None, rank=None, personal_best=None, improved=False)
+        outcome.update(medal=None, rank=None, personal_best=None, improved=False, first=False)
     else:
         outcome.update(record(challenge, _entry('agent', competitor, kind_team, totals, results)))
-    outcome['achievements'] = _achievements_of(lambda: _achievements.for_agent_run(outcome))
+    outcome['achievements'] = _achievements_of(
+        lambda: _achievements.for_agent_run(outcome, recordings)
+    )
+    keep_group('done', outcome)
+    outcome['group'] = group
     return outcome
 
 
@@ -849,12 +1102,18 @@ def _play_attempt(
     device: str,
     runner: Any,
     factory: Callable[[Any], Any],
-) -> tuple[str, dict[str, Any], list[bytes]]:
-    """Plays one attempt, saves its recording and returns its identifier, header and frames."""
-    from .play import PolicyError
+    keep: bool = True,
+) -> tuple[str | None, dict[str, Any], list[bytes]]:
+    """Plays one attempt and returns its recording's identifier, header and frames.
+
+    The recording goes to the library when `keep` is true, and its identifier is `None` otherwise.
+    """
+    from .play import PolicyMessageError
 
     scenario, seed = spec['scenario'], spec['seeds'][index]
-    batch = BatchEnvironment(
+    # A test may put a batch of its own in the module's place of `BatchEnvironment`.
+    make = globals().get('BatchEnvironment') or __getattr__('BatchEnvironment')
+    batch = make(
         f'{scenario}_l{agents}_r0',
         agent_counts=[(agents, 0)],
         environment_count=1,
@@ -888,7 +1147,7 @@ def _play_attempt(
                 limit = FIRST_CALL_SECONDS if first_call else HANG_SECONDS
                 first_call = False
                 if not runner.wait(limit):
-                    raise PolicyError(f'the policy has not answered for {limit:g} seconds')
+                    raise PolicyMessageError('server.policy.silent', seconds=f'{limit:g}')
                 actions = runner.actions(None)
             else:
                 import torch
@@ -900,9 +1159,10 @@ def _play_attempt(
         played = [round(float(value), 4) for value in batch.difficulty[0].tolist()]
     finally:
         batch.close()
+    shown = competitor_name({'kind': 'agent', 'name': competitor, 'team': side['id']})
     if side['kind'] == 'policy':
         teams = [
-            {'id': None, 'name': competitor, 'ability': played[0]},
+            {'id': None, 'name': shown, 'ability': played[0]},
             {**_teams.header_team(_teams.BUILTIN), 'ability': played[1]},
         ]
     else:
@@ -924,10 +1184,15 @@ def _play_attempt(
     }
     if side['kind'] == 'policy':
         provenance['policy'] = competitor
-    title = f'{spec["title"]}, attempt {index + 1}, {competitor}'
+    title = _messages.label(
+        'server.names.challenge_attempt',
+        challenge=challenge_value(spec),
+        attempt=index + 1,
+        competitor=shown,
+    )
     head = _recording.header(title, scenario, lineup, teams, len(frames), timing, provenance)
-    path = _library.save(head, frames)
-    return path.stem, json.loads(head[len(_recording.MAGIC) + 4 :]), frames
+    match = _library.save(head, frames).stem if keep else None
+    return match, json.loads(head[len(_recording.MAGIC) + 4 :]), frames
 
 
 # The runs that the page asks for, played one at a time in child processes.
@@ -947,34 +1212,40 @@ class _Jobs:
         self._wake = threading.Event()
         threading.Thread(target=self._run, daemon=True, name='cuju-challenges').start()
 
-    def add(self, identifier: str, team: Any, attempts: Any) -> dict[str, Any]:
+    def add(
+        self, identifier: str, team: Any, attempts: Any, keep_recordings: Any = True
+    ) -> dict[str, Any]:
         """Queues a run of a team and returns its entry.
 
         Raises:
-            ArgumentError: If the challenge, the team or the attempts do not fit.
+            ArgumentError: If the challenge, the team, the attempts or the keeping do not fit.
         """
         challenge = find(identifier)
+        keep = _keep_flag(keep_recordings)
         if not isinstance(team, str):
-            raise ArgumentError(f'expected a team of the registry, found {team!r}')
+            raise MessageError('server.challenges.team', team=repr(team))
         entry = _teams.entry(team)
         _teams.check_scenario([entry, _teams.entry(_teams.BUILTIN)], challenge['scenario'])
         if attempts is not None and (
             not _whole(attempts) or not 1 <= attempts <= challenge['attempts']
         ):
-            raise ArgumentError(
-                f'expected from 1 to {challenge["attempts"]} attempts, found {attempts!r}'
+            raise MessageError(
+                'server.challenges.attempts', most=challenge['attempts'], attempts=repr(attempts)
             )
         job = {
             'id': _home.new_identifier('j'),
             'challenge': identifier,
             'team': team,
-            'name': entry['name'],
+            **_messages.named('name', _teams.shown_name(entry)),
             'attempts': challenge['attempts'] if attempts is None else attempts,
+            'keep_recordings': keep,
             'state': 'queued',
             'progress': 0.0,
             'results': [],
             'result': None,
             'error': None,
+            'error_id': None,
+            'error_values': None,
             'created': time.time(),
         }
         with self._lock:
@@ -996,7 +1267,7 @@ class _Jobs:
             job = next((item for item in self._entries if item['id'] == identifier), None)
             if job is None or job['state'] not in ('queued', 'running'):
                 return False
-            job.update(state='failed', error='cancelled')
+            job.update(state='failed', **_messages.fields('server.requests.cancelled'))
             process = self._processes.get(identifier)
         if process is not None:
             process.kill()
@@ -1015,7 +1286,8 @@ class _Jobs:
                     self._play(job)
                 except Exception as error:
                     with self._lock:
-                        job.update(state='failed', error=f'{type(error).__name__}: {error}')
+                        job['state'] = 'failed'
+                        job.update(_messages.entry_fields(error, _messages.described(error)))
 
     def _play(self, job: dict[str, Any]) -> None:
         command = [
@@ -1028,6 +1300,8 @@ class _Jobs:
             '--attempts',
             str(job['attempts']),
         ]
+        if not job['keep_recordings']:
+            command.append('--no-recordings')
         with self._lock:
             if job['state'] != 'queued':
                 return
@@ -1065,7 +1339,7 @@ class _Jobs:
                     if isinstance(report.get('result'), dict):
                         job['result'] = report['result']
                     if isinstance(report.get('error'), str):
-                        job['error'] = report['error']
+                        job.update(_messages.report_fields(report))
             code = process.wait()
         finally:
             timer.cancel()
@@ -1080,9 +1354,7 @@ class _Jobs:
                 job['state'] = 'failed'
                 if not job['error']:
                     tail = ''.join(stderr).strip()
-                    job['error'] = f'the run ended with exit code {code}' + (
-                        f', {tail}' if tail else ''
-                    )
+                    job.update(_messages.exit_fields('server.challenges.exit', code, tail))
 
 
 _JOBS: _Jobs | None = None
@@ -1110,39 +1382,46 @@ def get(parts: list[str], query: dict[str, str]) -> tuple[Any, int]:
         return jobs().entries(), 200
     identifier = parts[0]
     if identifier not in {entry['id'] for entry in CATALOG}:
-        return {'error': f'no challenge {identifier!r}'}, 404
+        return _messages.fields('server.challenges.no_challenge', identifier=repr(identifier)), 404
     if len(parts) == 1:
         return {'challenge': find(identifier), 'entries': board(identifier)}, 200
     if parts[1:] == ['score']:
         try:
             return score_recording(identifier, query.get('match', ''), query.get('attempt')), 200
         except UnknownRecordingError as error:
-            return {'error': str(error)}, 404
-    return {'error': 'no such resource'}, 404
+            return _messages.error_fields(error), 404
+    return _messages.fields('server.no_resource'), 404
 
 
 def post(parts: list[str], document: dict[str, Any]) -> tuple[Any, int]:
-    """Answers `POST /api/challenges/<id>/runs`, a person's run to record or a team's to play."""
-    if len(parts) != 2 or parts[1] != 'runs':
-        return {'error': 'no such resource'}, 404
+    """Answers `POST /api/challenges/<id>/runs` and `POST /api/challenges/<id>/leave`.
+
+    A run is a person's run to record or a team's to play, and leave takes the attempts of a run
+    that a person left, to keep as a group or to remove.
+    """
+    if len(parts) != 2 or parts[1] not in ('runs', 'leave'):
+        return _messages.fields('server.no_resource'), 404
     if parts[0] not in {entry['id'] for entry in CATALOG}:
-        return {'error': f'no challenge {parts[0]!r}'}, 404
-    if 'person' in document:
-        unknown = set(document) - {'person', 'matches'}
+        return _messages.fields('server.challenges.no_challenge', identifier=repr(parts[0])), 404
+    keep = document.get('keep_recordings', True)
+    if 'person' in document or parts[1] == 'leave':
+        unknown = set(document) - {'person', 'matches', 'keep_recordings'}
         if unknown:
-            raise ArgumentError(f'expected person and matches, found {sorted(unknown)!r}')
-        return person_run(parts[0], document['person'], document.get('matches')), 201
-    unknown = set(document) - {'team', 'attempts'}
+            raise MessageError('server.challenges.person_fields', unknown=repr(sorted(unknown)))
+        if parts[1] == 'leave':
+            return leave_run(parts[0], document.get('person'), document.get('matches'), keep), 200
+        return person_run(parts[0], document['person'], document.get('matches'), keep), 201
+    unknown = set(document) - {'team', 'attempts', 'keep_recordings'}
     if unknown or 'team' not in document:
-        raise ArgumentError('expected a person with matches, or a team with attempts')
-    return jobs().add(parts[0], document['team'], document.get('attempts')), 201
+        raise MessageError('server.challenges.run_fields')
+    return jobs().add(parts[0], document['team'], document.get('attempts'), keep), 201
 
 
 def delete(parts: list[str]) -> tuple[Any, int]:
     """Answers `DELETE /api/challenges/jobs/<job>`, which cancels a run of the page."""
     if len(parts) == 2 and parts[0] == 'jobs' and jobs().cancel(parts[1]):
         return {'cancelled': parts[1]}, 200
-    return {'error': 'no such run'}, 404
+    return _messages.fields('server.challenges.no_run'), 404
 
 
 # The child process of a headless run, and the command line.
@@ -1166,6 +1445,7 @@ def main(arguments: list[str] | None = None) -> None:
     parser.add_argument('--team', required=True)
     parser.add_argument('--attempts', type=int, default=None)
     parser.add_argument('--device', default='cpu')
+    parser.add_argument('--no-recordings', action='store_true')
     options = parser.parse_args(arguments)
     sys.stdout.flush()
     _reports = os.fdopen(os.dup(1), 'w', encoding='utf-8')
@@ -1178,12 +1458,13 @@ def main(arguments: list[str] | None = None) -> None:
             attempts=options.attempts,
             device=options.device,
             progress=lambda result: _report(attempt=result),
+            keep_recordings=not options.no_recordings,
         )
     except PolicyError as error:
-        _report(error=str(error))
+        _report(error=str(error), **_messages.id_fields(error))
         sys.exit(1)
     except Exception as error:
-        _report(error=f'{type(error).__name__}: {error}')
+        _report(error=_messages.described(error), **_messages.id_fields(error))
         sys.exit(1)
     _report(result=outcome)
 

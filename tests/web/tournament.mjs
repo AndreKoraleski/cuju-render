@@ -14,7 +14,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's module
 // loads from a copy beside a package file that names it a module.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-tournament-'));
-cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/play/tournament-layout.js', import.meta.url)), join(folder, 'play/tournament-layout.js'));
+for (const name of ['play/tournament-layout.js', 'core/i18n.js']) {
+    cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
+}
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const layout = await import(pathToFileURL(join(folder, 'play/tournament-layout.js')).href);
@@ -122,4 +124,77 @@ test('Fixture states follow their matches, and progress follows the schedule', (
     assert.equal(layout.progressShare({ state: 'running', played: 3, scheduled: 12 }), 0.25);
     assert.equal(layout.progressShare({ state: 'done', played: 3, scheduled: 4 }), 1);
     assert.equal(layout.stageText({ format: 'groups', group_sizes: [4, 4, 3] }), 'Groups, 3 groups');
+});
+
+// The labels that the server gives, as its rules make them, here written out by hand.
+const label = (id, text, values = {}) => ({ id: `server.tournament.label.${id}`, text, values });
+const semi = label('semi_final', 'Semi-final 1', { number: '1' });
+
+test('Names and labels of the server show in the language of the page', async () => {
+    const i18n = await import(pathToFileURL(join(folder, 'core/i18n.js')).href);
+    const builtin = { name: 'Built-in AI 0.50', name_id: 'server.tournament.label.builtin_ability', name_values: { ability: '0.50' } };
+    const twice = {
+        name: 'Built-in AI 0.50 2', name_id: 'server.tournament.label.numbered',
+        name_values: { name: label('builtin_ability', 'Built-in AI 0.50', { ability: '0.50' }), number: '2' },
+    };
+    const person = { name: 'Ana' };
+    const from = { from: 'Winner of Semi-final 1', from_id: 'server.tournament.label.winner_of', from_values: { match: semi } };
+    const table = { name: 'Group A', name_id: 'server.tournament.label.group', name_values: { group: 'A' } };
+    const title = label('title', 'Spring cup, Semi-final 1, Built-in AI 0.50 against Ana', {
+        tournament: 'Spring cup', match: semi, home: label('builtin_ability', 'Built-in AI 0.50', { ability: '0.50' }), away: 'Ana',
+    });
+    const note = {
+        note: 'The game stopped, the policy of Reds failed, ValueError: no. Award the match to either side, or play it again.',
+        note_id: 'server.tournament.note.failed',
+        note_values: { error: { id: 'server.policy.failed', text: 'the policy of Reds failed, ValueError: no', values: { player: 'Reds', reason: 'ValueError: no' } } },
+    };
+    // English shows the server's own text.
+    assert.equal(layout.entrantName(builtin), 'Built-in AI 0.50');
+    assert.equal(layout.entrantName(twice), 'Built-in AI 0.50 2');
+    assert.equal(layout.sideName(0, [person]), 'Ana');
+    assert.equal(layout.sideName(from, []), 'Winner of Semi-final 1');
+    assert.equal(layout.stageNameText('Group stage'), 'Group stage');
+    assert.equal(layout.formatsText([{ format: 'groups' }, { format: 'knockout' }]), 'Groups then knockout');
+    assert.equal(i18n.labelText(title), title.text);
+    try {
+        await i18n.setLanguage('pt');
+        assert.equal(layout.entrantName(builtin), 'IA embutida 0,50');
+        assert.equal(layout.entrantName(twice), 'IA embutida 0,50 2');
+        assert.equal(layout.entrantName(person), 'Ana');
+        assert.equal(layout.sideName(from, []), 'Vencedor de Semifinal 1');
+        assert.equal(i18n.serverText(table, 'name'), 'Grupo A');
+        assert.equal(i18n.labelText(title), 'Spring cup, Semifinal 1, IA embutida 0,50 x Ana');
+        // The note and the failure inside it both read in Portuguese.
+        const shown = i18n.serverText(note, 'note');
+        assert.ok(shown.startsWith('O jogo parou, ') && shown.includes('W.O.'), shown);
+        assert.ok(!/policy|failed|Award/.test(shown), shown);
+        // A stage named by the server or a preset reads in Portuguese, a typed one as typed.
+        assert.equal(layout.stageNameText('Group stage'), 'Fase de grupos');
+        assert.equal(layout.stageNameText('Cup'), 'Copa');
+        assert.equal(layout.stageNameText('Our final'), 'Our final');
+        // A file of before, with the English text alone, keeps showing it.
+        assert.equal(layout.entrantName({ name: 'Built-in AI 0.30' }), 'Built-in AI 0.30');
+        assert.equal(layout.sideName({ from: 'Winner of Final' }, []), 'Winner of Final');
+    } finally {
+        await i18n.setLanguage('en');
+    }
+});
+
+test('Every stage name of the page has a message in each shipped language', async () => {
+    const { readFileSync } = await import('node:fs');
+    for (const code of ['en', 'pt']) {
+        const file = JSON.parse(readFileSync(new URL(`../../src/cuju/render/web/languages/${code}.json`, import.meta.url), 'utf8'));
+        for (const key of Object.values(layout.STAGE_NAME_IDS)) {
+            assert.equal(typeof file[`server.tournament.label.stage.${key}`], 'string', `${code} ${key}`);
+        }
+        for (const format of Object.keys(layout.FORMAT_NAMES)) {
+            assert.equal(typeof file[`tournament.formatLater.${format}`], 'string', `${code} ${format}`);
+        }
+    }
+    const english = JSON.parse(readFileSync(new URL('../../src/cuju/render/web/languages/en.json', import.meta.url), 'utf8'));
+    for (const [name, key] of Object.entries(layout.STAGE_NAME_IDS)) {
+        assert.equal(english[`server.tournament.label.stage.${key}`], name);
+    }
+    // The section of the third place match agrees with the name of its round.
+    assert.equal(english['tournament.section.third'], english['server.tournament.label.third_place']);
 });

@@ -28,9 +28,12 @@ import time
 import urllib.request
 from pathlib import Path
 
+import page_a11y
 import page_feed
 import page_grid
+import page_groups
 import page_help
+import page_language
 import page_search
 
 
@@ -216,6 +219,15 @@ def annotation_checks(client):
             await open(bytes, 'annotated.cjr');
             const labelled = await settle(() => layer.querySelector('span'));
             const label = labelled ? labelled.textContent : '';
+            // Each label hangs under the feet of its player, or over the head near the controls.
+            const view = cuju.view.renderer.domElement.getBoundingClientRect();
+            const clear = [...layer.querySelectorAll('span')].every((node) => {
+                const box = node.getBoundingClientRect();
+                const point = cuju.playerTools.points.find(
+                    (p) => p.index === Number(node.dataset.player));
+                return point && (box.top >= cuju.annotationOverlay.feetY(point.index, view)
+                    || box.bottom <= point.y);
+            });
             const shown = !button.hidden && label.includes('value')
                 && label.includes('Shot chosen');
             const box = document.querySelector('.annotation-match');
@@ -246,7 +258,8 @@ def annotation_checks(client):
             const closed = !panel.classList.contains('open') && document.activeElement === button;
             await open(plain, 'plain.cjr');
             const hidden = await settle(() => button.hidden && layer.hidden && paths() === 0);
-            return { off, shown, match, line, opened, listed, two, none, quiet, closed, hidden };
+            return { off, shown, clear, match, line, opened, listed, two, none, quiet, closed,
+                hidden };
         })()
     """)
     assert all(result.values()), f'Annotations {result}'
@@ -395,7 +408,7 @@ def tournament_checks(client):
             const bracket = await until(() => main().querySelector('.cup-bracket .cup-fixture'));
             const cells = main().querySelectorAll('.cup-bracket-cell').length >= 7;
             const third = [...main().querySelectorAll('.cup-bracket-section h3')]
-                .some((h) => h.textContent === 'Third place');
+                .some((h) => h.textContent === 'Third place match');
             const watch = !!main().querySelector('.cup-watch button');
             const champion = /Champion, /.test(main().querySelector('.cup-champion').textContent);
             const text = page.root.textContent;
@@ -425,7 +438,173 @@ def tournament_checks(client):
         })()
     """)
     assert result is True, f'Trophy ceremony {result}'
-    return 2
+    result = client.evaluate("""
+        (async () => {
+            const page = cuju.tournaments;
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const config = {
+                name: 'Failing cup', seed: 3, seeding: 'manual',
+                entrants: [{ kind: 'builtin', ability: 0.1, name: 'Failing bot' },
+                    { kind: 'builtin', ability: 0.2 }, { kind: 'builtin', ability: 0.3 },
+                    { kind: 'builtin', ability: 0.4 }],
+                stages: [{ format: 'knockout', settle: ['lots'] }],
+            };
+            const made = await fetch('/api/tournaments', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config }),
+            }).then((r) => r.json());
+            await page.refresh();
+            await page.open(made.id);
+            const reach = async (state) => {
+                for (let t = 0; t < 8000; t += 100) {
+                    await page.load(made.id);
+                    if (page.current && page.current.state === state) {
+                        return true;
+                    }
+                    await wait(100);
+                }
+                return false;
+            };
+            const stopped = await reach('stopped');
+            const main = page.mainHost;
+            const fixture = main.querySelector('.cup-fixture.state-failed');
+            const awards = fixture ? [...fixture.querySelectorAll('button')]
+                .filter((b) => b.textContent.startsWith('Award to')).length === 2 : false;
+            const notice = main.querySelector('.notice.error');
+            const named = !!notice && /Semi-final 1 failed, the policy of Failing bot/
+                .test(notice.textContent);
+            const inNotice = main.querySelectorAll('.cup-failed button').length === 2;
+            // The other semi-final plays, since it does not depend on the failed one.
+            const other = page.current.matches.find((m) => m.key === '0/w4-2/1');
+            const independent = !!other && other.state === 'done';
+            // The award goes to the other side, since Failing bot would fail its final too.
+            // It asks first, Escape leaves the match as it was, and Award confirms it.
+            const award = () => main.querySelectorAll('.cup-failed li > .row > button')[1];
+            award().click();
+            const asked = main.querySelector('.cup-failed .cup-confirm');
+            const focused = !!asked && asked.contains(document.activeElement);
+            document.activeElement.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            const kept = !main.querySelector('.cup-confirm') && page.current.state === 'stopped'
+                && document.activeElement === award();
+            award().click();
+            main.querySelector('.cup-failed .cup-confirm .btn.primary').click();
+            const done = await reach('done');
+            const all = { stopped, awards, named, inNotice, independent, focused, kept, done };
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+        })()
+    """)
+    assert result is True, f'Award of a failed tournament match {result}'
+    return 3
+
+
+def tournament_play_checks(client, debug, port):
+    """Checks Play now for a person's match of a tournament on a fresh page, and the pause menu.
+
+    A page opened on Tournaments has nothing on Watch, and Play still takes up the game's stream
+    once it shows. The pause menu's Controls then takes the focus, Esc closes the card before the
+    menu, and a game that ends for the page's silence says so on its end card. The tab is a fresh
+    one of its own, and the game's routes answer from the page with a live source of the mock.
+    """
+    tab = page_feed._Tab(client, debug, CDP, 800, 600)
+    try:
+        tab.tab.call(
+            'Page.addScriptToEvaluateOnNewDocument',
+            {
+                'source': """
+            localStorage.setItem('cuju.muted', 'true');
+            localStorage.setItem('cuju.quality', '"low"');
+            localStorage.setItem('cuju.tips', '{"off": true}');
+            Element.prototype.requestPointerLock = function () {
+                throw new Error('Pointer capture refused by the page check.');
+            };
+        """
+            },
+        )
+        tab.open(f'http://127.0.0.1:{port}/#page=tournaments')
+        deadline = time.monotonic() + 90
+        while not tab.evaluate(
+            "!!(window.cuju && cuju.tournaments && cuju.page === 'tournaments')"
+        ):
+            if time.monotonic() > deadline:
+                raise RuntimeError('The fresh page did not open Tournaments.')
+            time.sleep(0.25)
+        result = tab.evaluate("""
+            (async () => {
+                const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                const until = async (test, ms = 60000) => {
+                    for (let t = 0; t < ms; t += 100) {
+                        if (test()) {
+                            return true;
+                        }
+                        await wait(100);
+                    }
+                    return false;
+                };
+                const { api } = await import('./js/core/api.js');
+                const { tournamentsApi } = await import('./js/play/tournament.js');
+                const sources = await api.live();
+                const empty = !cuju.source;
+                let entry = { id: sources[0].id, state: 'ready', score: [0, 0] };
+                const streams = [];
+                tournamentsApi.action = async () => entry;
+                api.gameStream = (id, signal) => {
+                    streams.push(id);
+                    return api.liveStream(id, signal);
+                };
+                api.pauseGame = async (id, paused) => {
+                    entry = { ...entry, state: paused ? 'paused' : 'playing' };
+                    return entry;
+                };
+                api.gameInput = async () => entry;
+                api.game = async () => entry;
+                api.quitGame = async () => {
+                    entry = { ...entry, state: 'ended', ending: 'timeout' };
+                    return entry;
+                };
+                const page = cuju.tournaments;
+                page.current = { id: 'cup-page-check', name: 'Page check cup' };
+                await page.playMatch({ key: 'final', persons: [true, false], label: 'Final' });
+                const started = await until(() => cuju.play && cuju.play.game
+                    && cuju.play.game.started, 40000);
+                const streamed = streams.length === 1 && cuju.page === 'play';
+                if (!started) {
+                    return JSON.stringify({ empty, started, streams: streams.length });
+                }
+                const play = cuju.play;
+                play.pause(true);
+                await wait(200);
+                play.controlsButton.click();
+                const card = play.card;
+                const focused = await until(() => card.contains(document.activeElement)
+                    && card.getAttribute('role') === 'dialog', 5000);
+                const where = (node) => node && `${node.tagName}.${node.className}`;
+                const held = { active: where(document.activeElement),
+                    role: card.getAttribute('role'), modal: card.getAttribute('aria-modal'),
+                    hidden: card.hidden };
+                document.activeElement.dispatchEvent(new KeyboardEvent('keydown',
+                    { key: 'Escape', code: 'Escape', bubbles: true }));
+                await wait(200);
+                const closed = card.hidden && !play.menu.hidden
+                    && document.activeElement === play.controlsButton;
+                await play.quit();
+                const silent = await until(() => /heard nothing from this page/
+                    .test(play.endPanel.innerText), 10000);
+                if (play.game && play.game.source) {
+                    play.game.source.live.stop();
+                }
+                play.showSetup();
+                const all = { empty, started, streamed, focused, closed, silent,
+                    unlocked: !document.pointerLockElement };
+                return Object.values(all).every(Boolean) || JSON.stringify({ ...all, held,
+                    after: where(document.activeElement) });
+            })()
+        """)
+    finally:
+        errors = tab.close()
+    assert result is True, f'Play now of a tournament on a fresh page {result}'
+    assert not errors, errors
+    return 1
 
 
 def surprise_checks(client):
@@ -689,6 +868,88 @@ def palette_checks(client):
     """)
     assert all(result.values()), f'The top bar button and a settings action {result}'
     return 4
+
+
+def ui_a11y_checks(client):
+    """Checks the names, headings, live regions and status lines that screen readers rely on."""
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const all = {};
+            const seek = ['back-30', 'back-5', 'forward-5', 'forward-30'].map((act) =>
+                document.querySelector(`[data-act="${act}"]`).getAttribute('aria-label'));
+            all.seek = seek.join() === [
+                'Back 30 seconds', 'Back 5 seconds', 'Forward 5 seconds', 'Forward 30 seconds',
+            ].join();
+            const clock = document.getElementById('clock');
+            all.clock = clock.getAttribute('role') === 'timer'
+                && clock.getAttribute('aria-live') === 'off';
+            const shown = (node) => !node.closest('[hidden]')
+                && (node.getClientRects().length > 0 || node.classList.contains('sr-only'));
+            const bad = [];
+            const pages = ['play', 'recordings', 'matches', 'tournaments', 'teams', 'field',
+                'help'];
+            for (const page of pages) {
+                cuju.showPage(page);
+                await wait(700);
+                const levels = [...document.querySelectorAll(
+                    '#pages h1, #pages h2, #pages h3, #pages h4, #pages h5, #pages h6')]
+                    .filter(shown).map((node) => Number(node.tagName[1]));
+                const skips = levels.some((level, i) => i > 0 && level > levels[i - 1] + 1);
+                const ones = levels.filter((level) => level === 1).length;
+                if (levels[0] !== 1 || ones !== 1 || skips) {
+                    bad.push(`${page} ${levels.join('')}`);
+                }
+            }
+            all.headings = bad.length === 0 || bad.join(' ');
+            const doctor = await import('./js/help/doctor.js');
+            const status = doctor.reportStatus({ server: { checks: [
+                { name: 'home folder', ok: true, detail: 'fine' },
+                { name: 'video export', ok: true, warning: true, detail: 'missing' },
+            ] } });
+            all.warning = status === 'The report is ready. 1 check warns, video export.' || status;
+            all.language = cuju.palette.actions()
+                .some((action) => action.title === 'Language, Português (Brasil)');
+            cuju.showPage('home');
+            return all;
+        })()
+    """)
+    for name, value in result.items():
+        assert value is True, (name, value)
+    return len(result)
+
+
+def hash_checks(client):
+    """Checks that a page beside Watch keeps its hash still and opens a hash typed into it."""
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const id = (await (await fetch('/api/matches')).json())[0].id;
+            await cuju.openMatch(id);
+            await wait(500);
+            cuju.showPage('tournaments');
+            const replace = history.replaceState;
+            let writes = 0;
+            history.replaceState = function (...args) {
+                writes += 1;
+                return replace.apply(this, args);
+            };
+            try {
+                await wait(1000);
+                const still = writes <= 1 && location.hash === '#page=tournaments';
+                location.hash = `#match=${encodeURIComponent(id)}&t=3`;
+                await wait(1500);
+                const opened = cuju.page === 'watch' && cuju.source && cuju.source.id === id;
+                return { still: still || writes, opened };
+            } finally {
+                history.replaceState = replace;
+                cuju.showPage('home');
+            }
+        })()
+    """)
+    for name, value in result.items():
+        assert value is True, ('hash', name, value)
+    return len(result)
 
 
 def presets_checks(client):
@@ -1136,22 +1397,357 @@ def presentation_checks(client, port):
     assert result['frames'] > 3 and result['sandboxes'] == 1, result
     assert any('seek' in line for line in result['log']) or result['log'], result
     extra = effects_checks(client, team)
-    # The worker gone, the page keeps drawing its manifest's look.
+    # A chunks shader that does not compile is named, and its materials stay standard.
+    shader = client.evaluate("""
+        (async () => {
+            const THREE = await import('three');
+            const p = cuju.presentation;
+            const pkg = p.packages[0];
+            const material = new THREE.MeshStandardMaterial();
+            const options = (file, source) => ({ shared: p.uniforms[0], seed: 1, source,
+                spec: null, textures: null, key: `0:${file}` });
+            const compile = (file, source) => p.chunksCompile(pkg, file, material,
+                options(file, source));
+            const hook = 'vec3 cujuEmissive(vec3 e, vec2 uv) { return e';
+            const good = compile('check/good.glsl', `${hook}; }`);
+            const bad = compile('check/bad.glsl', `${hook} + ; }`);
+            const { previewSide } = await import('./js/presentation/preview.js');
+            return { good, bad, error: pkg.errors.includes('shader check/bad.glsl did not compile'),
+                notice: [...p.statusShown].some((t) => t.includes('did not compile')),
+                sides: [previewSide('left'), previewSide('right'), previewSide('1')] };
+        })()
+    """)
+    assert shader == {
+        'good': True,
+        'bad': False,
+        'error': True,
+        'notice': True,
+        'sides': [0, 1, None],
+    }, shader
+    # The worker gone, the page keeps drawing its manifest's look and says why.
     result = client.evaluate("""
         (async () => {
             const pkg = cuju.presentation.packages[0];
+            // A worker that a loaded machine starved may still be restarting, so the check waits
+            // for it to answer before it ends it.
+            const end = performance.now() + 30000;
+            while (pkg.host.status !== 'ready' && performance.now() < end) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
             pkg.host.fail('test', true);
             await new Promise((resolve) => setTimeout(resolve, 300));
             const s = cuju.presentation.status();
             return { status: s.packages[0].status, level: s.packages[0].budget.level,
+                pkgLevel: s.packages[0].level, detail: s.packages[0].detail,
+                notice: [...cuju.presentation.statusShown]
+                    .some((t) => t.startsWith('The worker of')),
                 entities: s.entities.length,
                 sandboxes: document.querySelectorAll('iframe[sandbox="allow-scripts"]').length };
         })()
     """)
-    assert result == {'status': 'failed', 'level': 'noWorker', 'entities': 5, 'sandboxes': 0}, (
-        result
+    assert result == {
+        'status': 'failed',
+        'level': 'noWorker',
+        'pkgLevel': 'manifest',
+        'detail': 'test',
+        'notice': True,
+        'entities': 5,
+        'sandboxes': 0,
+    }, result
+    return 10 + extra
+
+
+# Posts a start to a sandbox window `w` with a port and reports whether a worker ever answered.
+_SANDBOX_START = """
+    (async (w) => {
+        const channel = new MessageChannel();
+        const answers = [];
+        channel.port1.onmessage = (e) => answers.push(e.data && e.data.type);
+        const module = 'export function init() {}';
+        try {
+            w.postMessage({ type: 'start', module, instanceId: 1 }, '*', [channel.port2]);
+        } catch (err) {
+            answers.push('unreachable');
+        }
+        channel.port1.postMessage({ type: 'hello', hello: { instanceId: 1 }, probe: 'x:' });
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        return answers.filter((type) => type !== 'unreachable');
+    })
+"""
+
+
+def sandbox_top_checks(client, port, debug):
+    """Opens the sandbox of team workers as a whole window, as another site could.
+
+    It has an opaque origin there, holds no cache or storage of the server, and starts no worker
+    for a message of its own window or of the page that opened it.
+    """
+    address = f'http://127.0.0.1:{port}'
+    created = client.call('Target.createTarget', {'url': f'{address}/sandbox/presentation'})
+    tab = CDP(f'ws://127.0.0.1:{debug}/devtools/page/{created["targetId"]}')
+    try:
+        tab.call('Runtime.enable')
+        for _ in range(100):
+            if tab.evaluate("document.readyState === 'complete'"):
+                break
+            time.sleep(0.1)
+        alone = tab.evaluate(f"""
+            (async () => {{
+                let caches = 'blocked';
+                try {{
+                    await self.caches.keys();
+                    caches = 'open';
+                }} catch (err) {{
+                    caches = 'blocked';
+                }}
+                let storage = 'blocked';
+                try {{
+                    localStorage.length;
+                    storage = 'open';
+                }} catch (err) {{
+                    storage = 'blocked';
+                }}
+                const answers = await ({_SANDBOX_START})(window);
+                return {{ origin: self.origin, top: window.parent === window, caches, storage,
+                    answers }};
+            }})()
+        """)
+    finally:
+        tab.socket.close()
+        client.call('Target.closeTarget', {'targetId': created['targetId']})
+    assert alone == {
+        'origin': 'null',
+        'top': True,
+        'caches': 'blocked',
+        'storage': 'blocked',
+        'answers': [],
+    }, alone
+    # The page opens the route in a window of its own and posts a start, as another site would.
+    before = {t['targetId'] for t in client.call('Target.getTargets')['targetInfos']}
+    opened = client.call(
+        'Runtime.evaluate',
+        {
+            'expression': f"""
+                (async () => {{
+                    const w = window.open('/sandbox/presentation', '_blank');
+                    // The window parts from the page once the sandbox's answer arrives.
+                    for (let i = 0; i < 100 && w && !w.closed; i++) {{
+                        await new Promise((resolve) => setTimeout(resolve, 100));
+                    }}
+                    const answers = w ? await ({_SANDBOX_START})(w) : [];
+                    return {{ opened: !!w, severed: !w || w.closed, answers }};
+                }})()
+            """,
+            'returnByValue': True,
+            'awaitPromise': True,
+            'userGesture': True,
+        },
+    )['result']['value']
+    for target in client.call('Target.getTargets')['targetInfos']:
+        if target['targetId'] not in before and target['type'] == 'page':
+            client.call('Target.closeTarget', {'targetId': target['targetId']})
+    # The page's own tab comes back to the front, since a tab behind another starts its frames late.
+    client.call('Page.bringToFront')
+    assert opened['answers'] == [] and opened['severed'], opened
+    return 2
+
+
+# A worker module that reports what it reaches of the GPU and of the wrapper around it.
+_WORKER_PROBE = """
+let hello = null;
+export function init(h) { hello = h; }
+export function frame(f) {
+    const kind = (canvas, name) => {
+        const context = canvas.getContext(name);
+        return context && Object.prototype.toString.call(context).slice(8, -1);
+    };
+    const slot = hello.canvases && hello.canvases.badge;
+    const seen = {
+        webgl2: kind(new OffscreenCanvas(8, 8), 'webgl2'),
+        webgl: kind(new OffscreenCanvas(8, 8), 'webgl'),
+        bitmap: kind(new OffscreenCanvas(8, 8), 'bitmaprenderer'),
+        webgpu: kind(new OffscreenCanvas(8, 8), 'webgpu'),
+        slotWebgl2: slot ? kind(slot, 'webgl2') : 'no slot',
+        twoD: kind(new OffscreenCanvas(8, 8), '2d'),
+        gpu: typeof navigator.gpu, worker: typeof Worker,
+        wrapper: [typeof port, typeof canvases, typeof instanceId, typeof reply, typeof listen],
+    };
+    const before = OffscreenCanvas.prototype.getContext;
+    try { OffscreenCanvas.prototype.getContext = () => 'mine'; } catch (err) { /* refused */ }
+    try { Object.defineProperty(OffscreenCanvas.prototype, 'getContext', { value: () => 'mine' }); }
+    catch (err) { /* refused */ }
+    seen.replaced = OffscreenCanvas.prototype.getContext !== before;
+    return { log: [JSON.stringify(seen)] };
+}
+"""
+# Worker modules that answer with a bitmap the host refuses, a slot's canvas grown past its size
+# and a large bitmap outside any slot.
+_WORKER_GROWN = """
+let hello = null;
+export function init(h) { hello = h; }
+export function frame(f) {
+    const slot = hello.canvases.badge;
+    slot.width = 2000;
+    slot.getContext('2d').fillRect(0, 0, 2000, 96);
+    return { overlays: [{ slot: 'badge', op: 'draw' }] };
+}
+"""
+_WORKER_LOOSE = """
+export function frame(f) {
+    const canvas = new OffscreenCanvas(3000, 3000);
+    canvas.getContext('2d').fillRect(0, 0, 3000, 3000);
+    return { log: [], extra: { picture: canvas.transferToImageBitmap() } };
+}
+"""
+# Runs a module in a ModuleHost of the page for one Frame and reports the answer and the statuses.
+# A page that has drawn for the whole check starts a sandbox slowly, so each wait lasts 30 seconds.
+_RUN_WORKER = """
+    (async (source) => {
+        const { ModuleHost } = await import('./js/presentation/host.js');
+        let answer = null;
+        const statuses = [];
+        const host = new ModuleHost({
+            source, instanceId: 'probe.1',
+            hello: { type: 'hello', instanceId: 'probe.1', slots: ['badge'] },
+            onResponse: (m) => { answer = m; },
+            onStatus: (status, detail) => statuses.push([status, detail]),
+        });
+        for (let i = 0; i < 300 && host.status !== 'ready'; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        const ready = host.status;
+        const seen = { hidden: document.hidden, frames: document.querySelectorAll('iframe').length,
+            frame: !!host.frame, port: !!host.port };
+        host.send({ epoch: 0, frameId: 1, events: [], players: [] });
+        for (let i = 0; i < 300 && !answer && host.status === 'ready'; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        host.dispose();
+        return ready === 'ready' ? { ready, log: answer && answer.log, statuses }
+            : { ready, log: answer && answer.log, statuses, seen };
+    })
+"""
+
+
+def worker_checks(client):
+    """Runs worker modules in the page's sandbox and checks what they reach and what they send.
+
+    A module's own canvases and its slot's canvas give no WebGL, WebGPU or bitmap context, only 2d,
+    it cannot put back the canvas's getContext, and it finds neither navigator.gpu, Worker nor any
+    binding of the wrapper around it. A bitmap of a slot grown past the slot's size, or a bitmap
+    outside the overlays, ends the worker as a failure.
+    """
+
+    def run(source):
+        # A loaded machine may leave a sandbox without its answer for a while, so a run that
+        # heard nothing and saw no failure runs once more.
+        for _ in range(2):
+            result = client.evaluate(f'({_RUN_WORKER})({json.dumps(source)})')
+            if result['log'] is not None or len(result['statuses']) > 2:
+                break
+        return result
+
+    result = run(_WORKER_PROBE)
+    assert result['ready'] == 'ready' and result['log'], result
+    assert json.loads(result['log'][0]) == {
+        'webgl2': None,
+        'webgl': None,
+        'bitmap': None,
+        'webgpu': None,
+        'slotWebgl2': None,
+        'twoD': 'OffscreenCanvasRenderingContext2D',
+        'gpu': 'undefined',
+        'worker': 'undefined',
+        'wrapper': ['undefined'] * 5,
+        'replaced': False,
+    }, result
+    for source, reason in (
+        (_WORKER_GROWN, 'a bitmap of 2000 by 96 pixels for the slot badge'),
+        (_WORKER_LOOSE, 'a bitmap outside its slot'),
+    ):
+        result = run(source)
+        assert result['ready'] == 'ready' and result['log'] is None, result
+        assert ['restarting', f'the worker answered with {reason}'] in result['statuses'], result
+    return 3
+
+
+# A package worklet that imports the renderer's loudness module and turns its governor and its
+# limiter off, as a module past the server's check could.
+_WORKLET_ATTACK = b"""
+import { Governor, Limiter } from '/js/presentation/loudness.js';
+Governor.prototype.update = function () { return 0; };
+Limiter.prototype.process = function (inputs, outputs) {
+    for (let c = 0; c < outputs.length; c++) outputs[c].set(inputs[Math.min(c, inputs.length - 1)]);
+};
+class TestHum extends AudioWorkletProcessor { process() { return true; } }
+registerProcessor('test-hum', TestHum);
+"""
+
+
+def worklet_checks(client, port):
+    """Loads a package worklet that turns the governor off, apart from the page's processors.
+
+    In a context of its own, as the page loads a team's worklet, the module leaves the renderer's
+    governor and limiter as they are, and a loud square wave comes out governed. Loaded into the
+    renderer's own scope, the same module turns them off, which the check also shows, so it proves
+    the separation and not a module that does nothing. Both render offline, so nothing sounds.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests'))
+    from support.package import package_zip
+
+    upload = urllib.request.Request(
+        f'http://127.0.0.1:{port}/api/teams?name=Loud%20package&filename=team.zip&format=5v5',
+        data=package_zip('Loud package', {'cuju-team/presentation/audio/hum.js': _WORKLET_ATTACK}),
+        method='POST',
     )
-    return 9 + extra
+    with urllib.request.urlopen(upload, timeout=30) as response:
+        team = json.load(response)
+    result = client.evaluate(f"""
+        (async () => {{
+            const {{ WORKLET, FREEZE }} = await import('./js/presentation/teamaudio.js');
+            const {{ SAFETY }} = await import('./js/presentation/commands.js');
+            const L = SAFETY.loudness;
+            const url = '/api/teams/{team['id']}/presentation/audio/hum.js';
+            const type = (await fetch(url)).headers.get('Content-Type');
+            const rate = 48000;
+            const render = async (shared) => {{
+                const ctx = new OfflineAudioContext(2, rate * 4, rate);
+                await ctx.audioWorklet.addModule(WORKLET);
+                await ctx.audioWorklet.addModule(FREEZE);
+                if (shared) {{
+                    await ctx.audioWorklet.addModule(url);
+                }} else {{
+                    const own = new OfflineAudioContext(2, 128, rate);
+                    await own.audioWorklet.addModule(url);
+                }}
+                const square = ctx.createOscillator();
+                square.type = 'square';
+                square.frequency.value = 220;
+                const level = ctx.createGain();
+                level.gain.value = 0.5;
+                const governor = new AudioWorkletNode(ctx, 'cuju-loudness', {{
+                    processorOptions: {{ govern: true, shortTermCeiling: L.teamShortTerm,
+                        momentaryCeiling: L.teamMomentary, channels: 2 }},
+                    outputChannelCount: [2] }});
+                const limiter = new AudioWorkletNode(ctx, 'cuju-limiter', {{
+                    processorOptions: {{ ceiling: L.teamTruePeak }}, outputChannelCount: [2] }});
+                square.connect(level).connect(governor).connect(limiter).connect(ctx.destination);
+                square.start();
+                const out = (await ctx.startRendering()).getChannelData(0);
+                let peak = 0;
+                for (let i = rate * 3; i < out.length; i++) {{
+                    peak = Math.max(peak, Math.abs(out[i]));
+                }}
+                return Math.round(peak * 1000) / 1000;
+            }};
+            return {{ type, apart: await render(false), shared: await render(true) }};
+        }})()
+    """)
+    assert result['type'] == 'text/javascript', result
+    # Governed, the square's last second sits under half its level, about 10 dB down by then.
+    # Ungoverned it keeps its level of 0.5.
+    assert result['shared'] > 0.45 and result['apart'] < result['shared'] / 2, result
+    return 1
 
 
 def effects_checks(client, team):
@@ -1302,11 +1898,19 @@ def effects_checks(client, team):
                     body: JSON.stringify({{ right: {value} }}) }});
                 await cuju.rebuildPlayers();
                 const pkg = cuju.presentation.packages[1];
-                return pkg ? pkg.teamId : null;
+                const s = cuju.presentation.status();
+                const right = s.entities.filter((e) => e.side === 1);
+                const entry = (e) => cuju.players.packageEntry(Number(e.id.slice(1))) || {{}};
+                const grf = right.filter((e) => entry(e).grf);
+                const drivers = grf.every((e) => e.driver === 'grf');
+                return [pkg ? pkg.teamId : null, right.length, grf.length, drivers];
             }})()
         """)
         )
-    assert sides == [team['id'], None], sides
+    assert [side[0] for side in sides] == [team['id'], None], sides
+    # The built-in AI draws GRF's figure, which carries the package chosen for its side.
+    assert sides[0][1] == 5 and sides[0][2] >= 1 and sides[0][3], sides
+    assert sides[1][1] == 0, sides
     assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
     return 10
 
@@ -1865,7 +2469,9 @@ def challenge_checks(client):
             const start = document.querySelector(
                 '.challenge-item[data-id="one_on_one"] [data-action="start"]');
             start.focus();
-            return { named, focused: document.activeElement === start,
+            // Every challenge has the same buttons, and each names its challenge.
+            const labelled = start.getAttribute('aria-label') === 'Start challenge, One on one';
+            return { named, labelled, focused: document.activeElement === start,
                 scripted: typeof cuju.challenges.start === 'function' };
         })()
     """)
@@ -1931,7 +2537,8 @@ def challenge_checks(client):
                 await cuju.challenges.next();
                 for (let i = 0; i < 100 && !cuju.play.game.started; i++) await wait(100);
                 await cuju.play.quit();
-                for (let i = 0; i < 100 && !/personal best/i.test(cuju.play.endPanel.innerText);
+                for (let i = 0; i < 100
+                    && !/personal best|first run/i.test(cuju.play.endPanel.innerText);
                     i++) {
                     await wait(50);
                 }
@@ -1973,7 +2580,9 @@ def challenge_checks(client):
                 for (let i = 0; i < 50 && !board().querySelector('table'); i++) await wait(50);
                 const kinds = [...board().querySelectorAll('.challenge-kind')]
                     .map((mark) => mark.textContent);
-                const marked = kinds.includes('Person') && kinds.includes('Agent')
+                // A team and a policy each read as their own kind of competitor.
+                const marked = kinds.includes('Person')
+                    && (kinds.includes('Team') || kinds.includes('Python policy'))
                     && toggle.getAttribute('aria-expanded') === 'true';
                 const entries = await cuju.challenges.board('one_on_one');
                 const ranked = entries.map((e) => e.kind).join() === 'agent,person';
@@ -2019,7 +2628,9 @@ def main():
     client = None
     checks = 0
     try:
-        with tempfile.TemporaryDirectory(prefix='cuju-page-') as profile:
+        with tempfile.TemporaryDirectory(
+            prefix='cuju-page-', ignore_cleanup_errors=True
+        ) as profile:
             processes.append(
                 subprocess.Popen(
                     [
@@ -2042,6 +2653,8 @@ def main():
                         options.chrome,
                         '--headless=new',
                         '--mute-audio',
+                        # The checks read the English page, whatever the language of the machine.
+                        '--lang=en-US',
                         '--no-sandbox',
                         '--disable-background-networking',
                         '--proxy-server=http://127.0.0.1:9',
@@ -2972,10 +3585,13 @@ def main():
             checks += 1
             checks += motion_checks(client)
             checks += library_checks(client)
+            checks += page_groups.check_groups(client)
             checks += tournament_checks(client)
+            checks += tournament_play_checks(client, debug, port)
             checks += surprise_checks(client)
             checks += reconnection_checks(client)
             checks += palette_checks(client)
+            checks += ui_a11y_checks(client)
             checks += presets_checks(client)
             checks += first_run_checks(client)
             checks += touch_checks(client)
@@ -2985,12 +3601,18 @@ def main():
             checks += format_checks(client)
             checks += annotation_checks(client)
             checks += presentation_checks(client, port)
+            checks += sandbox_top_checks(client, port, debug)
+            checks += worklet_checks(client, port)
+            checks += worker_checks(client)
             checks += photo_checks(client)
             checks += challenge_checks(client)
             checks += page_help.help_checks(client, port)
+            checks += page_a11y.a11y_checks(client)
             checks += page_search.check_search(client)
             checks += page_search.check_captions(client)
             checks += page_feed.check_feed(client, f'http://127.0.0.1:{port}/', debug, CDP)
+            checks += page_language.check_languages(client)
+            checks += hash_checks(client)
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
             assert not client.evaluate('!!document.pointerLockElement')
             assert not client.errors, client.errors

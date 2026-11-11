@@ -17,9 +17,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from cuju.errors import ArgumentError
-
 from .._registry import teams as _teams
+from .._text.messages import MessageError
 from . import home as _home
 from . import library as _library
 
@@ -130,7 +129,7 @@ def add(wanted: list[str] | None = None) -> dict[str, Any]:
     wanted = every if wanted is None else list(wanted)
     unknown = [name for name in wanted if name not in every]
     if unknown:
-        raise ArgumentError(f'expected samples from {every}, found {unknown}')
+        raise MessageError('server.samples.unknown', every=every, unknown=unknown)
     before = {entry['id']: entry['state'] for entry in listing()}
     recordings = [name for name in wanted if name in _library.samples()]
     if recordings:
@@ -160,5 +159,5 @@ def team_folder(name: str) -> Path:
         ArgumentError: If the name is not a sample team.
     """
     if name not in TEAMS:
-        raise ArgumentError(f'expected a sample team from {list(TEAMS)}, found {name!r}')
+        raise MessageError('server.samples.team', teams=list(TEAMS), name=repr(name))
     return _FOLDER / 'teams' / TEAMS[name]['folder']

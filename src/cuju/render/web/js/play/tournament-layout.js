@@ -6,44 +6,100 @@
 // its widest round needs, and each tie spans the rows of the ties that feed it, so a later tie
 // sits centred between its two earlier ones.
 
+import { serverText, t, tOr } from '../core/i18n.js';
+
 export const FORMAT_NAMES = {
-    knockout: 'Knockout',
-    double_elimination: 'Double elimination',
-    league: 'League',
-    groups: 'Groups',
-    swiss: 'Swiss system',
-    ladder: 'Ladder',
-    king_of_the_hill: 'King of the hill',
-    gauntlet: 'Gauntlet',
+    knockout: t('tournament.format.knockout'),
+    double_elimination: t('tournament.format.double_elimination'),
+    league: t('tournament.format.league'),
+    groups: t('tournament.format.groups'),
+    swiss: t('tournament.format.swiss'),
+    ladder: t('tournament.format.ladder'),
+    king_of_the_hill: t('tournament.format.king_of_the_hill'),
+    gauntlet: t('tournament.format.gauntlet'),
 };
 
 export const TIEBREAK_NAMES = {
-    goal_difference: 'goal difference',
-    goals_for: 'goals scored',
-    goals_against: 'fewer goals conceded',
-    head_to_head: 'the matches between them',
-    wins: 'wins',
-    away_goals: 'away goals',
-    fair_play: 'fair play',
-    buchholz: 'Buchholz, the points of the opponents met',
-    lots: 'lots drawn from the tournament seed',
+    goal_difference: t('tournament.tiebreak.goal_difference'),
+    goals_for: t('tournament.tiebreak.goals_for'),
+    goals_against: t('tournament.tiebreak.goals_against'),
+    head_to_head: t('tournament.tiebreak.head_to_head'),
+    wins: t('tournament.tiebreak.wins'),
+    away_goals: t('tournament.tiebreak.away_goals'),
+    fair_play: t('tournament.tiebreak.fair_play'),
+    buchholz: t('tournament.tiebreak.buchholz'),
+    lots: t('tournament.tiebreak.lots'),
 };
 
+// The format of each later stage in a list of stages, as it reads after the first.
+const LATER_FORMAT_NAMES = {
+    knockout: t('tournament.formatLater.knockout'),
+    double_elimination: t('tournament.formatLater.double_elimination'),
+    league: t('tournament.formatLater.league'),
+    groups: t('tournament.formatLater.groups'),
+    swiss: t('tournament.formatLater.swiss'),
+    ladder: t('tournament.formatLater.ladder'),
+    king_of_the_hill: t('tournament.formatLater.king_of_the_hill'),
+    gauntlet: t('tournament.formatLater.gauntlet'),
+};
+
+// The formats of a list of stages in a phrase, such as Groups then knockout.
+export function formatsText(stages) {
+    return (stages || []).map((stage, index) => {
+        const names = index === 0 ? FORMAT_NAMES : LATER_FORMAT_NAMES;
+        return names[stage.format] || stage.format;
+    }).join(t('tournament.formats.then'));
+}
+
+// The stage names that the server and its shipped presets give, by their English text, each
+// with the message of its label. A stage that a draft holds by such a name shows it in the
+// language of the page, and the server keeps the label when the name stays as it was.
+export const STAGE_NAME_IDS = {
+    Knockout: 'knockout',
+    'Double elimination': 'double_elimination',
+    League: 'league',
+    Groups: 'groups',
+    Swiss: 'swiss',
+    Ladder: 'ladder',
+    'King of the hill': 'king_of_the_hill',
+    Gauntlet: 'gauntlet',
+    'Group stage': 'group_stage',
+    'Knockout stage': 'knockout_stage',
+    'League phase': 'league_phase',
+    Playoffs: 'playoffs',
+    'Round robin': 'round_robin',
+    Cup: 'cup',
+    'Regular season': 'regular_season',
+};
+
+// The name of a stage of a draft in the language of the page, a name that a person typed as
+// they typed it.
+export function stageNameText(name) {
+    const key = typeof name === 'string' && Object.prototype.hasOwnProperty.call(STAGE_NAME_IDS, name) ? STAGE_NAME_IDS[name] : null;
+    return key ? tOr(`server.tournament.label.stage.${key}`, name) : (name || '');
+}
+
+// The name of an entrant, a name that the server made, such as Built-in AI 0.50, in the
+// language of the page, and a name that a person gave as given.
+export function entrantName(entrant) {
+    return entrant ? serverText(entrant, 'name') : '';
+}
+
 export const SETTLE_NAMES = {
-    away_goals: 'Away goals',
-    replay: 'A replay',
-    decider: 'A deciding match',
-    lots: 'Lots from the seed',
+    away_goals: t('tournament.settle.away_goals'),
+    replay: t('tournament.settle.replay'),
+    decider: t('tournament.settle.decider'),
+    lots: t('tournament.settle.lots'),
 };
 
 export const DECIDED_NAMES = {
     score: '',
-    aggregate: 'on aggregate',
-    'away goals': 'on away goals',
-    replay: 'after a replay',
-    decider: 'after a deciding match',
-    lots: 'by lots',
-    holder: 'holds on a draw',
+    aggregate: t('tournament.decided.aggregate'),
+    'away goals': t('tournament.decided.away_goals'),
+    replay: t('tournament.decided.replay'),
+    decider: t('tournament.decided.decider'),
+    lots: t('tournament.decided.lots'),
+    holder: t('tournament.decided.holder'),
     bye: '',
 };
 
@@ -51,12 +107,12 @@ export const DECIDED_NAMES = {
 const SECTIONS = ['play_in', 'main', 'winners', 'losers', 'final', 'third'];
 
 export const SECTION_NAMES = {
-    play_in: 'Play-in round',
-    main: 'Bracket',
-    winners: 'Winners bracket',
-    losers: 'Losers bracket',
-    final: 'Grand final',
-    third: 'Third place',
+    play_in: t('tournament.section.play_in'),
+    main: t('tournament.section.main'),
+    winners: t('tournament.section.winners'),
+    losers: t('tournament.section.losers'),
+    final: t('tournament.section.final'),
+    third: t('tournament.section.third'),
 };
 
 // Whether a stage draws as a bracket.
@@ -95,15 +151,16 @@ export function bracketLayout(rounds) {
     return { columns: rounds.length, rows, cells };
 }
 
-// The name of a side of a fixture, an entrant, a bye or the tie it comes from.
+// The name of a side of a fixture, an entrant, a bye or the tie it comes from, whose words the
+// server gives.
 export function sideName(side, entrants) {
     if (side === null || side === undefined) {
-        return 'Bye';
+        return t('tournament.side.bye');
     }
     if (typeof side === 'object') {
-        return side.from || 'To be decided';
+        return side.from ? serverText(side, 'from') : t('tournament.side.undecided');
     }
-    return entrants[side] ? entrants[side].name : `Entrant ${side + 1}`;
+    return entrants[side] ? entrantName(entrants[side]) : t('tournament.side.entrant', { number: side + 1 });
 }
 
 // Why a row stands above the next one in a table, in words, or an empty text when its points
@@ -115,9 +172,9 @@ export function tiebreakText(row, next, entrants) {
     const name = TIEBREAK_NAMES[row.tiebreak] || row.tiebreak;
     const other = sideName(next.entrant, entrants);
     if (row.tiebreak === 'lots') {
-        return `Level with ${other} on every tiebreaker, placed above by ${name}`;
+        return t('tournament.tiebreakText.lots', { other, name });
     }
-    return `Level on points with ${other}, placed above on ${name}`;
+    return t('tournament.tiebreakText.points', { other, name });
 }
 
 // The share of a tournament played, from 0 to 1, by the matches scheduled so far.
@@ -133,13 +190,13 @@ export function stageText(stage) {
     const name = FORMAT_NAMES[stage.format] || stage.format;
     const parts = [name];
     if (stage.format === 'groups' && stage.group_sizes) {
-        parts.push(`${stage.group_sizes.length} groups`);
+        parts.push(t('tournament.stageText.groups', { count: stage.group_sizes.length }));
     }
     if (stage.format === 'swiss' && stage.rounds) {
-        parts.push(`${stage.rounds} rounds`);
+        parts.push(t('tournament.stageText.rounds', { count: stage.rounds }));
     }
     if ((stage.format === 'knockout' || stage.format === 'double_elimination') && stage.legs > 1) {
-        parts.push(`${stage.legs} legs`);
+        parts.push(t('tournament.stageText.legs', { count: stage.legs }));
     }
     return parts.join(', ');
 }
@@ -167,11 +224,11 @@ export function fixtureState(fixture, matches) {
 }
 
 export const STATE_NAMES = {
-    done: 'Played',
-    waiting: 'Waiting for earlier results',
-    running: 'Playing',
-    playing: 'A person is playing',
-    failed: 'Failed',
-    person: 'Ready for a person',
-    ready: 'In the queue',
+    done: t('tournament.fixtureState.done'),
+    waiting: t('tournament.fixtureState.waiting'),
+    running: t('tournament.fixtureState.running'),
+    playing: t('tournament.fixtureState.playing'),
+    failed: t('tournament.fixtureState.failed'),
+    person: t('tournament.fixtureState.person'),
+    ready: t('tournament.fixtureState.ready'),
 };

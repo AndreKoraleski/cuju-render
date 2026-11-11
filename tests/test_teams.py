@@ -5,6 +5,7 @@
 import io
 import json
 import logging
+import os
 import struct
 import threading
 import urllib.request
@@ -16,11 +17,13 @@ import cuju
 import cuju.errors
 import cuju.state
 from cuju.render._format import recording as _recording
+from cuju.render._http import launch as _launch
 from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
 from cuju.render._store import home as _home
 from cuju.render._store import library as _library
 from support.common import (
+    _OGG,
     _SEVERAL,
     _SINGLE,
     _control,
@@ -30,7 +33,9 @@ from support.common import (
     _package_team,
     _send,
     _short_matches,
+    _template_variant,
     _toy_team,
+    _zip_folder,
 )
 
 
@@ -336,7 +341,7 @@ def test_api_team_assets_and_missing_resources(render_home):
         assert _get(address, f'{prefix}/model')[1] == model
         for slot, payload in [
             ('images/shirt-front', b'\x89PNG\r\n\x1a\n' + bytes(32)),
-            ('sounds/goal', b'OggS' + bytes(60)),
+            ('sounds/goal', _OGG + bytes(60)),
         ]:
             _send(address, f'{prefix}/{slot}', payload, 'PUT')
             assert _get(address, f'{prefix}/{slot}')[1] == payload
@@ -600,7 +605,7 @@ def test_team_import_keeps_unknown_files(render_home, caplog):
     import zipfile
 
     png = b'\x89PNG\r\n\x1a\n' + bytes(32)
-    ogg = b'OggS' + bytes(60)
+    ogg = _OGG + bytes(60)
     files = {
         'main.py': b'def agent(obs):\n    return 0\n',
         'cuju-team/team.json': json.dumps({'name': 'Keepers', 'format': '5v5'}).encode(),
@@ -665,13 +670,13 @@ def test_team_sounds_version_follows_the_files(render_home):
 
     team = _teams.add('Singers', 'main.py', b'def agent(obs):\n    return 0\n')
     assert team['sounds'] == [] and team['sounds_version'] == ''
-    first = _teams.set_sound(team['id'], 'goal', b'OggS' + bytes(60))
+    first = _teams.set_sound(team['id'], 'goal', _OGG + bytes(60))
     assert first['sounds'] == ['goal'] and first['sounds_version']
     assert _teams.entry(team['id'])['sounds_version'] == first['sounds_version']
     # The same slot and kind with other bytes, as a replaced file, makes a new version.
-    second = _teams.set_sound(team['id'], 'goal', b'OggS' + bytes(61))
+    second = _teams.set_sound(team['id'], 'goal', _OGG + bytes(61))
     assert second['sounds_version'] not in ('', first['sounds_version'])
-    third = _teams.set_sound(team['id'], 'goal', b'OggS' + bytes(61))
+    third = _teams.set_sound(team['id'], 'goal', _OGG + bytes(61))
     assert third['sounds_version'] != second['sounds_version']
     meta = _home.folder('teams') / team['id'] / _teams.TEAM_FOLDER / 'team.json'
     assert 'sounds_version' not in json.loads(meta.read_text())
@@ -809,8 +814,8 @@ def test_presentation_package_refuses_bad_files_and_parts(render_home):
     served = _presentation.served(team['id'])
     warnings = ' | '.join(served['warnings'])
     assert 'socket bad left out' in warnings and 'the manifest ignores unknown' in warnings
-    assert 'attachment halo left out' in warnings and 'behaviour 8 left out' in warnings
-    assert 'reflex 5 left out' in warnings
+    assert 'attachment halo left out' in warnings and 'behaviour x left out' in warnings
+    assert 'reflex 6 left out' in warnings
     assert served['missing'] == ['future.feature']
     # The parts that passed stay.
     assert 'bad' not in served['manifest']['rig']['sockets']
@@ -837,6 +842,112 @@ def test_presentation_package_refuses_bad_files_and_parts(render_home):
         assert f'{folder}models/keeper.glb' in archive.namelist()
 
 
+def test_pack_check_and_import_agree_on_the_team_model(render_home, tmp_path):
+    """A rigged model without joints in team.json maps by its bone names in both, else neither."""
+    from cuju.render._packages import pack as _pack
+    from support.package import package_files
+
+    model = next(v for k, v in package_files().items() if k.endswith('cuju-team/model.glb'))
+    folder = _template_variant(tmp_path, 'model', lambda p, m: None)
+    (folder / 'cuju-team/model.glb').write_bytes(model)
+    result = _pack.check(folder)
+    assert result['ok'], result['errors']
+    mapped = 'import maps model.glb by its bone names, body to mixamorig:Hips'
+    assert any(mapped in item for item in result['info']), result['info']
+    entry = _teams.add('', 'team.zip', _zip_folder(folder, tmp_path / 'model.zip').read_bytes())
+    assert entry['model']['joints']['body'] == 'mixamorig:Hips'
+    assert entry['model']['joints']['right_ankle'] == 'mixamorig:RightFoot'
+    assert entry['style']['model'] == 'custom'
+    # A model without a skin is set aside by import and is an error of the check.
+    (folder / 'cuju-team/model.glb').write_bytes(_pack.ring_bytes())
+    result = _pack.check(folder)
+    aside = 'the team model.glb fails the checks of an uploaded model'
+    assert any(aside in error for error in result['errors']), result['errors']
+    entry = _teams.add('', 'team.zip', _zip_folder(folder, tmp_path / 'ring.zip').read_bytes())
+    assert entry['model'] is None
+
+
+def test_pack_preview_updates_its_team_and_opens_no_browser(
+    render_home, tmp_path, capsys, monkeypatch
+):
+    """A second preview of a folder keeps the team's id, named by the manifest, on its side."""
+    from cuju.render.__main__ import main
+    from cuju.render._packages import pack as _pack
+    from cuju.render._packages import presentation as _presentation
+
+    folder = _template_variant(tmp_path, 'team', lambda p, m: m.__setitem__('name', 'Lanterns'))
+    first = _pack.register_preview(folder, 'right')
+    assert first['name'] == 'Lanterns' and first['place'].endswith('&preview=right')
+    count = len(_teams.teams())
+    manifest = folder / 'cuju-team/presentation/presentation.json'
+    manifest.write_text(manifest.read_text().replace('Lanterns', 'Lanterns two'))
+    second = _pack.register_preview(manifest, 'right')
+    assert second['team'] == first['team'] and len(_teams.teams()) == count
+    assert _teams.entry(first['team'])['name'] == 'Lanterns two'
+    assert _presentation.served(first['team'])['manifest']['name'] == 'Lanterns two'
+    assert _presentation.sides()['right'] == first['team']
+    # With a server running, --no-open prints the address as JSON and opens nothing.
+    opened = []
+    server = _launch.Server(port=8799, pid=os.getpid(), key='k', home=render_home)
+    monkeypatch.setattr(_launch, 'running', lambda: server)
+    monkeypatch.setattr(_launch, 'open_browser', lambda url: opened.append(url) or True)
+    assert main(['pack', 'preview', str(folder), '--json', '--no-open', '--side', 'left']) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown['team'] == first['team'] and shown['side'] == 'left' and opened == []
+    assert shown['url'].startswith('http://127.0.0.1:8799/#match=')
+    assert shown['url'].endswith('&preview=left')
+    assert main(['pack', 'preview', str(folder)]) == 0
+    assert opened and opened[0].endswith('&preview=left')
+
+
+def test_teams_without_a_kit_take_kits_in_turn(render_home, tmp_path):
+    """A team file without a kit keeps the kit of the turn, and a preview keeps its team's kit."""
+    from cuju.render._packages import pack as _pack
+
+    first = _template_variant(tmp_path, 'first', lambda p, m: None)
+    second = _template_variant(tmp_path, 'second', lambda p, m: m.__setitem__('name', 'Other'))
+    one = _pack.register_preview(first)
+    two = _pack.register_preview(second, 'right')
+    kits = [_teams.entry(x['team'])['style']['kit']['primary'] for x in (one, two)]
+    assert kits[0] != kits[1], kits
+    again = _pack.register_preview(first)
+    assert again['team'] == one['team']
+    assert _teams.entry(one['team'])['style']['kit']['primary'] == kits[0]
+    # A team file that names a kit keeps it.
+    named = tmp_path / 'named'
+    _pack.new(named, 'Named')
+    team = json.loads((named / 'cuju-team/team.json').read_text())
+    team['style'] = {'kit': {'primary': [10, 200, 30]}}
+    (named / 'cuju-team/team.json').write_text(json.dumps(team))
+    shown = _pack.register_preview(named)
+    assert _teams.entry(shown['team'])['style']['kit']['primary'] == [10, 200, 30]
+
+
+def test_team_sounds_are_read_past_their_first_bytes(render_home):
+    """A sound must hold what its kind holds, a header alone or a stray sync is refused."""
+    from cuju.render._packages import pack as _pack
+
+    team = _teams.add('Singers', 'main.py', b'def agent(obs):\n    return 0\n')
+    assert _teams.set_sound(team['id'], 'shot', _pack.tone_bytes())['sounds'] == ['shot']
+    assert _teams.set_sound(team['id'], 'goal', _OGG)['sounds'] == ['goal', 'shot']
+    tagged = b'ID3\x04\x00\x00\x00\x00\x00\x00' + b'\xff\xfb\x90\x00' + bytes(400)
+    assert _teams.set_sound(team['id'], 'pass', tagged)['sounds'] == ['goal', 'shot', 'pass']
+    refused = {
+        b'RIFF\x08\x00\x00\x00WAVEfmt ': ('server.teams.sound_damaged', 'WAV'),
+        _pack.tone_bytes()[:44]: ('server.teams.sound_damaged', 'WAV'),
+        b'OggS' + bytes(60): ('server.teams.sound_damaged', 'Ogg'),
+        b'ID3' + bytes(40): ('server.teams.sound_damaged', 'MP3'),
+        b'\xff\xfb\x90\x00' + bytes(12): ('server.teams.sound_type', None),
+    }
+    for data, (message, kind) in refused.items():
+        with pytest.raises(cuju.errors.ArgumentError) as caught:
+            _teams.set_sound(team['id'], 'save', data)
+        assert caught.value.message_id == message, (data[:16], caught.value.message_id)
+        if kind:
+            assert f'expected a whole {kind} sound' in str(caught.value)
+    assert 'save' not in _teams.entry(team['id'])['sounds']
+
+
 def _board_entry(name, value, seconds, when, kind='person', team=None):
     from cuju.render._playing import challenges as _challenges
 
@@ -858,12 +969,15 @@ def test_challenge_leaderboard_ranks_and_keeps_personal_bests(render_home, monke
     from cuju.render._playing import challenges as _challenges
 
     record = _challenges.record
-    assert record('corner', _board_entry('Ana', 2, 9.0, 1))['rank'] == 1
+    first = record('corner', _board_entry('Ana', 2, 9.0, 1))
+    # A competitor's first run says so, rather than a new personal best.
+    assert first['rank'] == 1 and first['improved'] and first['first']
     assert record('corner', _board_entry('Bo', 2, 7.0, 2))['rank'] == 1
     # The tie on value and seconds goes to the earlier run.
     assert record('corner', _board_entry('Cy', 2, 9.0, 3))['rank'] == 3
     worse = record('corner', _board_entry('Ana', 1, 1.0, 4))
     assert not worse['improved'] and worse['personal_best']['value'] == 2 and worse['rank'] == 2
+    assert not worse['first']
     better = record('corner', _board_entry('Ana', 4, 20.0, 5))
     assert better['improved'] and better['rank'] == 1
     agent = _board_entry('Toy', 3, 5.0, 6, kind='agent', team='t-toy')
@@ -918,7 +1032,7 @@ def test_samples_add_restore_and_register_the_starter_team(render_home):
     from cuju.render._store import samples as _samples
 
     listed = {entry['id']: entry for entry in _samples.listing()}
-    assert list(listed) == ['sample-11v11', 'sample-5v5', 'starter-team']
+    assert list(listed) == ['sample-5v5', 'sample-11v11', 'starter-team']
     assert {entry['state'] for entry in listed.values()} == {'missing'}
     added = _samples.add(['sample-5v5'])
     assert added['changes'] == [{'id': 'sample-5v5', 'change': 'added'}]
@@ -943,3 +1057,140 @@ def test_samples_add_restore_and_register_the_starter_team(render_home):
     assert {change['id'] for change in every['changes']} == {'sample-11v11', 'starter-team'}
     with pytest.raises(cuju.errors.ArgumentError):
         _samples.add(['sample-3v3'])
+
+
+def test_cli_team_control_show_set_and_json(render_home, tmp_path, capsys):
+    from cuju.render.__main__ import main
+
+    folder = tmp_path / 'submission'
+    folder.mkdir()
+    (folder / 'main.py').write_text('def agent(obs):\n    return [0]\n')
+    assert (
+        main(['team', 'add', str(folder), '--format', '5v5', '--selection', '1,2', '--json']) == 0
+    )
+    added = json.loads(capsys.readouterr().out)
+    assert added['control'] == {
+        'players': 2,
+        'assignment': 'fixed',
+        'selection': [1, 2],
+        'goalkeeper': 'scenario',
+        'action_set': 'default',
+    }
+    assert main(['team', 'set', added['id'], '--assignment', 'dynamic', '--players', '3']) == 0
+    assert 'changed' in capsys.readouterr().out
+    control = _teams.entry(added['id'])['control']
+    assert (control['players'], control['assignment'], control['selection']) == (3, 'dynamic', [])
+    assert main(['team', 'set', added['id'], '--name', 'Renamed', '--action-set', 'v2']) == 0
+    capsys.readouterr()
+    assert main(['team', 'show', added['id']]) == 0
+    shown = capsys.readouterr().out
+    assert 'Renamed' in shown and 'action set v2' in shown and '3 controlled' in shown
+    assert main(['team', 'list', '--json']) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert [team['id'] for team in listed] == ['builtin', added['id']]
+    assert main(['sample', 'list', '--json']) == 0
+    assert [entry['id'] for entry in json.loads(capsys.readouterr().out)][:2] == [
+        'sample-5v5',
+        'sample-11v11',
+    ]
+    assert main(['team', 'remove', added['id']]) == 0
+    assert f'removed {added["id"]}' in capsys.readouterr().out
+    assert main(['team', 'add', str(tmp_path / 'nowhere')]) == 1
+    assert 'found nothing at' in capsys.readouterr().err
+
+
+def test_new_teams_take_kits_in_turn(render_home, tmp_path):
+    folder = tmp_path / 'submission'
+    folder.mkdir()
+    (folder / 'main.py').write_text('def agent(obs):\n    return [0]\n')
+    kits = [_teams.add_folder(folder, f'Team {k}')['style']['kit']['primary'] for k in range(3)]
+    assert len({tuple(kit) for kit in kits}) == 3
+
+
+def test_message_error_reads_and_catches_as_before():
+    from cuju.render._text import messages as _messages
+
+    error = _messages.MessageError('server.scenario', scenario=repr('nowhere'))
+    assert str(error) == "expected a shipped scenario, found 'nowhere'"
+    assert isinstance(error, cuju.errors.ArgumentError) and isinstance(error, ValueError)
+    assert (error.message_id, error.values) == ('server.scenario', {'scenario': "'nowhere'"})
+    assert _messages.described(error) == f'ArgumentError: {error}'
+    with pytest.raises(cuju.errors.ArgumentError, match=r'^expected an ability from 0 to 1'):
+        _teams.check_ability([None, 2])
+    with pytest.raises(ValueError, match=r'^expected a seed from 0 to 2\*\*64 - 1, found -1$'):
+        _server._seed(-1)
+    try:
+        _teams.check_ability([None, 2])
+    except ValueError as caught:
+        assert _messages.error_fields(caught) == {
+            'error': 'expected an ability from 0 to 1, found 2',
+            'error_id': 'server.teams.ability',
+            'error_values': {'value': '2'},
+        }
+    # A message keeps a brace that names no placeholder as text, as the page does.
+    assert _messages.text('server.teams.crowd', value='1') == (
+        'expected the crowd as {"colors": [...]}, found 1'
+    )
+    assert _messages.error_fields(ValueError('plain')) == {'error': 'plain'}
+
+
+def test_names_of_the_built_in_ai_travel_as_a_label_until_renamed(render_home):
+    builtin = _teams.teams()[0]
+    assert builtin['name'] == "GRF's built-in AI"
+    assert builtin['name_id'] == 'server.names.builtin' and builtin['name_values'] == {}
+    header = _teams.header_team(_teams.BUILTIN)
+    assert header['name_id'] == 'server.names.builtin'
+    # The page sends the name back with every change of the style, which keeps the label.
+    kept = _teams.update(_teams.BUILTIN, name="GRF's built-in AI")
+    assert kept['name_id'] == 'server.names.builtin'
+    renamed = _teams.update(_teams.BUILTIN, name='House AI')
+    assert renamed['name'] == 'House AI' and 'name_id' not in renamed
+    assert 'name_id' not in _teams.entry(_teams.BUILTIN)
+    stored = json.loads(_teams._meta_path(_teams.BUILTIN).read_text())
+    assert stored['name'] == 'House AI' and 'name_id' not in stored
+    _teams.update(_teams.BUILTIN, name="GRF's built-in AI")
+    assert _teams.entry(_teams.BUILTIN)['name_id'] == 'server.names.builtin'
+
+
+def test_names_of_scenarios_in_team_messages_travel_as_scenarios(render_home):
+    from cuju.render._text import messages as _messages
+
+    team = {'id': 't', 'name': 'Multi four', 'kind': 'submission', 'format': '5v5'}
+    with pytest.raises(_messages.MessageError) as raised:
+        _teams.check_scenario([team, _teams.entry(_teams.BUILTIN)], '11_vs_11_kaggle')
+    error = raised.value
+    assert error.message_id == 'server.teams.scenario_format'
+    assert error.values['scenario'] == _messages.scenario('11_vs_11_kaggle')
+    # The English text of the command line stays as it was.
+    assert str(error) == 'expected a scenario of 5v5 for Multi four, found 11_vs_11_kaggle'
+    assert _messages.valid_label(
+        {'id': error.message_id, 'text': str(error), 'values': error.values}
+    )
+
+
+def test_names_of_games_and_challenges(render_home):
+    from cuju.render._playing import challenges as _challenges
+    from cuju.render._playing import play as _play
+    from cuju.render._text import messages as _messages
+
+    builtin = _messages.label('server.names.builtin')
+    title = _play.game_title([_messages.label('server.names.you'), builtin], None)
+    assert title['text'] == "You against GRF's built-in AI"
+    assert title['values']['right'] == builtin
+    entry = {'kind': 'agent', 'name': "GRF's built-in AI", 'team': _teams.BUILTIN}
+    assert _challenges.competitor_name(entry) == builtin
+    policy = {'kind': 'agent', 'name': 'Python policy', 'team': None}
+    assert _challenges.competitor_name(policy)['id'] == 'server.names.python_policy'
+    # A person's name and a renamed team stay text.
+    assert _challenges.competitor_name({'kind': 'person', 'name': 'Ana', 'team': None}) == 'Ana'
+    renamed = {'kind': 'agent', 'name': 'House AI', 'team': _teams.BUILTIN}
+    assert _challenges.competitor_name(renamed) == 'House AI'
+    spec = _challenges.find('empty_goal_close')
+    attempt = _messages.label(
+        'server.names.challenge_attempt',
+        challenge=_challenges.challenge_value(spec),
+        attempt=5,
+        competitor='Rule bot',
+    )
+    assert attempt['text'] == f'{spec["title"]}, attempt 5, Rule bot'
+    assert _messages.valid_label(attempt)

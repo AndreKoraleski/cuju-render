@@ -30,6 +30,9 @@ export const CLASSES = ['moment', 'action', 'bed'];
 export const BUSES = ['effects', 'fans', 'music', 'voice'];
 export const SHOTS = ['closeup', 'orbit', 'low', 'behindBall', 'path'];
 export const SLOTS = ['badge', 'lowerThird', 'sting', 'card', 'lineup'];
+// The size in pixels of each slot's canvas, which the sandbox's wrapper makes and every drawing of
+// the slot holds.
+export const SLOT_SIZES = Object.freeze({ badge: [96, 96], lowerThird: [360, 90], sting: [320, 180], card: [200, 200], lineup: [384, 270] });
 export const CLAIMS = ['ball', 'goal', 'sky', 'floodlights', 'fans'];
 export const REPLAY = ['repeat', 'quiet', 'skip'];
 // The kinds of command and the actions a reflex may hold.

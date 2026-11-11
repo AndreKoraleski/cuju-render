@@ -5,7 +5,9 @@
 // thirds for players, the replay badge, the stinger between live play and replays, and notices.
 
 import { GAME_MODES } from '../recording/format.js';
+import { t } from '../core/i18n.js';
 import { css } from '../players/kits.js';
+import { teamName } from '../core/names.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,16 +33,16 @@ export function formatSeconds(seconds) {
 // The names of the two teams as the page shows them, two teams of the same name told apart by
 // their side.
 export function teamNames(header) {
-    const raw = [0, 1].map((t) => ((header.teams[t] && header.teams[t].name) || (t ? 'Right' : 'Left')).trim());
+    const raw = [0, 1].map((side) => bareTeamName(header, side));
     if (raw[0].toLowerCase() === raw[1].toLowerCase()) {
-        return [`${raw[0]} (left)`, `${raw[1]} (right)`];
+        return [t('hud.team.sameName.left', { name: raw[0] }), t('hud.team.sameName.right', { name: raw[1] })];
     }
     return raw;
 }
 
 // The bare name of a team, without the side added to tell two of the same name apart.
-export function bareTeamName(header, t) {
-    return ((header.teams[t] && header.teams[t].name) || (t ? 'Right' : 'Left')).trim();
+export function bareTeamName(header, side) {
+    return (teamName(header.teams[side]) || (side ? t('hud.team.right') : t('hud.team.left'))).trim();
 }
 
 // A swatch of a team's kit, its shirt color, split with the second color for patterned kits.
@@ -133,11 +135,16 @@ export class Hud {
         }
         const scored = this.scoreFrom || frame;
         this.setScore(scored.scoreLeft, scored.scoreRight);
-        this.el.clock.textContent = formatClock(frame.timeMs);
+        // The clock is a timer outside the live region of the HUD, and its text changes only
+        // when the second does.
+        const clock = formatClock(frame.timeMs);
+        if (this.el.clock.textContent !== clock) {
+            this.el.clock.textContent = clock;
+        }
         if (frame.gameMode !== this.lastMode) {
             this.lastMode = frame.gameMode;
             if (frame.gameMode > 0) {
-                this.showMode(GAME_MODES[frame.gameMode] || `Mode ${frame.gameMode}`);
+                this.showMode(GAME_MODES[frame.gameMode] || t('hud.mode.unknown', { mode: frame.gameMode }));
             } else {
                 this.el.mode.classList.remove('show');
             }
@@ -265,7 +272,7 @@ export class Hud {
         num.style.background = info.color || 'var(--accent)';
         num.style.color = info.ink || '#fff';
         const body = el('span', 'lt-body');
-        body.append(el('span', 'lt-name', info.name), el('span', 'lt-sub', view ? `${info.teamName}, ${view}` : info.teamName));
+        body.append(el('span', 'lt-name', info.name), el('span', 'lt-sub', view ? t('hud.follow.teamView', { team: info.teamName, view }) : info.teamName));
         f.replaceChildren(num, body);
         f.hidden = false;
     }
@@ -328,6 +335,14 @@ export class Hud {
         t.dataset.kind = kind;
         t.classList.add('show');
         clearTimeout(this.toastTimer);
-        this.toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+        clearTimeout(this.toastClear);
+        this.toastTimer = setTimeout(() => {
+            t.classList.remove('show');
+            // The text leaves the live region once the toast has faded, so no stale notice stays
+            // for a reader or for the next game.
+            this.toastClear = setTimeout(() => {
+                t.textContent = '';
+            }, 400);
+        }, ms);
     }
 }

@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Checks of video jobs, the clean feed and picture sizes."""
 
+import json
 import re
+import threading
+import urllib.request
 
 import pytest
 
@@ -10,6 +13,7 @@ import cuju
 import cuju.errors
 import cuju.state
 from cuju.render._http import server as _server
+from support.common import _FeedRequests, _FeedTournaments, _get
 
 
 def test_sizes_match_the_page():
@@ -85,3 +89,67 @@ def test_feed_address_matches_the_page():
     ):
         with pytest.raises(cuju.errors.ArgumentError):
             _feed.query(**wrong)
+
+
+def test_feed_lists_live_sources_by_title_and_errors_without_class_names(render_home):
+    """A live source goes by its title, and the server's errors read as cuju words them."""
+    from cuju.render._export import feed as _feed
+
+    live = [
+        {'id': 'live-20261110-101500-aaaa', 'title': 'Evaluation'},
+        {'id': 'live-20261110-111500-bbbb', 'title': 'evaluation'},
+        {'id': 'live-20261110-121500-cccc', 'title': ''},
+    ]
+    rows = _feed.targets('http://127.0.0.1:8780/', live, [])
+    named = [row['source'] for row in rows if row['source'].startswith('live:')]
+    assert named == ['live:live-20261110-121500-cccc', 'live:evaluation']
+    cup = {'id': 'cup-1', 'name': 'Cup', 'matches': []}
+    handler = _server.make_handler(_FeedRequests([]), tournaments=_FeedTournaments(cup))
+    server = _server.http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            _get(f'http://127.0.0.1:{server.server_address[1]}', '/api/feed/resolve?source=../up')
+        message = json.loads(refused.value.read())['error']
+        assert message.startswith('expected a source of') and 'Error' not in message
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_names_of_the_feed_travel_with_their_messages():
+    from cuju.render._export import feed as _feed
+    from cuju.render._text import messages as _messages
+
+    def resolve(source, live=(), recordings=(), requests=(), tournaments=()):
+        return _feed.resolve(
+            source,
+            live=lambda: list(live),
+            recordings=lambda: list(recordings),
+            recording=lambda identifier: next(
+                (entry for entry in recordings if entry['id'] == identifier), None
+            ),
+            requests=lambda: list(requests),
+            tournaments=lambda: list(tournaments),
+            tournament=lambda identifier: None,
+        )
+
+    waiting = resolve('queue')
+    assert waiting['message'] == 'No requested match has finished yet'
+    assert waiting['message_id'] == 'server.feed.no_request'
+    assert resolve('live:Evaluation')['message_values'] == {'name': 'Evaluation'}
+    summary = {
+        'id': 'm-1',
+        'title': 'Demo, the built-in AI against itself',
+        'title_id': 'server.names.demo',
+        'title_values': {},
+    }
+    found = resolve('latest', recordings=[summary])
+    assert found['title'] == summary['title'] and found['title_id'] == 'server.names.demo'
+    rows = _feed.targets('http://127.0.0.1:8000', [summary | {'id': 'live-1'}], [])
+    assert rows[0]['label'] == 'a live source while one streams, else the newest recording'
+    assert all(row['label_id'].startswith('server.feed.follow.') for row in rows)
+    assert rows[-1]['label_values']['name']['id'] == 'server.names.demo'
+    with pytest.raises(_messages.MessageError) as raised:
+        _feed.parse_source('nowhere at all')
+    assert raised.value.message_id == 'server.feed.source'

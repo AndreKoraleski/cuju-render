@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .._text import messages as _messages
+
 
 def get(parts: list[str], query: dict[str, str]) -> tuple[Any, int]:
     """Answers `GET /api/help/...` with a document and a status."""
@@ -39,7 +41,7 @@ def get(parts: list[str], query: dict[str, str]) -> tuple[Any, int]:
         from .._http import pwa as _pwa
 
         return _pwa.app_info(), 200
-    return {'error': 'no such resource'}, 404
+    return _messages.fields('server.no_resource'), 404
 
 
 def post(parts: list[str], document: dict[str, Any]) -> tuple[Any, int]:
@@ -51,10 +53,10 @@ def post(parts: list[str], document: dict[str, Any]) -> tuple[Any, int]:
         if names is not None and (
             not isinstance(names, list) or not all(isinstance(name, str) for name in names)
         ):
-            return {'error': f'expected names as a list of samples, found {names!r}'}, 400
+            return _messages.fields('server.help.sample_names', names=repr(names)), 400
         return _samples.add(names), 200
     if parts[:1] == ['tutorial']:
         from . import tutorial as _tutorial
 
         return _tutorial.post(parts[1:], document)
-    return {'error': 'no such resource'}, 404
+    return _messages.fields('server.no_resource'), 404

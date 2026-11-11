@@ -41,7 +41,7 @@ SPDX-License-Identifier: Apache-2.0
         --accent: #c2410c;
         --accent-hover: #9a3412;
         --on-accent: #ffffff;
-        --link: #1a73e8;
+        --link: #1967d2;
         --danger: #d93025;
         --live: #d93025;
         --overlay: rgba(255, 255, 255, 0.88);
@@ -65,7 +65,7 @@ SPDX-License-Identifier: Apache-2.0
     --accent: #c2410c;
     --accent-hover: #9a3412;
     --on-accent: #ffffff;
-    --link: #1a73e8;
+    --link: #1967d2;
     --danger: #d93025;
     --live: #d93025;
     --overlay: rgba(255, 255, 255, 0.88);
@@ -693,6 +693,23 @@ fieldset.plain:disabled {
     margin: 0;
 }
 
+/* The light card over the pitch is nearly opaque, so its links keep the contrast of AA over any
+   picture, and its link buttons are targets of at least 24 pixels. */
+:root[data-theme="light"] #watch-empty {
+    background: rgba(255, 255, 255, 0.96);
+}
+
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) #watch-empty {
+        background: rgba(255, 255, 255, 0.96);
+    }
+}
+
+#watch-empty button.link,
+.side-note button.link {
+    min-height: 24px;
+}
+
 #watch-empty p + p {
     margin-top: 6px;
 }
@@ -1293,16 +1310,25 @@ body.offline .offline-note {
     border-bottom: 1px solid var(--border);
 }
 
-.help-card h2 {
+.help-card header h1 {
     margin: 0 0 8px;
     font-size: 20px;
+}
+
+/* The visible titles of Help, Teams and Tournaments are the h1 of their pages. */
+.help-card header h1,
+.panel-section h1,
+.cup-side-head h1 {
+    font-weight: normal;
 }
 
 h3,
 .label,
 .editor-form h4,
-.field-form h4,
-.panel-section h3 {
+.field-form h2,
+.panel-section h1,
+.panel-section h2,
+.help-card section h2 {
     margin: 14px 0 8px;
     color: var(--muted);
     font-size: 14px;
@@ -2767,7 +2793,8 @@ dialog.video-export progress {
 :root {
     --glow: rgba(255, 111, 0, 0.18);
     --shade: rgba(0, 0, 0, 0.45);
-    --shirt-edge: rgba(0, 0, 0, 0.55);
+    /* A light edge, so a black or dark kit keeps its outline on the dark page. */
+    --shirt-edge: rgba(232, 234, 237, 0.75);
     --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -3239,6 +3266,17 @@ select:not([multiple]) {
     text-overflow: ellipsis;
 }
 
+/* A value of the settings panel wraps to a second line instead of losing its end. */
+.popover .dd-select {
+    white-space: normal;
+    text-align: left;
+}
+
+.popover .dd-select .dd-value {
+    overflow: visible;
+    overflow-wrap: anywhere;
+}
+
 .dd-select .dd-prefix {
     color: var(--muted);
     font-size: 12px;
@@ -3310,6 +3348,29 @@ select:not([multiple]) {
     display: none;
 }
 
+/* On a phone the address takes a row of its own below the menus, so a long word in any language
+   leaves it room, and the bug and banners below the bar move down by that row. */
+@media (max-width: 600px) {
+    #watch-bar {
+        flex-wrap: wrap;
+    }
+
+    #watch-bar .bar-btn {
+        min-height: 36px;
+    }
+
+    #watch-bar #address {
+        order: 1;
+        flex: 1 1 100%;
+        border: 0;
+        border-top: 1px solid var(--border);
+    }
+
+    #app:not(.idle):not(.tv):not(.post-show) #hud {
+        top: 38px;
+    }
+}
+
 .bar-btn {
     display: inline-flex;
     align-items: center;
@@ -3348,6 +3409,14 @@ select:not([multiple]) {
     font-size: 11px;
     font-variant: normal;
     letter-spacing: 0;
+    /* The count keeps its full contrast, a ring pulses around it instead of the number fading. */
+    animation: live-ring 1.4s infinite;
+}
+
+@keyframes live-ring {
+    50% {
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 35%, transparent);
+    }
 }
 
 .goal-mark {
@@ -4345,9 +4414,11 @@ canvas.stands {
     font-size: 12px;
 }
 
-.title-cell {
+/* The title cell stays a table cell, so its rule spans the row, and a line inside lays it out. */
+.title-cell .title-line {
     display: flex;
     align-items: center;
+    min-width: 0;
 }
 
 .favorite-mark {
@@ -4402,6 +4473,44 @@ table.grid tbody tr:focus-visible {
 
 table.grid th:focus-visible {
     outline-offset: -2px;
+}
+
+/* A group of the recordings of one challenge run, a disclosure row over the rows of its attempts. */
+table.grid .group-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 2px 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+table.grid .group-caret::before {
+    content: '\25B8';
+}
+
+table.grid .group-toggle[aria-expanded='true'] .group-caret::before {
+    content: '\25BE';
+}
+
+table.grid tr.group-row .title-cell {
+    flex-wrap: wrap;
+    row-gap: 2px;
+    white-space: normal;
+}
+
+table.grid .group-result {
+    margin-left: 8px;
+}
+
+table.grid tr.group-member .title-cell {
+    padding-left: 30px;
 }
 
 .move-menu.open {
@@ -5210,6 +5319,30 @@ dialog.painter .toolbar {
     margin: 12px 0;
 }
 
+/* An ability of the setup, its check box over the slider and the value, which keep one line. */
+.play-setup .ability {
+    display: flex;
+    flex: 1 1 300px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    max-width: 100%;
+}
+
+.play-setup .ability > .check {
+    flex: 1 0 100%;
+}
+
+.play-setup .ability input[type='range'] {
+    flex: 1 1 120px;
+    min-width: 0;
+}
+
+.play-setup .ability .ability-value {
+    flex: none;
+    white-space: nowrap;
+}
+
 .play-tables {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -5313,7 +5446,7 @@ dialog.painter .toolbar {
 }
 
 .pad-a {
-    --pad-body: #2f9e44;
+    --pad-body: #237a33;
 }
 
 .pad-b {
@@ -5599,6 +5732,11 @@ dialog.painter .toolbar {
     padding: 10px 14px;
     border: 1px solid var(--border);
     background: var(--overlay);
+}
+
+/* The card that Controls of the pause menu opens lies above the menu. */
+.play-card[role='dialog'] {
+    z-index: 7;
 }
 
 .play-menu,
@@ -6512,7 +6650,7 @@ dialog.painter .toolbar {
     border-bottom: 1px solid var(--border);
 }
 
-.cup-side-head h2,
+.cup-side-head h1,
 .cup-head h2 {
     margin: 0;
     font-size: 22px;
@@ -6679,8 +6817,14 @@ dialog.painter .toolbar {
     flex-wrap: wrap;
     gap: 6px;
     align-items: flex-end;
+    min-width: 0;
     padding: 10px;
     border: 1px solid var(--border);
+}
+
+.cup-adder .btn {
+    max-width: 100%;
+    white-space: normal;
 }
 
 .cup-entrants {
@@ -6691,12 +6835,26 @@ dialog.painter .toolbar {
 }
 
 .cup-entrant {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 28px minmax(100px, 160px) minmax(140px, 1fr) minmax(110px, 160px) minmax(90px, 130px) auto;
     gap: 8px 12px;
-    align-items: flex-end;
+    align-items: end;
     padding: 6px 0;
     border-bottom: 1px solid var(--border);
+}
+
+@media (max-width: 760px) {
+    .cup-entrant {
+        display: flex;
+        flex-wrap: wrap;
+    }
+}
+
+.cup-confirm {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
 }
 
 .cup-entrant-kind {
@@ -7190,4 +7348,29 @@ dialog.painter .toolbar {
     .moment-match {
         grid-column: 2;
     }
+}
+
+/* Unearned achievements keep full opacity in a muted color, so their text reads at the contrast of
+   any muted text, and the dashed border marks them. */
+:root .achievement-list li.missing {
+    opacity: 1;
+    color: var(--muted);
+}
+
+/* No more tips of the first run tip is a target of at least 24 pixels. */
+.tip-actions .link {
+    min-height: 24px;
+    padding: 2px 4px;
+}
+
+/* The Annotations button of Watch is as wide as its word. */
+#annotations-button {
+    width: auto;
+    padding: 0 8px;
+}
+
+/* The teams and the scenario of the Recordings table wrap, so Date and Size stay in view. */
+table.grid td.wrap {
+    min-width: 6em;
+    white-space: normal;
 }

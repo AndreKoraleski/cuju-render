@@ -21,10 +21,12 @@ import http.client
 import http.server
 import json
 import os
+import queue
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass, field
@@ -75,10 +77,55 @@ class LoopbackServer(http.server.ThreadingHTTPServer):
 
     Windows lets a socket with `SO_REUSEADDR` take a port that another socket listens on, so the
     server sets the option only elsewhere, where it lets a restarted server take its port again.
+
+    Each request runs on a thread of its own, as `ThreadingHTTPServer` runs it, but a thread that
+    finished waits a while for the next request rather than ending. A new thread costs a tenth of
+    a second on some Windows machines, a page asks for some three hundred files, and a stream
+    holds its thread as long as it plays, so a thread is made only when none waits.
     """
 
     allow_reuse_address = sys.platform != 'win32'
     daemon_threads = True
+    # The connections that wait to be accepted. A page opens its few hundred files a handful at a
+    # time and at once, and Windows refuses a connection beyond the queue, which loses a module of
+    # the page and leaves it blank, where Linux lets the browser try again. Five is the default.
+    request_queue_size = 128
+    # How long a thread without a request waits for one before it ends, in seconds.
+    idle_seconds = 30.0
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        with self._pool_lock:
+            if self._waiting:
+                self._waiting -= 1
+                spawn = False
+            else:
+                spawn = True
+        self._requests.put((request, client_address))
+        if spawn:
+            threading.Thread(target=self._serve_requests, daemon=True).start()
+
+    def _serve_requests(self) -> None:
+        while True:
+            try:
+                request, client_address = self._requests.get(timeout=self.idle_seconds)
+            except queue.Empty:
+                with self._pool_lock:
+                    # A request may have counted on this thread just as it timed out.
+                    if not self._waiting or not self._requests.empty():
+                        continue
+                    self._waiting -= 1
+                return
+            if request is None:
+                return
+            self.process_request_thread(request, client_address)
+            with self._pool_lock:
+                self._waiting += 1
+
+    def __init__(self, *arguments: Any, **options: Any) -> None:
+        self._pool_lock = threading.Lock()
+        self._requests: queue.Queue = queue.Queue()
+        self._waiting = 0
+        super().__init__(*arguments, **options)
 
 
 @dataclass
@@ -180,14 +227,14 @@ def running() -> Server | None:
         port, pid, key = entry['port'], entry['pid'], entry['key']
     except (OSError, ValueError, TypeError, KeyError):
         return None
-    if not (
-        isinstance(port, int)
-        and isinstance(pid, int)
-        and isinstance(key, str)
-        and 0 < port < 65536
-        and _alive(pid)
-        and answers(port)
-    ):
+    if not (isinstance(port, int) and isinstance(pid, int) and isinstance(key, str)):
+        return None
+    if not _alive(pid):
+        # The file of a server whose process ended without removing it, as a killed one leaves.
+        with contextlib.suppress(OSError):
+            path.unlink()
+        return None
+    if not (0 < port < 65536 and answers(port)):
         return None
     return Server(port, pid, key, _home.home())
 
@@ -202,22 +249,34 @@ def port_free(port: int) -> bool:
     return True
 
 
-def port_error(port: int, error: OSError) -> Exception:
-    """Returns the error to raise when the server cannot listen on `port`, with what to do."""
+def port_error(port: int, error: OSError, remote: bool = False) -> Exception:
+    """Returns the error to raise when the server cannot listen on `port`, with what to do.
+
+    With `remote`, as `cuju render serve --remote` asks, a port that a server of the renderer
+    holds adds the SSH command that reaches that server from another computer.
+    """
     if error.errno not in _IN_USE and getattr(error, 'winerror', None) not in _IN_USE:
         return error
     server = running()
     if server is not None and server.port == port:
-        return Error(
+        text = (
             f'port {port} is in use by the server of this folder, which serves {server.url}; '
             f'open that page, or run cuju render open, or choose another port with --port '
             f'{port + 10} or --port 0 for a free one'
         )
-    owner = 'another cuju render server' if answers(port) else 'another program'
-    return Error(
-        f'port {port} is in use by {owner}; choose another port with --port {port + 10}, '
-        f'or --port 0 for a free one'
-    )
+    elif answers(port):
+        text = (
+            f'port {port} is in use by another cuju render server; choose another port with '
+            f'--port {port + 10}, or --port 0 for a free one'
+        )
+    else:
+        return Error(
+            f'port {port} is in use by another program; choose another port with --port '
+            f'{port + 10}, or --port 0 for a free one'
+        )
+    if remote:
+        text += f'\nThat server already serves port {port}. ' + remote_note(port)
+    return Error(text)
 
 
 def open_browser(url: str) -> bool:

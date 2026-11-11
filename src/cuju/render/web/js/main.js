@@ -4,11 +4,15 @@
 // The viewer application, which wires the scene, playback, controls, sound and panels together.
 
 import * as THREE from 'three';
+import { onLanguageChange } from './core/i18n.js';
+import { t } from './core/i18n.js';
+import { LanguageSettings } from './core/language-ui.js';
 import { api, formatBytes } from './core/api.js';
 import { PlayerTools } from './watch/player-tools.js';
 import { AnnotationOverlay } from './watch/annotations.js';
 import { AccessibilityControls } from './core/accessibility.js';
-import { OWN_KEYS, openPanel } from './core/comfort.js';
+import { OWN_KEYS, keepsKey, openPanel } from './core/comfort.js';
+import { PageStructure } from './core/page-structure.js';
 import { Sound } from './broadcast/audio.js';
 import { Ball } from './world/ball.js';
 import { CAMERA_MODES, CameraRig, PLAYER_VIEWS } from './world/cameras.js';
@@ -42,7 +46,7 @@ import { FrameStore, Timeline } from './recording/timeline.js';
 import { Transitions } from './broadcast/transition.js';
 import { Decisions } from './broadcast/decisions.js';
 import { fullMatch } from './recording/episodes.js';
-import { titleText } from './core/scenarios.js';
+import { recordingTitle, teamName } from './core/names.js';
 import { CommandPalette } from './help/palette.js';
 import { SettingsPresets } from './watch/presets.js';
 import { FirstRun } from './help/firstrun.js';
@@ -57,6 +61,8 @@ import { FeedDialog } from './export/feed-dialog.js';
 const $ = (id) => document.getElementById(id);
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
 const HALF_TIME_MS = 45 * 60 * 1000;
+// How long a page stays out of sight before it lets its live stream go.
+const HIDDEN_HOLD_MS = 30 * 1000;
 // The cameras a new visit opens on, the wide views of the whole pitch.
 const REMEMBERED_CAMERAS = new Set(['broadcast', 'tactical', 'goal']);
 
@@ -141,7 +147,7 @@ class App {
         // The free camera drifts back to the broadcast view after a while without input.
         this.cameras.onIdle = () => {
             this.setCamera('broadcast');
-            this.hud.toast('Back to the broadcast camera', 'info', 1500);
+            this.hud.toast(t('main.camera.idleBack'), 'info', 1500);
         };
         this.sound = new Sound();
         this.sound.setVolume(this.settings.volume);
@@ -216,7 +222,14 @@ class App {
         this.settings = this.flat.gate(this.settings);
         this.grid = new EnvironmentGrid(this);
         this.presets = new SettingsPresets(this);
+        // The language of the page, whose change reloads the page at its address in the new one.
+        this.language = new LanguageSettings(this);
+        onLanguageChange(() => {
+            this.updateHash(true);
+            location.reload();
+        });
         this.firstRun = new FirstRun(this);
+        this.structure = new PageStructure(this);
         // The tour, the lessons, the samples, the report and the installable page of Help, which
         // scripts reach as cuju.tour, cuju.tutorial, cuju.samples, cuju.doctor and cuju.install.
         this.helpCenter = null;
@@ -263,10 +276,31 @@ class App {
             if (document.hidden) {
                 this.sound.setActive(false);
             }
+            this.holdHiddenStream();
         });
         window.addEventListener('hashchange', () => this.openFromHash());
         this.openFromHash();
         requestAnimationFrame((t) => this.tick(t));
+    }
+
+    // A page out of sight for a while lets its live stream go, so tabs behind others hold none of
+    // the six connections that a browser keeps to one server, and the stream resumes as the page
+    // shows again. A clean feed keeps its stream, since a streaming program shows it unseen.
+    holdHiddenStream() {
+        clearTimeout(this.holdTimer);
+        const live = this.source && this.source.live;
+        if (!live || window.cujuFeed) {
+            return;
+        }
+        if (!document.hidden) {
+            live.release();
+            return;
+        }
+        this.holdTimer = setTimeout(() => {
+            if (document.hidden && this.source && this.source.live === live) {
+                live.hold();
+            }
+        }, HIDDEN_HOLD_MS);
     }
 
     fatal(text) {
@@ -323,17 +357,17 @@ class App {
         const token = ++this.loadToken;
         this.dropPendingLive();
         this.showPage('watch');
-        this.showLoading('Downloading the recording', 0);
+        this.showLoading(t('main.loading.download'), 0);
         try {
             const bytes = await api.matchBytes(id, (got, total) => {
                 if (token === this.loadToken) {
-                    this.showLoading(total ? `Downloading the recording, ${formatBytes(got)} of ${formatBytes(total)}` : `Downloading the recording, ${formatBytes(got)}`, total ? got / total : null);
+                    this.showLoading(total ? t('main.loading.downloadOf', { got: formatBytes(got), total: formatBytes(total) }) : t('main.loading.downloadGot', { got: formatBytes(got) }), total ? got / total : null);
                 }
             });
             if (token !== this.loadToken) {
                 return;
             }
-            this.showLoading(`Reading ${formatBytes(bytes.length)} of frames`, null);
+            this.showLoading(t('main.loading.frames', { size: formatBytes(bytes.length) }), null);
             const rec = await decodeRecording(bytes);
             if (token !== this.loadToken || !(await this.waitForAssets(token))) {
                 return;
@@ -348,7 +382,7 @@ class App {
             this.director.showLineups();
         } catch (err) {
             const missing = err.status === 404;
-            this.hud.toast(err instanceof FormatError ? err.message : missing ? `No match with the id ${id}.` : `The match could not be opened. ${err.message}`, 'error', 8000);
+            this.hud.toast(err instanceof FormatError ? err.message : missing ? t('main.match.missing', { id }) : t('main.match.failed', { reason: err.message }), 'error', 8000);
             if (!this.source) {
                 this.showEmpty(true);
             }
@@ -367,7 +401,7 @@ class App {
             done = true;
         });
         while (!done && token === this.loadToken) {
-            this.showLoading('Loading the players and the stadium', this.assetProgress || 0);
+            this.showLoading(t('main.loading.assets'), this.assetProgress || 0);
             await Promise.race([settled, new Promise((resolve) => setTimeout(resolve, 100))]);
         }
         return token === this.loadToken;
@@ -377,7 +411,7 @@ class App {
         this.showPage('watch');
         const token = ++this.loadToken;
         this.dropPendingLive();
-        this.showLoading(`Reading ${file.name}`);
+        this.showLoading(t('main.loading.file', { name: file.name }));
         try {
             const rec = await decodeRecording(new Uint8Array(await file.arrayBuffer()));
             if (token !== this.loadToken || !(await this.waitForAssets(token))) {
@@ -388,7 +422,7 @@ class App {
             this.director.showLineups();
             this.updateHash(true);
         } catch (err) {
-            this.hud.toast(err instanceof FormatError ? err.message : `${file.name} could not be opened. ${err.message}`, 'error', 8000);
+            this.hud.toast(err instanceof FormatError ? err.message : t('main.file.failed', { name: file.name, reason: err.message }), 'error', 8000);
         } finally {
             if (token === this.loadToken) {
                 this.hideLoading();
@@ -401,7 +435,7 @@ class App {
     // the page that the viewer is on.
     openLive(id, typed = false, switched = false) {
         if (/^https?:\/\//i.test(id) && !typed) {
-            this.hud.toast('A stream on another server opens only when its address is typed in the address bar.', 'error', 8000);
+            this.hud.toast(t('main.live.remoteTyped'), 'error', 8000);
             return;
         }
         const token = ++this.loadToken;
@@ -409,20 +443,20 @@ class App {
         if (!switched) {
             this.showPage('watch');
         }
-        this.setWaiting('Waiting for the source');
+        this.setWaiting(t('main.live.waiting'));
         const live = new LiveSource(id, {
             onHeader: async (header, store) => {
                 if (token !== this.loadToken) {
                     live.stop();
                     return;
                 }
-                this.setWaiting('Connected', 900);
+                this.setWaiting(t('main.live.connected'), 900);
                 await this.setSource({ kind: 'live', id, header, store, live });
                 if (this.source.live !== live) {
                     return;
                 }
                 if (switched) {
-                    this.hud.toast(`The source now shows environment ${(header.provenance && header.provenance.environment) || 0}.`, 'info', 4000);
+                    this.hud.toast(t('main.live.switched', { environment: (header.provenance && header.provenance.environment) || 0 }), 'info', 4000);
                 }
                 this.timeline.goLive();
                 // A source sends what it already captured first, so the viewer can rewind at once.
@@ -432,7 +466,7 @@ class App {
                     const sps = header.steps_per_second || 10;
                     const seconds = Math.floor((store.last - store.first) / sps);
                     if (seconds >= 1) {
-                        this.hud.toast(`Joined with ${seconds} ${seconds === 1 ? 'second' : 'seconds'} of history to rewind.`, 'info', 3500);
+                        this.hud.toast(t('main.live.joined', { count: seconds }), 'info', 3500);
                     }
                 }
             },
@@ -451,27 +485,28 @@ class App {
                     this.setWaiting(null);
                     this.pendingLive = null;
                     if (token === this.loadToken) {
-                        this.hud.toast('The live stream ended before sending any frames.', 'info');
+                        this.hud.toast(t('main.live.endedEmpty'), 'info');
                     }
                 }
                 if (this.source && this.source.live === live) {
-                    this.hud.toast('The live stream ended. Its frames stay here to review.', 'info', 6000);
+                    this.hud.toast(t('main.live.ended'), 'info', 6000);
                     this.updateLiveUi();
                 }
             },
             onError: (err) => {
                 live.stop();
                 live.failed = true;
-                // A source whose process ended answers 404 or 502 through the server.
-                if (/answered (404|502)|no such live source|did not answer/i.test(err.message)) {
-                    err = new Error('This live source has stopped.');
+                // A source whose process ended answers 404 or 502 through the server, which the
+                // status of the error says in every language.
+                if (err.status === 404 || err.status === 502 || /answered (404|502)|no such live source|did not answer/i.test(err.message)) {
+                    err = new Error(t('main.live.stopped'));
                 }
                 if (this.pendingLive === live) {
                     this.setWaiting(null);
                     this.pendingLive = null;
                 }
                 if (this.source && this.source.live === live) {
-                    this.hud.toast(`${err.message} Its frames stay here to review.`, 'error', 8000);
+                    this.hud.toast(t('main.live.failedKept', { reason: err.message }), 'error', 8000);
                     this.updateLiveUi();
                 } else if (token === this.loadToken) {
                     this.hud.toast(err.message, 'error', 8000);
@@ -515,20 +550,20 @@ class App {
         const current = (source.header.provenance && source.header.provenance.environment) || 0;
         const environment = Number($('live-env-index').value);
         if (!Number.isInteger(environment) || environment < 0 || environment >= count) {
-            this.hud.toast(`Choose an environment from 0 to ${count - 1}.`, 'error');
+            this.hud.toast(t('main.environment.range', { last: count - 1 }), 'error');
             return;
         }
         if (environment === current) {
-            this.hud.toast(`The source already shows environment ${environment}.`, 'info');
+            this.hud.toast(t('main.environment.already', { environment }), 'info');
             return;
         }
         $('live-env-go').disabled = true;
         try {
             await api.selectEnvironment(source.id, environment);
             this.switchingLive = live;
-            this.hud.toast(`Environment ${environment} shows after the next step of the batch.`, 'info');
+            this.hud.toast(t('main.environment.pending', { environment }), 'info');
         } catch (err) {
-            this.hud.toast(`The environment could not be switched. ${err.message}`, 'error', 8000);
+            this.hud.toast(t('main.environment.failed', { reason: err.message }), 'error', 8000);
         } finally {
             $('live-env-go').disabled = false;
         }
@@ -578,13 +613,13 @@ class App {
                     this.transition.fullTime();
                     this.postMatch.start();
                 } else if (ended) {
-                    this.transition.title.show('End of episode', h, this.styles, f, '',
+                    this.transition.title.show(t('main.end.episode'), h, this.styles, f, '',
                         this.settings.podium ? [] : [this.postMatch.statsButton()]);
                     clearTimeout(this.fullTimeTimer);
                     this.fullTimeTimer = setTimeout(() => this.transition.title.hide(), 4500);
                     this.postMatch.start();
                 } else {
-                    this.transition.title.show('End of recording', h, this.styles, f, '', [this.postMatch.statsButton()]);
+                    this.transition.title.show(t('main.end.recording'), h, this.styles, f, '', [this.postMatch.statsButton()]);
                     this.endCard = true;
                 }
             }
@@ -595,7 +630,7 @@ class App {
         this.lastIndex = -1;
         $('address-input').value = source.kind === 'file' ? '' : source.id;
         $('address-input').placeholder = source.kind === 'file' ? source.id : $('address-input').placeholder;
-        document.title = `${titleText(source.header.title, source.header.scenario) || 'Match'} · cuju`;
+        this.structure?.setWatchTitle(recordingTitle(source.header, source.kind === 'match' ? source.id : null) || t('main.title.match'));
         this.showEmpty(false);
         await this.rebuildPlayers();
         this.applyBoards();
@@ -721,7 +756,7 @@ class App {
             this.stadium.setTeams(['cuju', 'cuju'], ['#202124', '#ff6f00'], []);
             return;
         }
-        const names = this.source.header.teams.map((t) => t.name || '');
+        const names = this.source.header.teams.map((team) => teamName(team));
         const colors = this.styles.map((s) => `rgb(${s.kit.primary.join(',')})`);
         if (mode === 'shipped') {
             this.stadium.setTeams(names, colors, []);
@@ -824,6 +859,7 @@ class App {
         } else if (name === 'field') {
             this.fieldPage.show();
         }
+        this.structure?.update(name);
         if (contentFocus) {
             $('pages').focus();
         }
@@ -857,7 +893,7 @@ class App {
             const count = $('live-count');
             count.hidden = !list.length;
             count.textContent = list.length ? String(list.length) : '';
-            count.title = list.length ? `${list.length} live ${list.length === 1 ? 'source' : 'sources'}` : '';
+            count.title = list.length ? t('main.live.count', { count: list.length }) : '';
         };
         fill();
         setInterval(() => {
@@ -933,8 +969,8 @@ class App {
         const roster = this.styles && this.styles[p.team] && this.styles[p.team].players
             ? this.styles[p.team].players[p.index] : null;
         const number = roster ? roster.number : (p.goalkeeper ? 1 : p.index + 1);
-        const name = roster && roster.name ? roster.name : (p.goalkeeper ? 'Goalkeeper' : `Player ${p.index + 1}`);
-        return `${number}  ${name}, ${team.name || ''}`;
+        const name = roster && roster.name ? roster.name : (p.goalkeeper ? t('main.player.goalkeeper') : t('main.player.numbered', { number: p.index + 1 }));
+        return t('main.player.label', { number, name, team: teamName(team) });
     }
 
     // Frame loop.
@@ -1012,7 +1048,7 @@ class App {
                 follow = this.players.position(this.pose, k, this.followPos || (this.followPos = new THREE.Vector3()));
                 if (k !== this.followShown) {
                     this.followShown = k;
-                    this.hud.followLabel(playerInfo(this, k), 'on the ball');
+                    this.hud.followLabel(playerInfo(this, k), t('main.follow.onBall'));
                 }
             }
             label.hidden = k < 0;
@@ -1296,7 +1332,7 @@ class App {
         }
         goal = goal || this.lastGoal || tl.goalNear(-1);
         if (!goal) {
-            this.hud.toast('No goal to replay yet.');
+            this.hud.toast(t('main.replay.none'));
             return;
         }
         this.director.start(goal, 1);
@@ -1386,7 +1422,7 @@ class App {
         case 'prev-goal': {
             const g = tl.goalNear(action === 'next-goal' ? 1 : -1, 6 * tl.sps);
             if (!g) {
-                this.hud.toast(action === 'next-goal' ? 'No later goal.' : 'No earlier goal.');
+                this.hud.toast(action === 'next-goal' ? t('main.goal.noLater') : t('main.goal.noEarlier'));
                 break;
             }
             // Land a few seconds before the goal to see the move.
@@ -1606,7 +1642,7 @@ class App {
             this.sound.unlock();
             const textField = e.target.closest('input, select, textarea, [contenteditable]');
             const control = e.target.closest(OWN_KEYS);
-            if (e.defaultPrevented || textField || (control && e.key !== 'Escape')) {
+            if (e.defaultPrevented || textField || keepsKey(control, e.key, e)) {
                 return;
             }
             const picture = e.target.closest('#stage, #field-preview');
@@ -1788,7 +1824,7 @@ class App {
         const n = this.source.header.players.length;
         const k = ((this.cameras.followIndex % n) + n) % n;
         const p = this.source.header.players[k];
-        this.hud.toast(`Following ${this.playerLabel(k)}.`, 'info', 1800);
+        this.hud.toast(t('main.follow.player', { player: this.playerLabel(k) }), 'info', 1800);
         void p;
     }
 
@@ -1805,9 +1841,10 @@ class App {
         const k = slot === 0 ? keeper : (outfield[slot - 1] !== undefined ? outfield[slot - 1] : -1);
         if (k < 0) {
             const size = players.filter((p) => p.team === team).length;
-            const words = ['no one', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven'];
-            const what = slot === 0 ? 'goalkeeper' : `player ${slot % 10}`;
-            this.hud.toast(`No ${what} in a team of ${words[size] || size}`, 'info', 1800);
+            const words = [t('main.teamSize.0'), t('main.teamSize.1'), t('main.teamSize.2'), t('main.teamSize.3'), t('main.teamSize.4'), t('main.teamSize.5'),
+                t('main.teamSize.6'), t('main.teamSize.7'), t('main.teamSize.8'), t('main.teamSize.9'), t('main.teamSize.10'), t('main.teamSize.11')];
+            const sized = words[size] || size;
+            this.hud.toast(slot === 0 ? t('main.firstPerson.noGoalkeeper', { team: sized }) : t('main.firstPerson.noPlayer', { player: slot % 10, team: sized }), 'info', 1800);
             return;
         }
         const cams = this.cameras;
@@ -1958,7 +1995,7 @@ class App {
                 return;
             }
             if (/\.glb$/i.test(file.name)) {
-                this.hud.toast('To use a model, open a team in Teams and drop it in the team editor.', 'info', 6000);
+                this.hud.toast(t('main.drop.model'), 'info', 6000);
                 return;
             }
             this.openFile(file);
@@ -2083,7 +2120,7 @@ class App {
             this.tvHintTimer = setTimeout(() => app.classList.remove('tv-hint'), 3200);
         }
         if (!this.tvMode) {
-            this.hud.toast('Broadcast mode off', 'info', 1200);
+            this.hud.toast(t('main.tv.off'), 'info', 1200);
         }
         this.poke();
     }
@@ -2138,7 +2175,7 @@ class App {
         if (document.fullscreenElement) {
             document.exitFullscreen().catch(() => {});
         } else {
-            $('app').requestFullscreen().catch((err) => this.hud.toast(`Fullscreen is not available here, ${err.message}`, 'error'));
+            $('app').requestFullscreen().catch((err) => this.hud.toast(t('main.fullscreen.failed', { reason: err.message }), 'error'));
         }
     }
 
@@ -2167,7 +2204,7 @@ class App {
         this.sound.setMuted(m);
         $('mute').setAttribute('aria-pressed', m ? 'true' : 'false');
         $('mute').classList.toggle('muted', m);
-        $('mute').title = m ? 'Unmute (M)' : 'Mute (M)';
+        $('mute').title = m ? t('main.mute.off') : t('main.mute.on');
     }
 
     setTrail(on) {
@@ -2241,17 +2278,17 @@ class App {
         const atEdge = tl.following || behind < 1;
         $('go-live').hidden = atEdge && !ended;
         $('go-live').disabled = ended;
-        $('go-live').title = ended ? 'The stream has ended' : 'Go to the newest moment (End)';
+        $('go-live').title = ended ? t('main.live.goLive.ended') : t('main.live.goLive');
         const connection = this.source.live;
-        let state = ended ? 'Stream ended' : atEdge ? 'Live' : `${formatSeconds(behind)} behind live`;
+        let state = ended ? t('main.live.state.ended') : atEdge ? t('main.live.state.live') : t('main.live.state.behind', { time: formatSeconds(behind) });
         if (connection && connection.failed) {
-            state = 'Disconnected';
+            state = t('main.live.state.disconnected');
         } else if (connection && connection.state === 'reconnecting') {
-            state = 'Reconnecting';
+            state = t('main.live.state.reconnecting');
         }
         // Frames lost while the stream reconnected show as cuts, and their count stays here.
         if (connection && connection.gaps) {
-            state += `, ${connection.gaps} ${connection.gaps === 1 ? 'frame' : 'frames'} lost`;
+            state = t('main.live.state.lost', { state, count: connection.gaps });
         }
         $('live-state').textContent = state;
         // A source on this server with several environments may show another, and the control
@@ -2284,8 +2321,20 @@ class App {
         const f = (tl.t - tl.first) / span;
         $('timeline-fill').style.width = `${f * 100}%`;
         $('timeline-thumb').style.left = `${f * 100}%`;
-        $('time-now').textContent = formatSeconds((tl.t - tl.first) / tl.sps);
-        $('time-total').textContent = formatSeconds(span / tl.sps);
+        const now = formatSeconds((tl.t - tl.first) / tl.sps);
+        const total = formatSeconds(span / tl.sps);
+        $('time-now').textContent = now;
+        $('time-total').textContent = total;
+        // The slider says where it stands, set again only when the second shown changes.
+        const position = t('main.timeline.position', { now, total });
+        if (this.timelineText !== position) {
+            this.timelineText = position;
+            const bar = $('timeline');
+            bar.setAttribute('aria-valuemin', '0');
+            bar.setAttribute('aria-valuemax', String(Math.round(span / tl.sps)));
+            bar.setAttribute('aria-valuenow', String(Math.round((tl.t - tl.first) / tl.sps)));
+            bar.setAttribute('aria-valuetext', this.timelineText);
+        }
         const goals = tl.store.goals;
         const box = $('timeline-markers');
         if (tl.live && goals.length === this.markerCount && tl.first === this.markerBase) {
@@ -2300,7 +2349,7 @@ class App {
                 const m = document.createElement('button');
                 m.className = `marker team-${g.team}`;
                 m.style.left = `${((g.index - tl.first) / span) * 100}%`;
-                m.title = `Goal, ${this.source.header.teams[g.team] ? this.source.header.teams[g.team].name : ''}`;
+                m.title = t('main.timeline.goal', { team: teamName(this.source.header.teams[g.team]) });
                 m.addEventListener('pointerdown', (e) => e.stopPropagation());
                 m.addEventListener('click', () => {
                     tl.seek(Math.max(tl.first, g.index - 6 * tl.sps));
@@ -2319,11 +2368,18 @@ class App {
 
     // The URL hash names a match and a time in seconds, or a live source, so a moment can be
     // shared.
+    // The page writes the hash only when it changes, at most once a second while a match plays,
+    // and leaves a hash that someone else wrote alone until its hashchange has opened it.
     updateHash(force = false) {
+        if (!force && location.hash !== (this.ownHash || '') && location.hash !== (this.openedHash || '')) {
+            return;
+        }
         if (this.page !== 'watch' || !this.source || this.source.kind === 'file' || this.source.game) {
             const hash = `#page=${this.page}`;
             this.ownHash = hash;
-            history.replaceState(null, '', hash);
+            if (location.hash !== hash) {
+                history.replaceState(null, '', hash);
+            }
             return;
         }
         const now = performance.now();
@@ -2345,6 +2401,7 @@ class App {
     }
 
     openFromHash() {
+        this.openedHash = location.hash;
         const raw = location.hash.replace(/^#/, '');
         if (!raw) {
             this.showPage('home');
@@ -2363,10 +2420,11 @@ class App {
         if (params.get('match')) {
             const id = params.get('match');
             if (this.source && this.source.kind === 'match' && this.source.id === id) {
+                this.showPage('watch');
                 if (Number.isFinite(t) && this.timeline) {
                     this.timeline.seek(this.timeline.first + t * this.timeline.sps);
                     this.afterSeek();
-                    this.ownHash = `#${raw}`;
+                    this.updateHash(true);
                 }
                 return;
             }

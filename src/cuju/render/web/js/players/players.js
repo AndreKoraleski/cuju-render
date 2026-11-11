@@ -16,6 +16,7 @@ import { Recolor, kitPairs, shownColors } from './recolor.js';
 import { fallbackCelebration, has as hasAnimation, pickCelebration } from './animate.js';
 import { attachKayKitClips } from './kaykit.js';
 import { RigNumbers } from './rig-numbers.js';
+import { t } from '../core/i18n.js';
 
 // The largest team model read, the server takes at most 30 MB so this only stops a runaway file.
 const MAX_MODEL_BYTES = 64 * 1024 * 1024;
@@ -462,7 +463,7 @@ export function skinnedBones(scene) {
         }
     });
     if (bones.length === 0) {
-        throw new Error('This model has no skin, so it cannot be animated. Export it with its armature and skin weights.');
+        throw new Error(t('players.model.noSkin'));
     }
     return bones;
 }
@@ -529,7 +530,7 @@ export class Rig {
         }
         const bodyBone = bones.find((b) => nodeOf.get(b) === 1);
         if (!bodyBone) {
-            throw new Error('The joint mapping has no bone for body, the pelvis.');
+            throw new Error(t('players.model.noBody'));
         }
         // Order bones parents first, and find the skeleton roots.
         const depth = (b) => {
@@ -1270,23 +1271,76 @@ function grfHead(grf) {
 // fragment weighted mostly to it is discarded while hide.value is 1, so no triangle shared with
 // the collar stretches. The shadow keeps the head.
 function hideHeadByWeight(material, neck, hide) {
-    material.onBeforeCompile = (shader) => {
-        shader.uniforms.cujuHeadBone = { value: neck };
-        shader.uniforms.cujuHideHead = hide;
-        shader.vertexShader = shader.vertexShader
-            .replace('#include <common>', `#include <common>
-                uniform float cujuHeadBone;
-                varying float vCujuHead;`)
-            .replace('#include <skinbase_vertex>', `#include <skinbase_vertex>
-                vCujuHead = dot(skinWeight, vec4(equal(skinIndex, vec4(cujuHeadBone))));`);
-        shader.fragmentShader = shader.fragmentShader
-            .replace('#include <common>', `#include <common>
-                uniform float cujuHideHead;
-                varying float vCujuHead;`)
-            .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
-                if (cujuHideHead > 0.5 && vCujuHead > 0.5) discard;`);
-    };
+    material.onBeforeCompile = (shader) => headPatch(shader, neck, hide);
     material.customProgramCacheKey = () => 'cuju-grf-head';
+    headOf.set(material, neck);
+}
+
+// The neck bone of each material whose head hides, so a package's copy of it hides it too.
+const headOf = new WeakMap();
+
+// Edits a program of GRF's player so that its head hides while hide.value is 1.
+function headPatch(shader, neck, hide) {
+    shader.uniforms.cujuHeadBone = { value: neck };
+    shader.uniforms.cujuHideHead = hide;
+    shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>
+            uniform float cujuHeadBone;
+            varying float vCujuHead;`)
+        .replace('#include <skinbase_vertex>', `#include <skinbase_vertex>
+            vCujuHead = dot(skinWeight, vec4(equal(skinIndex, vec4(cujuHeadBone))));`);
+    shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+            uniform float cujuHideHead;
+            varying float vCujuHead;`)
+        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+            if (cujuHideHead > 0.5 && vCujuHead > 0.5) discard;`);
+}
+
+// GRF's own figure as a package sees a rig, so the sockets, attachments, behaviours, materials,
+// shaders and lights of a team's presentation package reach GRF's player too. Its bones are
+// GRF's 14 nodes by their names, and the world matrix of each is the node's transform in three's
+// frame, scaled by the player's height about his ground point, so a socket's frame at rest has y
+// up and z toward where the player faces. GRF's figure plays no clip of a package, so the
+// package's own clips, its team and worker drivers and its layers apply to its models alone.
+const GRF_BONES = NODE_NAMES.map((name, i) => ({ name, parent: NODE_PARENTS[i], node: i }));
+const grfWorld = new THREE.Matrix4();
+const grfNode = new THREE.Matrix4();
+const grfScale = new THREE.Vector3();
+
+function grfRig(entry) {
+    return {
+        grf: true,
+        bones: GRF_BONES,
+        headIndex: -1,
+        headMask: [],
+        clip: () => null,
+        // Fills the world matrices of the instance from the nodes, as GrfPlayers draws them.
+        pose(instance, nodes, base) {
+            const gx = nodes[base];
+            const gz = -nodes[base + 1];
+            const s = entry.scale;
+            grfWorld.set(
+                s, 0, 0, gx * (1 - s),
+                0, s, 0, 0,
+                0, 0, s, gz * (1 - s),
+                0, 0, 0, 1,
+            );
+            for (let i = 0; i < NODE_COUNT; i++) {
+                nodeMatrix(nodes, base + i * 7, grfNode);
+                instance.world[i].multiplyMatrices(grfWorld, grfNode);
+            }
+        },
+        // Writes the world matrices into GRF's bones, which keep the engine frame of player.glb.
+        write(instance) {
+            for (let i = 0; i < NODE_COUNT; i++) {
+                const bone = instance.bones[i];
+                if (bone) {
+                    bone.matrixWorld.multiplyMatrices(instance.world[i], ENGINE_TO_THREE);
+                }
+            }
+        },
+    };
 }
 
 // GRF's own player, player.glb, kept in the engine frame. Its bind pose has identity rotations
@@ -1339,6 +1393,7 @@ class GrfPlayers {
             this.entries.push(entry);
             this.byK.set(k, entry);
             const bones = entry.bones;
+            const owned = [];
             const kit = this.kitCanvas
                 ? kitTexture(this.kitCanvas, style, false, null)
                 : kitTexture(kitBase(p.team, p.goalkeeper ? 1 : 0), style, !!p.goalkeeper, playerLook(style, p, k).number);
@@ -1362,6 +1417,7 @@ class GrfPlayers {
                             if (neck >= 0) {
                                 hideHeadByWeight(copy, neck, entry.hideHead);
                             }
+                            owned.push(copy);
                             copies.set(mat, copy);
                         }
                         return copies.get(mat);
@@ -1386,6 +1442,25 @@ class GrfPlayers {
                 this.group.add(hair);
             }
             this.group.add(root);
+            // What a team's presentation package reads of the player, as of a rigged model. A
+            // package's copy of a material keeps the hidden head of GRF's player.
+            const instance = {
+                root, bones, materials: owned, world: GRF_BONES.map(() => new THREE.Matrix4()),
+                repatch: (original, copy) => {
+                    const neck = headOf.get(original);
+                    if (neck === undefined) {
+                        return;
+                    }
+                    const own = copy.onBeforeCompile;
+                    const key = copy.customProgramCacheKey;
+                    copy.onBeforeCompile = (shader, renderer) => {
+                        own.call(copy, shader, renderer);
+                        headPatch(shader, neck, entry.hideHead);
+                    };
+                    copy.customProgramCacheKey = () => `${key.call(copy)}:grf-head`;
+                },
+            };
+            entry.adapter = { k, team: p.team, gk: !!p.goalkeeper, rig: grfRig(entry), instance, hideHead: false, request: null, grf: true };
         }
     }
 
@@ -1429,6 +1504,18 @@ class GrfPlayers {
                 continue;
             }
             const base = e.k * PLAYER_FLOATS;
+            // A team presentation package poses its players of GRF's figure, see
+            // presentation/index.js, and the hair follows the posed neck.
+            if (this.presentation && e.adapter) {
+                e.adapter.hideHead = mode === HIDE_HEAD;
+                if (this.presentation.pose(e.adapter, nodes, base)) {
+                    if (e.hair) {
+                        e.adapter.instance.world[3].decompose(tmpPos, tmpQuat, grfScale);
+                        e.hair.matrix.compose(tmpPos, tmpQuat, ONE).multiply(ENGINE_TO_THREE);
+                    }
+                    continue;
+                }
+            }
             // Scaling about the ground point g moves g to the origin, scales and moves it back, in
             // three's frame g has y 0.
             const gx = nodes[base];
@@ -1478,6 +1565,10 @@ class GrfPlayers {
 
     size(k) {
         const e = this.byK.get(k);
+        const own = e && e.adapter && this.presentation ? this.presentation.size(e.adapter) : null;
+        if (own) {
+            return own;
+        }
         const s = e ? e.scale : 1;
         const base = grfSize(this.grf);
         return { radius: base.radius * s, height: base.height * s };
@@ -1489,6 +1580,9 @@ class GrfPlayers {
             d.dispose();
         }
         for (const e of this.entries) {
+            if (this.presentation && e.adapter) {
+                this.presentation.release(e.adapter);
+            }
             disposeSkeletons(e.root);
         }
         this.disposables = [];
@@ -1667,24 +1761,24 @@ function sealedManager() {
 function checkSelfContained(buffer) {
     const view = new DataView(buffer);
     if (buffer.byteLength < 20 || view.getUint32(0, true) !== 0x46546c67) {
-        throw new Error('This model is not a binary glTF file, export it as .glb.');
+        throw new Error(t('players.model.notGlb'));
     }
     const length = view.getUint32(12, true);
     if (view.getUint32(16, true) !== 0x4e4f534a || 20 + length > buffer.byteLength) {
-        throw new Error('This .glb file is damaged, its JSON chunk is missing.');
+        throw new Error(t('players.model.damaged'));
     }
     const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, length)));
     const outside = [...(json.buffers || []), ...(json.images || [])]
         .filter((entry) => typeof entry.uri === 'string' && !/^data:/i.test(entry.uri));
     if (outside.length) {
-        throw new Error('This model refers to files outside the .glb, export it with every buffer and texture embedded.');
+        throw new Error(t('players.model.outside'));
     }
 }
 
 // Parses the bytes of a team's own model, the upload of the team editor included.
 export async function parseModel(buffer) {
     if (buffer.byteLength > MAX_MODEL_BYTES) {
-        throw new Error(`This model is ${Math.ceil(buffer.byteLength / 1048576)} MB, at most ${MAX_MODEL_BYTES / 1048576} MB is read.`);
+        throw new Error(t('players.model.tooLarge', { size: Math.ceil(buffer.byteLength / 1048576), max: MAX_MODEL_BYTES / 1048576 }));
     }
     checkSelfContained(buffer);
     return new GLTFLoader(sealedManager()).parseAsync(buffer, '');
@@ -1696,7 +1790,7 @@ async function fetchModel(url) {
         throw new Error(`model download failed, ${res.status}`);
     }
     if (Number(res.headers.get('Content-Length')) > MAX_MODEL_BYTES) {
-        throw new Error(`This model is larger than ${MAX_MODEL_BYTES / 1048576} MB.`);
+        throw new Error(t('players.model.larger', { max: MAX_MODEL_BYTES / 1048576 }));
     }
     return res.arrayBuffer();
 }
@@ -2034,6 +2128,8 @@ export class Players {
         if (grf.length) {
             try {
                 const part = new GrfPlayers(this.group, header, styles, grf, assets.grf);
+                part.presentation = this.presentation;
+                this.grfPart = part;
                 this.parts.push(part);
                 grf.forEach((k) => {
                     this.where[k] = part;
@@ -2123,6 +2219,28 @@ export class Players {
     // The pairs a team and model are drawn with, the clash recolor included.
     colorsOf(team, model) {
         return { ...((this.pairs[team] && this.pairs[team].get(model)) || {}) };
+    }
+
+    // What a team's presentation package reads of player k, the entry of his rigged model or of
+    // GRF's figure, or null for a simple figure.
+    packageEntry(k) {
+        const rigged = this.rigged ? this.rigged.byK.get(k) : null;
+        if (rigged) {
+            return rigged;
+        }
+        const grf = this.grfPart ? this.grfPart.byK.get(k) : null;
+        return grf ? grf.adapter || null : null;
+    }
+
+    // Every entry a package may present, with the group its attachments join.
+    packageEntries() {
+        const out = (this.rigged ? this.rigged.entries : []).map((e) => ({ entry: e, group: this.rigged.group }));
+        for (const e of this.grfPart ? this.grfPart.entries : []) {
+            if (e.adapter) {
+                out.push({ entry: e.adapter, group: this.grfPart.group });
+            }
+        }
+        return out;
     }
 
     // The model player k draws, grf when its own had no rig.

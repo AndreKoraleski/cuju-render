@@ -24,6 +24,8 @@ from typing import Any
 
 from cuju.errors import ArgumentError
 
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from . import sizes as _sizes
 
 # The sources that a feed follows, as the page names them.
@@ -89,16 +91,13 @@ def parse_source(text: Any) -> tuple[str, str]:
     head, rest = head.lower(), rest.strip()
     if head in SOURCES:
         if head == 'recording' and not rest:
-            raise ArgumentError('expected the identifier of a recording after recording:')
+            raise MessageError('server.feed.recording_name')
         if head in ('auto', 'latest', 'queue') and colon:
-            raise ArgumentError(f'expected nothing after the source {head}, found {value!r}')
+            raise MessageError('server.feed.nothing_after', source=head, value=repr(value))
         return head, rest
     if _IDENTIFIER.fullmatch(value):
         return 'recording', value
-    raise ArgumentError(
-        f'expected a source of {", ".join(SOURCES)}, a kind with a name such as live:Evaluation, '
-        f'or the identifier of a recording, found {value!r}'
-    )
+    raise MessageError('server.feed.source', sources=', '.join(SOURCES), value=repr(value))
 
 
 def source_text(kind: str, name: str) -> str:
@@ -222,12 +221,28 @@ def _newest_live(sources: list[dict[str, Any]], name: str = '') -> dict[str, Any
     return ordered[0] if ordered else None
 
 
-def _target(kind: str, identifier: str, title: str, **extra: Any) -> dict[str, Any]:
-    return {'kind': kind, 'id': identifier, 'title': title, **extra}
+def _target(kind: str, identifier: str, entry: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    """Returns a target, whose title comes from the summary or the source `entry`, with the
+    message of a title that cuju made beside its English text."""
+    return {'kind': kind, 'id': identifier, **_messages.named('title', _title(entry)), **extra}
 
 
-def _none(message: str) -> dict[str, Any]:
-    return {'kind': 'none', 'id': '', 'title': '', 'message': message}
+def _title(entry: dict[str, Any] | None) -> dict[str, Any] | str:
+    """Returns the title of a summary or a live source, a label when it carries a valid one."""
+    entry = entry or {}
+    found = {
+        'id': entry.get('title_id'),
+        'text': str(entry.get('title') or ''),
+        'values': entry.get('title_values'),
+    }
+    return found if _messages.valid_label(found) else found['text']
+
+
+def _none(message_id: str, **values: Any) -> dict[str, Any]:
+    """Returns the answer for a source that names nothing now, with the message of what it waits
+    for, whose English text stays in `message`."""
+    label = _messages.label(message_id, **values)
+    return {'kind': 'none', 'id': '', 'title': '', **_messages.named('message', label)}
 
 
 def _tournament_match(entry: dict[str, Any]) -> str | None:
@@ -263,21 +278,21 @@ def resolve(
     if kind in ('auto', 'live'):
         found = _newest_live(live(), name)
         if found is not None:
-            return _target('live', found['id'], str(found.get('title') or ''))
+            return _target('live', found['id'], found)
         if kind == 'live':
-            return _none(
-                f'No live source named {name} streams now' if name else 'No live source streams now'
-            )
+            if name:
+                return _none('server.feed.no_live_named', name=name)
+            return _none('server.feed.no_live')
     if kind in ('auto', 'latest'):
         entries = recordings()
         if entries:
-            return _target('match', entries[0]['id'], str(entries[0].get('title') or ''))
-        return _none('The library holds no recording yet')
+            return _target('match', entries[0]['id'], entries[0])
+        return _none('server.feed.no_recordings')
     if kind == 'recording':
         entry = recording(name)
         if entry is None:
-            return _none(f'The library holds no recording {name}')
-        return _target('match', name, str(entry.get('title') or ''))
+            return _none('server.feed.no_recording', name=name)
+        return _target('match', name, entry)
     if kind == 'queue':
         done = [
             entry
@@ -286,25 +301,31 @@ def resolve(
         ]
         if done:
             newest = max(done, key=lambda entry: float(entry.get('finished') or 0))
-            title = f'{newest.get("left", "")} against {newest.get("right", "")}'
-            return _target('match', newest['match'], title, request=newest['id'])
-        return _none('No requested match has finished yet')
+            # The recording's own title names the teams as the match did.
+            entry = recording(newest['match']) or {
+                'title': f'{newest.get("left", "")} against {newest.get("right", "")}'
+            }
+            return _target('match', newest['match'], entry, request=newest['id'])
+        return _none('server.feed.no_request')
     summaries = tournaments()
     if name:
         chosen = next((t for t in summaries if t.get('id') == name), None) or next(
             (t for t in summaries if str(t.get('name') or '').casefold() == name.casefold()), None
         )
         if chosen is None:
-            return _none(f'No tournament named {name}')
+            return _none('server.feed.no_tournament_named', name=name)
     elif summaries:
         chosen = summaries[0]
     else:
-        return _none('No tournament yet')
+        return _none('server.feed.no_tournament')
     entry = tournament(chosen['id'])
     match = _tournament_match(entry) if entry else None
     if match is None:
-        return _none(f'{chosen.get("name") or "The tournament"} has no finished match yet')
-    return _target('match', match, str(chosen.get('name') or ''), tournament=chosen['id'])
+        if chosen.get('name'):
+            return _none('server.feed.tournament_waits', name=str(chosen['name']))
+        return _none('server.feed.tournament_waits_unnamed')
+    named = {'title': str(chosen.get('name') or '')}
+    return _target('match', match, named, tournament=chosen['id'])
 
 
 def targets(
@@ -314,22 +335,26 @@ def targets(
 ) -> list[dict[str, Any]]:
     """Returns the sources that a feed may follow now, each with its address on `base`."""
     rows = [
-        {'source': 'auto', 'label': 'a live source while one streams, else the newest recording'},
-        {'source': 'latest', 'label': 'the newest recording of the library'},
-        {'source': 'live', 'label': 'the newest live source'},
-        {'source': 'queue', 'label': 'the newest finished requested match'},
-        {'source': 'tournament', 'label': 'the newest finished match of the newest tournament'},
+        {'source': kind, **_messages.named('label', _messages.label(f'server.feed.follow.{kind}'))}
+        for kind in ('auto', 'latest', 'live', 'queue', 'tournament')
     ]
+    # A live source goes by its title, which follows it through its restarts, and a source without
+    # a title by its identifier. Sources of one title share a row, the newest of them.
+    named = set()
     for source in sorted(live, key=lambda s: str(s.get('id', '')), reverse=True):
-        title = str(source.get('title') or source['id'])
-        rows.append({'source': f'live:{source["id"]}', 'label': f'the live source {title}'})
+        title = str(source.get('title') or '').strip()
+        name = title or str(source['id'])
+        if name.casefold() in named:
+            continue
+        named.add(name.casefold())
+        shown = _title(source) if title else name
+        label = _messages.label('server.feed.follow.live_named', name=shown)
+        rows.append({'source': f'live:{name}', **_messages.named('label', label)})
     for entry in tournaments[:8]:
-        rows.append(
-            {
-                'source': f'tournament:{entry["id"]}',
-                'label': f'the matches of the tournament {entry.get("name") or entry["id"]}',
-            }
+        label = _messages.label(
+            'server.feed.follow.tournament_named', name=str(entry.get('name') or entry['id'])
         )
+        rows.append({'source': f'tournament:{entry["id"]}', **_messages.named('label', label)})
     for row in rows:
         row['url'] = address(base, source=row['source'])
     return rows
@@ -455,6 +480,7 @@ def run(namespace: argparse.Namespace) -> int:
     base, running = _server_base(namespace.port)
     if namespace.source is not None:
         url = address(base, source=namespace.source, **options)
+        _check_target(namespace.source, base, running)
         rows = [{'source': source_text(*parse_source(namespace.source)), 'url': url}]
     else:
         check(**options)
@@ -476,6 +502,33 @@ def run(namespace: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     return 0
+
+
+def _check_target(source: str, base: str, running: bool) -> None:
+    """Checks that a feed's recording is in the library and its tournament on the server.
+
+    A live source may start later, so a name of one passes. A recording must be in the library,
+    and a named tournament must be one of the running server.
+
+    Raises:
+        ArgumentError: If the recording or the tournament is unknown.
+    """
+    from .._store import library as _library
+
+    kind, name = parse_source(source)
+    if kind == 'recording' and _library.path_of(name) is None:
+        raise ArgumentError(
+            f'expected a recording of the library, found none named {name}, the Recordings page '
+            'and cuju render search list them'
+        )
+    if kind == 'tournament' and name and running:
+        cups = _listed(base)[1]
+        folded = name.casefold()
+        if not any(
+            entry.get('id') == name or str(entry.get('name') or '').casefold() == folded
+            for entry in cups
+        ):
+            raise ArgumentError(f'expected a tournament of the server, found none named {name}')
 
 
 def _home_text() -> str:

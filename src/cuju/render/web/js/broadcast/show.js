@@ -19,6 +19,7 @@ import { HALF_H, HALF_W } from '../world/pitch.js';
 import { Players } from '../players/players.js';
 import { h } from '../teams/library.js';
 import { css } from '../players/kits.js';
+import { formatNumber, t } from '../core/i18n.js';
 
 // GRF's goal, the posts at 3.66 meters either side of the center of the goal line and the bar at
 // 2.44 meters.
@@ -36,6 +37,9 @@ const ballZ = (f) => f.data[10];
 // The goal line a team attacks, the left team defends negative x.
 const attackX = (team) => (team === 0 ? HALF_W : -HALF_W);
 const scoreOf = (f, team) => (team === 0 ? f.scoreLeft : f.scoreRight);
+// A number as toFixed writes it, with the decimal separator of the language.
+const DECIMAL = formatNumber(0.5).charAt(1);
+const fixed = (value, digits) => value.toFixed(digits).replace('.', DECIMAL);
 
 // Whether the ball, flying from a to b over one step, would cross the goal line at goalX between
 // the posts and under the bar. It flies straight with gravity and no drag, close enough over the
@@ -579,7 +583,7 @@ export function playerInfo(app, k) {
     const style = app.styles ? app.styles[p.team] : null;
     const roster = style && style.players ? style.players[p.index] : null;
     const number = roster ? roster.number : (p.goalkeeper ? 1 : p.index + 1);
-    const name = roster && roster.name ? roster.name : (p.goalkeeper ? 'Goalkeeper' : `Player ${number}`);
+    const name = roster && roster.name ? roster.name : (p.goalkeeper ? t('show.player.goalkeeper') : t('show.player.unnamed', { number }));
     const kit = style ? (p.goalkeeper && style.goalkeeper ? style.goalkeeper : style.kit) : null;
     const rgb = kit ? kit.primary : [255, 111, 0];
     const light = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] > 150;
@@ -605,10 +609,10 @@ function goalInfo(app, index, team, who) {
         info.number = s.number;
         info.color = s.color;
         if (who.ownGoal) {
-            info.assist = `Own goal, ${s.teamName}`;
+            info.assist = t('show.goal.own', { team: s.teamName });
         } else if (who.assist >= 0) {
             const a = playerInfo(app, who.assist);
-            info.assist = a.named ? `Assist, ${a.number} ${a.name}` : `Assist, ${a.name}`;
+            info.assist = a.named ? t('show.goal.assist.numbered', { number: a.number, name: a.name }) : t('show.goal.assist', { name: a.name });
         }
     }
     return info;
@@ -642,7 +646,8 @@ function playerAt(store, k, t, out) {
 // the camera rig's own modes.
 export const REPLAY_ANGLES = ['broadcast', 'reverse', 'netcam', 'high'];
 const ANGLE_NAMES = {
-    broadcast: 'Wide', reverse: 'Reverse angle', netcam: 'Goal camera', high: 'High angle', lowside: 'Pitch side',
+    broadcast: t('show.angle.broadcast'), reverse: t('show.angle.reverse'), netcam: t('show.angle.netcam'),
+    high: t('show.angle.high'), lowside: t('show.angle.lowside'),
 };
 
 // How a goal's replay plays, the angle that suits it best unless one is asked for, where the
@@ -1177,7 +1182,7 @@ export class Director {
             return;
         }
         this.wiping = true;
-        this.sting(app.settings.replays ? 'Replay' : '', () => {
+        this.sting(app.settings.replays ? t('show.sting.replay') : '', () => {
             this.wiping = false;
             this.cel = null;
             this.releaseClips(c);
@@ -1263,7 +1268,7 @@ export class Director {
         const goal = (this.active && this.active.plan && this.active.plan.goal) || (this.recent && this.recent.goal)
             || app.lastGoal || tl.goalNear(-1);
         if (!goal) {
-            app.hud.toast('No goal to show again yet.');
+            app.hud.toast(t('show.replay.none'));
             return;
         }
         const shown = new Set(this.recent && this.recent.goal.index === goal.index ? this.recent.angles : []);
@@ -1282,7 +1287,9 @@ export class Director {
         if (this.active) {
             // A replay in progress plays the new angles next, keeping where it returns to.
             this.active.queue = this.active.queue.slice(0, this.active.item + 1).concat(queue);
-            app.hud.toast(`More angles next, ${queue.map((q) => ANGLE_NAMES[q.shot].toLowerCase()).join(' and ')}.`, 'info', 2200);
+            const angles = queue.map((q) => ANGLE_NAMES[q.shot].toLowerCase());
+            const named = angles.reduce((first, second) => t('show.replay.and', { first, second }));
+            app.hud.toast(t('show.replay.more.one', { angle: named }), 'info', 2200);
             return;
         }
         this.recent = { goal, angles: [...shown] };
@@ -1338,7 +1345,7 @@ export class Director {
             return;
         }
         this.wiping = true;
-        this.sting('Replay', () => {
+        this.sting(t('show.sting.replay'), () => {
             this.wiping = false;
             if (this.active) {
                 begin();
@@ -1384,8 +1391,8 @@ export class Director {
             this.useScripted();
         }
         app.afterSeek();
-        const more = a.item < a.queue.length - 1 ? 'Enter next angle' : 'Enter skip';
-        app.hud.setReplay(true, `${ANGLE_NAMES[plan.angle] || 'Replay'}, Shift R more angles, ${more}`);
+        const angle = ANGLE_NAMES[plan.angle] || t('show.sting.replay');
+        app.hud.setReplay(true, a.item < a.queue.length - 1 ? t('show.replay.bar.next', { angle }) : t('show.replay.bar.skip', { angle }));
     }
 
     // The scripted replay angles, from the ball and the scorer at timeline position t.
@@ -1469,7 +1476,7 @@ export class Director {
             if (a.holdClock >= REPLAY_HOLD) {
                 a.phase = 'wait';
                 this.wiping = true;
-                this.sting(a.item < a.queue.length - 1 ? 'Replay' : '', () => {
+                this.sting(a.item < a.queue.length - 1 ? t('show.sting.replay') : '', () => {
                     this.wiping = false;
                     if (this.active === a) {
                         this.nextShot();
@@ -1515,7 +1522,7 @@ export class Director {
             const a = this.active;
             a.phase = 'wait';
             this.wiping = true;
-            this.sting(a.item < a.queue.length - 1 ? 'Replay' : '', () => {
+            this.sting(a.item < a.queue.length - 1 ? t('show.sting.replay') : '', () => {
                 this.wiping = false;
                 if (this.active === a) {
                     this.nextShot();
@@ -1640,6 +1647,13 @@ export class Director {
         app.updatePlayUi();
     }
 
+    // The formation of a team sheet, such as 2-2, which names itself as the formation at kick-off.
+    formationTag(lines) {
+        const shape = lines.map((l) => l.length).join('-');
+        const text = t('show.lineups.formation', { shape });
+        return h('span', { class: 'ls-formation', title: text }, h('span', { 'aria-hidden': 'true' }, shape), h('span', { class: 'sr-only' }, text));
+    }
+
     // The team sheets, keeper first, then the lines from the back, each from the team's left to
     // its right, with the formation read from the first frame.
     lineupCard() {
@@ -1656,7 +1670,7 @@ export class Director {
                 const num = h('span', { class: 'ls-num' }, String(info.number));
                 num.style.background = info.color;
                 num.style.color = info.ink;
-                return h('li', { style: `--i:${rows.length}` }, num, h('span', { class: 'ls-name' }, info.name), h('span', { class: 'ls-role' }, role));
+                return h('li', { style: `--i:${rows.length}` }, num, h('span', { class: 'ls-name' }, info.name), h('span', { class: 'ls-role' }, ROLE_SHORT[role]));
             };
             if (keeper >= 0) {
                 rows.push(row(keeper, 'GK'));
@@ -1672,20 +1686,23 @@ export class Director {
             return h('section', { class: `ls-sheet side-${team}` },
                 h('header', {}, chip, style && style.badge ? h('b', { class: 'ls-badge' }, style.badge) : null,
                     h('span', { class: 'ls-team' }, names[team]),
-                    lines.length > 1 ? h('span', { class: 'ls-formation' }, lines.map((l) => l.length).join('-')) : null),
+                    lines.length > 1 ? this.formationTag(lines) : null),
                 h('ol', { class: 'ls-list' }, rows));
         });
         const card = h('div', { id: 'lineups', class: 'lineups' },
-            h('div', { class: 'post-kicker' }, 'Lineups'),
+            h('div', { class: 'post-kicker' }, t('show.lineups.title')),
             h('div', { class: 'ls-sheets' }, sheets),
-            h('div', { class: 'post-hint muted small' }, 'Enter or a click to kick off, Esc to skip'));
+            h('div', { class: 'post-hint muted small' }, t('show.lineups.hint')));
         card.addEventListener('click', () => this.skip());
         return card;
     }
 }
 
-// A team's keeper and its outfield lines from the back, read from the first frame. Players
-// within 5 meters of depth of the one before share a line, each line from the team's left.
+// A team's keeper and its outfield lines from the back, read from the first frame. A player
+// shares the line of the one before within a gap of depth of 5 meters, or of two fifths of the
+// depth the team spans when that is less, and at least a meter, so the close lines of five a side,
+// a few meters apart at kick-off, part as those of eleven a side do. Each line runs from the
+// team's left.
 export function formation(store, header, team) {
     const f = store.get(store.first);
     const attack = team === 0 ? 1 : -1;
@@ -1703,10 +1720,12 @@ export function formation(store, header, team) {
         list.push({ k, depth: f ? f.data[o] * attack : p.index, side: f ? f.data[o + 1] * attack : 0 });
     });
     list.sort((a, b) => a.depth - b.depth);
+    const span = list.length ? list[list.length - 1].depth - list[0].depth : 0;
+    const gap = Math.max(1, Math.min(5, span * 0.4));
     const lines = [];
     for (const x of list) {
         const line = lines[lines.length - 1];
-        if (line && x.depth - line[line.length - 1].depth < 5) {
+        if (line && x.depth - line[line.length - 1].depth < gap) {
             line.push(x);
         } else {
             lines.push([x]);
@@ -1758,7 +1777,7 @@ const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const pos = (f, k) => f.data[NODES_FLOAT + k * PLAYER_FLOATS];
 const medal = (s) => h('span', {
     class: `grade-medal tier-${s.tier}`,
-    title: s.grade ? `Rating ${s.rating.toFixed(2)}` : 'Too little time'
+    title: s.grade ? t('show.medal.rating', { rating: fixed(s.rating, 2) }) : t('show.medal.ungraded')
 },
     s.grade || '—');
 
@@ -1844,7 +1863,10 @@ export function contribution(store, header, facts) {
         bins[binOf(g.index)].goals[g.team]++;
         marks.push({i: g.index, team: g.team, label: 'Goal', icon: '●'});
     }
-    const award = (s, name, icon, reason) => s.achievements.push({name, icon, reason});
+    // The name stays the English key that orders the headline, the label is what people read,
+    // and brief is the reason the headline shows.
+    const award = (s, name, icon, reason, brief = reason) =>
+        s.achievements.push({name, label: AWARD_LABELS[name], icon, reason, brief});
     const max = (key) => Math.max(0, ...players.map((s) => s[key]));
     for (const s of players) {
         s.minutes = s.elapsedMs / 60000;
@@ -1876,26 +1898,30 @@ export function contribution(store, header, facts) {
             'silver', 'silver', 'silver', 'gold', 'gold', 'gold', 's'];
         s.tier = eligible ? tiers[gradeIndex] : 'plain';
         if (s.goals >= 3)
-            award(s, 'Hat trick', '⚽', `${s.goals} goals`);
+            award(s, 'Hat trick', '⚽', t('show.award.hattrick.reason', { count: s.goals }));
         else if (s.goals === 2)
-            award(s, 'Brace', '⚽', '2 goals');
+            award(s, 'Brace', '⚽', t('show.award.brace.reason'));
         if (s.assists > 0 && s.assists === max('assists'))
-            award(s, 'Playmaker', '✦', `${s.assists} assists, joint leaders included`);
+            award(s, 'Playmaker', '✦', t('show.award.playmaker.reason', { count: s.assists }),
+                t('show.award.playmaker.brief', { count: s.assists }));
         else if (s.keyPasses >= 2 && s.keyPasses === max('keyPasses'))
-            award(s, 'Creator', '✦', `${s.keyPasses} key passes, joint leaders included`);
+            award(s, 'Creator', '✦', t('show.award.creator.reason', { count: s.keyPasses }),
+                t('show.award.creator.brief', { count: s.keyPasses }));
         if (s.saves > 0 && s.saves === max('saves'))
-            award(s, 'Wall', '▣', `${s.saves} saves, joint leaders included`);
+            award(s, 'Wall', '▣', t('show.award.wall.reason', { count: s.saves }),
+                t('show.award.wall.brief', { count: s.saves }));
         if (s.clean)
-            award(s, 'Clean sheet', '◇', `${s.minutes.toFixed(1)} minutes, 0 conceded on pitch`);
+            award(s, 'Clean sheet', '◇', t('show.award.cleansheet.reason', { minutes: fixed(s.minutes, 1) }));
         if (s.touches >= 5 && s.touches === max('touches'))
-            award(s, 'Engine', '↯', `${s.touches} touches, joint leaders included`);
+            award(s, 'Engine', '↯', t('show.award.engine.reason', { count: s.touches }),
+                t('show.award.engine.brief', { count: s.touches }));
         if (s.tackles >= 2 && s.tackles === max('tackles'))
-            award(s, 'Ball winner', '◆',
-                `${s.tackles} tackles and recoveries, joint leaders included`);
+            award(s, 'Ball winner', '◆', t('show.award.ballwinner.reason', { count: s.tackles }),
+                t('show.award.ballwinner.brief', { count: s.tackles }));
         if (s.shots >= 3 && s.shotsOnTarget / s.shots >= 0.75)
-            award(s, 'Sharpshooter', '◎', `${s.shotsOnTarget} of ${s.shots} shots on target`);
-        if (s.ownGoals) award(s, 'Own goal', '↶', `${s.ownGoals} own goals`);
-        if (s.red) award(s, 'Sent off', '▮', `${s.red} red card`);
+            award(s, 'Sharpshooter', '◎', t('show.award.sharpshooter.reason', { onTarget: s.shotsOnTarget, count: s.shots }));
+        if (s.ownGoals) award(s, 'Own goal', '↶', t('show.award.owngoal.reason', { count: s.ownGoals }));
+        if (s.red) award(s, 'Sent off', '▮', t('show.award.sentoff.reason', { count: s.red }));
     }
     const teams = [ [], [] ];
     for (const team of [0, 1]) {
@@ -1904,8 +1930,9 @@ export function contribution(store, header, facts) {
             (team === 0 ? first.scoreRight : first.scoreLeft) === 0)
             teams[team].push({
                 name: 'Clean sheet',
+                label: AWARD_LABELS['Clean sheet'],
                 icon: '◇',
-                reason: '0 goals conceded in the available frames'
+                reason: t('show.award.team.cleansheet.reason')
             });
         if (facts.score[team] > facts.score[opponent]) {
             const trailed = facts.scorers.some((g) => {
@@ -1915,8 +1942,9 @@ export function contribution(store, header, facts) {
             if (trailed)
                 teams[team].push({
                     name: 'Comeback',
+                    label: AWARD_LABELS.Comeback,
                     icon: '↗',
-                    reason: `Won ${facts.score[team]} to ${facts.score[opponent]} after trailing`
+                    reason: t('show.award.comeback.reason', { scored: facts.score[team], conceded: facts.score[opponent] })
                 });
             const winner = facts.scorers.find((g) => g.team === team &&
                     (team === 0 ? store.get(g.index).scoreLeft : store.get(g.index).scoreRight) ===
@@ -1925,9 +1953,9 @@ export function contribution(store, header, facts) {
                 store.get(winner.index).timeMs >= first.timeMs + duration * 60000 * 0.9)
                 teams[team].push({
                     name: 'Late winner',
+                    label: AWARD_LABELS['Late winner'],
                     icon: '◷',
-                    reason:
-                        `Decisive goal at ${winner.minute} minutes, final tenth of this episode`
+                    reason: t('show.award.latewinner.reason', { minute: winner.minute })
                 });
         }
     }
@@ -1947,15 +1975,15 @@ export function comparisonTable(f, styles = [null, null]) {
     const accuracy = (team) => (f.passes[team] ? Math.round((100 * f.passesCompleted[team]) / f.passes[team]) : null);
     const pct = (v) => (v == null ? '–' : `${v}%`);
     const table = h('table', { class: 'post-table' }, h('tbody', {},
-        row('Possession', `${f.possession[0]}%`, `${f.possession[1]}%`, f.possession[0], f.possession[1]),
-        row('Shots', f.shots[0], f.shots[1]),
-        row('On target', f.onTarget[0], f.onTarget[1]),
-        row('Passes', f.passes[0], f.passes[1]),
-        row('Pass accuracy', pct(accuracy(0)), pct(accuracy(1)), accuracy(0) || 0, accuracy(1) || 0),
-        row('Tackles', f.tackles[0], f.tackles[1]),
-        row('Saves', f.saves[0], f.saves[1]),
-        row('Yellow cards', cards(0, false), cards(1, false)),
-        row('Red cards', cards(0, true), cards(1, true))));
+        row(t('show.compare.possession'), `${f.possession[0]}%`, `${f.possession[1]}%`, f.possession[0], f.possession[1]),
+        row(t('show.compare.shots'), f.shots[0], f.shots[1]),
+        row(t('show.compare.ontarget'), f.onTarget[0], f.onTarget[1]),
+        row(t('show.compare.passes'), f.passes[0], f.passes[1]),
+        row(t('show.compare.accuracy'), pct(accuracy(0)), pct(accuracy(1)), accuracy(0) || 0, accuracy(1) || 0),
+        row(t('show.compare.tackles'), f.tackles[0], f.tackles[1]),
+        row(t('show.compare.saves'), f.saves[0], f.saves[1]),
+        row(t('show.compare.yellow'), cards(0, false), cards(1, false)),
+        row(t('show.compare.red'), cards(0, true), cards(1, true))));
     table.style.setProperty('--left', styles && styles[0] ? css(styles[0].kit.primary) : 'var(--accent)');
     table.style.setProperty('--right', styles && styles[1] ? css(styles[1].kit.primary) : 'var(--muted)');
     return table;
@@ -1967,8 +1995,6 @@ export function playerOfMatch(stats, score) {
     const best = stats.slice().sort((a, b) => b.score - a.score);
     return winner >= 0 ? best.find((s) => s.team === winner) : best[0];
 }
-
-const count = (value, one, many) => `${value} ${value === 1 ? one : many}`;
 
 // The comparison of the statistics screen draws its bars in the colors of the charts.
 function chartColors(table) {
@@ -2004,7 +2030,7 @@ export function mvpMedal(channels) {
         const a = (Math.PI / 5) * i - Math.PI / 2;
         return `${f(60 + r * Math.cos(a))},${f(98 + r * Math.sin(a))}`;
     }).join(' ');
-    const node = h('div', { class: 'mvp-medal', role: 'img', 'aria-label': 'MVP medal' });
+    const node = h('div', { class: 'mvp-medal', role: 'img', 'aria-label': t('show.mvp.medal') });
     node.innerHTML = `<svg viewBox="0 0 120 170" aria-hidden="true" focusable="false">
 <defs>
 <linearGradient id="${id}-rim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff4c2"/><stop offset="0.35" stop-color="#e7b94c"/><stop offset="0.7" stop-color="#a8701a"/><stop offset="1" stop-color="#6e4608"/></linearGradient>
@@ -2107,14 +2133,14 @@ function chart(report, kind, names, store) {
         }
         for (const p of points) {
             if (!p.total) continue;
-            const text = `${names[0]} ${Math.round(100 * p.share)}%, ${names[1]} ${Math.round(100 * (1 - p.share))}%`;
+            const text = t('show.chart.possession.tip', { left: names[0], leftShare: Math.round(100 * p.share), right: names[1], rightShare: Math.round(100 * (1 - p.share)) });
             tip(draw('circle', { cx: p.x, cy: p.y, r: 2.5, class: `chart-side-${p.share >= 0.5 ? 0 : 1}` }), text);
         }
         draw('path', { d: `M${left} ${mid}H${left + width}`, class: 'chart-rule half' });
         draw('text', { x: left + width - 3, y: mid - 3, class: 'chart-note end' }, '50%');
-        draw('text', { x: left + 3, y: top + 11, class: 'chart-note' }, `${names[0]} on the ball more`);
-        draw('text', { x: left + 3, y: bottom - 5, class: 'chart-note' }, `${names[1]} on the ball more`);
-        legend.push(['side-0', `${names[0]} above 50%`], ['side-1', `${names[1]} below 50%`]);
+        draw('text', { x: left + 3, y: top + 11, class: 'chart-note' }, t('show.chart.possession.more', { team: names[0] }));
+        draw('text', { x: left + 3, y: bottom - 5, class: 'chart-note' }, t('show.chart.possession.more', { team: names[1] }));
+        legend.push(['side-0', t('show.chart.possession.above', { team: names[0] })], ['side-1', t('show.chart.possession.below', { team: names[1] })]);
     } else if (kind === 'shots') {
         const sums = (team, key) => bins.reduce((v, b) => v + b[key][team], 0);
         const ceiling = Math.max(1, sums(0, 'shots'), sums(1, 'shots'), sums(0, 'goals'), sums(1, 'goals'));
@@ -2130,8 +2156,8 @@ function chart(report, kind, names, store) {
                 draw('polyline', { points: points.join(' '), class: `chart-line side-${team} ${key}` });
             }
         }
-        draw('text', { x: left + 3, y: top + 11, class: 'chart-note' }, `Top line, ${count(ceiling, 'shot', 'shots')}`);
-        legend.push(['side-0', names[0]], ['side-1', names[1]], ['solid', 'Goals'], ['dashed', 'Shots']);
+        draw('text', { x: left + 3, y: top + 11, class: 'chart-note' }, t('show.chart.shots.top', { count: ceiling }));
+        legend.push(['side-0', names[0]], ['side-1', names[1]], ['solid', t('show.chart.legend.goals')], ['dashed', t('show.chart.legend.shots')]);
     } else {
         const mid = (top + bottom) / 2;
         draw('path', { d: `M${left} ${mid}H${left + width}`, class: 'chart-rule half' });
@@ -2140,8 +2166,8 @@ function chart(report, kind, names, store) {
             return `${left + (i + 0.5) * step},${mid - pressure * (mid - top)}`;
         });
         draw('polyline', { points: points.join(' '), class: 'chart-line neutral' });
-        draw('text', { x: left + 3, y: top + 11, class: 'chart-note' }, `${names[0]} on top`);
-        draw('text', { x: left + 3, y: bottom - 5, class: 'chart-note' }, `${names[1]} on top`);
+        draw('text', { x: left + 3, y: top + 11, class: 'chart-note' }, t('show.chart.pressure.top', { team: names[0] }));
+        draw('text', { x: left + 3, y: bottom - 5, class: 'chart-note' }, t('show.chart.pressure.top', { team: names[1] }));
     }
     draw('path', { d: `M${left} ${bottom}H${left + width}`, class: 'chart-rule' });
     // Goals and cards on a strip under the chart, at their moment.
@@ -2153,26 +2179,26 @@ function chart(report, kind, names, store) {
             ? draw('circle', { cx: x, cy: y, r: 3.5, class: `chart-side-${m.team}` })
             : draw('rect', { x: x - 2.5, y: y - 4.5, width: 5, height: 9, class: m.label === 'Red card' ? 'chart-red' : 'chart-yellow' });
         cards ||= m.label !== 'Goal';
-        tip(node, `${m.label}, ${names[m.team]}, ${(store.get(m.i).timeMs / 60000).toFixed(1)} minutes`);
+        tip(node, t('show.chart.mark', { mark: MARK_LABELS[m.label] || m.label, team: names[m.team], minutes: fixed(store.get(m.i).timeMs / 60000, 1) }));
     }
-    if (report.marks.some((m) => m.label === 'Goal')) legend.push(['dot', 'Goal']);
-    if (cards) legend.push(['card', 'Card']);
+    if (report.marks.some((m) => m.label === 'Goal')) legend.push(['dot', t('show.chart.legend.goal')]);
+    if (cards) legend.push(['card', t('show.chart.legend.card')]);
     const values = bins.map((b, i) => {
         const total = b.owned[0] + b.owned[1];
         const value = kind === 'possession'
-            ? total ? `${Math.round((100 * b.owned[0]) / total)} percent for ${names[0]}` : 'no possession'
+            ? total ? t('show.chart.period.possession', { percent: Math.round((100 * b.owned[0]) / total), team: names[0] }) : t('show.chart.period.none')
             : kind === 'pressure'
-                ? (b.count ? b.pressure / b.count : 0).toFixed(2)
-                : `${b.shots.join(' to ')} shots and ${b.goals.join(' to ')} goals`;
-        return `Period ${i + 1}, ${value}`;
+                ? fixed(b.count ? b.pressure / b.count : 0, 2)
+                : t('show.chart.period.shots', { shotsLeft: b.shots[0], shotsRight: b.shots[1], goalsLeft: b.goals[0], goalsRight: b.goals[1] });
+        return t('show.chart.period', { number: i + 1, value });
     });
     const title = {
-        possession: 'Possession against an even split, in each period',
-        shots: 'Shots and goals, running total',
-        pressure: 'Territory and possession',
+        possession: t('show.chart.title.possession'),
+        shots: t('show.chart.title.shots'),
+        pressure: t('show.chart.title.pressure'),
     }[kind];
-    svg.setAttribute('aria-label', `${title}. ${names[0]} first. ${values.join('. ')}`);
-    const minute = (i) => `${Math.round(store.get(i).timeMs / 60000)} min`;
+    svg.setAttribute('aria-label', t('show.chart.label', { title, team: names[0], values: values.join('. ') }));
+    const minute = (i) => t('show.chart.minute', { minutes: Math.round(store.get(i).timeMs / 60000) });
     return h('figure', { class: 'stats-chart' },
         h('figcaption', {}, title),
         svg,
@@ -2183,18 +2209,34 @@ function chart(report, kind, names, store) {
 
 // Awards, in the order the headline shows them, the rarest first.
 const AWARD_ORDER = ['Hat trick', 'Brace', 'Playmaker', 'Wall', 'Sharpshooter', 'Creator', 'Ball winner', 'Clean sheet', 'Engine'];
+// What people read of each award, by its English name.
+const AWARD_LABELS = {
+    'Hat trick': t('show.award.hattrick'), Brace: t('show.award.brace'), Playmaker: t('show.award.playmaker'),
+    Creator: t('show.award.creator'), Wall: t('show.award.wall'), 'Clean sheet': t('show.award.cleansheet'),
+    Engine: t('show.award.engine'), 'Ball winner': t('show.award.ballwinner'), Sharpshooter: t('show.award.sharpshooter'),
+    'Own goal': t('show.award.owngoal'), 'Sent off': t('show.award.sentoff'), Comeback: t('show.award.comeback'),
+    'Late winner': t('show.award.latewinner'),
+};
+// What people read of the marks under the charts, by their English label.
+const MARK_LABELS = {
+    Goal: t('show.chart.mark.goal'), 'Yellow card': t('show.chart.mark.yellow'), 'Red card': t('show.chart.mark.red'),
+};
 
 // The columns of the player table, the first set always shown and the rest on demand.
 const COLUMNS = [
-    ['gradeRank', 'Grade'], ['minutes', 'Minutes'], ['goals', 'Goals'], ['assists', 'Assists'],
-    ['shots', 'Shots'], ['passesCompleted', 'Passes'], ['tackles', 'Tackles'], ['saves', 'Saves'],
+    ['gradeRank', t('show.column.grade')], ['minutes', t('show.column.minutes')], ['goals', t('show.column.goals')],
+    ['assists', t('show.column.assists')], ['shots', t('show.column.shots')], ['passesCompleted', t('show.column.passes')],
+    ['tackles', t('show.column.tackles')], ['saves', t('show.column.saves')],
 ];
 const MORE_COLUMNS = [
-    ['shotsOnTarget', 'On target'], ['keyPasses', 'Key passes'], ['accuracy', 'Pass accuracy'],
-    ['shotAccuracy', 'Shot accuracy'], ['touches', 'Touches'], ['clean', 'Clean sheet'],
-    ['ownGoals', 'Own goals'], ['yellow', 'Yellow cards'], ['red', 'Red cards'],
+    ['shotsOnTarget', t('show.column.ontarget')], ['keyPasses', t('show.column.keypasses')],
+    ['accuracy', t('show.column.accuracy')], ['shotAccuracy', t('show.column.shotaccuracy')],
+    ['touches', t('show.column.touches')], ['clean', t('show.column.clean')], ['ownGoals', t('show.column.owngoals')],
+    ['yellow', t('show.column.yellow')], ['red', t('show.column.red')],
 ];
-const ROLE_NAMES = { GK: 'Goalkeeper', DF: 'Defender', MF: 'Midfielder', FW: 'Forward' };
+const ROLE_NAMES = { GK: t('show.role.gk'), DF: t('show.role.df'), MF: t('show.role.mf'), FW: t('show.role.fw') };
+// The short roles of the team sheets.
+const ROLE_SHORT = { GK: t('show.role.short.gk'), DF: t('show.role.short.df'), MF: t('show.role.short.mf'), FW: t('show.role.short.fw') };
 
 // The statistics screen of the show after the match. It opens on the result and the headline
 // awards, then compares the teams, lists every player of each team with a grade medal, and ends
@@ -2210,21 +2252,21 @@ export function statsScreen(report, names, info, store, advance, extra = {}) {
     const body = h('tbody', {});
     const cell = (s, key) => {
         if (key === 'gradeRank') return medal(s);
-        if (key === 'minutes') return s.minutes.toFixed(1);
-        if (key === 'passesCompleted') return s.passes ? `${s.passesCompleted} of ${s.passes}` : '0';
+        if (key === 'minutes') return fixed(s.minutes, 1);
+        if (key === 'passesCompleted') return s.passes ? t('show.stats.of', { done: s.passesCompleted, total: s.passes }) : '0';
         if (key === 'accuracy' || key === 'shotAccuracy') return s[key] == null ? '–' : `${s[key]}%`;
-        if (key === 'clean') return s.clean ? 'Yes' : '–';
+        if (key === 'clean') return s.clean ? t('show.stats.yes') : '–';
         return String(s[key] ?? '–');
     };
     const columns = () => (more ? [...COLUMNS, ...MORE_COLUMNS] : COLUMNS);
     const renderHead = () => {
-        head.replaceChildren(h('tr', {}, h('th', { scope: 'col', class: 'player-col' }, 'Player'),
+        head.replaceChildren(h('tr', {}, h('th', { scope: 'col', class: 'player-col' }, t('show.stats.player')),
             ...columns().map(([key, label]) => h('th', {
                 scope: 'col',
                 'aria-sort': key === sort ? (descending ? 'descending' : 'ascending') : 'none',
             }, h('button', {
                 type: 'button',
-                title: `Sort by ${label.toLowerCase()}`,
+                title: t('show.column.sort', { column: label.toLowerCase() }),
                 onclick: () => {
                     descending = sort === key ? !descending : true;
                     sort = key;
@@ -2233,7 +2275,7 @@ export function statsScreen(report, names, info, store, advance, extra = {}) {
                 },
             }, label)))));
     };
-    const tabs = h('div', { class: 'stats-tabs', role: 'tablist', 'aria-label': 'Team' });
+    const tabs = h('div', { class: 'stats-tabs', role: 'tablist', 'aria-label': t('show.stats.team') });
     const moreButton = h('button', {
         type: 'button', class: 'btn ghost', 'aria-controls': 'stats-roster',
         onclick: () => {
@@ -2256,13 +2298,16 @@ export function statsScreen(report, names, info, store, advance, extra = {}) {
                 h('summary', {}, h('span', { class: 'shirt-number' }, String(who.number)), who.name,
                     h('small', {}, ROLE_NAMES[s.role] || s.role)),
                 h('div', { class: 'rating-inputs' },
-                    h('p', {}, `Rating ${s.rating.toFixed(2)} of 10, ${s.grade ? `grade ${s.grade}` : 'too little time for a grade'}.`),
-                    h('p', {}, `Base 5, contribution ${s.positive.toFixed(2)}, passing ${s.passing.toFixed(2)}, `
-                        + `clean sheet ${s.sheet.toFixed(2)}, discipline less ${s.penalty.toFixed(2)}.`),
-                    ...s.achievements.map((a) => h('p', {}, `${a.name}, ${a.reason}.`))));
+                    h('p', {}, s.grade ? t('show.rating.graded', { rating: fixed(s.rating, 2), grade: s.grade })
+                        : t('show.rating.ungraded', { rating: fixed(s.rating, 2) })),
+                    h('p', {}, t('show.rating.parts', {
+                        contribution: fixed(s.positive, 2), passing: fixed(s.passing, 2),
+                        sheet: fixed(s.sheet, 2), penalty: fixed(s.penalty, 2),
+                    })),
+                    ...s.achievements.map((a) => h('p', {}, t('show.award.line', { name: a.label, reason: a.reason })))));
             const row = h('tr', {}, h('th', { scope: 'row', class: 'player-cell' }, details,
                 s.achievements.length ? h('div', { class: 'player-awards' }, s.achievements.map((a) =>
-                    h('span', { class: 'award-chip', 'data-award': a.name, title: a.reason }, a.name))) : null));
+                    h('span', { class: 'award-chip', 'data-award': a.name, title: a.reason }, a.label))) : null));
             for (const [key] of columns()) row.append(h('td', {}, cell(s, key)));
             return row;
         }));
@@ -2273,18 +2318,18 @@ export function statsScreen(report, names, info, store, advance, extra = {}) {
         }
         roster.setAttribute('aria-labelledby', `stats-tab-${team}`);
         moreButton.setAttribute('aria-pressed', String(more));
-        moreButton.textContent = more ? 'Fewer columns' : 'More columns';
+        moreButton.textContent = more ? t('show.stats.fewer') : t('show.stats.more');
     };
-    for (const t of [0, 1]) {
-        const players = report.players.filter((p) => p.team === t).length;
+    for (const side of [0, 1]) {
+        const players = report.players.filter((p) => p.team === side).length;
         const button = h('button', {
-            type: 'button', role: 'tab', 'data-team': String(t), 'aria-controls': 'stats-roster', id: `stats-tab-${t}`,
+            type: 'button', role: 'tab', 'data-team': String(side), 'aria-controls': 'stats-roster', id: `stats-tab-${side}`,
             onclick: () => {
-                team = t;
+                team = side;
                 render();
             },
-        }, h('span', { class: `chart-key side-${t}`, 'aria-hidden': 'true' }), names[t],
-        h('span', { class: 'tab-count' }, count(players, 'player', 'players')));
+        }, h('span', { class: `chart-key side-${side}`, 'aria-hidden': 'true' }), names[side],
+        h('span', { class: 'tab-count' }, t('show.stats.players.count', { count: players })));
         button.addEventListener('keydown', (e) => {
             if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
                 e.preventDefault();
@@ -2305,9 +2350,9 @@ export function statsScreen(report, names, info, store, advance, extra = {}) {
     const mvp = facts ? playerOfMatch(report.players, facts.score) : null;
     if (mvp) {
         const who = info(mvp.k);
-        const line = [count(mvp.goals, 'goal', 'goals'), count(mvp.assists, 'assist', 'assists'),
-            mvp.goalkeeper || mvp.saves ? count(mvp.saves, 'save', 'saves') : count(mvp.tackles, 'tackle', 'tackles')];
-        headline.push(award('Player of the match', `${who.number} ${who.name}`, mvp.team, line.join(', '), 'award mvp'));
+        const line = [t('show.count.goals', { count: mvp.goals }), t('show.count.assists', { count: mvp.assists }),
+            mvp.goalkeeper || mvp.saves ? t('show.count.saves', { count: mvp.saves }) : t('show.count.tackles', { count: mvp.tackles })];
+        headline.push(award(t('show.award.mvp'), `${who.number} ${who.name}`, mvp.team, line.join(', '), 'award mvp'));
     }
     const top = report.players
         .flatMap((s) => s.achievements.filter((a) => AWARD_ORDER.includes(a.name)).map((a) => ({ s, a })))
@@ -2315,37 +2360,29 @@ export function statsScreen(report, names, info, store, advance, extra = {}) {
         .slice(0, 4);
     for (const { s, a } of top) {
         const who = info(s.k);
-        headline.push(award(a.name, `${who.number} ${who.name}`, s.team, a.reason.replace(/, joint leaders included$/, '')));
+        headline.push(award(a.label, `${who.number} ${who.name}`, s.team, a.brief));
     }
-    for (const t of [0, 1]) {
-        for (const a of report.teams[t]) headline.push(award(a.name, names[t], null, a.reason));
+    for (const side of [0, 1]) {
+        for (const a of report.teams[side]) headline.push(award(a.label, names[side], null, a.reason));
     }
 
     const section = (id, title, ...content) => h('section', { class: `stats-section stats-${id}`, 'aria-labelledby': `stats-${id}-title` },
         h('h3', { id: `stats-${id}-title` }, title), ...content);
     const root = h('section', { class: 'match-lab', 'aria-labelledby': 'stats-title' },
         h('header', { class: 'stats-heading' },
-            h('div', { class: 'stats-result' }, h('h2', { id: 'stats-title' }, 'Match statistics'), extra.scoreLine || null),
-            h('button', { type: 'button', class: 'btn primary', onclick: advance }, extra.closeLabel || 'Continue')),
-        headline.length ? section('awards', 'Awards', h('ol', { class: 'award-list' }, headline)) : null,
-        facts ? section('teams', 'Teams',
+            h('div', { class: 'stats-result' }, h('h2', { id: 'stats-title' }, t('show.stats.title')), extra.scoreLine || null),
+            h('button', { type: 'button', class: 'btn primary', onclick: advance }, extra.closeLabel || t('show.stats.continue'))),
+        headline.length ? section('awards', t('show.stats.awards'), h('ol', { class: 'award-list' }, headline)) : null,
+        facts ? section('teams', t('show.stats.teams'),
             h('div', { class: 'compare-names', 'aria-hidden': 'true' }, h('span', {}, names[0]), h('span', {}, names[1])),
             chartColors(comparisonTable(facts))) : null,
-        section('players', 'Players', h('div', { class: 'stats-toolbar' }, tabs, moreButton), roster),
-        section('time', 'Over the match',
+        section('players', t('show.stats.players'), h('div', { class: 'stats-toolbar' }, tabs, moreButton), roster),
+        section('time', t('show.stats.time'),
             h('div', { class: 'stats-charts' }, ['possession', 'shots', 'pressure'].map((kind) => chart(report, kind, names, store)))),
-        h('details', { class: 'rating-guide' }, h('summary', {}, 'How grades work'),
-            h('p', {}, 'Grades run from F through D, C, B and A to S, with minus and plus steps between. '
-                + 'A player with too little time shows a dash. Roles come from the starting position.'),
-            h('p', {}, 'A rating starts at 5. Contribution per 30 minutes, capped at three times, counts goals 1.4, '
-                + 'assists 1, shots on target 0.25, key passes 0.35, tackles 0.6 for a goalkeeper or defender '
-                + 'and 0.35 otherwise, and goalkeeper saves 0.65. Passing adds accuracy less 0.65, times 1.5, '
-                + 'after three passes. A clean sheet adds 1 for a goalkeeper or defender and 0.3 otherwise. '
-                + 'Own goals cost 2, yellow cards 0.4 and red cards 1.5.'),
-            h('p', {}, 'The charts split the match into twelve equal periods. Possession is a line around an '
-                + 'even split, in the color of the first team above the middle and of the second below, and '
-                + 'leaves out time when neither team holds the ball. Territory and possession averages the ball position and the '
-                + 'side in possession, and a line above the middle favours the first team.')));
+        h('details', { class: 'rating-guide' }, h('summary', {}, t('show.guide.title')),
+            h('p', {}, t('show.guide.grades')),
+            h('p', {}, t('show.guide.rating')),
+            h('p', {}, t('show.guide.charts'))));
     root.addEventListener('click', (e) => e.stopPropagation());
     root.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') e.stopPropagation();
@@ -2366,6 +2403,11 @@ export function statsScreen(report, names, info, store, advance, extra = {}) {
 function plural(name) {
     const n = name.trim();
     return /[^s']s$/i.test(n) && !/ss$/i.test(n);
+}
+
+// The line of a winning team, where a team whose English name reads as plural has its own message.
+function winLine(team, bare) {
+    return plural(bare) ? t('show.result.win.plural', { team }) : t('show.result.win', { team });
 }
 
 // The stages of the scene at the final whistle in seconds. The camera of play stays on while the
@@ -2449,7 +2491,7 @@ export class PostMatch {
     showCard(node) {
         this.clearCard();
         this.card = h('div', { class: 'post-card', 'data-prompt': '' }, node,
-            h('div', { class: 'post-hint muted small' }, 'Enter or a click for the next part, Esc to finish'));
+            h('div', { class: 'post-hint muted small' }, t('show.post.hint.next')));
         this.card.addEventListener('click', () => this.advance());
         document.getElementById('watch').appendChild(this.card);
         release(this.app);
@@ -2540,7 +2582,7 @@ export class PostMatch {
             index, clock: 0, choreo, hero: hero ? hero.k : -1, beaten: beaten != null ? beaten : -1, stage: -1,
             titled: false, titleAt: choreo.titleAt, titleDone: false, frame: store.get(index), winner,
         };
-        this.hint = h('div', { class: 'post-skip', 'data-prompt': '' }, 'Enter or a click to go on, Esc to finish');
+        this.hint = h('div', { class: 'post-skip', 'data-prompt': '' }, t('show.post.hint.goon'));
         this.hint.addEventListener('click', () => this.advance());
         document.getElementById('watch').appendChild(this.hint);
         release(app);
@@ -2580,11 +2622,11 @@ export class PostMatch {
             const header = app.source.header;
             if (title && typeof title.show === 'function') {
                 const w = r.winner;
-                const foot = w >= 0 ? `${this.teamName(w)} ${plural(bareTeamName(header, w)) ? 'win' : 'wins'}` : 'A draw, the points are shared';
-                title.show(fullMatch(header) ? 'Full time' : 'Episode complete', header, app.styles, r.frame, foot);
+                const foot = w >= 0 ? winLine(this.teamName(w), bareTeamName(header, w)) : t('show.result.draw.shared');
+                title.show(fullMatch(header) ? t('show.post.fulltime') : t('show.post.episode'), header, app.styles, r.frame, foot);
                 r.titled = true;
             } else {
-                this.showCard(h('div', { class: 'post-score' }, h('div', { class: 'post-kicker' }, fullMatch(header) ? 'Full time' : 'Episode complete'), this.scoreLine(this.facts)));
+                this.showCard(h('div', { class: 'post-score' }, h('div', { class: 'post-kicker' }, fullMatch(header) ? t('show.post.fulltime') : t('show.post.episode')), this.scoreLine(this.facts)));
             }
         }
         if (r.titled && r.clock >= r.titleAt + TITLE_SECONDS && title) {
@@ -2719,10 +2761,12 @@ export class PostMatch {
             app.cameras.jump();
             const header = app.source.header;
             const scorers = (team) => f.scorers.filter((g) => g.team === team).map((g) =>
-                h('div', {}, `${g.scorer >= 0 ? this.playerName(g.scorer) : 'Unknown'}${g.scorer >= 0 && header.players[g.scorer].team !== team ? ' (own goal)' : ''}  ${g.minute}′`));
+                h('div', {}, g.scorer >= 0 && header.players[g.scorer].team !== team
+                    ? t('show.facts.owngoal', { name: this.playerName(g.scorer), minute: g.minute })
+                    : t('show.facts.scorer', { name: g.scorer >= 0 ? this.playerName(g.scorer) : t('show.facts.unknown'), minute: g.minute })));
             const table = comparisonTable(f, app.styles || [null, null]);
             this.showCard(h('div', { class: 'post-facts' },
-                h('div', { class: 'post-kicker' }, 'Match facts'),
+                h('div', { class: 'post-kicker' }, t('show.facts.title')),
                 this.scoreLine(f),
                 h('div', { class: 'post-scorers' }, h('div', {}, scorers(0)), h('div', {}, scorers(1))),
                 table));
@@ -2784,7 +2828,7 @@ export class PostMatch {
         };
         const names = [this.teamName(0), this.teamName(1)];
         const screen = statsScreen(report, names, (k) => playerInfo(app, k), store, close,
-            { facts: f, scoreLine: this.scoreLine(f), closeLabel: 'Close' });
+            { facts: f, scoreLine: this.scoreLine(f), closeLabel: t('show.close') });
         this.statsCard = h('div', { class: 'post-card stats-card', tabindex: '-1', role: 'dialog', 'aria-labelledby': 'stats-title' }, screen);
         const colors = teamChartColors(app.styles);
         if (colors) {
@@ -2813,7 +2857,7 @@ export class PostMatch {
         return h('button', { type: 'button', class: className, onclick: (e) => {
             e.stopPropagation();
             this.openStats();
-        } }, 'Match statistics');
+        } }, t('show.stats.title'));
     }
 
     // Enter shows the next part, the next goal while the reel plays, or ends the show after
@@ -2952,21 +2996,21 @@ export class Podium {
         const cards = winner >= 0 ? [this.card(best(winner)[0], header)] : [this.card(best(0)[0], header, true), this.card(best(1)[0], header, true)];
         const all = stats.slice().sort((a, b) => b.score - a.score);
         this.mvp = winner >= 0 ? best(winner)[0] : all[0];
-        const title = honour ? honour.title : winner >= 0 ? `${names[winner]} ${plural(bareTeamName(header, winner)) ? 'win' : 'wins'}` : 'A draw';
+        const title = honour ? honour.title : winner >= 0 ? winLine(names[winner], bareTeamName(header, winner)) : t('show.result.draw');
         this.overlay = h('div', { id: 'victory', class: honour ? 'ceremony' : winner >= 0 ? '' : 'draw', role: honour ? 'dialog' : null, 'aria-label': honour ? title : null },
             h('div', { class: 'victory-head' },
                 h('div', { class: 'victory-title' }, title),
                 h('div', { class: 'victory-score' }, honour ? honour.subtitle : `${names[0]}  ${last.scoreLeft} – ${last.scoreRight}  ${names[1]}`)),
             h('div', { class: 'victory-cards' }, cards),
             h('div', { class: 'victory-actions' }, app.postMatch.statsButton('btn ghost'),
-                h('button', { class: 'btn', onclick: () => app.postMatch.end() }, 'Close')));
+                h('button', { class: 'btn', onclick: () => app.postMatch.end() }, t('show.close'))));
         document.getElementById('watch').appendChild(this.overlay);
     }
 
     // The card of a team's best player, compact when two share the panel after a draw.
     card(s, header, compact = false) {
         if (!s) {
-            return h('div', { class: 'mvp-card' }, 'No player data.');
+            return h('div', { class: 'mvp-card' }, t('show.mvp.none'));
         }
         const app = this.app;
         const info = playerInfo(app, s.k);
@@ -2974,13 +3018,13 @@ export class Podium {
         const row = (label, value) => h('div', { class: 'stat' }, h('span', {}, label), h('b', {}, String(value)));
         void header;
         return h('div', { class: 'mvp-card', style: `border-top-color:${style ? css(style.kit.primary) : 'var(--accent)'}` },
-            h('div', { class: 'mvp-label' }, 'Most valuable player'),
+            h('div', { class: 'mvp-label' }, t('show.mvp.label')),
             h('div', { class: 'mvp-name' }, h('span', { class: 'mvp-number' }, String(info.number)), info.name),
             h('div', { class: 'mvp-team' }, info.badge ? `${info.badge}  ` : '', info.teamName),
-            row('Goals', s.goals), row('Assists', s.assists), compact ? null : row('Touches', s.touches),
-            row('Passes', s.passes ? `${s.passesCompleted} of ${s.passes}` : 0), row('Tackles', s.tackles),
-            s.goalkeeper || s.saves ? row('Saves', s.catches || s.parries ? `${s.saves}, ${s.catches} caught` : s.saves) : null,
-            s.ownGoals ? row('Own goals', s.ownGoals) : null);
+            row(t('show.column.goals'), s.goals), row(t('show.column.assists'), s.assists), compact ? null : row(t('show.column.touches'), s.touches),
+            row(t('show.column.passes'), s.passes ? t('show.stats.of', { done: s.passesCompleted, total: s.passes }) : 0), row(t('show.column.tackles'), s.tackles),
+            s.goalkeeper || s.saves ? row(t('show.column.saves'), s.catches || s.parries ? t('show.mvp.saves', { saves: s.saves, caught: s.catches }) : s.saves) : null,
+            s.ownGoals ? row(t('show.column.owngoals'), s.ownGoals) : null);
     }
 
     buildScene(header, ranked, team) {
@@ -3280,6 +3324,12 @@ export class Podium {
     }
 }
 
+// The captions of the spotlight's clip, by the English name of what it shows.
+const SPOT_CAPTIONS = {
+    Goal: t('show.spotlight.goal'), Assist: t('show.spotlight.assist'), Save: t('show.spotlight.save'),
+    Tackle: t('show.spotlight.tackle'), 'On the ball': t('show.spotlight.ball'),
+};
+
 // The MVP spotlight, the play of the match loops in the main view, slowed near its key moment,
 // while the MVP dances in a cone of light on a dark stage beside it with a name plate.
 export class Spotlight {
@@ -3351,10 +3401,10 @@ export class Spotlight {
         const style = app.styles ? app.styles[s.team] : null;
         this.danceName = showDance(style, s.index);
         const stage = h('div', { class: 'spot-stage' });
-        const count = (value, one, many) => `${value} ${value === 1 ? one : many}`;
         const stats = [
-            count(s.goals, 'goal', 'goals'), count(s.assists, 'assist', 'assists'), count(s.passes, 'pass', 'passes'),
-            count(s.tackles, 'tackle', 'tackles'), s.goalkeeper || s.saves ? count(s.saves, 'save', 'saves') : null,
+            t('show.count.goals', { count: s.goals }), t('show.count.assists', { count: s.assists }),
+            t('show.count.passes', { count: s.passes }), t('show.count.tackles', { count: s.tackles }),
+            s.goalkeeper || s.saves ? t('show.count.saves', { count: s.saves }) : null,
         ].filter(Boolean).join(', ');
         this.overlay = h('div', { id: 'spotlight' },
             h('div', { class: 'mvp-flash', 'aria-hidden': 'true' }),
@@ -3362,12 +3412,12 @@ export class Spotlight {
                 h('div', { class: 'mvp-rays', 'aria-hidden': 'true' }),
                 mvpMedal(style ? [style.kit.primary, style.kit.secondary] : [[194, 65, 12], [248, 249, 250]]), stage,
                 h('div', { class: 'nameplate', style: style ? `border-top-color:${css(style.kit.primary)}` : '' },
-                    h('div', { class: 'mvp-label' }, 'Most valuable player'),
+                    h('div', { class: 'mvp-label' }, t('show.mvp.label')),
                     h('div', { class: 'mvp-name' }, h('span', { class: 'mvp-number' }, String(info.number)), info.name),
                     h('div', { class: 'mvp-team' }, info.badge ? `${info.badge}  ` : '', info.teamName),
                     h('div', { class: 'small muted' }, stats),
-                    h('button', { class: 'btn primary', onclick: () => app.postMatch.skip() }, 'Next'))),
-            h('div', { class: 'spot-frame' }, h('div', { class: 'spot-caption' }, clip ? `Player of the match, ${clip.what.toLowerCase()}` : 'Player of the match')));
+                    h('button', { class: 'btn primary', onclick: () => app.postMatch.skip() }, t('show.spotlight.next')))),
+            h('div', { class: 'spot-frame' }, h('div', { class: 'spot-caption' }, clip ? SPOT_CAPTIONS[clip.what] : t('show.award.mvp'))));
         document.getElementById('watch').appendChild(this.overlay);
         document.getElementById('app').classList.add('spot-show');
         this.buildStage(stage, s);

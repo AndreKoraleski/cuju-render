@@ -9,18 +9,20 @@
 export const STORAGE_KEY = 'cuju.input';
 
 // Each binding presses the buttons of Gameplay Football, the ones outside GRF's 19 actions left
-// out. The high pass key also slides when defending, as GRF reads one key for both.
+// out. The high pass key also slides when defending, as GRF reads one key for both. The label of a
+// binding is a message of the language files, play.binding and its id, which the Play page shows,
+// so this module stays free of the page and loads alone in a test.
 export const BINDINGS = [
-    { id: 'left', key: 'ArrowLeft', names: ['left'], label: 'Move left' },
-    { id: 'right', key: 'ArrowRight', names: ['right'], label: 'Move right' },
-    { id: 'up', key: 'ArrowUp', names: ['up'], label: 'Move up' },
-    { id: 'down', key: 'ArrowDown', names: ['down'], label: 'Move down' },
-    { id: 'short_pass', key: 'KeyS', names: ['short_pass'], label: 'Short pass' },
-    { id: 'long_pass', key: 'KeyW', names: ['long_pass'], label: 'Long pass' },
-    { id: 'high_pass', key: 'KeyA', names: ['high_pass', 'sliding'], label: 'High pass, or a sliding tackle when defending' },
-    { id: 'shot', key: 'KeyD', names: ['shot'], label: 'Shot' },
-    { id: 'sprint', key: 'KeyE', names: ['sprint'], label: 'Sprint while held' },
-    { id: 'dribble', key: 'KeyC', names: ['dribble'], label: 'Dribble while held' },
+    { id: 'left', key: 'ArrowLeft', names: ['left'] },
+    { id: 'right', key: 'ArrowRight', names: ['right'] },
+    { id: 'up', key: 'ArrowUp', names: ['up'] },
+    { id: 'down', key: 'ArrowDown', names: ['down'] },
+    { id: 'short_pass', key: 'KeyS', names: ['short_pass'] },
+    { id: 'long_pass', key: 'KeyW', names: ['long_pass'] },
+    { id: 'high_pass', key: 'KeyA', names: ['high_pass', 'sliding'] },
+    { id: 'shot', key: 'KeyD', names: ['shot'] },
+    { id: 'sprint', key: 'KeyE', names: ['sprint'] },
+    { id: 'dribble', key: 'KeyC', names: ['dribble'] },
 ];
 
 // H, M and F keep Help, mute and fullscreen during a game, and Esc keeps the pause menu.
@@ -51,7 +53,8 @@ export function defaultSettings() {
 }
 
 // Why a key cannot take a binding, or null when it can. A key is an arrow, a letter or a digit,
-// apart from the reserved ones, and belongs to one binding at a time.
+// apart from the reserved ones, and belongs to one binding at a time. The Play page tells the
+// reason with a message, play.input.problem and the reason.
 export function keyProblem(settings, id, code) {
     if (RESERVED.includes(code)) {
         return 'reserved';
@@ -63,14 +66,6 @@ export function keyProblem(settings, id, code) {
         return 'taken';
     }
     return null;
-}
-
-export function keyMessage(problem) {
-    return {
-        reserved: 'H, M and F keep Help, mute and fullscreen. Choose another key.',
-        invalid: 'Choose an arrow key, a letter or a digit.',
-        taken: 'That key already has another action. Change that one first.',
-    }[problem] || '';
 }
 
 // Whether two sides would share a named device, which each side keeps to itself.

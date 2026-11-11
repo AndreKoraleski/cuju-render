@@ -4,6 +4,7 @@
 // The range and settings of a video export, as the Export video dialog of the Watch page reads
 // them and the server's endpoint POST /api/matches/{id}/video takes them.
 
+import { formatNumber, serverText, t } from '../core/i18n.js';
 import { SIZE_PRESETS, checkSize, parseGraphicsScale, parseSafe } from './sizes.js';
 
 // The sizes, frame rates, qualities and cameras that the server accepts from the page. The sizes
@@ -12,16 +13,16 @@ import { SIZE_PRESETS, checkSize, parseGraphicsScale, parseSafe } from './sizes.
 export const VIDEO_SIZES = SIZE_PRESETS;
 export const VIDEO_RATES = [24, 25, 30, 50, 60];
 export const VIDEO_QUALITIES = [
-    { id: 'draft', label: 'Draft' },
-    { id: 'standard', label: 'Standard' },
-    { id: 'high', label: 'High' },
+    { id: 'draft', label: t('video.quality.draft') },
+    { id: 'standard', label: t('video.quality.standard') },
+    { id: 'high', label: t('video.quality.high') },
 ];
 export const VIDEO_CAMERAS = [
-    { id: 'broadcast', label: 'Broadcast' },
-    { id: 'tactical', label: 'Tactical' },
-    { id: 'goal', label: 'Behind the goal' },
-    { id: 'ball', label: 'Follow the ball' },
-    { id: 'owner', label: 'Follow the player on the ball' },
+    { id: 'broadcast', label: t('video.camera.broadcast') },
+    { id: 'tactical', label: t('video.camera.tactical') },
+    { id: 'goal', label: t('video.camera.goal') },
+    { id: 'ball', label: t('video.camera.ball') },
+    { id: 'owner', label: t('video.camera.owner') },
 ];
 // The longest export that the page asks for, in seconds, as the server's default limit.
 export const VIDEO_MAX_SECONDS = 600;
@@ -63,17 +64,17 @@ export function checkRange(startText, endText, duration) {
     const start = parseMoment(startText);
     const end = parseMoment(endText);
     if (start == null || end == null) {
-        return { error: 'Type the start and end as seconds, such as 75, or minutes and seconds, such as 1:15.' };
+        return { error: t('video.range.unreadable') };
     }
     if (start >= duration) {
-        return { error: `The start lies past the end of the recording, at ${formatMoment(duration)}.` };
+        return { error: t('video.range.past_end', { end: formatMoment(duration) }) };
     }
     const last = Math.min(end, duration);
     if (last <= start) {
-        return { error: 'The end comes after the start.' };
+        return { error: t('video.range.order') };
     }
     if (last - start > VIDEO_MAX_SECONDS) {
-        return { error: `A video runs at most ${VIDEO_MAX_SECONDS / 60} minutes, so choose a shorter range.` };
+        return { error: t('video.range.too_long', { count: VIDEO_MAX_SECONDS / 60 }) };
     }
     return { start, end: last };
 }
@@ -92,6 +93,10 @@ export function exportRequest(range, choices, field) {
         quality: VIDEO_QUALITIES.some((q) => q.id === choices.quality) ? choices.quality : 'standard',
         score: choices.score !== false,
     };
+    // The annotations show only when asked for, so the field stays out otherwise.
+    if (choices.annotations === true) {
+        body.annotations = true;
+    }
     const graphics = graphicsScale(choices.scale);
     if (graphics !== 1) {
         body.scale = graphics;
@@ -142,26 +147,39 @@ function safeChoice(value) {
     }
 }
 
+// The size of a file for people, in KB below a megabyte and in MB from there.
+export function fileSize(bytes) {
+    return bytes < 1e6
+        ? t('video.size.kb', { kb: Math.max(1, Math.round(bytes / 1e3)) })
+        : t('video.size.mb', { mb: formatNumber(bytes / 1e6, { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }) });
+}
+
 // The line of progress of an export entry from the server.
 export function progressText(entry) {
     if (!entry) {
         return '';
     }
     if (entry.state === 'done') {
-        const mb = entry.bytes ? `, ${(entry.bytes / 1e6).toFixed(1)} MB` : '';
-        return `The video is ready${mb}.`;
+        // The entry may be an export of before, so the line names its range, which the fields of
+        // the dialog may no longer show.
+        if (typeof entry.start === 'number' && typeof entry.end === 'number') {
+            const range = { start: formatMoment(entry.start), end: formatMoment(entry.end) };
+            return entry.bytes ? t('video.progress.ready_range_size', { ...range, size: fileSize(entry.bytes) }) : t('video.progress.ready_range', range);
+        }
+        return entry.bytes ? t('video.progress.ready_size', { size: fileSize(entry.bytes) }) : t('video.progress.ready');
     }
     if (entry.state === 'failed') {
-        return `The export failed. ${entry.error || ''}`.trim();
+        const error = serverText(entry);
+        return error ? t('video.progress.failed_reason', { error }) : t('video.progress.failed');
     }
     if (entry.state === 'cancelled') {
-        return 'The export was cancelled.';
+        return t('video.progress.cancelled');
     }
     if (!entry.frame) {
-        return 'Starting Chrome and opening the recording.';
+        return t('video.progress.starting');
     }
     if (entry.progress >= 1) {
-        return 'Finishing the file.';
+        return t('video.progress.finishing');
     }
-    return `Drawing frame ${entry.frame} of ${entry.frames}, ${Math.round(entry.progress * 100)} percent.`;
+    return t('video.progress.drawing', { frame: entry.frame, frames: entry.frames, percent: Math.round(entry.progress * 100) });
 }

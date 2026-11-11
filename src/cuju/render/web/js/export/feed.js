@@ -9,11 +9,15 @@
 // stream or server is asked for again until it answers. While nothing shows, the feed shows its
 // background and a slate. Scripts read the feed's state through cuju.feed.state().
 
+import { serverText, t } from '../core/i18n.js';
 import { watchSafeArea } from './safe-frame.js';
 
 // The pace of the questions to the server, the first after a failure and the longest.
 const POLL_MS = 4000;
 const RETRY_MAX_MS = 15000;
+// A question to the server that has no answer this long counts as failed, so a busy server never
+// holds the feed on its last picture.
+const RESOLVE_TIMEOUT_MS = 10000;
 // A finished match of a source that follows others holds its last picture this long before the
 // slate covers it.
 const HOLD_MS = 6000;
@@ -54,8 +58,9 @@ export function sameTarget(a, b) {
 
 // What the feed does with a target that the server names, given what it shows. Returns open to
 // open the target, retry to open the same one again, restart to play the recording again, slate
-// to cover a finished match with the slate, or wait.
-export function nextStep({ target, current, finished, following, loop, failed, heldFor }) {
+// to cover a finished match with the slate, or wait. Stalled says that the live stream shown has
+// lost its connection, so a newer live source that the server names takes its place at once.
+export function nextStep({ target, current, finished, following, loop, failed, heldFor, stalled = false }) {
     if (!target || target.kind === 'none') {
         if (!current) {
             return 'slate';
@@ -74,7 +79,8 @@ export function nextStep({ target, current, finished, following, loop, failed, h
         }
         return following && heldFor >= HOLD_MS ? 'slate' : 'wait';
     }
-    return !current || finished ? 'open' : 'wait';
+    const replaced = stalled && current.kind === 'live' && target.kind === 'live';
+    return !current || finished || replaced ? 'open' : 'wait';
 }
 
 export class Feed {
@@ -89,7 +95,9 @@ export class Feed {
         this.finishedSince = 0;
         this.failures = 0;
         this.online = null;
+        // The server's message in English for the state, and as the slate shows it.
         this.message = '';
+        this.messageText = '';
         this.timer = null;
         this.root = $('app');
         this.root.classList.add('feed');
@@ -151,7 +159,7 @@ export class Feed {
     setSlate(on, text = '') {
         this.root.classList.toggle('feed-idle', on);
         this.slate.classList.toggle('show', on && this.options.slate);
-        this.slateText.textContent = text || 'The next match starts soon';
+        this.slateText.textContent = text || t('feed.slate.next');
     }
 
     // Whether the current target has finished, a recording that played to its end and its show,
@@ -179,6 +187,15 @@ export class Feed {
         return !tl.playing && tl.t >= tl.last - 0.5 && !app.director.running && !app.postMatch.running;
     }
 
+    // Whether the live stream shown has lost its connection and tries to reconnect.
+    liveStalled() {
+        const source = this.app.source;
+        if (this.current && this.current.kind === 'live' && source && source.kind === 'live' && source.id === this.current.id) {
+            return !!(source.live && source.live.state === 'reconnecting');
+        }
+        return false;
+    }
+
     liveFailed() {
         const source = this.app.source;
         if (this.current && source && source.kind === 'live' && source.id === this.current.id) {
@@ -188,10 +205,20 @@ export class Feed {
     }
 
     async resolve() {
-        const res = await fetch(`/api/feed/resolve?source=${encodeURIComponent(this.options.source)}`, { cache: 'no-store' });
-        const body = await res.json().catch(() => null);
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), RESOLVE_TIMEOUT_MS);
+        let res;
+        let body;
+        try {
+            res = await fetch(`/api/feed/resolve?source=${encodeURIComponent(this.options.source)}`, { cache: 'no-store', signal: abort.signal });
+            body = await res.json().catch(() => null);
+        } catch (err) {
+            throw new Error(abort.signal.aborted ? t('feed.error.timeout') : err.message);
+        } finally {
+            clearTimeout(timer);
+        }
         if (!res.ok || !body || typeof body !== 'object') {
-            throw new Error((body && body.error) || `The server answered ${res.status}.`);
+            throw new Error((body && body.error && serverText(body)) || t('feed.error.status', { status: res.status }));
         }
         return body;
     }
@@ -204,15 +231,17 @@ export class Feed {
             this.online = true;
             this.failures = 0;
             this.message = target.message || '';
+            this.messageText = serverText(target, 'message');
         } catch (err) {
             this.online = false;
             this.failures += 1;
             this.message = err.message;
+            this.messageText = err.message;
         }
         if (this.online && !this.opening) {
             await this.consider(target);
         } else if (!this.online && !this.current) {
-            this.setSlate(true, 'Waiting for the cuju server');
+            this.setSlate(true, t('feed.slate.offline'));
         }
         const delay = this.online ? POLL_MS : Math.min(RETRY_MAX_MS, POLL_MS * 2 ** Math.min(3, this.failures - 1));
         this.timer = setTimeout(() => this.poll(), delay);
@@ -234,13 +263,14 @@ export class Feed {
             loop: this.options.loop,
             failed: this.current && this.current.kind === 'live' ? this.liveFailed() : false,
             heldFor: this.finishedSince ? now - this.finishedSince : 0,
+            stalled: this.liveStalled(),
         });
         if (step === 'open' || step === 'retry') {
             await this.open(target);
         } else if (step === 'restart') {
             this.restart();
         } else if (step === 'slate') {
-            this.setSlate(true, target && target.kind !== 'none' ? '' : target && target.message);
+            this.setSlate(true, target && target.kind !== 'none' ? '' : serverText(target, 'message'));
         }
     }
 
@@ -294,7 +324,7 @@ export class Feed {
         if (showing && !(this.finishedSince && performance.now() - this.finishedSince >= HOLD_MS && this.following)) {
             this.setSlate(false);
         } else if (!this.current && this.online !== false) {
-            this.setSlate(true, this.message);
+            this.setSlate(true, this.messageText);
         }
     }
 

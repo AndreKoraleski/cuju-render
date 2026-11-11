@@ -4,10 +4,16 @@
 // The client of the local server, for recordings in the format of the section Recording format of
 // docs/rendering.md, live sources, teams with their styles, models and images, and folder uploads.
 
+import { formatNumber, serverText, t, tOr } from './i18n.js';
+
+// An error of the server, whose message is in the language of the page when the server gives the
+// id of its message, else the server's own English text. The id and values stay on the error.
 export class ApiError extends Error {
-    constructor(message, status = 0) {
+    constructor(message, status = 0, id = null, values = null) {
         super(message);
         this.status = status;
+        this.id = id;
+        this.values = values;
     }
 }
 
@@ -30,22 +36,26 @@ async function request(method, path, { body, json, headers, timeout } = {}) {
     try {
         res = await fetch(path, init);
     } catch {
-        throw new ApiError(`Cannot reach the cuju server at ${location.origin}. Is it still running?`, 0);
+        throw new ApiError(t('api.unreachable', { origin: location.origin }), 0);
     }
     if (!res.ok) {
         let detail = '';
+        let id = null;
+        let values = null;
         try {
             const text = await res.text();
             try {
                 const parsed = JSON.parse(text);
-                detail = parsed.error || parsed.message || text;
+                detail = parsed.error ? serverText(parsed, 'error') : (parsed.message || text);
+                id = typeof parsed.error_id === 'string' ? parsed.error_id : null;
+                values = parsed.error_values && typeof parsed.error_values === 'object' ? parsed.error_values : null;
             } catch {
                 detail = text;
             }
         } catch {
             detail = '';
         }
-        throw new ApiError(detail ? `${detail}` : `The server answered ${res.status} ${res.statusText}.`, res.status);
+        throw new ApiError(detail ? `${detail}` : t('api.status', { status: res.status, text: res.statusText }), res.status, id, values);
     }
     return res;
 }
@@ -58,6 +68,9 @@ const enc = encodeURIComponent;
 
 export const api = {
     matches: () => getJson('/api/matches'),
+    languages: () => getJson('/api/languages'),
+    importLanguage: async (document) => (await request('POST', '/api/languages', { json: document })).json(),
+    removeLanguage: async (code) => (await request('DELETE', `/api/languages/${enc(code)}`)).json(),
     matchBytes: async (id, onProgress) => {
         const res = await request('GET', `/api/matches/${enc(id)}`);
         const total = Number(res.headers.get('Content-Length')) || 0;
@@ -165,10 +178,19 @@ export function controlValue(control) {
     return JSON.stringify(control);
 }
 
+// The team setting in short, each value in the words of api.control.short.<field>.<value>, the
+// value itself for one without words.
 export function controlLabel(control) {
     const c = controlFromValue(controlValue(control));
-    const selection = c.assignment === 'fixed' ? `, players ${c.selection.join(', ')}` : '';
-    return `${c.players} ${c.assignment}${selection}, goalkeeper ${c.goalkeeper}, ${c.action_set}`;
+    const values = {
+        players: c.players,
+        // The word of the assignment agrees with the number of players, as dinâmico or dinâmicos.
+        assignment: tOr(`api.control.short.assignment.${c.assignment}`, c.assignment, { count: c.players }),
+        selection: c.selection.join(', '),
+        goalkeeper: tOr(`api.control.short.goalkeeper.${c.goalkeeper}`, c.goalkeeper),
+        actionSet: tOr(`api.control.short.actionSet.${c.action_set}`, c.action_set),
+    };
+    return t(c.assignment === 'fixed' ? 'api.control.summary.fixed' : 'api.control.summary', values);
 }
 
 export function controlForm(format, initial = null) {
@@ -189,31 +211,31 @@ export function controlForm(format, initial = null) {
         root.append(row);
         return input;
     }
-    const count = field('Agent count');
+    const count = field(t('api.control.count'));
     count.type = 'number';
     count.min = '1';
     count.value = current.players;
-    const assignment = field('Assignment', [
-        ['dynamic', 'Dynamic, GRF switches players'], ['fixed', 'Fixed, keep selected players'],
+    const assignment = field(t('api.control.assignment'), [
+        ['dynamic', t('api.control.assignment.dynamic')], ['fixed', t('api.control.assignment.fixed')],
     ]);
     assignment.value = current.assignment;
-    const by = field('Select fixed players by', [['index', 'Index'], ['role', 'GRF role']]);
+    const by = field(t('api.control.by'), [['index', t('api.control.by.index')], ['role', t('api.control.by.role')]]);
     by.value = typeof current.selection[0] === 'string' ? 'role' : 'index';
-    const selection = field('Players, in agent order');
+    const selection = field(t('api.control.selection'));
     selection.value = current.selection.join(', ');
-    const goalkeeper = field('Goalkeeper', [
-        ['agent', 'In team control'], ['builtin', 'Handed to the AI, fixed assignment'],
-        ['scenario', 'Scenario decides, fixed requires an uncontrollable keeper'],
+    const goalkeeper = field(t('api.control.goalkeeper'), [
+        ['agent', t('api.control.goalkeeper.agent')], ['builtin', t('api.control.goalkeeper.builtin')],
+        ['scenario', t('api.control.goalkeeper.scenario')],
     ]);
     goalkeeper.value = current.goalkeeper;
-    const actionSet = field('Action set', [
-        ['default', 'Default, 19 actions'], ['v2', 'v2, 20 actions, includes builtin AI'],
+    const actionSet = field(t('api.control.actionSet'), [
+        ['default', t('api.control.actionSet.default')], ['v2', t('api.control.actionSet.v2')],
     ]);
     actionSet.value = current.action_set;
     const lineup = document.createElement('div');
     lineup.className = 'lineup-picker';
     lineup.setAttribute('role', 'group');
-    lineup.setAttribute('aria-label', 'Fixed players');
+    lineup.setAttribute('aria-label', t('api.control.lineup'));
     root.append(lineup);
     function update() {
         const fixed = assignment.value === 'fixed';
@@ -254,7 +276,7 @@ export function controlForm(format, initial = null) {
             name.className = 'lineup-role';
             name.textContent = role;
             button.append(number, name);
-            button.setAttribute('aria-label', `Player ${index}, ${role}`);
+            button.setAttribute('aria-label', t('api.control.lineup.player', { index, role }));
             button.setAttribute('aria-pressed', 'false');
             button.dataset.index = String(index);
             button.dataset.role = role;
@@ -356,16 +378,18 @@ export function formatBytes(n) {
     if (!Number.isFinite(n)) {
         return '';
     }
+    // The figures follow the language, with its decimal mark and without grouping, as toFixed.
+    const figure = (value, digits) => formatNumber(value, { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false });
     if (n < 1024) {
-        return `${n} B`;
+        return t('api.bytes.b', { size: n });
     }
     if (n < 1024 * 1024) {
-        return `${(n / 1024).toFixed(1)} KB`;
+        return t('api.bytes.kb', { size: figure(n / 1024, 1) });
     }
     if (n < 1024 * 1024 * 1024) {
-        return `${(n / 1024 / 1024).toFixed(1)} MB`;
+        return t('api.bytes.mb', { size: figure(n / 1024 / 1024, 1) });
     }
-    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    return t('api.bytes.gb', { size: figure(n / 1024 / 1024 / 1024, 2) });
 }
 
 // Accepts an ISO string, or seconds or milliseconds since the epoch.

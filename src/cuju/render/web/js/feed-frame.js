@@ -6,9 +6,12 @@
 // the picture, so a feed of 1920 by 1080 shows the graphics as the page shows them at 1280 by
 // 720, and a vertical feed lays out 720 wide. A window of another size than the picture fits the
 // picture inside it, centered. The page inside draws at the picture's own pixels, and a page
-// that stops answering, fails to load or loses its graphics context loads again.
+// that stops answering, fails to load or loses its graphics context loads again. The page inside
+// takes the whole query of the feed's address, so the parameter lang names the language of the
+// feed, as i18n.js reads it, and a feed without one follows the language of the browser.
 
-import { parseFeed } from './export/feed-params.js';
+import './core/i18n.js';
+import { frameScheme, parseFeed } from './export/feed-params.js';
 
 // A page that has not started this long after it loaded, or has not answered this long, loads
 // again. The check pauses while the window is hidden.
@@ -21,6 +24,9 @@ const query = location.search.replace(/^\?/, '');
 const { options } = parseFeed(query);
 document.documentElement.style.background = options.background;
 document.body.style.background = options.background;
+// The frame takes the color scheme of the page inside it. Chrome paints an opaque backdrop behind
+// a frame whose page has another scheme than the frame itself, which a transparent feed would show.
+frame.style.colorScheme = frameScheme(options.theme);
 
 // Places the frame and returns the ratio of the picture's pixels to the layout's.
 function place() {

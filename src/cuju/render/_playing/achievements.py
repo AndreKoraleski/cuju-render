@@ -300,25 +300,34 @@ def for_person_run(recordings: list[tuple[dict[str, Any], list[bytes]]], outcome
     return [identifier for identifier in IDENTIFIERS if identifier in earned]
 
 
-def for_agent_run(outcome: dict[str, Any]) -> list[str]:
+def for_agent_run(
+    outcome: dict[str, Any], recordings: list[tuple[dict[str, Any], list[bytes]]] | None = None
+) -> list[str]:
     """Records and returns the achievements of an agent's run of a challenge.
 
     A team of the registry, the built-in AI aside, keeps what each attempt's recording and the
-    medal earned. A Python policy keeps nothing on disk, and the run names its achievements.
+    medal earned, and the run returns them. The built-in AI and a Python policy keep nothing, so
+    their runs return none, as they earn none. `recordings` holds the header and frames of each
+    attempt in order, as the run played them, and without it each attempt's recording is read
+    from the library.
     """
+    team = outcome['team']
+    if team is None or team == _teams.BUILTIN:
+        return []
     earned: dict[str, str | None] = {}
-    for result in outcome['attempts']:
-        path = _home.folder('matches') / f'{result["match"]}.cjr'
-        header = _recording.read_header(path)
-        for identifier in detect(header, list(_recording.frames(path)), 0):
+    for index, result in enumerate(outcome['attempts']):
+        if recordings is None:
+            path = _home.folder('matches') / f'{result["match"]}.cjr'
+            header, frames = _recording.read_header(path), list(_recording.frames(path))
+        else:
+            header, frames = recordings[index]
+        for identifier in detect(header, frames, 0):
             earned.setdefault(identifier, result['match'])
     medals = _medals('agent', outcome['name'], outcome['team']) if not outcome['practice'] else {}
     first = outcome['attempts'][0]['match'] if outcome['attempts'] else None
     for identifier in challenge_awards(medals, outcome['medal']):
         earned.setdefault(identifier, first)
-    team = outcome['team']
-    if team is not None and team != _teams.BUILTIN:
-        _award(team, earned)
+    _award(team, earned)
     return [identifier for identifier in IDENTIFIERS if identifier in earned]
 
 

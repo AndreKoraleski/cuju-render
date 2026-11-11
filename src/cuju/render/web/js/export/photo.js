@@ -13,10 +13,12 @@ import { CAMERA_BOX, confine } from '../world/cameras.js';
 import { OWN_KEYS } from '../core/comfort.js';
 import { el, menuItem } from '../core/menu.js';
 import {
-    DEFAULTS, FOCUS_MAX, FOCUS_MIN, GUIDES, LOOKS, RANGES, RESOLUTIONS, captureFov, focusToSlider,
+    DEFAULTS, FOCUS_MAX, FOCUS_MIN, GUIDES, LOOKS, MAX_SIDE, MIN_SIDE, RANGES, RESOLUTIONS, captureFov, focusToSlider,
     guideGeometry, lookById, nextGuide, nextLook, normalizeSettings, photoFileName, readPad,
     resolveResolution, sliderToFocus,
 } from './photo-core.js';
+import { formatNumber, t } from '../core/i18n.js';
+import { presetLabel } from './size-fields.js';
 
 // Samples of the depth of field, on a spiral of the golden angle.
 const SAMPLES = 48;
@@ -28,6 +30,14 @@ const GRAIN_RATE = 24;
 const TURN = 1.2;
 const ROLL = 30;
 const ZOOM = 20;
+
+// The name of a look in the language of the page.
+const lookLabel = (id) => t(`photo.look.${lookById(id).id}`);
+// A number as String writes it, with the decimal separator of the language.
+const decimal = (v) => {
+    const text = String(v);
+    return /^-?\d+\.\d+$/.test(text) ? text.replace('.', formatNumber(0.5).charAt(1)) : text;
+};
 
 const VERTEX = /* glsl */`
 varying vec2 vUv;
@@ -264,8 +274,8 @@ export class PhotoMode {
         if (!host) {
             return;
         }
-        host.replaceChildren(menuItem('Photo mode', {
-            kbd: 'O', hint: 'Hold the moment and frame it with a free camera',
+        host.replaceChildren(menuItem(t('photo.title'), {
+            kbd: 'O', hint: t('photo.menu.hint'),
             onSelect: () => {
                 this.open();
                 setTimeout(() => this.panel && !this.panel.hidden && this.panel.focus(), 0);
@@ -724,7 +734,7 @@ export class PhotoMode {
             r.setPixelRatio(1);
             r.setSize(width, height, false);
             if (gl.drawingBufferWidth !== width || gl.drawingBufferHeight !== height) {
-                throw new RangeError(`This device draws at most ${gl.drawingBufferWidth} by ${gl.drawingBufferHeight} here.`);
+                throw new RangeError(t('photo.error.device', { width: gl.drawingBufferWidth, height: gl.drawingBufferHeight }));
             }
             cam.aspect = width / height;
             cam.fov = captureFov(fov, viewAspect, width / height);
@@ -773,7 +783,7 @@ export class PhotoMode {
         const win = this.windowSize();
         const { width, height } = resolveResolution(choice, win.width, win.height, this.maxSide());
         const canvas = this.renderPhoto(width, height);
-        const blob = await new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('The photo could not be encoded.'))), 'image/png'));
+        const blob = await new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error(t('photo.error.encode')))), 'image/png'));
         const name = this.fileName();
         this.lastCapture = { width, height, name, bytes: blob.size };
         if (o.download) {
@@ -796,14 +806,14 @@ export class PhotoMode {
             return null;
         }
         this.saving = true;
-        this.status('Saving the photo');
+        this.status(t('photo.status.saving'));
         try {
             await this.capture({ ...options, as: 'blob', download: true });
             const c = this.lastCapture;
-            this.status(`Saved ${c.name}, ${c.width} by ${c.height}`);
+            this.status(t('photo.status.saved', { name: c.name, width: c.width, height: c.height }));
             return { ...c };
         } catch (err) {
-            this.status(`The photo was not saved. ${err.message}`);
+            this.status(t('photo.status.failed', { reason: err.message }));
             throw err;
         } finally {
             this.saving = false;
@@ -834,12 +844,14 @@ export class PhotoMode {
 
     // Changes settings, each checked. Returns the state.
     set(patch) {
-        this.update(patch);
+        this.update(patch, true);
         return this.state();
     }
 
-    update(patch) {
-        this.settings = normalizeSettings(this.settings, patch);
+    // Changes settings. A script's change is strict, a number out of range throws, and the keys,
+    // the controller and the panel hold theirs to the range.
+    update(patch, strict = false) {
+        this.settings = normalizeSettings(this.settings, patch, { strict });
         this.dirty = true;
         if (this.isOpen) {
             this.syncPanel();
@@ -941,7 +953,7 @@ export class PhotoMode {
             if (this.panel.contains(document.activeElement)) {
                 document.activeElement.blur();
             }
-            this.app.hud.toast('Interface hidden, U or Esc brings it back', 'info', 1800);
+            this.app.hud.toast(t('photo.hidden'), 'info', 1800);
         } else {
             // A panel that asks for the pointer frees it, as every panel of the page does.
             this.panel.setAttribute('data-prompt', '');
@@ -1021,7 +1033,7 @@ export class PhotoMode {
             this.update({ roll: 0, fov: DEFAULTS.fov, focus: 'auto' });
         } else if (lower === 'l') {
             this.update({ look: nextLook(s.look, step) });
-            app.hud.toast(lookById(this.settings.look).label, 'info', 1000);
+            app.hud.toast(lookLabel(this.settings.look), 'info', 1000);
         } else if (lower === 'g') {
             this.update({ guide: nextGuide(s.guide, step) });
         } else if (lower === 'u') {
@@ -1112,7 +1124,7 @@ export class PhotoMode {
                 return;
             } else if (name === 'nextLook' || name === 'previousLook') {
                 this.update({ look: nextLook(this.settings.look, name === 'nextLook' ? 1 : -1) });
-                this.app.hud.toast(lookById(this.settings.look).label, 'info', 1000);
+                this.app.hud.toast(lookLabel(this.settings.look), 'info', 1000);
             } else if (name === 'interface') {
                 this.setHidden(!this.hidden);
             } else if (name === 'guide') {
@@ -1129,12 +1141,12 @@ export class PhotoMode {
             return;
         }
         this.guideLayer = svg('svg', { class: 'photo-guides photo-ui', 'aria-hidden': 'true' });
-        const select = (id, entries) => el('select', { id }, entries.map((e) => el('option', { value: e.id }, e.label)));
+        const select = (id, entries, label) => el('select', { id }, entries.map((e) => el('option', { value: e.id }, label(e))));
         const range = (id, min, max, stepValue) => el('input', { id, type: 'range', min, max, step: stepValue });
         const row = (label, id, control) => el('div', { class: 'photo-row' },
             el('label', { for: id }, label), el('output', { for: id, id: `${id}-value` }), control);
         this.controls = {
-            look: select('photo-look', LOOKS),
+            look: select('photo-look', LOOKS, (e) => lookLabel(e.id)),
             vignette: range('photo-vignette', 0, 1, 0.01),
             grain: range('photo-grain', 0, 1, 0.01),
             auto: el('input', { id: 'photo-autofocus', type: 'checkbox' }),
@@ -1142,36 +1154,34 @@ export class PhotoMode {
             aperture: range('photo-aperture', 0, 1, 0.01),
             fov: range('photo-fov', RANGES.fov[0], RANGES.fov[1], 0.5),
             roll: range('photo-roll', RANGES.roll[0], RANGES.roll[1], 0.5),
-            guide: select('photo-guide', GUIDES),
-            resolution: select('photo-resolution', [...RESOLUTIONS, { id: 'custom', label: 'Custom size' }]),
-            width: el('input', { id: 'photo-width', type: 'number', min: '16', max: '8192', step: '1', value: '1920', 'aria-label': 'Width in pixels' }),
-            height: el('input', { id: 'photo-height', type: 'number', min: '16', max: '8192', step: '1', value: '1080', 'aria-label': 'Height in pixels' }),
+            guide: select('photo-guide', GUIDES, (e) => t(`photo.guide.${e.id}`)),
+            resolution: select('photo-resolution', [...RESOLUTIONS, { id: 'custom', label: t('photo.resolution.custom') }],
+                (e) => (e.id === 'window' ? t('photo.resolution.window') : e.preset ? presetLabel({ id: e.preset }) : e.label)),
+            width: el('input', { id: 'photo-width', type: 'number', min: '16', max: '8192', step: '1', value: '1920', 'aria-label': t('photo.width') }),
+            height: el('input', { id: 'photo-height', type: 'number', min: '16', max: '8192', step: '1', value: '1080', 'aria-label': t('photo.height') }),
         };
         const c = this.controls;
         this.statusLine = el('p', { class: 'photo-status', role: 'status' });
         const button = (text, title, action, cls = 'btn small') => el('button', { type: 'button', class: cls, title, onclick: action }, text);
-        this.panel = el('aside', { id: 'photo-panel', class: 'photo-ui', 'aria-label': 'Photo mode', tabindex: '-1' },
-            el('h2', {}, 'Photo mode'),
-            row('Look', 'photo-look', c.look),
-            row('Vignette', 'photo-vignette', c.vignette),
-            row('Grain', 'photo-grain', c.grain),
-            el('label', { class: 'photo-check' }, c.auto, 'Focus on the center of the picture'),
-            row('Focus distance', 'photo-focus', c.focus),
-            row('Blur strength', 'photo-aperture', c.aperture),
-            row('Field of view', 'photo-fov', c.fov),
-            row('Roll', 'photo-roll', c.roll),
-            row('Guide', 'photo-guide', c.guide),
-            row('Resolution', 'photo-resolution', c.resolution),
-            el('div', { class: 'photo-row photo-size', hidden: true }, c.width, el('span', { 'aria-hidden': 'true' }, 'by'), c.height),
+        this.panel = el('aside', { id: 'photo-panel', class: 'photo-ui', 'aria-label': t('photo.title'), tabindex: '-1' },
+            el('h2', {}, t('photo.title')),
+            row(t('photo.look'), 'photo-look', c.look),
+            row(t('photo.vignette'), 'photo-vignette', c.vignette),
+            row(t('photo.grain'), 'photo-grain', c.grain),
+            el('label', { class: 'photo-check' }, c.auto, t('photo.autofocus')),
+            row(t('photo.focus'), 'photo-focus', c.focus),
+            row(t('photo.aperture'), 'photo-aperture', c.aperture),
+            row(t('photo.fov'), 'photo-fov', c.fov),
+            row(t('photo.roll'), 'photo-roll', c.roll),
+            row(t('photo.guide'), 'photo-guide', c.guide),
+            row(t('photo.resolution'), 'photo-resolution', c.resolution),
+            el('div', { class: 'photo-row photo-size', hidden: true }, c.width, el('span', { 'aria-hidden': 'true' }, t('photo.by')), c.height),
             el('div', { class: 'photo-actions' },
-                button('Save photo', 'Save the photo as a PNG (P)', () => this.save().catch((err) => console.warn('photo not saved', err)), 'btn small primary'),
-                button('Hide interface', 'Hide this panel, U or Esc brings it back', () => this.setHidden(true)),
-                button('Leave', 'Leave photo mode (O or Esc)', () => this.close())),
+                button(t('photo.save'), t('photo.save.title'), () => this.save().catch((err) => console.warn('photo not saved', err)), 'btn small primary'),
+                button(t('photo.hide'), t('photo.hide.title'), () => this.setHidden(true)),
+                button(t('photo.leave'), t('photo.leave.title'), () => this.close())),
             this.statusLine,
-            el('p', { class: 'photo-keys' },
-                'W, A, S and D fly, Q and E lower and raise, the arrows turn, Z and X roll, minus and plus zoom. ',
-                'Brackets move the focus, with Shift the blur. L and G change the look and the guide, ',
-                'R resets the roll, the zoom and the focus, U hides this panel, P saves and O leaves.'));
+            el('p', { class: 'photo-keys' }, t('photo.keys')));
         const on = (control, event, read) => control.addEventListener(event, () => {
             try {
                 this.update(read());
@@ -1188,7 +1198,17 @@ export class PhotoMode {
         on(c.fov, 'input', () => ({ fov: Number(c.fov.value) }));
         on(c.roll, 'input', () => ({ roll: Number(c.roll.value) }));
         on(c.guide, 'change', () => ({ guide: c.guide.value }));
-        const custom = () => ({ resolution: { width: Number(c.width.value), height: Number(c.height.value) } });
+        const custom = () => {
+            const size = { width: Number(c.width.value), height: Number(c.height.value) };
+            // The checks of photo-core.js, here with the message in the language of the page.
+            for (const side of ['width', 'height']) {
+                const v = size[side];
+                if (!Number.isInteger(v) || v < MIN_SIDE || v > MAX_SIDE) {
+                    throw new RangeError(t(`photo.error.${side}`, { min: MIN_SIDE, max: MAX_SIDE, value: String(v) }));
+                }
+            }
+            return { resolution: size };
+        };
         on(c.resolution, 'change', () => (c.resolution.value === 'custom' ? custom() : { resolution: c.resolution.value }));
         on(c.width, 'change', custom);
         on(c.height, 'change', custom);
@@ -1232,18 +1252,18 @@ export class PhotoMode {
         };
         value(c.look, s.look);
         value(c.vignette, s.vignette);
-        show(c.vignette, `${Math.round(s.vignette * 100)} percent`);
+        show(c.vignette, t('photo.value.percent', { value: Math.round(s.vignette * 100) }));
         value(c.grain, s.grain);
-        show(c.grain, `${Math.round(s.grain * 100)} percent`);
+        show(c.grain, t('photo.value.percent', { value: Math.round(s.grain * 100) }));
         c.auto.checked = s.focus === 'auto';
         value(c.focus, focusToSlider(s.focus === 'auto' ? this.focusGuess() : s.focus));
-        show(c.focus, s.focus === 'auto' ? 'center' : `${s.focus} m`);
+        show(c.focus, s.focus === 'auto' ? t('photo.value.center') : t('photo.value.meters', { value: decimal(s.focus) }));
         value(c.aperture, s.aperture);
-        show(c.aperture, `${Math.round(s.aperture * 100)} percent`);
+        show(c.aperture, t('photo.value.percent', { value: Math.round(s.aperture * 100) }));
         value(c.fov, Math.round(s.fov * 2) / 2);
-        show(c.fov, `${Math.round(s.fov)} degrees`);
+        show(c.fov, t('photo.value.degrees', { value: Math.round(s.fov) }));
         value(c.roll, Math.round(s.roll * 2) / 2);
-        show(c.roll, `${Math.round(s.roll)} degrees`);
+        show(c.roll, t('photo.value.degrees', { value: Math.round(s.roll) }));
         value(c.guide, s.guide);
         const known = typeof s.resolution === 'string' && RESOLUTIONS.some((r) => r.id === s.resolution);
         value(c.resolution, known ? s.resolution : 'custom');

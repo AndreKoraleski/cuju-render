@@ -215,3 +215,11 @@ test('names, badges and rosters are made of the word lists', () => {
     assert.equal(badgeFor('Comets'), 'COM');
     assert.equal(badgeFor(''), '');
 });
+
+test('a seed other than text or a number is refused', () => {
+    assert.throws(() => surprise({ seed: {} }), /expected the seed as text or a number, found an object/);
+    assert.throws(() => surprise({ seed: [1] }), /found a list/);
+    assert.throws(() => surprise({ seed: true }), /found a boolean/);
+    assert.equal(surprise({ seed: 7 }).seed, '7');
+    assert.equal(surprise({ seed: null }).seed.length, 6);
+});

@@ -17,6 +17,7 @@ exported from the page carries them along, and a submission folder that holds on
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import functools
 import hashlib
@@ -40,11 +41,20 @@ from typing import Any
 from cuju.errors import ArgumentError
 
 from .._store import home as _home
+from .._text import messages as _messages
+from .._text.messages import MessageError
 
 BUILTIN = 'builtin'
 # The start of a submission folder as the page uploads it, an index and the files' bytes.
 FOLDER_MAGIC = b'CUJDIR1\n'
-_BUILTIN_ENTRY = {'id': BUILTIN, 'name': "GRF's built-in AI", 'kind': 'builtin', 'created': None}
+# The built-in AI's name until a person renames it, a label that the page shows in its language.
+_BUILTIN_NAME = 'server.names.builtin'
+_BUILTIN_ENTRY = {
+    'id': BUILTIN,
+    'name': _messages.text(_BUILTIN_NAME),
+    'kind': 'builtin',
+    'created': None,
+}
 # Kaggle: the file that an archive's agent lives in.
 _MAIN = 'main.py'
 # Submissions larger than this are refused, as Kaggle limits them too.
@@ -95,7 +105,7 @@ IMAGE_SLOTS = (
     'sponsor-4-edit',
 )
 # The fields of an entry that the team's folder implies, which its file never stores.
-_IMPLIED = ('images', 'sounds', 'sounds_version', 'clips')
+_IMPLIED = ('images', 'sounds', 'sounds_version', 'clips', 'name_id', 'name_values')
 # The folder of a submission that holds the renderer's files of its team.
 TEAM_FOLDER = 'cuju-team'
 _MAXIMUM_IMAGE_BYTES = 8 * 1024 * 1024
@@ -121,6 +131,38 @@ _GOALKEEPER = {
     'shorts': [20, 20, 20],
     'socks': [46, 204, 113],
 }
+
+
+# The kits that new teams take in turn, so that two teams added one after the other differ. Each
+# is a primary color and the color of the shorts, away from the built-in AI's blue and from the
+# goalkeepers' green.
+_NEW_KITS = (
+    ([214, 48, 49], [255, 255, 255]),
+    ([230, 126, 34], [20, 20, 20]),
+    ([142, 68, 173], [255, 255, 255]),
+    ([241, 196, 15], [20, 20, 20]),
+    ([45, 52, 54], [255, 255, 255]),
+    ([232, 67, 147], [255, 255, 255]),
+    ([255, 255, 255], [20, 20, 20]),
+    ([127, 0, 32], [255, 255, 255]),
+)
+
+
+def _new_kit() -> dict[str, Any]:
+    """Returns the kit of the next new team, the first of `_NEW_KITS` that fewest teams wear."""
+    worn: collections.Counter[tuple[int, ...]] = collections.Counter()
+    for path in _home.folder('teams').glob(f'*/{TEAM_FOLDER}/team.json'):
+        with contextlib.suppress(OSError, ValueError, TypeError, KeyError, AttributeError):
+            team = json.loads(path.read_text(encoding='utf-8'))
+            worn[tuple(team['style']['kit']['primary'])] += 1
+    primary, shorts = min(_NEW_KITS, key=lambda kit: worn[tuple(kit[0])])
+    return {
+        **_KIT,
+        'primary': list(primary),
+        'shorts': list(shorts),
+        'socks': list(primary),
+        'secondary': [20, 20, 20] if primary == [255, 255, 255] else [255, 255, 255],
+    }
 
 
 def _player_style(index: int) -> dict[str, Any]:
@@ -176,7 +218,7 @@ def _color(value: Any, name: str) -> list[int]:
             for part in value
         )
     ):
-        raise ArgumentError(f'expected {name} as three integers from 0 to 255, found {value!r}')
+        raise MessageError('server.teams.color', name=name, value=repr(value))
     return [int(part) for part in value]
 
 
@@ -188,7 +230,9 @@ def _printable(text: str) -> str:
 def _choice(value: Any, choices: tuple[str, ...], name: str) -> str:
     """Returns `value` if it is one of `choices`, or raises `ArgumentError`."""
     if value not in choices:
-        raise ArgumentError(f'expected {name} as one of {", ".join(choices)}, found {value!r}')
+        raise MessageError(
+            'server.teams.choice', name=name, choices=', '.join(choices), value=repr(value)
+        )
     return value
 
 
@@ -197,21 +241,19 @@ def _players(
 ) -> list[dict[str, Any]]:
     """Returns the roster with the changes of `value`, a list of per-player dictionaries."""
     if not isinstance(value, list) or len(value) > len(current):
-        raise ArgumentError(f'expected at most {len(current)} player entries, found {value!r}')
+        raise MessageError('server.teams.players', count=len(current), value=repr(value))
     roster = [dict(player) for player in current]
     for index, changes in enumerate(value):
         if not isinstance(changes, dict):
-            raise ArgumentError(f'expected player {index} as a dictionary, found {changes!r}')
+            raise MessageError('server.teams.player', index=index, value=repr(changes))
         for key, entry in changes.items():
             if key == 'name':
                 if not isinstance(entry, str) or len(entry) > 24:
-                    raise ArgumentError(
-                        f'expected a name of at most 24 characters, found {entry!r}'
-                    )
+                    raise MessageError('server.teams.player_name', name=repr(entry))
                 roster[index][key] = _printable(entry)
             elif key == 'number':
                 if isinstance(entry, bool) or not isinstance(entry, int) or not 0 <= entry <= 99:
-                    raise ArgumentError(f'expected a shirt number from 0 to 99, found {entry!r}')
+                    raise MessageError('server.teams.shirt_number', number=repr(entry))
                 roster[index][key] = entry
             elif key == 'skin':
                 roster[index][key] = _choice(entry, _SKINS, 'the skin')
@@ -228,7 +270,7 @@ def _players(
                     entry, ('team', 'grf', 'custom', *models), 'the player model'
                 )
             else:
-                raise ArgumentError(f'expected an entry of a player, found {key!r}')
+                raise MessageError('server.teams.player_entry', key=repr(key))
     return roster
 
 
@@ -240,7 +282,7 @@ _CELEBRATION = re.compile(r'[a-z0-9_]{1,40}(:[A-Za-z0-9_. -]{1,60})?')
 def _celebration(value: Any) -> str:
     """Returns the name of a celebration, which the page knows or finds among a model's clips."""
     if not isinstance(value, str) or not _CELEBRATION.fullmatch(value):
-        raise ArgumentError(f'expected the name of a celebration, found {value!r}')
+        raise MessageError('server.teams.celebration', value=repr(value))
     return value
 
 
@@ -255,12 +297,14 @@ def _colors(value: Any, models: tuple[str, ...]) -> dict[str, dict[str, str]]:
     of them to the color the team wants instead. GRF's own model takes the kit's colors instead.
     """
     if not isinstance(value, dict):
-        raise ArgumentError(f'expected the colors as a dictionary by model, found {value!r}')
+        raise MessageError('server.teams.colors', value=repr(value))
     result: dict[str, dict[str, str]] = {}
     for model, pairs in value.items():
         _choice(model, models, 'the model of the colors')
         if not isinstance(pairs, dict) or len(pairs) > _MAXIMUM_RECOLORS:
-            raise ArgumentError(f'expected at most {_MAXIMUM_RECOLORS} colors for {model!r}')
+            raise MessageError(
+                'server.teams.colors_count', count=_MAXIMUM_RECOLORS, model=repr(model)
+            )
         result[model] = {}
         for old, new in pairs.items():
             if not (
@@ -269,7 +313,7 @@ def _colors(value: Any, models: tuple[str, ...]) -> dict[str, dict[str, str]]:
                 and _HEX.fullmatch(old.lower())
                 and _HEX.fullmatch(new.lower())
             ):
-                raise ArgumentError(f'expected colors as #rrggbb, found {old!r} and {new!r}')
+                raise MessageError('server.teams.color_pair', old=repr(old), new=repr(new))
             result[model][old.lower()] = new.lower()
     return result
 
@@ -284,7 +328,7 @@ def _hidden_numbers(value: Any, models: tuple[str, ...]) -> list[str]:
         or len(value) > 64
         or not all(isinstance(model, str) and len(model) <= 64 for model in value)
     ):
-        raise ArgumentError(f'expected hidden_numbers as a list of model names, found {value!r}')
+        raise MessageError('server.teams.hidden_numbers', value=repr(value))
     return list(dict.fromkeys(model for model in value if model in models))
 
 
@@ -304,27 +348,25 @@ def style(
     result = json.loads(json.dumps(base))
     changes = changes or {}
     if not isinstance(changes, dict):
-        raise ArgumentError(f'expected a style as a dictionary, found {changes!r}')
+        raise MessageError('server.teams.style', value=repr(changes))
     for key, value in changes.items():
         if key in ('kit', 'goalkeeper'):
             if not isinstance(value, dict):
-                raise ArgumentError(f'expected {key} as a dictionary, found {value!r}')
+                raise MessageError('server.teams.style_part_object', key=key, value=repr(value))
             for part, entry in value.items():
                 if key == 'kit' and part == 'pattern':
                     result[key][part] = _choice(entry, _PATTERNS, 'the pattern')
                 elif part in _PARTS:
                     result[key][part] = _color(entry, f'{key} {part}')
                 else:
-                    raise ArgumentError(f'expected a part of {key}, found {part!r}')
+                    raise MessageError('server.teams.style_part', key=key, part=repr(part))
         elif key == 'model':
             result[key] = _choice(value, ('grf', 'custom', *models), 'the model')
         elif key == 'number':
             result[key] = _choice(value, _NUMBERS, 'the numbers')
         elif key == 'badge':
             if not isinstance(value, str) or len(value) > 3:
-                raise ArgumentError(
-                    f'expected a badge of at most three characters, found {value!r}'
-                )
+                raise MessageError('server.teams.badge', value=repr(value))
             result[key] = value
         elif key == 'players':
             result[key] = _players(value, result[key], models)
@@ -332,19 +374,19 @@ def style(
             result[key] = _colors(value, ('custom', *models))
         elif key == 'celebrations':
             if not isinstance(value, list) or len(value) > 32:
-                raise ArgumentError('expected a list of at most 32 celebrations')
+                raise MessageError('server.teams.celebrations')
             result[key] = [_celebration(item) for item in value]
         elif key == 'hidden_numbers':
             result[key] = _hidden_numbers(value, ('custom', *models))
         elif key == 'crowd':
             if not isinstance(value, dict) or set(value) - {'colors'}:
-                raise ArgumentError(f'expected the crowd as {{"colors": [...]}}, found {value!r}')
+                raise MessageError('server.teams.crowd', value=repr(value))
             colors = value.get('colors', result[key]['colors'])
             if not isinstance(colors, list) or not 1 <= len(colors) <= 4:
-                raise ArgumentError('expected one to four colors of the fans')
+                raise MessageError('server.teams.crowd_colors')
             result[key] = {'colors': [_color(color, 'a color of the fans') for color in colors]}
         else:
-            raise ArgumentError(f'expected an entry of a style, found {key!r}')
+            raise MessageError('server.teams.style_entry', key=repr(key))
     return result
 
 
@@ -439,7 +481,33 @@ def _builtin() -> dict[str, Any]:
         entry.update(
             {key: saved[key] for key in ('name', 'style', 'model', 'format') if key in saved}
         )
-    return _complete(entry, _BUILTIN_KIT)
+    return _complete(_builtin_name(entry), _BUILTIN_KIT)
+
+
+def _builtin_name(entry: dict[str, Any]) -> dict[str, Any]:
+    """Returns the built-in AI's entry with the message of its name while it keeps the default.
+
+    The page sends the name back with every change of the style, so a stored name equal to the
+    English default still counts as the default.
+    """
+    entry = {key: value for key, value in entry.items() if key not in ('name_id', 'name_values')}
+    if entry.get('name') == _BUILTIN_ENTRY['name']:
+        entry.update(_messages.named('name', _messages.label(_BUILTIN_NAME)))
+    return entry
+
+
+def _reason(error: BaseException) -> dict[str, Any] | str:
+    """Returns an error as a value of another message, a label when it carries a message id."""
+    message_id = getattr(error, 'message_id', None)
+    if isinstance(message_id, str) and message_id in _messages.MESSAGES:
+        return _messages.label(message_id, **getattr(error, 'values', {}))
+    return str(error)
+
+
+def shown_name(team: dict[str, Any]) -> dict[str, Any] | str:
+    """Returns the name of a team as a message value, a label for a name that cuju made."""
+    found = {'id': team.get('name_id'), 'text': team.get('name'), 'values': team.get('name_values')}
+    return found if _messages.valid_label(found) else str(team.get('name'))
 
 
 def teams() -> list[dict[str, Any]]:
@@ -463,11 +531,11 @@ def check_control(control: Any, format: str) -> dict[str, Any]:
     control = dict(DEFAULT_CONTROL) if control is None else control
     allowed = {'players', 'goalkeeper', 'assignment', 'selection', 'action_set'}
     if not isinstance(control, dict) or set(control) - allowed:
-        raise ArgumentError('expected players, assignment, selection, goalkeeper and action_set')
+        raise MessageError('server.teams.control.fields')
     players = control.get('players', 1)
     most = FORMATS[format]
     if isinstance(players, bool) or not isinstance(players, int) or not 1 <= players <= most:
-        raise ArgumentError(f'expected from 1 to {most} controlled players')
+        raise MessageError('server.teams.control.players', most=most)
     legacy = 'assignment' not in control
     keeper = _choice(
         control.get('goalkeeper', 'scenario'), ('agent', 'builtin', 'scenario'), 'goalkeeper'
@@ -475,25 +543,25 @@ def check_control(control: Any, format: str) -> dict[str, Any]:
     assignment = control.get('assignment', 'fixed' if keeper == 'builtin' else 'dynamic')
     _choice(assignment, ('dynamic', 'fixed'), 'assignment')
     if legacy and keeper == 'builtin' and (format != '11v11' or players != 10):
-        raise ArgumentError('expected 10 players for the earlier goalkeeper setting')
+        raise MessageError('server.teams.control.legacy_goalkeeper')
     if legacy and keeper == 'agent':
         keeper = 'scenario'
     if assignment == 'dynamic' and keeper == 'builtin':
-        raise ArgumentError('expected fixed assignment for a goalkeeper handed to the AI')
+        raise MessageError('server.teams.control.goalkeeper_fixed')
     selection = control.get('selection', [])
     if legacy and assignment == 'fixed':
         selection = list(range(1, players + 1))
     if not isinstance(selection, list):
-        raise ArgumentError('expected a list of player indices or roles')
+        raise MessageError('server.teams.control.selection_list')
     if assignment == 'fixed' and len(selection) != players:
-        raise ArgumentError('expected one selection for each controlled player')
+        raise MessageError('server.teams.control.selection_count')
     if assignment == 'dynamic' and selection:
-        raise ArgumentError('expected an empty selection for dynamic assignment')
+        raise MessageError('server.teams.control.selection_empty')
     if selection:
         indices = all(type(item) is int and 0 <= item <= 10 for item in selection)
         roles = all(isinstance(item, str) and item in ROLES for item in selection)
         if not (indices or roles) or (indices and len(set(selection)) != len(selection)):
-            raise ArgumentError('expected distinct player indices or GRF role names')
+            raise MessageError('server.teams.control.selection_distinct')
     action_set = _choice(control.get('action_set', 'default'), ('default', 'v2'), 'action set')
     return dict(
         players=players,
@@ -543,11 +611,11 @@ def selected_players(control: dict[str, Any], formation: list[Any]) -> list[int]
     """Resolves selections in agent order, with repeated roles in lineup order."""
     available = [index for index, player in enumerate(formation) if player.controllable]
     if control['players'] > len(available):
-        raise ArgumentError(f'scenario has only {len(available)} controllable players')
+        raise MessageError('server.teams.control.too_few', count=len(available))
     keeper = [index for index, player in enumerate(formation) if player.role == 0]
     if control['assignment'] == 'dynamic':
         if control['goalkeeper'] == 'agent' and not any(i in available for i in keeper):
-            raise ArgumentError('scenario makes the goalkeeper uncontrollable')
+            raise MessageError('server.teams.control.goalkeeper_uncontrollable')
         return available
     selected = []
     for item in control['selection']:
@@ -558,17 +626,17 @@ def selected_players(control: dict[str, Any], formation: list[Any]) -> list[int]
         )
         found = next((i for i in candidates if i in available and i not in selected), None)
         if found is None:
-            raise ArgumentError(f'scenario cannot select player {item}')
+            raise MessageError('server.teams.control.select_player', player=item)
         selected.append(found)
     if control['goalkeeper'] == 'builtin' and not any(i in available for i in keeper):
-        raise ArgumentError('scenario makes the goalkeeper uncontrollable, choose scenario')
+        raise MessageError('server.teams.control.goalkeeper_builtin')
     owns_keeper = any(i in keeper for i in selected)
     if control['goalkeeper'] == 'agent' and not owns_keeper:
-        raise ArgumentError('expected the goalkeeper in the fixed selection')
+        raise MessageError('server.teams.control.goalkeeper_selected')
     if control['goalkeeper'] in ('builtin', 'scenario') and owns_keeper:
-        raise ArgumentError('expected the goalkeeper outside the fixed selection')
+        raise MessageError('server.teams.control.goalkeeper_outside')
     if control['goalkeeper'] == 'scenario' and any(i in available for i in keeper):
-        raise ArgumentError('scenario has a controllable goalkeeper, choose agent or builtin')
+        raise MessageError('server.teams.control.goalkeeper_scenario')
     return selected
 
 
@@ -597,8 +665,13 @@ def update(
     if name is not None:
         name = _printable(str(name)).strip()[:80]
         if not name:
-            raise ArgumentError('expected a team name with at least one character')
+            raise MessageError('server.teams.name')
         current['name'] = name
+        if identifier == BUILTIN:
+            current = _builtin_name(current)
+        else:
+            current.pop('name_id', None)
+            current.pop('name_values', None)
     if format is not None:
         current['format'] = _choice(format, tuple(FORMATS), 'the format')
         current['style'] = _resize(current['style'], current['format'])
@@ -615,7 +688,7 @@ def update(
         *(player['model'] for player in current['style']['players']),
     }
     if 'custom' in chosen and model_path(identifier) is None:
-        raise ArgumentError('expected an uploaded model before choosing the custom model')
+        raise MessageError('server.teams.custom_model')
     _write(identifier, current)
     return current
 
@@ -634,9 +707,7 @@ def _image_suffix(slot: str, data: bytes) -> str:
         try:
             json.loads(data)
         except ValueError as error:
-            raise ArgumentError(
-                f'expected the JSON document of the editor, found {error}'
-            ) from error
+            raise MessageError('server.teams.editor', error=error) from error
         return '.json'
     if data.startswith(b'\x89PNG\r\n\x1a\n'):
         return '.png'
@@ -644,7 +715,7 @@ def _image_suffix(slot: str, data: bytes) -> str:
         return '.jpg'
     if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
         return '.webp'
-    raise ArgumentError('expected a PNG, JPEG or WebP image')
+    raise MessageError('server.teams.image_type')
 
 
 def set_image(identifier: str, slot: str, data: bytes) -> dict[str, Any]:
@@ -664,7 +735,7 @@ def set_image(identifier: str, slot: str, data: bytes) -> dict[str, Any]:
     entry(identifier)
     _choice(slot, IMAGE_SLOTS, 'the image slot')
     if len(data) > _MAXIMUM_IMAGE_BYTES:
-        raise ArgumentError(f'expected an image of at most 8 MB, found {len(data)} bytes')
+        raise MessageError('server.teams.image_size', size=len(data))
     suffix = _image_suffix(slot, data)
     folder = _meta_path(identifier).parent
     with _LOCK:
@@ -701,16 +772,67 @@ def _sound_file(folder: Path, slot: str) -> Path | None:
     return None
 
 
+def _wav_whole(data: bytes) -> bool:
+    """Returns whether a RIFF WAVE file holds a format chunk the page reads and some samples."""
+    offset, form, samples = 12, None, False
+    while offset + 8 <= len(data):
+        kind = data[offset : offset + 4]
+        size = int.from_bytes(data[offset + 4 : offset + 8], 'little')
+        body = data[offset + 8 : offset + 8 + size]
+        if kind == b'fmt ' and len(body) >= 16:
+            tag = int.from_bytes(body[0:2], 'little')
+            channels = int.from_bytes(body[2:4], 'little')
+            rate = int.from_bytes(body[4:8], 'little')
+            bits = int.from_bytes(body[14:16], 'little')
+            form = tag in (1, 3, 0xFFFE) and 0 < channels <= 8 and 8000 <= rate <= 192000
+            form = form and bits in (8, 16, 24, 32)
+        elif kind == b'data':
+            samples = len(body) > 0
+        offset += 8 + size + (size & 1)
+    return bool(form) and samples
+
+
+def _mp3_frame(data: bytes, offset: int) -> bool:
+    """Returns whether a valid MPEG audio frame header starts at `offset`."""
+    if offset + 4 > len(data) or data[offset] != 0xFF or data[offset + 1] & 0xE0 != 0xE0:
+        return False
+    version = (data[offset + 1] >> 3) & 3
+    layer = (data[offset + 1] >> 1) & 3
+    bitrate = data[offset + 2] >> 4
+    rate = (data[offset + 2] >> 2) & 3
+    return version != 1 and layer != 0 and bitrate not in (0, 15) and rate != 3
+
+
 def _sound_suffix(data: bytes) -> str:
-    """Returns the extension of a sound's bytes, or raises `ArgumentError` for another kind."""
+    """Returns the extension of a sound's bytes, or raises `ArgumentError` for another kind.
+
+    Each kind is read past its first bytes, so a file that only starts like a sound is refused.
+    A WAV file holds a format chunk the page reads and a data chunk of samples, an Ogg file starts
+    with a page of Vorbis, Opus or FLAC, and an MP3 file holds a valid frame header after its tag.
+    """
     if data.startswith(b'OggS'):
-        return '.ogg'
+        segments = data[26] if len(data) > 26 else 0
+        packet = data[27 + segments : 27 + segments + 8]
+        if data[4:5] == b'\0' and packet.startswith((b'\x01vorbis', b'OpusHead', b'\x7fFLAC')):
+            return '.ogg'
+        raise MessageError('server.teams.sound_damaged', kind='Ogg')
     if data[:4] == b'RIFF' and data[8:12] == b'WAVE':
-        return '.wav'
-    # MP3: a tag of ID3 or the sync bits of a first frame.
-    if data.startswith(b'ID3') or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+        if _wav_whole(data):
+            return '.wav'
+        raise MessageError('server.teams.sound_damaged', kind='WAV')
+    if data.startswith(b'ID3') and len(data) >= 10:
+        size = 0
+        for byte in data[6:10]:
+            size = size << 7 | (byte & 0x7F)
+        start = 10 + size + (10 if data[5] & 0x10 else 0)
+        # Padding may sit between the tag and the first frame.
+        if any(_mp3_frame(data, at) for at in range(start, min(len(data), start + 4096))):
+            return '.mp3'
+        raise MessageError('server.teams.sound_damaged', kind='MP3')
+    # A bare MP3 file starts with its first frame and holds more than one header's worth.
+    if _mp3_frame(data, 0) and len(data) >= 128:
         return '.mp3'
-    raise ArgumentError('expected an Ogg, MP3 or WAV sound')
+    raise MessageError('server.teams.sound_type')
 
 
 def set_sound(identifier: str, slot: str, data: bytes) -> dict[str, Any]:
@@ -730,7 +852,7 @@ def set_sound(identifier: str, slot: str, data: bytes) -> dict[str, Any]:
     entry(identifier)
     _choice(slot, SOUND_SLOTS, 'the sound slot')
     if len(data) > _MAXIMUM_SOUND_BYTES:
-        raise ArgumentError(f'expected a sound of at most 2 MB, found {len(data)} bytes')
+        raise MessageError('server.teams.sound_size', size=len(data))
     suffix = _sound_suffix(data)
     folder = _meta_path(identifier).parent
     with _LOCK:
@@ -788,26 +910,26 @@ def _skin_joints(data: bytes) -> set[str]:
     """
     # glTF: a binary file opens with `glTF`, the version, the length and a JSON chunk.
     if len(data) < 20 or data[:4] != b'glTF':
-        raise ArgumentError('expected a binary glTF file, .glb, found other bytes')
+        raise MessageError('server.teams.model.binary')
     version, length = struct.unpack_from('<II', data, 4)
     chunk_length, chunk_type = struct.unpack_from('<II', data, 12)
     if version != 2 or length > len(data) or chunk_type != 0x4E4F534A:
-        raise ArgumentError('expected a binary glTF 2.0 file with its JSON chunk first')
+        raise MessageError('server.teams.model.json_first')
     try:
         document = json.loads(data[20 : 20 + chunk_length])
     except ValueError as error:
-        raise ArgumentError(f'expected the JSON chunk of a glTF file, found {error}') from error
+        raise MessageError('server.teams.model.json', error=error) from error
     if not isinstance(document, dict):
-        raise ArgumentError('expected the JSON chunk of a glTF file to hold an object')
+        raise MessageError('server.teams.model.json_object')
     for kind in ('buffers', 'images'):
         for item in document.get(kind) or []:
             uri = item.get('uri') if isinstance(item, dict) else None
             if isinstance(uri, str) and not uri.startswith('data:'):
-                raise ArgumentError(f'expected a self-contained model, found a link to {uri!r}')
+                raise MessageError('server.teams.model.link', uri=repr(uri))
     nodes = document.get('nodes') or []
     skins = document.get('skins') or []
     if not skins:
-        raise ArgumentError('expected a rigged model, a glTF file with a skin, found none')
+        raise MessageError('server.teams.model.rigged')
     names = set()
     for skin in skins:
         joints = skin.get('joints', []) if isinstance(skin, dict) else []
@@ -836,20 +958,20 @@ def set_model(identifier: str, data: bytes, joints: dict[str, str]) -> dict[str,
     """
     current = entry(identifier)
     if len(data) > _MAXIMUM_MODEL_BYTES:
-        raise ArgumentError(f'expected a model of at most 30 MB, found {len(data)} bytes')
+        raise MessageError('server.teams.model.size', size=len(data))
     bones = _skin_joints(data)
     if not isinstance(joints, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in joints.items()
     ):
-        raise ArgumentError(f'expected the joints as names of bones by joint, found {joints!r}')
+        raise MessageError('server.teams.model.joints', joints=repr(joints))
     if 'body' not in joints:
-        raise ArgumentError('expected a bone for the joint body, the pelvis, which every rig has')
+        raise MessageError('server.teams.model.body')
     unknown = [joint for joint in joints if joint not in (*JOINTS, 'player')]
     if unknown:
-        raise ArgumentError(f"expected joints of GRF's skeleton, found {', '.join(unknown)}")
+        raise MessageError('server.teams.model.unknown_joints', joints=', '.join(unknown))
     absent = [bone for bone in joints.values() if bone not in bones]
     if absent:
-        raise ArgumentError(f'expected bones of the model, found {", ".join(map(str, absent))}')
+        raise MessageError('server.teams.model.missing_bones', bones=', '.join(map(str, absent)))
     folder = _meta_path(identifier).parent
     _replace(folder / _MODEL, data)
     current['model'] = {
@@ -923,14 +1045,14 @@ def check_ability(ability: Any) -> tuple[float | None, float | None]:
         ArgumentError: If `ability` is no pair, or a value is no number from 0 to 1.
     """
     if not isinstance(ability, (list, tuple)) or len(ability) != 2:
-        raise ArgumentError(f'expected a pair of abilities, left and right, found {ability!r}')
+        raise MessageError('server.teams.ability_pair', ability=repr(ability))
     pair = []
     for value in ability:
         if value is None:
             pair.append(None)
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
-            raise ArgumentError(f'expected an ability from 0 to 1, found {value!r}')
+            raise MessageError('server.teams.ability', value=repr(value))
         pair.append(float(value))
     return (pair[0], pair[1])
 
@@ -942,14 +1064,22 @@ def check_scenario(teams_: list[dict[str, Any]], scenario: str) -> None:
         if team['kind'] == 'builtin':
             continue
         if size is not None and size != FORMATS[team['format']]:
-            raise ArgumentError(
-                f'expected a scenario of {team["format"]} for {team["name"]}, found {scenario}'
+            raise MessageError(
+                'server.teams.scenario_format',
+                format=team['format'],
+                team=shown_name(team),
+                scenario=_messages.scenario(scenario),
             )
         control = check_control(team.get('control'), team['format'])
         try:
             selected_players(control, scenario_players(scenario, side))
         except ArgumentError as error:
-            raise ArgumentError(f'{team["name"]} cannot play {scenario}, {error}') from error
+            raise MessageError(
+                'server.teams.cannot_play',
+                team=shown_name(team),
+                scenario=_messages.scenario(scenario),
+                reason=_reason(error),
+            ) from error
 
 
 def game_agents(teams_: list[dict[str, Any]], scenario: str, humans: Any) -> list[int]:
@@ -971,14 +1101,14 @@ def game_agents(teams_: list[dict[str, Any]], scenario: str, humans: Any) -> lis
         if humans[side] and count:
             control = check_control(team.get('control'), team['format'])
             if control['assignment'] != 'dynamic':
-                raise ArgumentError(
-                    f'expected dynamic assignment for {team["name"]} beside a person'
-                )
+                raise MessageError('server.teams.beside_dynamic', team=shown_name(team))
             available = sum(player.controllable for player in scenario_players(scenario, side))
             if count + 1 > available:
-                raise ArgumentError(
-                    f'{team["name"]} cannot play beside a person in {scenario}, which has '
-                    f'{available} controllable players on that side'
+                raise MessageError(
+                    'server.teams.beside_count',
+                    team=shown_name(team),
+                    scenario=_messages.scenario(scenario),
+                    available=available,
                 )
         agents.append(count)
     return agents
@@ -1017,7 +1147,7 @@ def header_team(identifier: str) -> dict[str, Any]:
     kit = team['style']['kit']
     return {
         'id': team['id'],
-        'name': team['name'],
+        **_messages.named('name', shown_name(team)),
         'format': team['format'],
         'control': team.get('control', dict(DEFAULT_CONTROL)),
         'color': kit['primary'],
@@ -1045,15 +1175,15 @@ def _unbundle(data: bytes, target: Path) -> None:
     `submission/main.py`, so a single top folder above `main.py` is dropped.
     """
     if len(data) < len(FOLDER_MAGIC) + 4:
-        raise ArgumentError('expected the files of a submission folder, found too few bytes')
+        raise MessageError('server.teams.folder.short')
     (length,) = struct.unpack_from('<I', data, len(FOLDER_MAGIC))
     start = len(FOLDER_MAGIC) + 4
     try:
         index = json.loads(data[start : start + length])
     except ValueError as error:
-        raise ArgumentError(f'expected the index of a submission folder, found {error}') from error
+        raise MessageError('server.teams.folder.index', error=error) from error
     if not isinstance(index, list) or len(index) > _MAXIMUM_FILES:
-        raise ArgumentError('expected the index of a submission folder, a list of its files')
+        raise MessageError('server.teams.folder.index_list')
     paths = [_check_member(str(entry['path'])) for entry in index]
     tops = {path.parts[0] for path in paths if len(path.parts) > 1}
     if (
@@ -1066,7 +1196,7 @@ def _unbundle(data: bytes, target: Path) -> None:
     for path, entry in zip(paths, index, strict=True):
         size = int(entry['size'])
         if size < 0 or position + size > len(data):
-            raise ArgumentError('expected the files that the index of the folder lists')
+            raise MessageError('server.teams.folder.files')
         destination = _inside(target, path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data[position : position + size])
@@ -1084,14 +1214,14 @@ def _extract(data: bytes, filename: str, target: Path) -> None:
         try:
             archive = tarfile.open(fileobj=io.BytesIO(data))
         except (tarfile.TarError, EOFError, OSError) as error:
-            raise ArgumentError(f'expected a readable .tar.gz archive, found {error}') from error
+            raise MessageError('server.teams.archive.tar', error=error) from error
         with archive:
             members = archive.getmembers()
             _check_unpacked(len(members), sum(member.size for member in members))
             for member in members:
                 _inside(target, _check_member(member.name))
                 if not (member.isfile() or member.isdir()):
-                    raise ArgumentError(f'expected plain files in the archive, found {member.name}')
+                    raise MessageError('server.teams.archive.plain', member=member.name)
             # Python 3.12 brought the data filter, and the checks above cover older versions.
             if hasattr(tarfile, 'data_filter'):
                 archive.extractall(target, filter='data')
@@ -1101,7 +1231,7 @@ def _extract(data: bytes, filename: str, target: Path) -> None:
         try:
             archive = zipfile.ZipFile(io.BytesIO(data))
         except (zipfile.BadZipFile, OSError) as error:
-            raise ArgumentError(f'expected a readable .zip archive, found {error}') from error
+            raise MessageError('server.teams.archive.zip', error=error) from error
         with archive:
             members = archive.infolist()
             _check_unpacked(len(members), sum(member.file_size for member in members))
@@ -1109,16 +1239,16 @@ def _extract(data: bytes, filename: str, target: Path) -> None:
                 _inside(target, _check_member(member.filename))
             archive.extractall(target)
     else:
-        raise ArgumentError(
-            f'expected a submission folder, a .py file or a .tar.gz or .zip archive, found '
-            f'{filename!r}'
-        )
+        raise MessageError('server.teams.submission.kind', filename=repr(filename))
     if not (target / _MAIN).is_file():
-        raise ArgumentError(f'expected {_MAIN} at the top of the submission, as Kaggle requires')
+        raise MessageError('server.teams.submission.main_top', main=_MAIN)
 
 
 def add_folder(
-    folder: str | Path, name: str | None = None, format: str = '11v11'
+    folder: str | Path,
+    name: str | None = None,
+    format: str = '11v11',
+    control: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Stores a submission folder or archive as a new team and returns its entry.
 
@@ -1126,18 +1256,26 @@ def add_folder(
         folder: A submission folder, submission file or exported archive.
         name: The name of the team, by default the folder's name.
         format: `5v5` or `11v11`, the size of the team for competition.
+        control: The players that the submission controls, as `check_control` takes them, or
+            `None` for the active player alone, or for the setting of an exported folder.
     """
     folder = Path(folder)
     if folder.is_file():
-        return add(name or '', folder.name, folder.read_bytes(), format)
+        return add(name or '', folder.name, folder.read_bytes(), format, control)
+    if not folder.is_dir():
+        raise ArgumentError(
+            f'expected a submission folder or archive, found nothing at {str(folder)!r}'
+        )
     if not (folder / _MAIN).is_file():
-        raise ArgumentError(f'expected {_MAIN} in the folder {str(folder)!r}, as Kaggle requires')
+        raise MessageError(
+            'server.teams.submission.main_folder', main=_MAIN, folder=repr(str(folder))
+        )
     files = [
         (path.relative_to(folder).as_posix(), path.read_bytes())
         for path in sorted(folder.rglob('*'))
         if path.is_file() and '__pycache__' not in path.parts
     ]
-    return add(name or folder.resolve().name, folder.name, folder_bundle(files), format)
+    return add(name or folder.resolve().name, folder.name, folder_bundle(files), format, control)
 
 
 def _check_member(name: str) -> PurePosixPath:
@@ -1153,7 +1291,7 @@ def _check_member(name: str) -> PurePosixPath:
         or path.is_absolute()
         or any(part in ('', '.', '..') or any(c in part for c in ':\\\0') for part in path.parts)
     ):
-        raise ArgumentError(f'expected archive members inside the archive, found {name!r}')
+        raise MessageError('server.teams.archive.outside', member=repr(name))
     return path
 
 
@@ -1161,14 +1299,14 @@ def _inside(target: Path, path: PurePosixPath) -> Path:
     """Returns `target / path`, refusing it unless it resolves inside `target`."""
     destination = target.joinpath(*path.parts)
     if not destination.resolve().is_relative_to(target.resolve()):
-        raise ArgumentError(f'expected archive members inside the archive, found {str(path)!r}')
+        raise MessageError('server.teams.archive.outside', member=repr(str(path)))
     return destination
 
 
 def _check_unpacked(count: int, size: int) -> None:
     """Refuses an archive of too many files or too large once unpacked."""
     if count > _MAXIMUM_FILES or size > _MAXIMUM_UNPACKED:
-        raise ArgumentError('expected an archive of at most 10,000 files and 500 MB unpacked')
+        raise MessageError('server.teams.archive.limits')
 
 
 def add(
@@ -1194,7 +1332,7 @@ def add(
             the control does not fit the format.
     """
     if len(data) > _MAXIMUM_BYTES:
-        raise ArgumentError(f'expected a submission of at most 100 MB, found {len(data)} bytes')
+        raise MessageError('server.teams.submission.size', size=len(data))
     _choice(format, tuple(FORMATS), 'the format')
     if control is not None:
         check_control(control, format)
@@ -1205,7 +1343,7 @@ def add(
         _extract(data, filename, folder)
     except OSError as error:
         shutil.rmtree(folder, ignore_errors=True)
-        raise ArgumentError(f'expected a submission whose files unpack, found {error}') from error
+        raise MessageError('server.teams.submission.unpack', error=error) from error
     except Exception:
         shutil.rmtree(folder, ignore_errors=True)
         raise
@@ -1215,7 +1353,7 @@ def add(
         'kind': 'kaggle',
         'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
         'format': format,
-        'style': default_style(format),
+        'style': default_style(format, _new_kit()),
         'model': None,
     }
     # A folder exported from the page brings its format, style, images and model along, each
@@ -1305,7 +1443,9 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
     with contextlib.suppress(ArgumentError):
         entry['control'] = check_control(saved.get('control'), entry['format'])
     with contextlib.suppress(ArgumentError, TypeError, KeyError, AttributeError):
-        base = default_style(entry['format'])
+        # A team file that names no kit keeps the kit the new team took in turn, so teams of
+        # such files differ as teams added on the page do.
+        base = default_style(entry['format'], (entry.get('style') or {}).get('kit'))
         entry['style'] = _resize(
             style(_known(saved.get('style') or {}, base), base, _model_names()), entry['format']
         )
@@ -1349,17 +1489,15 @@ def _import(team_folder: Path, entry: dict[str, Any], name_given: bool) -> None:
     )
     try:
         data = model.read_bytes()
-        bones = _skin_joints(data)
-        if len(data) > _MAXIMUM_MODEL_BYTES or not isinstance(joints, dict) or 'body' not in joints:
-            raise ArgumentError('expected a model of the limits with a joint for body')
-        if not all(isinstance(bone, str) and bone in bones for bone in joints.values()):
-            raise ArgumentError('expected bones of the model')
-        entry['model'] = {
-            'joints': {
-                str(key): value for key, value in joints.items() if key in (*JOINTS, 'player')
-            },
-            'bytes': len(data),
-        }
+        if len(data) > _MAXIMUM_MODEL_BYTES:
+            raise MessageError('server.teams.model.too_large')
+        # A model without joints in team.json takes those the team editor guesses from its bones.
+        from . import joints as _joints
+
+        joints, guessed = _joints.resolve(joints, _skin_joints(data))
+        entry['model'] = {'joints': joints, 'bytes': len(data)}
+        if guessed and not (saved.get('style') or {}).get('model'):
+            entry['style']['model'] = 'custom'
     except (OSError, ArgumentError, AttributeError):
         if model.exists() or model.is_symlink():
             set_aside(model, 'it fails the checks of an uploaded model')
@@ -1380,7 +1518,7 @@ def duplicate(identifier: str) -> dict[str, Any]:
     """
     team = entry(identifier)
     if team['kind'] == 'builtin':
-        raise ArgumentError('expected a registered submission to duplicate, found the built-in AI')
+        raise MessageError('server.teams.duplicate_builtin')
     filename, data = export(identifier)
     return add(f'{team["name"]} copy', filename, data, team['format'])
 
@@ -1441,7 +1579,7 @@ def entry(identifier: str) -> dict[str, Any]:
     for team in teams():
         if team['id'] == identifier:
             return team
-    raise ArgumentError(f'expected a team of the registry, found {identifier!r}')
+    raise MessageError('server.teams.unknown', identifier=repr(identifier))
 
 
 def load_agent(identifier: str) -> Any:
@@ -1454,7 +1592,7 @@ def load_agent(identifier: str) -> Any:
     folder = _home.folder('teams') / identifier
     main = folder / _MAIN
     if not _home.valid_identifier(identifier) or not main.is_file():
-        raise ArgumentError(f'expected a Kaggle team of the registry, found {identifier!r}')
+        raise MessageError('server.teams.unknown_kaggle', identifier=repr(identifier))
     module = types.ModuleType(f'cuju_team_{identifier.replace("-", "_")}')
     module.__file__ = str(main)
     with _from_folder(folder):
@@ -1468,7 +1606,7 @@ def load_agent(identifier: str) -> Any:
                 del sys.modules[name]
     callables = [value for value in module.__dict__.values() if callable(value)]
     if not callables:
-        raise ArgumentError(f'expected an agent function in the submission {identifier!r}')
+        raise MessageError('server.teams.agent_function', identifier=repr(identifier))
     agent = callables[-1]
 
     @functools.wraps(agent)

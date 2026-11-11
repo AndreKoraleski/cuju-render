@@ -7,6 +7,7 @@
 // named numbers v, a text t, the chosen action a and the likely actions k, each a pair of an
 // action and its probability. Nothing here touches the page, so the tests read it in Node.
 
+import { t, tOr } from '../core/i18n.js';
 import { ACTION_NAMES } from '../core/input-settings.js';
 
 // The named numbers that a label over a player shows at most.
@@ -122,10 +123,15 @@ export function formatValue(value) {
     return String(Number(text));
 }
 
-// The name of an action of GRF's action set, with a capital.
+// The name of an action of GRF's action set, with a capital, from the message whose id ends in
+// the action's name, such as annotations.action.top_left, else the name itself.
 export function actionLabel(action) {
-    const name = Number.isInteger(action) && ACTION_NAMES[action] ? ACTION_NAMES[action] : `action ${action}`;
-    return name[0].toUpperCase() + name.slice(1);
+    if (!(Number.isInteger(action) && ACTION_NAMES[action])) {
+        return t('annotations.action.other', { action: String(action) });
+    }
+    const name = ACTION_NAMES[action];
+    const id = `annotations.action.${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+    return tOr(id, name[0].toUpperCase() + name.slice(1));
 }
 
 // The lines that show a record, its numbers, its action and the likely actions, and its text,
@@ -137,10 +143,10 @@ export function noteLines(record) {
     const values = Object.entries(record.v || {}).filter(([, value]) => typeof value === 'number')
         .slice(0, LABEL_VALUES).map(([name, value]) => `${name} ${formatValue(value)}`);
     const likely = Array.isArray(record.k) ? record.k.filter((pair) => Array.isArray(pair) && pair.length === 2) : [];
-    const parts = likely.map(([action, probability]) => `${actionLabel(action)} ${Math.round(probability * 100)}%`);
+    const parts = likely.map(([action, probability]) => t('annotations.likely', { action: actionLabel(action), percent: Math.round(probability * 100) }));
     let action = parts.join(', ');
     if (Number.isInteger(record.a)) {
-        action = [`${actionLabel(record.a)} chosen`, ...(action ? [action] : [])].join(', ');
+        action = [t('annotations.chosen', { action: actionLabel(record.a) }), ...(action ? [action] : [])].join(', ');
     }
     return {
         values: values.length ? values.join(', ') : null,
@@ -175,4 +181,23 @@ export function seriesPath(points, first, last, width, height, gap = 10) {
         previous = frame;
     }
     return { path, min, max };
+}
+
+// The pixels of a label's line and of its border and padding, and the gap between the feet of a
+// player and the label under them.
+const LINE_PX = 16;
+const EDGE_PX = 4;
+const GAP_PX = 4;
+
+// The height in pixels of a label of `lines` lines.
+export function labelHeight(lines) {
+    return lines * LINE_PX + EDGE_PX;
+}
+
+// The top of a label of `lines` lines under the feet of a player, at `feet` on the screen, or over
+// the head, at `head`, when the label would reach past `bottom`, the top of the controls.
+export function labelTop(head, feet, lines, bottom) {
+    const height = labelHeight(lines);
+    const under = feet + GAP_PX;
+    return under + height <= bottom ? under : head - height - GAP_PX;
 }

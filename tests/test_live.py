@@ -366,12 +366,52 @@ def test_grid_reads_only_while_asked_and_within_its_bounds(render_home, monkeypa
         for first, count in ((12, 1), (-1, 1), (0, 0), (0, 65), (True, 1), (0, 1.5)):
             with pytest.raises(ValueError):
                 grid.request(first, count)
-        # A grid that nobody asks for again stops reading after a few seconds and forgets it all.
+        # A grid that nobody asks for again stops reading after its linger and keeps its tiles.
         clock.now += _grid._LINGER + 0.1
         reads = grid.reads
         batch.step(actions)
         batch.step(actions)
-        assert grid.reads == reads and not grid.watched and not grid._tiles
+        assert grid.reads == reads and not grid.watched and sorted(grid._tiles) == [10, 11]
+    finally:
+        batch.close()
+
+
+def test_grid_keeps_its_tiles_for_requests_that_arrive_late(render_home):
+    """A loaded machine relays the page's requests far apart, and each still receives tiles."""
+    batch = cuju.BatchEnvironment('5_vs_5_l1_r0', environment_count=12, device='cpu', seed=3)
+    try:
+        source = cuju.render.watch(batch)
+        grid = source._grid
+        clock = grid._clock = _Clock()
+        grid._timer = lambda: 0.0
+        batch.reset()
+        actions = torch.zeros((12, 1), dtype=torch.int32)
+        assert 10 <= _grid._LINGER <= 15
+        grid.request(0, 9)
+        # A step reads four states, and the rate holds the others for a later step.
+        batch.step(actions)
+        assert grid.reads == 4
+        # The next request arrives 16 seconds later, past the linger, so the grid stopped reading
+        # and kept what it read.
+        clock.now += 16.0
+        batch.step(actions)
+        assert grid.reads == 4 and not grid.watched
+        tiles = grid.request(0, 9)['tiles']
+        assert [tile is not None for tile in tiles] == [True] * 4 + [False] * 5
+        # The pass goes on where it stopped, and the next request finds every tile.
+        batch.step(actions)
+        assert grid.reads == 8
+        clock.now += 1.0
+        batch.step(actions)
+        assert grid.reads == 9
+        tiles = grid.request(0, 9)['tiles']
+        assert [tile['environment'] for tile in tiles] == list(range(9))
+        # A request within the linger keeps the grid reading, and another range drops the others.
+        clock.now += _grid._LINGER - 1
+        batch.step(actions)
+        assert grid.watched
+        assert [tile is not None for tile in grid.request(6, 4)['tiles']] == [True] * 3 + [False]
+        assert sorted(grid._tiles) == [6, 7, 8]
     finally:
         batch.close()
 

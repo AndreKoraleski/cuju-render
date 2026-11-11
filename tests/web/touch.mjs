@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
 // load from copies beside a package file that names them modules.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-touch-'));
-for (const name of ['play/touch.js', 'core/input-settings.js']) {
+for (const name of ['play/touch.js', 'core/input-settings.js', 'core/i18n.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');

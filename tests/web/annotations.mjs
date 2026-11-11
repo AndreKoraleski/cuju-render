@@ -19,7 +19,7 @@ cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/', import.meta.url)),
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const load = (name) => import(pathToFileURL(join(folder, name)).href);
-const { Annotations, LABEL_VALUES, actionLabel, formatValue, noteLines, seriesKey, seriesPath } = await load('recording/annotation-data.js');
+const { Annotations, LABEL_VALUES, actionLabel, formatValue, labelHeight, labelTop, noteLines, seriesKey, seriesPath } = await load('recording/annotation-data.js');
 const { StreamParser, parseHeader, parseRecording, readSections } = await load('recording/format.js');
 const { decodeFrames } = await load('recording/codec.js');
 
@@ -81,6 +81,16 @@ test('a label shows the numbers, the chosen and likely actions and the text of a
     assert.equal(formatValue(3), '3');
     assert.equal(actionLabel(19), 'Built-in AI');
     assert.equal(actionLabel(40), 'Action 40');
+});
+
+test('a label hangs under the feet of its player, or over the head near the controls', () => {
+    // A player with the head at 300 and the feet at 340 on the screen.
+    const under = labelTop(300, 340, 2, 600);
+    assert.ok(under > 340, under);
+    assert.ok(labelHeight(2) > labelHeight(1));
+    // Near the top of the controls the label goes over the head, so it stays in view.
+    const over = labelTop(300, 340, 2, 360);
+    assert.ok(over + labelHeight(2) < 300, over);
 });
 
 test('a series draws as a path over the timeline that breaks across gaps', () => {

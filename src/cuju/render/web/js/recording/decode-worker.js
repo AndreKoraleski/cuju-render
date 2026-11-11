@@ -6,7 +6,11 @@
 // hands the frames and the annotations back with their buffers moved rather than copied, so the
 // page receives exactly the frames it would read itself.
 
-import { FormatError, parseRecording } from './format.js';
+// The reader loads on the first request. It reads the language files as it loads, so a static
+// import would hold the worker's message handler back until then, and a request that arrives
+// first would be lost.
+let reader = null;
+const format = () => (reader = reader || import('./format.js'));
 
 // Every buffer that the frames hold, once each, which the reply moves to the page.
 export function frameBuffers(frames) {
@@ -26,14 +30,22 @@ export function frameBuffers(frames) {
     return [...seen];
 }
 
-// Decodes one request, { id, bytes }, into the reply and the buffers that it moves.
+// Decodes one request, { id, bytes }, into the reply and the buffers that it moves. A format
+// error also sends the id and the values of its message, so the page shows it in its language.
 export async function decodeRequest({ id, bytes }) {
+    const { FormatError, parseRecording } = await format();
     try {
         const { header, frames, annotations } = await parseRecording(bytes);
         return { reply: { id, header, frames, annotations }, transfer: frameBuffers(frames) };
     } catch (err) {
         const message = err && err.message ? err.message : String(err);
-        return { reply: { id, error: message, format: err instanceof FormatError }, transfer: [] };
+        const format = err instanceof FormatError;
+        const reply = { id, error: message, format };
+        if (format) {
+            reply.messageId = err.messageId;
+            reply.messageValues = err.messageValues;
+        }
+        return { reply, transfer: [] };
     }
 }
 

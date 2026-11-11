@@ -13,8 +13,15 @@ attachment against the budgets of each quality, the names that the rig, behaviou
 to nodes and animations of the models, the contact markers of action clips and the loudness and
 true peak of every WAV sample.
 
-Errors are what makes the server leave a part out or refuse the package. Warnings are what the
-page holds back or degrades as it draws, and information is everything else worth knowing.
+Errors are what makes the server leave a part out or refuse the package, or what the page can never
+run, a required feature it lacks, a team model that import sets aside or a module that does not
+parse. Warnings are what the page holds back or degrades as it draws, and information is everything
+else worth knowing.
+
+The check compiles no shader and runs no JavaScript. It reads each shader by the static rules of
+`_glsl`, which also catch an operator with nothing after it, and parses the worker and the worklet
+with Node.js when Node.js is installed. The page compiles every shader before it draws and names
+in a notice a shader that does not compile or a worker that does not load.
 
 `new` writes a small working package for an author to start from, a team submission folder with
 an agent, a team file and a package that uses most levels of contract 1.1.
@@ -28,6 +35,7 @@ imports and pure Python otherwise, and reads at most the first 60 seconds of eac
 from __future__ import annotations
 
 import base64
+import difflib
 import io
 import json
 import math
@@ -41,6 +49,7 @@ from typing import Any
 
 from cuju.errors import ArgumentError
 
+from .._registry import joints as _joints
 from .._registry import teams as _teams
 from . import glsl as _glsl
 from . import presentation as _presentation
@@ -556,18 +565,66 @@ def _clip_names(clips: Any) -> list[tuple[str, str]]:
     return out
 
 
+# GRF's own figure, which the team draws unless a model of the package, the team's own model or
+# a shipped character takes its place.
+GRF_FIGURE = 'grf'
+
+
+def _figures(document: dict[str, Any], source: _Source, assets: dict[str, str]) -> dict[str, int]:
+    """Returns how many players of the team draw each figure, as the page picks it.
+
+    A figure is a model file of the package, `model.glb` for the team's own model, `grf` for
+    GRF's own figure or the name of a shipped character. The goalkeeper is the first player of
+    the roster, as in every shipped scenario.
+    """
+    team = _dict(source.team)
+    style = _dict(team.get('style'))
+    size = _teams.FORMATS.get(team.get('format'), _teams.FORMATS['11v11'])
+    roster = _list(style.get('players'))
+    section = _dict(document.get('models'))
+    numbers = _dict(section.get('byNumber'))
+    out: dict[str, int] = {}
+    for index in range(size):
+        player = _dict(roster[index]) if index < len(roster) else {}
+        number = player.get('number', index + 1)
+        wanted = numbers.get(str(number))
+        if not isinstance(wanted, str):
+            wanted = section.get('goalkeeper') if index == 0 else None
+        if not isinstance(wanted, str):
+            wanted = section.get('outfield')
+        if isinstance(wanted, str) and wanted in assets and wanted.endswith('.glb'):
+            figure = wanted
+        else:
+            model = player.get('model')
+            figure = model if isinstance(model, str) and model != 'team' else style.get('model')
+            figure = figure if isinstance(figure, str) and figure else GRF_FIGURE
+            if figure == 'custom':
+                figure = 'model.glb' if source.model is not None else GRF_FIGURE
+        out[figure] = out.get(figure, 0) + 1
+    return out
+
+
 def _references(
     document: dict[str, Any],
     assets: dict[str, str],
     models: dict[str, dict[str, Any]],
     report: _Report,
+    figures: dict[str, int] | None = None,
 ) -> set[str]:
     """Checks that every name of the manifest names a file, node, clip or part of the package.
+
+    The names of nodes are checked against the models the team draws, GRF's figure among them,
+    and the names of clips against the models of the package and the team's own model, since
+    GRF's figure plays no clip of a package.
 
     Returns:
         The paths of the files that the manifest names.
     """
     named: set[str] = set()
+    figures = figures or {}
+    grf = GRF_FIGURE in figures
+    # A shipped character has bones of its own that the check does not read.
+    shipped = any(f not in (GRF_FIGURE, 'model.glb') and f not in assets for f in figures)
 
     def file(value: Any, what: str, suffixes: tuple[str, ...] | None = None) -> None:
         if not isinstance(value, str):
@@ -593,22 +650,34 @@ def _references(
     nodes = set().union(*(m['nodes'] for m in models.values())) if models else set()
     animations = {n for m in models.values() for n in m['animations']}
     unchecked: list[str] = []
+    no_clips: list[str] = []
 
     def node(value: Any, what: str) -> None:
         if not isinstance(value, str):
             report.add('errors', f'{what} names no node, found {value!r}')
-        elif not models:
-            unchecked.append(what)
-        elif value not in nodes:
+        elif value in nodes or (grf and value in _joints.NODES):
+            return
+        elif models:
             report.add('errors', f'{what} names the node {value}, which no model of the team has')
+        elif grf and not shipped:
+            report.add(
+                'warnings',
+                f"{what} names the node {value}, which GRF's figure lacks, so the page uses the "
+                f"root of the figure there, and GRF's figure has the nodes "
+                f'{_presentation.words(_joints.NODES, "and")}',
+            )
+        else:
+            unchecked.append(what)
 
     def clip(value: Any, what: str) -> None:
         if not isinstance(value, str):
             report.add('errors', f'{what} names no clip, found {value!r}')
+        elif models and value not in animations:
+            report.add('errors', f'{what} names the clip {value}, which no model of the team holds')
+        elif not models and grf and not shipped:
+            no_clips.append(what)
         elif not models:
             unchecked.append(what)
-        elif value not in animations:
-            report.add('errors', f'{what} names the clip {value}, which no model of the team holds')
 
     models_section = _dict(document.get('models'))
     for role in ('outfield', 'goalkeeper'):
@@ -632,7 +701,7 @@ def _references(
             node(bone, f'the chain of ik {name}')
         if 'socket' in chain and chain['socket'] not in sockets:
             lacks(f'ik {name}', 'socket', chain['socket'], 'the rig')
-    for index, layer in enumerate(_list(rig.get('layers'))):
+    for index, layer in enumerate(_list(rig.get('layers')), 1):
         layer = _dict(layer)
         for bone in _list(layer.get('mask')):
             node(bone, f'the mask of layer {index}')
@@ -644,7 +713,7 @@ def _references(
         clip(name, f'the role {role}')
     for index, spec in enumerate(_list(document.get('behaviours'))):
         spec = _dict(spec)
-        what = f'behaviour {spec.get("id", index)}'
+        what = _presentation._behaviour_name(spec, index)
         if 'node' in spec:
             node(spec['node'], what)
         if spec.get('type') == 'spin' and 'clip' in spec:
@@ -693,7 +762,7 @@ def _references(
     for name, layer in _dict(document.get('post')).items():
         if 'shader' in _dict(layer):
             file(layer['shader'], f'the shader of post {name}', ('.glsl',))
-    for index, reflex in enumerate(_list(document.get('reflexes'))):
+    for index, reflex in enumerate(_list(document.get('reflexes')), 1):
         for action in _list(_dict(reflex).get('do')):
             action = _dict(action)
             if 'music' in action and action['music'] not in music:
@@ -710,10 +779,36 @@ def _references(
     if unchecked:
         report.add(
             'info',
-            f'the team draws the stock model, so the names of nodes and clips of {unchecked[0]} '
-            f'and {len(unchecked) - 1} more stay unchecked'
+            f'the team draws a shipped character, so the names of nodes and clips of '
+            f'{unchecked[0]} and {len(unchecked) - 1} more stay unchecked'
             if len(unchecked) > 1
-            else f'the team draws the stock model, so the names of {unchecked[0]} stay unchecked',
+            else f'the team draws a shipped character, so the names of {unchecked[0]} stay '
+            f'unchecked',
+        )
+    if no_clips:
+        more = f' and {len(no_clips) - 1} more' if len(no_clips) > 1 else ''
+        report.add(
+            'warnings',
+            f"the team draws GRF's figure, which plays no clip of a package, so {no_clips[0]}"
+            f"{more} shows only on a model of the package or the team's own model",
+        )
+    if grf:
+        drivers = rig.get('driver', 'grf')
+        if isinstance(drivers, str):
+            drivers = {'outfield': drivers, 'goalkeeper': drivers}
+        others = sorted({d for d in _dict(drivers).values() if isinstance(d, str) and d != 'grf'})
+        if others:
+            report.add(
+                'warnings',
+                f"GRF's figure keeps the grf driver, so the {_presentation.words(others, 'and')} "
+                f"driver of the rig applies only to a model of the package or the team's own model",
+            )
+        count = figures[GRF_FIGURE]
+        report.add(
+            'info',
+            f"{count} player{'s draw' if count != 1 else ' draws'} GRF's figure, which "
+            f'carries the sockets, attachments, behaviours, materials, shaders and lights of the '
+            f'package on its own nodes and plays no clip of the package',
         )
     return named
 
@@ -754,6 +849,7 @@ def _models(
 
 def _budgets(
     document: dict[str, Any],
+    kept: dict[str, Any],
     source: _Source,
     assets: dict[str, str],
     stats: dict[str, dict[str, Any]],
@@ -761,7 +857,11 @@ def _budgets(
     named: set[str],
     report: _Report,
 ) -> dict[str, dict[str, list[int]]]:
-    """Returns the static use of each budget at each quality and reports what passes a budget."""
+    """Returns the static use of each budget at each quality and reports what passes a budget.
+
+    Only the parts that the server keeps count, `kept` being the checked manifest, so a value the
+    check refuses, such as a count of particles past its range, adds no warning of its own.
+    """
     size = _teams.FORMATS.get(_dict(source.team).get('format'), _teams.FORMATS['11v11'])
     used = dict.fromkeys(BUDGETS['high'], 0)
 
@@ -773,7 +873,10 @@ def _budgets(
         if name in stats:
             add_model(stats[name], times)
     rig = _dict(document.get('rig'))
+    attachments = _dict(_dict(kept.get('rig')).get('attachments'))
     for name, item in _dict(rig.get('attachments')).items():
+        if name not in attachments:
+            continue
         item = _dict(item)
         path = item.get('file')
         if path in assets and str(path).endswith('.glb'):
@@ -782,6 +885,8 @@ def _budgets(
             except _UNREADABLE as error:
                 report.add('warnings', f'attachment {name} could not be read for its cost, {error}')
     for name, effect in _dict(document.get('effects')).items():
+        if name not in _dict(kept.get('effects')):
+            continue
         effect = _dict(effect)
         kind = effect.get('type')
         if kind == 'mesh' and effect.get('file') in assets:
@@ -802,8 +907,10 @@ def _budgets(
             dimensions = image_size(source.read(name))
             if dimensions:
                 used['textureBytes'] += dimensions[0] * dimensions[1] * 4
-    used['shaders'] = _glsl.programs(document)
-    for light in _dict(document.get('lights')).values():
+    used['shaders'] = _glsl.programs(kept)
+    for name, light in _dict(document.get('lights')).items():
+        if name not in _dict(kept.get('lights')):
+            continue
         key = 'lights' if _dict(light).get('kind') == 'pool' else 'localLights'
         used[key] += _wearers(_dict(light).get('when'), size)
     used['worklets'] = len(_dict(_dict(document.get('audio')).get('processors')))
@@ -893,6 +1000,94 @@ def _modules(
                 )
 
 
+def _team_model(source: _Source, report: _Report) -> None:
+    """Checks the team's own `model.glb` by the rule of an import, which keeps or sets it aside."""
+    if source.model is None:
+        return
+    saved = _dict(source.team)
+    joints = (
+        _dict(saved.get('model')).get('joints') if isinstance(saved.get('model'), dict) else None
+    )
+    try:
+        joints, guessed = _joints.resolve(joints, _teams._skin_joints(source.model))
+    except _UNREADABLE as error:
+        report.add(
+            'errors',
+            f'the team model.glb fails the checks of an uploaded model, so import sets it aside, '
+            f'{error}',
+        )
+        return
+    if guessed:
+        report.add(
+            'info',
+            f'team.json gives no model.joints, so import maps model.glb by its bone names, body '
+            f'to {joints["body"]} and {len(joints) - 1} more joints',
+        )
+
+
+# The longest a parse of one module by Node.js may take, in seconds.
+_NODE_SECONDS = 20
+_NODE_LINE = re.compile(r'^\[stdin\]:(\d+)', re.M)
+_NODE_ERROR = re.compile(r'^(\w*Error): (.*)$', re.M)
+
+
+def _parse_module(text: str, node: str) -> str | None:
+    """Returns the syntax error of an ES module as Node.js reads it, or `None` when it parses.
+
+    Node.js only parses the module, `--check`, and runs none of it.
+    """
+    import subprocess
+
+    try:
+        done = subprocess.run(
+            [node, '--input-type=module', '--check'],
+            input=text.encode('utf-8'),
+            capture_output=True,
+            timeout=_NODE_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode == 0:
+        return None
+    message = done.stderr.decode('utf-8', 'replace')
+    line = _NODE_LINE.search(message)
+    error = _NODE_ERROR.search(message)
+    what = f'{error.group(1)}, {error.group(2).strip()}' if error else 'a syntax error'
+    return f'{what}, at line {line.group(1)}' if line else what
+
+
+def _syntax(
+    document: dict[str, Any], source: _Source, assets: dict[str, str], report: _Report
+) -> None:
+    """Parses the worker and the worklet with Node.js when it is installed.
+
+    Python reads no JavaScript, so without Node.js the check leaves their syntax to the page,
+    which names a module that does not load in a notice.
+    """
+    import shutil
+
+    modules = [('the worker', document.get('worker'))]
+    modules.append(('the worklet', _dict(document.get('audio')).get('worklet')))
+    modules = [(what, name) for what, name in modules if isinstance(name, str) and name in assets]
+    if not modules:
+        return
+    node = shutil.which('node')
+    if node is None:
+        report.add(
+            'info',
+            'Node.js is not installed, so the check leaves the syntax of the JavaScript modules '
+            'to the page',
+        )
+        return
+    for what, name in modules:
+        problem = _parse_module(source.read(name).decode('utf-8', 'replace'), node)
+        if problem is not None:
+            report.add(
+                'errors', f'{what} {name} does not parse, {problem}, so the page cannot load it'
+            )
+
+
 def _sounds(assets: dict[str, str], source: _Source, report: _Report) -> list[dict[str, Any]]:
     """Measures every WAV sample of the package against the team's ceilings."""
     out = []
@@ -912,6 +1107,13 @@ def _sounds(assets: dict[str, str], source: _Source, report: _Report) -> list[di
         if measured['maxMomentary'] is None:
             report.add('info', f'{name} is silent')
             continue
+        if measured['seconds'] < 0.4:
+            report.add(
+                'info',
+                f'{name} lasts {measured["seconds"]:g} seconds, less than one block of 400 ms, so '
+                'its integrated loudness is its mean over its own length and reads above its '
+                'momentary loudness, which spreads it over 400 ms',
+            )
         if measured['measured'] < measured['seconds']:
             report.add('info', f'{name} is measured over its first {MAXIMUM_SECONDS} seconds')
         short = measured['maxShortTerm'] if measured['maxShortTerm'] is not None else -math.inf
@@ -940,28 +1142,37 @@ def _sounds(assets: dict[str, str], source: _Source, report: _Report) -> list[di
     return out
 
 
-def _features(document: dict[str, Any], report: _Report) -> dict[str, list[str]]:
-    """Returns the features a manifest requires and prefers and those this renderer lacks."""
+def _features(document: dict[str, Any], report: _Report, newer: bool) -> dict[str, list[str]]:
+    """Returns the features a manifest requires and prefers and those this renderer lacks.
+
+    A required feature that this renderer lacks, other than one a worker alone uses, loses the
+    whole package, so it is an error, unless the manifest is of a newer contract, which a newer
+    renderer reads in full.
+    """
     required = [f for f in _list(document.get('requires')) if isinstance(f, str)]
     preferred = [f for f in _list(document.get('prefers')) if isinstance(f, str)]
     missing = [f for f in required if f not in _vocabulary.FEATURES]
     lacking = [f for f in preferred if f not in _vocabulary.FEATURES]
     known = (*_vocabulary.FEATURES, *getattr(_vocabulary, 'PLANNED', ()))
     for feature in missing:
-        if feature not in known:
-            report.add('warnings', f'the package requires {feature}, a feature no renderer names')
         if feature in WORKER_FEATURES:
             report.add(
                 'warnings',
                 f'this renderer lacks {feature}, which only a worker uses, so the page drops the '
                 'worker and keeps the manifest',
             )
+            continue
+        if feature in known:
+            message = f'this renderer lacks the required feature {feature}'
         else:
-            report.add(
-                'warnings',
-                f'this renderer lacks the required feature {feature}, so the page draws the team '
-                'in its stock look',
-            )
+            near = difflib.get_close_matches(feature, _vocabulary.FEATURES, 1, 0.6)
+            hint = f', the nearest is {near[0]}' if near else ''
+            message = f'the package requires {feature}, a feature no renderer names{hint}'
+        report.add(
+            'warnings' if newer else 'errors',
+            f'{message}, so the page draws the team in its stock look, and prefers takes a '
+            'feature the team can do without',
+        )
     for feature in lacking:
         report.add(
             'info',
@@ -990,7 +1201,14 @@ def check(path: str | Path) -> dict[str, Any]:
         ArgumentError: If the path is no folder or archive of a team or a package.
     """
     path = Path(path)
-    if path.is_file():
+    if path.is_file() and path.name == MANIFEST:
+        source = _folder(path.parent)
+    elif path.is_file():
+        if not zipfile.is_zipfile(path):
+            raise ArgumentError(
+                f'expected a team folder, its cuju-team or presentation folder, its {MANIFEST} or '
+                f'a .zip export of a team, found the file {str(path)!r}'
+            )
         source = _archive(path)
     elif path.is_dir():
         source = _folder(path)
@@ -1013,6 +1231,7 @@ def check(path: str | Path) -> dict[str, Any]:
         'loudness': [],
     }
     assets = _files(source, result, report)
+    _team_model(source, report)
     if MANIFEST not in source.sizes:
         report.add('errors', f'the package holds no {MANIFEST}, so the team draws its stock look')
         return _finish(result, report)
@@ -1026,17 +1245,27 @@ def check(path: str | Path) -> dict[str, Any]:
     result['manifest'] = _manifest(document, assets, report)
     if not isinstance(document, dict):
         return _finish(result, report)
-    result['features'] = _features(document, report)
-    for shader, mode in _glsl.shaders(document):
-        if shader in assets:
-            text = source.read(shader).decode('utf-8', 'replace')
-            for problem in _glsl.check(text, mode):
-                report.add('errors', f'{shader} of mode {mode} {problem}')
+    kept = result['manifest'] or {}
+    newer = bool(kept) and not _presentation.supported(kept.get('contract'))
+    result['features'] = _features(document, report, newer)
+    shaders = [(shader, mode) for shader, mode in _glsl.shaders(document) if shader in assets]
+    for shader, mode in shaders:
+        text = source.read(shader).decode('utf-8', 'replace')
+        for problem in _glsl.check(text, mode):
+            report.add('errors', f'{shader} of mode {mode} {problem}')
+    if shaders:
+        report.add(
+            'info',
+            f'the check read {len(shaders)} shader{"s" if len(shaders) != 1 else ""} by the '
+            f'static rules of the section Shaders and compiled none, and the page compiles each '
+            f'before it draws and names one that fails in a notice',
+        )
     stats, counts = _models(document, source, assets, report)
-    named = _references(document, assets, stats, report)
-    result['budgets'] = _budgets(document, source, assets, stats, counts, named, report)
+    named = _references(document, assets, stats, report, _figures(document, source, assets))
+    result['budgets'] = _budgets(document, kept, source, assets, stats, counts, named, report)
     _markers(document, stats, report)
     _modules(document, source, assets, report)
+    _syntax(document, source, assets, report)
     result['loudness'] = _sounds(assets, source, report)
     for name in sorted(set(assets) - named - {MANIFEST}):
         report.add('info', f'{name} is named by no part of the manifest')
@@ -1330,7 +1559,7 @@ export function frame(f) {
 
 _GLOW = """\
 // The glow of the team, a shader of mode chunks. The renderer declares every uniform, uPulse,
-// which rises with each event of the team and decays, uTeamColor, the team's colour, and uGlow,
+// which rises with each event of the team and decays, uTeamColor, the team's color, and uGlow,
 // the uniform that the manifest gives this material.
 
 vec3 cujuEmissive(vec3 emissive, vec2 uv) {
@@ -1432,12 +1661,13 @@ def template_manifest(name: str = 'My team') -> dict[str, Any]:
 
 def template_files(name: str = 'My team') -> dict[str, bytes]:
     """Returns every file of the template by its path in a team's submission folder."""
-    team = {'name': name, 'format': '11v11', 'style': {'model': 'grf'}}
+    # The team draws GRF's figure, or a model.glb put beside team.json, whose joints import guesses.
+    team = {'name': name, 'format': '11v11'}
     folder = f'{_teams.TEAM_FOLDER}/{FOLDER}'
     return {
         'main.py': _MAIN.encode(),
-        f'{_teams.TEAM_FOLDER}/team.json': (json.dumps(team, indent=4) + '\n').encode(),
-        f'{folder}/{MANIFEST}': (json.dumps(template_manifest(name), indent=4) + '\n').encode(),
+        f'{_teams.TEAM_FOLDER}/team.json': (json_text(team) + '\n').encode(),
+        f'{folder}/{MANIFEST}': (json_text(template_manifest(name)) + '\n').encode(),
         f'{folder}/worker.js': _WORKER.encode(),
         f'{folder}/shaders/glow.glsl': _GLOW.encode(),
         f'{folder}/models/ring.glb': ring_bytes(),
@@ -1445,40 +1675,260 @@ def template_files(name: str = 'My team') -> dict[str, bytes]:
     }
 
 
-def preview(path: str | Path, side: str = 'left') -> str:
-    """Registers a package as a team, sets the side that draws it and returns the page to open.
+def json_text(value: Any, indent: int = 0, width: int = 96) -> str:
+    """Returns JSON indented by four spaces, with each short list or object on one line.
 
-    A zip registers as it is, a folder as the zip an export of it would make. The team draws on
-    `side` of the shipped five a side sample, with the preview panel of the page open.
+    A list of numbers, such as a vector or the keys of a curve, stays on one line when it fits in
+    `width` characters, so a manifest reads as an author writes it.
+    """
+    flat = json.dumps(value)
+    if not isinstance(value, (list, dict)) or not value:
+        return flat
+    items = value.values() if isinstance(value, dict) else value
+    # A value of scalars and lists of scalars stays on one line when it fits, the top level apart.
+    simple = all(
+        not isinstance(item, (list, dict))
+        or (isinstance(item, list) and not any(isinstance(x, (list, dict)) for x in item))
+        for item in items
+    )
+    if simple and indent > 0 and 4 * indent + len(flat) + 24 <= width:
+        return flat
+    pad = ' ' * (4 * (indent + 1))
+    if isinstance(value, list):
+        items = [pad + json_text(item, indent + 1, width) for item in value]
+        return '[\n' + ',\n'.join(items) + '\n' + ' ' * (4 * indent) + ']'
+    items = [
+        f'{pad}{json.dumps(key)}: {json_text(item, indent + 1, width)}'
+        for key, item in value.items()
+    ]
+    return '{\n' + ',\n'.join(items) + '\n' + ' ' * (4 * indent) + '}'
+
+
+def next_steps(folder: str | Path) -> list[str]:
+    """Returns the commands that follow `pack new`, to check, preview and register the team."""
+    where = str(folder)
+    quoted = f'"{where}"' if ' ' in where else where
+    return [
+        'next steps',
+        f'  cuju render pack check {quoted}    checks it as the server and the page read it',
+        f'  cuju render pack preview {quoted}  plays it on a sample match with the preview panel',
+        f'  cuju render team add {quoted}      registers the team',
+        'docs/presentation.md describes every part of a package',
+    ]
+
+
+# The preview teams of `pack preview` by the folder or archive they came from, in the home.
+PREVIEWS_FILE = 'presentation-previews.json'
+
+
+def _preview_source(path: str | Path) -> tuple[bytes, Path]:
+    """Returns the zip a preview registers and the folder or archive it came from."""
+    source = Path(path).expanduser()
+    if source.is_file() and source.suffix == '.zip':
+        return source.read_bytes(), source.resolve()
+    if source.is_file() and source.name == MANIFEST:
+        source = source.parent
+    if not source.is_dir():
+        raise ArgumentError(f'expected a team folder or a zip to preview, found {path}')
+    root = source
+    if (root / MANIFEST).is_file():
+        root = root.parent.parent
+    elif root.name == _teams.TEAM_FOLDER:
+        root = root.parent
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as archive:
+        for item in sorted(root.rglob('*')):
+            if item.is_file() and not item.is_symlink() and '__pycache__' not in item.parts:
+                archive.write(item, item.relative_to(root).as_posix())
+    return buffer.getvalue(), root.resolve()
+
+
+def _preview_name(data: bytes, origin: Path) -> str:
+    """Returns the name a preview team takes, the manifest's, the team's or the folder's own."""
+    wanted = f'{_teams.TEAM_FOLDER}/{FOLDER}/{MANIFEST}'
+    for member, key in ((wanted, 'name'), (f'{_teams.TEAM_FOLDER}/team.json', 'name')):
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                document = json.loads(archive.read(member))
+        except (KeyError, ValueError, zipfile.BadZipFile, OSError, UnicodeDecodeError):
+            continue
+        value = document.get(key) if isinstance(document, dict) else None
+        if isinstance(value, str) and _teams._printable(value).strip():
+            return _teams._printable(value).strip()[:80]
+    return (origin.stem if origin.suffix == '.zip' else origin.name)[:80] or 'Preview'
+
+
+def _previews() -> dict[str, str]:
+    from .._store import home as _home
+
+    try:
+        document = json.loads((_home.home() / PREVIEWS_FILE).read_text(encoding='utf-8'))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return (
+        {k: v for k, v in document.items() if isinstance(v, str)}
+        if isinstance(document, dict)
+        else {}
+    )
+
+
+def _names_kit(data: bytes) -> bool:
+    """Returns whether the team file of a preview's zip names a kit of its own."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            document = json.loads(archive.read(f'{_teams.TEAM_FOLDER}/team.json'))
+    except (KeyError, ValueError, zipfile.BadZipFile, OSError, UnicodeDecodeError):
+        return False
+    style = document.get('style') if isinstance(document, dict) else None
+    return isinstance(style, dict) and isinstance(style.get('kit'), dict)
+
+
+def _take_place(old: str, new: dict[str, Any], keep_kit: bool = False) -> dict[str, Any] | None:
+    """Moves a freshly registered team into the folder of an older one, keeping the older id.
+
+    With `keep_kit` the team keeps the kit and the fans' colors of the older one, so a team
+    whose file names no kit wears the same kit at every preview.
+
+    Returns:
+        The entry of the team under the older id, or `None` when the older folder cannot go.
+    """
+    import shutil
+
+    from .._store import home as _home
+
+    teams = _home.folder('teams')
+    if not _home.valid_identifier(old) or not (teams / old / _teams.TEAM_FOLDER).is_dir():
+        return None
+    if keep_kit:
+        try:
+            before = _teams.entry(old)['style']
+            new = {**new, 'style': {**new['style'], 'kit': before['kit'], 'crowd': before['crowd']}}
+        except (ArgumentError, KeyError, TypeError):
+            pass
+    parked = teams / f'{old}.old'
+    try:
+        os.replace(teams / old, parked)
+    except OSError:
+        return None
+    try:
+        os.replace(teams / new['id'], teams / old)
+    except OSError:
+        os.replace(parked, teams / old)
+        return None
+    shutil.rmtree(parked, ignore_errors=True)
+    _teams._write(old, {**new, 'id': old})
+    return _teams.entry(old)
+
+
+def register_preview(path: str | Path, side: str = 'left') -> dict[str, Any]:
+    """Registers a package as a team, sets the side that draws it and returns what to open.
+
+    A zip registers as it is, a folder as the zip an export of it would make, under the name of
+    its manifest. A second preview of the same folder or zip updates the team of the first in
+    place, so its identifier, and a `developer.json` that names it, stay.
+
+    Returns:
+        A dictionary with `team`, the identifier, `name`, `side` and `place`, the end of the
+        address of the page from `#` on, the shipped five a side sample with the preview panel
+        open on `side`.
 
     Raises:
         ArgumentError: If the path is neither a team folder nor a zip, or import refuses it.
     """
     from .._http import launch as _launch
-    from .._registry import teams as _teams
+    from .._store import home as _home
     from .._store import library as _library
 
-    source = Path(path).expanduser()
-    if source.is_file() and source.suffix == '.zip':
-        data, name = source.read_bytes(), source.stem
-    elif source.is_dir():
-        root = source
-        if (root / 'presentation.json').is_file():
-            root = root.parent.parent
-        elif root.name == _teams.TEAM_FOLDER:
-            root = root.parent
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, 'w') as archive:
-            for item in sorted(root.rglob('*')):
-                if item.is_file() and not item.is_symlink() and '__pycache__' not in item.parts:
-                    archive.write(item, item.relative_to(root).as_posix())
-        data, name = buffer.getvalue(), root.name
-    else:
-        raise ArgumentError(f'expected a team folder or a zip to preview, found {path}')
-    team = _teams.add(f'Preview of {name}'[:60], 'team.zip', data)
-    _presentation.assign({side: team['id']})
+    if side not in _presentation.SIDES:
+        raise ArgumentError(f'expected the side left or right, found {side!r}')
+    data, origin = _preview_source(path)
+    name = _preview_name(data, origin)
+    team = _teams.add(name, 'team.zip', data)
+    previews = _previews()
+    earlier = previews.get(str(origin))
+    if earlier and earlier != team['id']:
+        team = _take_place(earlier, team, not _names_kit(data)) or team
+    previews[str(origin)] = team['id']
+    (_home.home() / PREVIEWS_FILE).write_text(json.dumps(previews, indent=1), encoding='utf-8')
+    # The package draws on the side asked for alone, so a preview on the right after one on the
+    # left moves it there.
+    changes: dict[str, str | None] = {side: team['id']}
+    for other, chosen in _presentation.sides().items():
+        if other != side and chosen == team['id']:
+            changes[other] = None
+    _presentation.assign(changes)
     place = _launch.resolve(str(_library._SAMPLES / 'sample-5v5.cjr'))
-    return f'{place}&preview=1'
+    return {
+        'team': team['id'],
+        'name': team['name'],
+        'side': side,
+        'place': f'{place}&preview={side}',
+    }
+
+
+def sides_lines(sides: dict[str, str | None]) -> list[str]:
+    """Returns the presentation of each side as lines to read, for `cuju render pack sides`."""
+    lines = []
+    for side in _presentation.SIDES:
+        identifier = sides.get(side)
+        if identifier is None:
+            lines.append(f'{side}  draws the package of the team that plays it')
+            continue
+        try:
+            name = _teams.entry(identifier).get('name') or identifier
+        except (ArgumentError, OSError, ValueError, KeyError):
+            name = identifier
+        lines.append(f'{side}  draws the package of {name}, team {identifier}')
+    return lines
+
+
+def preview(path: str | Path, side: str = 'left') -> str:
+    """Registers a package as a team for a preview and returns the end of the page's address.
+
+    `register_preview` describes the registration.
+    """
+    return register_preview(path, side)['place']
+
+
+def run_preview(
+    path: str | Path, side: str, port: int, open_page: bool = True, as_json: bool = False
+) -> int:
+    """Runs `cuju render pack preview`, which registers a package and opens it on the sample.
+
+    A server of the home that runs already serves the page, and otherwise this one serves it in
+    the foreground until interrupted. The browser opens through the renderer's guarded opening,
+    which opens none on a machine without a display, and stays shut with `open_page` false.
+
+    Args:
+        path: The team folder, `cuju-team` folder, `presentation` folder or zip.
+        side: The side that draws the package, left or right.
+        port: The port of a server that this call starts.
+        open_page: Whether to open the page in a browser.
+        as_json: Whether to print the address, the team and the side as one line of JSON.
+
+    Returns:
+        The exit status.
+    """
+    from .._http import launch as _launch
+    from .._http import server as _server
+
+    shown = register_preview(path, side)
+    server = _launch.running()
+    base = server.url if server is not None else f'http://127.0.0.1:{port}/'
+    url = base + shown['place']
+    if as_json:
+        print(json.dumps({**shown, 'url': url, 'running': server is not None}), flush=True)
+    else:
+        print(f'previewing {shown["name"]}, team {shown["team"]}, on the {side} side', flush=True)
+    if server is None:
+        _server.serve(port, open_page, page=shown['place'])
+        return 0
+    if open_page and _launch.open_browser(url):
+        if not as_json:
+            print(f'opened {url}', flush=True)
+    elif not as_json:
+        print(f'open it in a browser at {url}', flush=True)
+    return 0
 
 
 def new(folder: str | Path, name: str = 'My team') -> list[Path]:

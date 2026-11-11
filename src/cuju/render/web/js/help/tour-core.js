@@ -5,65 +5,68 @@
 // control it points at as a selector, a title and a line of text, and what it needs to show, a
 // recording that plays or a team of the registry, which the tour offers to add first. The browser
 // keeps the step reached, so a tour left midway resumes there. Nothing here touches the page, so
-// the rules hold the same in a test.
+// the rules hold the same in a test. The title and text of a step are the messages
+// tour.step.<id>.title and tour.step.<id>.text.
+
+import { t } from '../core/i18n.js';
 
 export const TOUR_KEY = 'cuju.tour';
 
 export const TOUR_STEPS = [
     {
-        id: 'home', page: 'home', target: '#home-btn', title: 'Home',
-        text: 'The logo leads Home from every page. Home starts a match, a game, a tournament or a challenge.',
+        id: 'home', page: 'home', target: '#home-btn', title: t('tour.step.home.title'),
+        text: t('tour.step.home.text'),
     },
     {
-        id: 'palette', page: 'home', target: '#open-palette', title: 'Commands',
-        text: 'Ctrl K, or this button, opens the command palette on any page. Type to find a page, a recording, a setting or a camera.',
+        id: 'palette', page: 'home', target: '#open-palette', title: t('tour.step.palette.title'),
+        text: t('tour.step.palette.text'),
     },
     {
-        id: 'match', page: 'watch', target: '#match-menu-btn', title: 'Watch',
-        text: 'The Match menu opens a recording, a live source or one goal of the match that plays.',
+        id: 'match', page: 'watch', target: '#match-menu-btn', title: t('tour.step.match.title'),
+        text: t('tour.step.match.text'),
         needs: 'recording',
     },
     {
-        id: 'timeline', page: 'watch', target: '#timeline', title: 'The timeline',
-        text: 'A click or a drag seeks, and the marks are goals. Space plays and pauses, N jumps to the next goal.',
+        id: 'timeline', page: 'watch', target: '#timeline', title: t('tour.step.timeline.title'),
+        text: t('tour.step.timeline.text'),
         needs: 'recording',
     },
     {
-        id: 'view', page: 'watch', target: '#view-menu-btn', title: 'Cameras and view',
-        text: 'The View menu holds the cameras, the time of day, the weather and photo mode. V cycles the cameras.',
+        id: 'view', page: 'watch', target: '#view-menu-btn', title: t('tour.step.view.title'),
+        text: t('tour.step.view.text'),
         needs: 'recording',
     },
     {
-        id: 'play', page: 'play', target: '.play-setup .play-row .btn.primary', title: 'Play',
-        text: 'Choose a scenario and a side, then Play. Arrow keys move, D shoots, Esc pauses, and a controller works too.',
+        id: 'play', page: 'play', target: '.play-setup .play-row .btn.primary', title: t('tour.step.play.title'),
+        text: t('tour.step.play.text'),
     },
     {
-        id: 'challenges', page: 'play', target: '.play-setup .challenges', title: 'Challenges',
-        text: 'Short drills with bronze, silver and gold targets. A person plays them here, and a team plays them headless.',
+        id: 'challenges', page: 'play', target: '.play-setup .challenges h2', title: t('tour.step.challenges.title'),
+        text: t('tour.step.challenges.text'),
     },
     {
-        id: 'teams', page: 'teams', target: '#teams-side', title: 'Teams',
-        text: 'A team is a Kaggle submission folder with a main.py. Add one here, then choose it to dress its kit, players and sounds.',
+        id: 'teams', page: 'teams', target: '#teams-side', title: t('tour.step.teams.title'),
+        text: t('tour.step.teams.text'),
         needs: 'team',
     },
     {
-        id: 'tournaments', page: 'tournaments', target: '.cup-side-head .btn', title: 'Tournaments',
-        text: 'New tournament starts a cup, a league or another format from a preset, for agents and people alike.',
+        id: 'tournaments', page: 'tournaments', target: '.cup-side-head .btn', title: t('tour.step.tournaments.title'),
+        text: t('tour.step.tournaments.text'),
     },
     {
-        id: 'settings', page: 'home', target: '#open-settings', title: 'Settings',
-        text: 'Settings hold the presets, the sound levels, motion and the theme. Sound starts muted, and M turns it on.',
+        id: 'settings', page: 'home', target: '#open-settings', title: t('tour.step.settings.title'),
+        text: t('tour.step.settings.text'),
     },
     {
-        id: 'help', page: 'help', target: '#help-learn', title: 'Help',
-        text: 'H opens Help on any page. It holds the keys, the hands-on lessons, the samples and the diagnostic report.',
+        id: 'help', page: 'help', target: '#help-learn-title', title: t('tour.step.help.title'),
+        text: t('tour.step.help.text'),
     },
 ];
 
 // The offer of a step whose need is missing.
 export const NEED_OFFERS = {
-    recording: { label: 'Open the sample match', text: 'This step shows a recording that plays.' },
-    team: { label: 'Add the starter team', text: 'This step shows best with a team of your own.' },
+    recording: { label: t('tour.need.recording.label'), text: t('tour.need.recording.text') },
+    team: { label: t('tour.need.team.label'), text: t('tour.need.team.text') },
 };
 
 // The stored state of the tour, the step reached and whether the tour ended, kept in range.
@@ -100,12 +103,12 @@ export function needMet(step, facts) {
 
 // The words a screen reader hears for a step.
 export function stepAnnouncement(step, index, count = TOUR_STEPS.length, found = true) {
-    const where = found ? '' : ' This control shows once its page has it.';
-    return `Step ${index + 1} of ${count}. ${step.title}. ${step.text}${where}`;
+    return t(found ? 'tour.announce' : 'tour.announce.missing', { index: index + 1, count, title: step.title, text: step.text });
 }
 
 // Where the card of a step goes beside its target, below it when there is room, above it when
-// not, and at the bottom of the window without a target. Every value is a pixel position of the
+// not, then to its right or left, over it as the last resort, and at the bottom of the window
+// without a target. Every value is a pixel position of the
 // window, inside its margins.
 export function placeCard(target, card, view, margin = 12) {
     const width = Math.min(card.width, view.width - 2 * margin);
@@ -118,6 +121,15 @@ export function placeCard(target, card, view, margin = 12) {
     }
     if (target.top - margin - card.height >= margin) {
         return { left, top: Math.round(target.top - margin - card.height), side: 'above' };
+    }
+    // A tall target leaves room at its side more often than above or below it.
+    const top = Math.round(Math.max(margin, Math.min(view.height - card.height - margin, target.top)));
+    const right = target.left + target.width;
+    if (right + margin + width <= view.width - margin) {
+        return { left: Math.round(right + margin), top, side: 'right' };
+    }
+    if (target.left - margin - width >= margin) {
+        return { left: Math.round(target.left - margin - width), top, side: 'left' };
     }
     return { left, top: Math.round(Math.max(margin, view.height - card.height - margin)), side: 'over' };
 }

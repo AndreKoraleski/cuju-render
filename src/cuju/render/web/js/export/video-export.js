@@ -7,11 +7,13 @@
 // what is missing and how to install it.
 
 import { ARENA_LABELS } from '../world/arenas.js';
+import { serverText, t } from '../core/i18n.js';
 import { h } from '../teams/library.js';
+import { teamName } from '../core/names.js';
 import { sizeFields } from './size-fields.js';
 import {
-    VIDEO_CAMERAS, VIDEO_QUALITIES, VIDEO_RATES, checkRange, exportRequest, formatMoment,
-    goalRange, progressText,
+    VIDEO_CAMERAS, VIDEO_MAX_SECONDS, VIDEO_QUALITIES, VIDEO_RATES, checkRange, exportRequest,
+    formatMoment, goalRange, progressText,
 } from './video-range.js';
 
 async function call(method, path, json) {
@@ -24,7 +26,7 @@ async function call(method, path, json) {
     try {
         res = await fetch(path, init);
     } catch {
-        throw new Error('The cuju server does not answer. Is it still running?');
+        throw new Error(t('video.error.unreachable'));
     }
     const text = await res.text();
     let value = null;
@@ -34,7 +36,7 @@ async function call(method, path, json) {
         value = null;
     }
     if (!res.ok) {
-        const error = new Error((value && value.error) || `The server answered ${res.status}.`);
+        const error = new Error((value && serverText(value)) || t('video.error.status', { status: res.status }));
         error.status = res.status;
         throw error;
     }
@@ -86,7 +88,7 @@ export class VideoExport {
         try {
             status = await call('GET', '/api/video');
         } catch (err) {
-            status = { available: false, missing: [err.status === 404 ? 'This server offers no video export. Update cuju to export videos from the page.' : err.message] };
+            status = { available: false, missing: [err.status === 404 ? t('video.error.no_export') : err.message] };
         }
         if (!this.dialog.open) {
             return;
@@ -114,27 +116,28 @@ export class VideoExport {
         const d = this.dialog;
         d.replaceChildren();
         const head = h('div', { class: 've-head' },
-            h('h2', { id: 'video-export-title' }, 'Export video'),
-            h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', title: 'Close (Escape)', onclick: () => this.close() }, '×'));
+            h('h2', { id: 'video-export-title' }, t('video.title')),
+            h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('video.close'), title: t('video.close.title'), onclick: () => this.close() }, '×'));
         d.append(head);
         const source = this.recording();
         if (!source) {
-            d.append(h('p', {}, 'Video export draws a recording of the library. Open one from the Match menu, then export it from here.'),
-                h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, 'Close')));
+            d.append(h('p', {}, t('video.no_recording')),
+                h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, t('video.close'))));
             return;
         }
         if (!status) {
-            d.append(h('p', { class: 'muted' }, 'Asking the server whether it can export videos.'));
+            d.append(h('p', { class: 'muted' }, t('video.asking')));
             return;
         }
         if (!status.available) {
-            d.append(h('p', {}, 'The server draws videos with Chrome or Chromium and encodes them with ffmpeg, installed on the machine that runs cuju render.'),
+            d.append(h('p', {}, t('video.unavailable')),
                 h('ul', { class: 've-missing' }, (status.missing || []).map((m) => h('li', {}, m))),
-                h('p', { class: 'muted' }, 'Restart the server once both are installed. The command cuju render video exports from a terminal the same way.'),
-                h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, 'Close')));
+                h('p', { class: 'muted' }, t('video.unavailable.restart')),
+                h('div', { class: 've-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, t('video.close'))));
             return;
         }
         const tl = this.app.timeline;
+        const annotated = !!(tl.store.annotations && tl.store.annotations.size > 0);
         const now = (tl.t - tl.first) / tl.sps;
         const duration = (tl.last - tl.first) / tl.sps;
         this.duration = duration;
@@ -143,11 +146,11 @@ export class VideoExport {
         const here = () => formatMoment((this.app.timeline.t - this.app.timeline.first) / this.app.timeline.sps);
         const goals = (tl.store.goals || []).map((g, i) => {
             const at = (g.index - tl.first) / tl.sps;
-            const team = (source.header.teams[g.team] && source.header.teams[g.team].name) || (g.team ? 'Right' : 'Left');
-            return { at, label: `Goal ${i + 1}, ${formatMoment(at)}, ${team}` };
+            const team = teamName(source.header.teams[g.team]) || t(g.team ? 'video.goal.right' : 'video.goal.left');
+            return { at, label: t('video.goal.option', { number: i + 1, moment: formatMoment(at), team }) };
         });
-        const goal = h('select', { id: 've-goal', 'aria-label': 'Range around a goal' },
-            h('option', { value: '' }, goals.length ? 'Around a goal' : 'No goals in this recording'),
+        const goal = h('select', { id: 've-goal', 'aria-label': t('video.goal.label') },
+            h('option', { value: '' }, goals.length ? t('video.goal.around') : t('video.goal.none')),
             goals.map((g, i) => h('option', { value: String(i) }, g.label)));
         goal.disabled = !goals.length;
         goal.addEventListener('change', () => {
@@ -165,33 +168,37 @@ export class VideoExport {
         const arena = ARENA_LABELS[field.arena] || ARENA_LABELS.stadium;
         const hour = typeof field.time === 'number' ? hourText(field.time) : '15:00';
         this.note = h('p', { id: 've-range-note', class: 've-note', role: 'status', 'aria-live': 'polite' },
-            `The recording runs to ${formatMoment(duration)}. A range runs at most 10 minutes.`);
-        this.progress = h('progress', { max: '1', value: '0', hidden: true, 'aria-label': 'Export progress' });
+            t('video.range.note', { end: formatMoment(duration), count: VIDEO_MAX_SECONDS / 60 }));
+        this.progress = h('progress', { max: '1', value: '0', hidden: true, 'aria-label': t('video.progress.label') });
         this.status = h('p', { class: 've-status', role: 'status', 'aria-live': 'polite' });
-        this.exportButton = h('button', { class: 'btn primary', type: 'button', onclick: () => this.start() }, 'Export');
-        this.cancelButton = h('button', { class: 'btn', type: 'button', hidden: true, onclick: () => this.cancel() }, 'Cancel export');
-        this.download = h('a', { class: 'btn primary', hidden: true }, 'Download video');
+        this.exportButton = h('button', { class: 'btn primary', type: 'button', onclick: () => this.start() }, t('video.export'));
+        this.cancelButton = h('button', { class: 'btn', type: 'button', hidden: true, onclick: () => this.cancel() }, t('video.cancel'));
+        this.download = h('a', { class: 'btn primary', hidden: true }, t('video.download'));
         this.sizes = sizeFields('ve', { value: '720p', limits: { even: true } });
         d.append(
             h('div', { class: 've-range' },
-                h('label', { class: 've-field' }, h('span', {}, 'Start'), start,
-                    h('button', { class: 'btn small', type: 'button', onclick: () => { start.value = here(); } }, 'From here')),
-                h('label', { class: 've-field' }, h('span', {}, 'End'), end,
-                    h('button', { class: 'btn small', type: 'button', onclick: () => { end.value = here(); } }, 'To here')),
-                h('label', { class: 've-field' }, h('span', {}, 'Goal'), goal)),
+                // A label of the field alone, so the button beside it stays out of its name.
+                h('div', { class: 've-field' }, h('span', {}, h('label', { for: 've-start' }, t('video.start'))), start,
+                    h('button', { class: 'btn small', type: 'button', onclick: () => { start.value = here(); } }, t('video.start.here'))),
+                h('div', { class: 've-field' }, h('span', {}, h('label', { for: 've-end' }, t('video.end'))), end,
+                    h('button', { class: 'btn small', type: 'button', onclick: () => { end.value = here(); } }, t('video.end.here'))),
+                h('label', { class: 've-field' }, h('span', {}, t('video.goal')), goal)),
             this.note,
             h('div', { class: 've-grid' },
                 ...this.sizes.fields,
-                h('label', { class: 've-field' }, h('span', {}, 'Frame rate'),
-                    h('select', { id: 've-fps' }, VIDEO_RATES.map((r) => h('option', { value: String(r), selected: r === 30 }, `${r} a second`)))),
-                select('ve-quality', 'Quality', VIDEO_QUALITIES, 'standard'),
-                select('ve-camera', 'Camera', VIDEO_CAMERAS, camera),
-                h('label', { class: 'check' }, h('input', { id: 've-score', type: 'checkbox', checked: true }), 'Scoreboard and clock')),
-            h('p', { class: 'muted small' }, `The video shows the ${arena} at ${hour}, as the Field page sets it, and is silent. Play follows the match clock, without replays or the presentation of restarts.`),
+                h('label', { class: 've-field' }, h('span', {}, t('video.fps')),
+                    h('select', { id: 've-fps' }, VIDEO_RATES.map((r) => h('option', { value: String(r), selected: r === 30 }, t('video.fps.option', { rate: r }))))),
+                select('ve-quality', t('video.quality'), VIDEO_QUALITIES, 'standard'),
+                select('ve-camera', t('video.camera'), VIDEO_CAMERAS, camera),
+                h('label', { class: 'check' }, h('input', { id: 've-score', type: 'checkbox', checked: true }), t('video.score')),
+                // The labels and the box of the annotations, off by default as in a clean picture,
+                // offered for a recording that has them.
+                annotated ? h('label', { class: 'check' }, h('input', { id: 've-annotations', type: 'checkbox' }), t('video.annotations')) : null),
+            h('p', { class: 'muted small' }, t('video.look', { arena, hour })),
             this.progress,
             this.status,
             h('div', { class: 've-actions' }, this.exportButton, this.cancelButton, this.download,
-                h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, 'Close')));
+                h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, t('video.close'))));
         this.inputs = { start, end };
         start.focus();
     }
@@ -207,6 +214,7 @@ export class VideoExport {
             quality: value('ve-quality'),
             camera: value('ve-camera'),
             score: this.dialog.querySelector('#ve-score').checked,
+            annotations: !!(this.dialog.querySelector('#ve-annotations') || {}).checked,
         };
     }
 
@@ -236,7 +244,7 @@ export class VideoExport {
             this.follow(entry);
         } catch (err) {
             this.exportButton.disabled = false;
-            this.status.textContent = err.status === 409 ? `${err.message}.` : `The export could not start. ${err.message}`;
+            this.status.textContent = err.status === 409 ? `${err.message}.` : t('video.error.start', { error: err.message });
         }
     }
 
@@ -263,7 +271,7 @@ export class VideoExport {
         this.progress.value = entry.state === 'done' ? 1 : entry.progress || 0;
         this.status.textContent = progressText(entry);
         this.exportButton.disabled = running;
-        this.exportButton.textContent = entry.state === 'done' ? 'Export again' : 'Export';
+        this.exportButton.textContent = entry.state === 'done' ? t('video.export.again') : t('video.export');
         this.cancelButton.hidden = !running;
         this.cancelButton.disabled = false;
         this.download.hidden = entry.state !== 'done';
@@ -280,7 +288,7 @@ export class VideoExport {
                         this.follow(next);
                     }
                 } catch (err) {
-                    this.status.textContent = err.status === 404 ? 'The server no longer knows this export.' : err.message;
+                    this.status.textContent = err.status === 404 ? t('video.error.gone') : err.message;
                     this.exportButton.disabled = false;
                     this.cancelButton.hidden = true;
                 }

@@ -22,7 +22,8 @@ const { momentsOf } = await import(pathToFileURL(join(folder, 'recording/moments
 const { captionContext, cuesOf } = await import(pathToFileURL(join(folder, 'recording/captions.js')).href);
 
 const cues = process.argv[2] === '--cues';
-const table = JSON.parse(readFileSync(new URL('../src/cuju/render/web/captions.json', import.meta.url), 'utf8'));
+const language = JSON.parse(readFileSync(new URL('../src/cuju/render/web/languages/en.json', import.meta.url), 'utf8'));
+const table = { messages: Object.fromEntries(Object.entries(language).filter(([id]) => id.startsWith('caption.'))) };
 const out = [];
 for (const file of process.argv.slice(cues ? 3 : 2)) {
     const { header, frames } = await parseRecording(readFileSync(file));

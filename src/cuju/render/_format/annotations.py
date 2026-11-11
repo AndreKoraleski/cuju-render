@@ -45,10 +45,19 @@ def _number(value: Any, what: str) -> float | int:
 
 
 def player_index(lineup: list[dict[str, Any]], player: Any) -> int:
-    """Returns the index in the header of a player given by index or as a pair of team and index."""
+    """Returns the index in the header of a player given by number or as a pair of team and index.
+
+    A number counts the players of the left team first, then those of the right team, each team in
+    the order of its indices, as the rewards and observations of a batch count them. The header may
+    list the teams in another order, which the returned index follows.
+    """
     if isinstance(player, int) and not isinstance(player, bool):
         if 0 <= player < len(lineup):
-            return player
+            order = sorted(
+                range(len(lineup)),
+                key=lambda k: (lineup[k].get('team', 0), lineup[k].get('index', k), k),
+            )
+            return order[player]
     elif isinstance(player, tuple | list) and len(player) == 2:
         for index, entry in enumerate(lineup):
             if [entry.get('team'), entry.get('index')] == list(player):
@@ -57,6 +66,19 @@ def player_index(lineup: list[dict[str, Any]], player: Any) -> int:
         f'expected a player from 0 to {len(lineup) - 1} or a pair of team and index, '
         f'found {player!r}'
     )
+
+
+def player_number(lineup: list[dict[str, Any]], index: int) -> int:
+    """Returns the number of the player at `index` of the header, the left team's players first.
+
+    The number is the one that `player_index` reads, so a player given by number comes back as
+    that number whatever order the header lists the teams in.
+    """
+    order = sorted(
+        range(len(lineup)),
+        key=lambda k: (lineup[k].get('team', 0), lineup[k].get('index', k), k),
+    )
+    return order.index(index) if 0 <= index < len(lineup) else index
 
 
 def _likely(probabilities: Any) -> list[list[float | int]]:
@@ -187,13 +209,22 @@ def decode(payload: bytes) -> list[dict[str, Any]]:
     )
 
 
-def public(record: dict[str, Any], frames: list[bytes]) -> dict[str, Any]:
-    """Returns a record with long keys and the step of its frame, as a filter reads it."""
+def public(
+    record: dict[str, Any], frames: list[bytes], lineup: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Returns a record with long keys and the step of its frame, as a filter reads it.
+
+    With the header's `lineup`, the player is its number with the left team's players first, as
+    `annotate` takes it, and without one the index in the header.
+    """
     frame = record['f']
+    player = record.get('p')
+    if lineup is not None and isinstance(player, int):
+        player = player_number(lineup, player)
     return {
         'frame': frame,
         'step': struct.unpack_from('<i', frames[frame])[0] if frame < len(frames) else None,
-        'player': record.get('p'),
+        'player': player,
         'values': dict(record.get('v', {})),
         'text': record.get('t'),
         'action': record.get('a'),

@@ -7,10 +7,13 @@ page inside the feed's frame and closes the tab, so the tab of the other checks 
 The windows stay small and the feeds draw at low quality, so software drawing keeps up.
 """
 
+import base64
 import json
+import struct
 import time
 import urllib.parse
 import urllib.request
+import zlib
 
 # The page inside the frame of /feed.
 _INNER = "document.getElementById('feed-frame').contentWindow"
@@ -111,6 +114,34 @@ _PLACES = f"""(() => {{
 }})()"""
 
 
+def _corner_alpha(tab):
+    """Returns the opacity from 0 to 255 of the top left pixel of a tab's picture.
+
+    The tab draws over a transparent default background, so only what the page paints shows. The
+    first pixel of a PNG reads the same under every filter of its first row.
+    """
+    transparent = {'color': {'r': 0, 'g': 0, 'b': 0, 'a': 0}}
+    tab.tab.call('Emulation.setDefaultBackgroundColorOverride', transparent)
+    try:
+        clip = {'x': 0, 'y': 0, 'width': 4, 'height': 4, 'scale': 1}
+        shot = tab.tab.call('Page.captureScreenshot', {'format': 'png', 'clip': clip})
+    finally:
+        tab.tab.call('Emulation.setDefaultBackgroundColorOverride', {})
+    data = base64.b64decode(shot['data'])
+    position, kind, compressed = 8, None, b''
+    while position < len(data):
+        (length,) = struct.unpack('>I', data[position : position + 4])
+        name = data[position + 4 : position + 8]
+        body = data[position + 8 : position + 8 + length]
+        position += 12 + length
+        if name == b'IHDR':
+            kind = body[9]
+        elif name == b'IDAT':
+            compressed += body
+    raw = zlib.decompress(compressed)
+    return raw[4] if kind == 6 else 255
+
+
 def _inside(box, safe, view, slack=1.5):
     """Returns whether a box lies inside the safe area of a view."""
     return (
@@ -179,6 +210,11 @@ def check_feed(client, base, debug, connect):
             assert state['view'] == {'width': view[0], 'height': view[1]}, (size, state)
             assert places['shape'] == shape, (size, places)
             assert _inside(places['scoreboard'], state['safe'], places['view']), (size, places)
+            if shape != 'wide':
+                # A square or tall picture gives the scoreboard the width of the safe area.
+                room = view[0] - state['safe']['left'] - state['safe']['right']
+                board = places['scoreboard']['right'] - places['scoreboard']['left']
+                assert board >= 0.95 * room, (size, board, room)
             assert state['safe']['top'] > 0 and state['safe']['left'] > 0, state
             shown = places['shown']
             assert shown['#scoreboard'] and shown['#stage'], (size, shown)
@@ -210,6 +246,8 @@ def check_feed(client, base, debug, connect):
         state = tab.until(lambda s: s['showing'] and s['playing'], what='the graphics alone')
         places = tab.evaluate(_PLACES)
         assert places['background'] == 'rgba(0, 0, 0, 0)', places
+        # The frame draws no opaque backdrop, so a corner that the graphics leave empty stays clear.
+        assert _corner_alpha(tab) == 0, 'the transparent feed drew an opaque backdrop'
         assert not places['shown']['#stage'] and places['shown']['#scoreboard'], places
         assert (state['width'], state['height']) == (1920, 1080), state
         assert len(state['problems']) == 1 and 'size' in state['problems'][0], state

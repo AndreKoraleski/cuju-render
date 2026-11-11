@@ -16,21 +16,31 @@ import { menuHeading, menuItem } from '../core/menu.js';
 import { Painter } from '../teams/painter.js';
 import { ARENAS, ARENA_LABELS, ARENA_NOTES, arenaThumbnail } from '../world/arenas.js';
 import { formatHour } from '../world/sky.js';
+import { formatNumber, t, tOr } from '../core/i18n.js';
 
 // Board pictures are read whole before they are scaled down, so a very large file is refused first.
 const BOARD_FILE_BYTES = 32 * 1024 * 1024;
 
 const sameList = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+// A number as String writes it, with the decimal separator of the language.
+const decimal = (v) => {
+    const text = String(v);
+    return /^-?\d+\.\d+$/.test(text) ? text.replace('.', formatNumber(0.5).charAt(1)) : text;
+};
 
 const LABELS = {
-    stripes: 'Stripes', checkers: 'Checkers', circles: 'Circles', none: 'None',
-    sponsors: 'Team sponsors', shipped: 'Shipped boards', custom: 'My own boards',
-    grf: 'GRF crowd', dawn: 'Dawn', day: 'Day', dusk: 'Dusk', night: 'Night',
+    stripes: t('fieldpage.mowing.stripes'), checkers: t('fieldpage.mowing.checkers'), circles: t('fieldpage.mowing.circles'),
+    none: t('fieldpage.mowing.none'), sponsors: t('fieldpage.boards.sponsors'), shipped: t('fieldpage.boards.shipped'),
+    custom: t('fieldpage.boards.custom'), grf: t('fieldpage.crowd.grf'), dawn: t('fieldpage.time.dawn'),
+    day: t('fieldpage.time.day'), dusk: t('fieldpage.time.dusk'), night: t('fieldpage.time.night'),
 };
-const CROWD_LABELS = { teams: 'Team fans', custom: 'Painted crowd in chosen colors', grf: 'GRF crowd' };
+const CROWD_LABELS = { teams: t('fieldpage.crowd.teams'), custom: t('fieldpage.crowd.custom'), grf: t('fieldpage.crowd.grf') };
 export const WEATHER_LABELS = {
-    clear: 'Clear', overcast: 'Overcast', rain: 'Rain', storm: 'Heavy rain', snow: 'Snow', fog: 'Fog',
+    clear: t('fieldpage.weather.clear'), overcast: t('fieldpage.weather.overcast'), rain: t('fieldpage.weather.rain'),
+    storm: t('fieldpage.weather.storm'), snow: t('fieldpage.weather.snow'), fog: t('fieldpage.weather.fog'),
 };
+// The name of a preset in the language of the page, the English name stays its key.
+const presetName = (name) => tOr(`fieldpage.preset.${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, name);
 
 // Where the preview looks for each part of the field, used when cameras.js has no table of its
 // own. Positions and targets are in three's frame, the main stand on positive z.
@@ -137,9 +147,9 @@ export class FieldPage {
             input.addEventListener('change', () => this.change({ [key]: Number(input.value) }, rerender));
             return [input, label];
         };
-        const percent = (v) => `${Math.round(v * 100)} %`;
+        const percent = (v) => t('fieldpage.value.percent', { value: Math.round(v * 100) });
         const section = (focus, ...children) => h('section', { class: 'field-section', 'data-focus': focus }, ...children);
-        const [width, widthLabel] = slider('stripeWidth', 2, 16, 0.5, (v) => `${v} m`);
+        const [width, widthLabel] = slider('stripeWidth', 2, 16, 0.5, (v) => t('fieldpage.value.meters', { value: decimal(v) }));
         const density = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(f.crowdDensity) });
         density.addEventListener('change', () => this.change({ crowdDensity: Number(density.value) }, true));
         const crowdColors = h('div', { class: 'swatches small' }, f.crowdColors.map((c, i) => {
@@ -152,11 +162,11 @@ export class FieldPage {
             return h('label', { class: 'swatch' }, input);
         }), f.crowdColors.length < 12 ? h('button', {
             type: 'button', class: 'btn small', onclick: () => this.change({ crowdColors: [...f.crowdColors, '#888888'], crowd: 'custom' }, true),
-        }, 'Add color') : null, f.crowdColors.length > 1 ? h('button', {
+        }, t('fieldpage.crowd.addColor')) : null, f.crowdColors.length > 1 ? h('button', {
             type: 'button', class: 'btn small ghost', onclick: () => this.change({ crowdColors: f.crowdColors.slice(0, -1), crowd: 'custom' }, true),
-        }, 'Remove last') : null);
-        const presets = h('select', { 'aria-label': 'Presets' }, h('option', { value: '' }, 'Choose a preset'),
-            Object.keys(PRESETS).map((n) => h('option', { value: n }, n)));
+        }, t('fieldpage.crowd.removeLast')) : null);
+        const presets = h('select', { 'aria-label': t('fieldpage.presets') }, h('option', { value: '' }, t('fieldpage.presets.choose')),
+            Object.keys(PRESETS).map((n) => h('option', { value: n }, presetName(n))));
         presets.addEventListener('change', () => {
             if (presets.value) {
                 const p = presetField(presets.value);
@@ -178,7 +188,7 @@ export class FieldPage {
             try {
                 const { field, notes } = await importField(file, this.field);
                 this.change(field, true);
-                this.app.hud.toast(['Field imported.', ...notes].join(' '), notes.length ? 'info' : undefined, notes.length ? 9000 : undefined);
+                this.app.hud.toast([t('fieldpage.imported'), ...notes].join(' '), notes.length ? 'info' : undefined, notes.length ? 9000 : undefined);
             } catch (err) {
                 this.app.hud.toast(err.message, 'error', 9000);
             }
@@ -191,36 +201,36 @@ export class FieldPage {
                 return;
             }
             if (file.size > BOARD_FILE_BYTES) {
-                this.app.hud.toast(`This picture is ${Math.ceil(file.size / 1024 / 1024)} MB, the limit is 32 MB.`, 'error');
+                this.app.hud.toast(t('fieldpage.board.tooLarge', { size: Math.ceil(file.size / 1024 / 1024), limit: BOARD_FILE_BYTES / 1024 / 1024 }), 'error');
                 return;
             }
             try {
                 this.addBoard(await this.boardDataUrl(file));
             } catch (err) {
-                this.app.hud.toast(`This picture could not be read, ${err.message || err}.`, 'error');
+                this.app.hud.toast(t('fieldpage.board.unreadable', { reason: err.message || err }), 'error');
             }
         });
         const full = f.customBoards.length >= MAX_BOARDS;
         const boards = h('div', { class: 'board-list' },
             f.customBoards.map((url, i) => h('div', { class: 'board-item' },
-                h('img', { src: url, alt: `Board ${i + 1}` }),
+                h('img', { src: url, alt: t('fieldpage.board.alt', { number: i + 1 }) }),
                 h('button', {
                     type: 'button', class: 'btn small ghost danger',
                     onclick: () => this.change({ customBoards: f.customBoards.filter((_, k) => k !== i) }, true),
-                }, 'Remove'))),
+                }, t('fieldpage.board.remove')))),
             h('div', { class: 'row' },
-                h('button', { type: 'button', class: 'btn small', disabled: full, onclick: () => boardFile.click() }, 'Upload an image'),
-                h('button', { type: 'button', class: 'btn small', disabled: full, onclick: () => this.drawBoard() }, 'Draw a board'),
+                h('button', { type: 'button', class: 'btn small', disabled: full, onclick: () => boardFile.click() }, t('fieldpage.board.upload')),
+                h('button', { type: 'button', class: 'btn small', disabled: full, onclick: () => this.drawBoard() }, t('fieldpage.board.draw')),
                 boardFile),
-            full ? h('p', { class: 'muted small' }, `This is the limit of ${MAX_BOARDS} boards. Remove one to add another.`) : null);
+            full ? h('p', { class: 'muted small' }, t('fieldpage.board.limit', { count: MAX_BOARDS })) : null);
         const [hour, hourLabel] = slider('time', 0, 24, 0.25, formatHour);
-        const named = TIMES.find((t) => Math.abs(TIME_HOURS[t] - f.time) < 0.01);
-        const timeChips = h('div', { class: 'chips' }, TIMES.map((t) => h('button', {
-            type: 'button', class: `chip-btn${t === named ? ' active' : ''}`, 'aria-pressed': t === named ? 'true' : 'false',
-            title: formatHour(TIME_HOURS[t]), onclick: () => this.change({ time: TIME_HOURS[t] }, true),
-        }, LABELS[t])));
+        const named = TIMES.find((time) => Math.abs(TIME_HOURS[time] - f.time) < 0.01);
+        const timeChips = h('div', { class: 'chips' }, TIMES.map((time) => h('button', {
+            type: 'button', class: `chip-btn${time === named ? ' active' : ''}`, 'aria-pressed': time === named ? 'true' : 'false',
+            title: formatHour(TIME_HOURS[time]), onclick: () => this.change({ time: TIME_HOURS[time] }, true),
+        }, LABELS[time])));
         const [amount, amountLabel] = slider('weatherAmount', 0.1, 1, 0.05, percent);
-        const [wind, windLabel] = slider('wind', 0, 1, 0.05, (v) => (v < 0.05 ? 'Calm' : percent(v)));
+        const [wind, windLabel] = slider('wind', 0, 1, 0.05, (v) => (v < 0.05 ? t('fieldpage.wind.calm') : percent(v)));
         const arenas = h('div', { class: 'arena-list' }, ARENAS.map((name) => h('button', {
             type: 'button', class: `arena-card${name === f.arena ? ' active' : ''}`, 'aria-pressed': name === f.arena ? 'true' : 'false',
             title: ARENA_NOTES[name], onclick: () => this.change({ arena: name }, true),
@@ -228,47 +238,47 @@ export class FieldPage {
         const form = h('div', { class: 'field-form' },
             section('presets', h('div', { class: 'row' }, presets,
                 h('span', { class: 'spacer' }),
-                h('button', { type: 'button', class: 'btn', onclick: () => exportField(this.field) }, 'Export'),
-                h('button', { type: 'button', class: 'btn', onclick: () => importInput.click() }, 'Import'),
+                h('button', { type: 'button', class: 'btn', onclick: () => exportField(this.field) }, t('fieldpage.export')),
+                h('button', { type: 'button', class: 'btn', onclick: () => importInput.click() }, t('fieldpage.import')),
                 h('button', {
                     type: 'button', class: 'btn ghost',
                     onclick: () => {
-                        if (confirm('Reset the field to the default look? Your boards are removed too. Export the field first to keep a copy.')) {
+                        if (confirm(t('fieldpage.reset.confirm'))) {
                             this.change({ ...presetField('Summer afternoon'), arena: 'stadium' }, true);
                         }
                     },
-                }, 'Reset'),
+                }, t('fieldpage.reset')),
                 importInput)),
-            section('arena', h('h4', {}, 'Arena'),
+            section('arena', h('h2', {}, t('fieldpage.arena')),
                 arenas,
-                h('p', { class: 'muted small' }, `${ARENA_NOTES[f.arena]} The pitch, its lines and its goals stay as in GRF.`)),
-            section('grass', h('h4', {}, 'Grass'),
-                h('div', { class: 'swatches' }, color('Grass', 'grass'),
-                    h('span', { 'data-focus': 'lines' }, color('Lines', 'lines')),
-                    h('span', { 'data-focus': 'nets' }, color('Goal nets', 'net'))),
-                h('div', { class: 'field-row' }, h('span', { class: 'field-label' }, 'Mowing'), chips(MOWING, f.mowing, 'mowing')),
-                h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, 'Band width'), width, widthLabel)),
-            section('time', h('h4', {}, 'Time of day'),
-                h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, 'Hour'), hour, hourLabel),
+                h('p', { class: 'muted small' }, t('fieldpage.arena.note', { note: ARENA_NOTES[f.arena] }))),
+            section('grass', h('h2', {}, t('fieldpage.grass')),
+                h('div', { class: 'swatches' }, color(t('fieldpage.grass.color'), 'grass'),
+                    h('span', { 'data-focus': 'lines' }, color(t('fieldpage.lines'), 'lines')),
+                    h('span', { 'data-focus': 'nets' }, color(t('fieldpage.nets'), 'net'))),
+                h('div', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.mowing')), chips(MOWING, f.mowing, 'mowing')),
+                h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.bandWidth')), width, widthLabel)),
+            section('time', h('h2', {}, t('fieldpage.time')),
+                h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.hour')), hour, hourLabel),
                 timeChips),
-            section('weather', h('h4', {}, 'Weather'),
+            section('weather', h('h2', {}, t('fieldpage.weather')),
                 chips(WEATHERS, f.weather, 'weather', WEATHER_LABELS),
-                f.weather !== 'clear' ? h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, 'Strength'), amount, amountLabel) : null,
-                h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, 'Wind'), wind, windLabel),
-                f.weather === 'snow' ? h('p', { class: 'muted small' }, 'Snow settles on the pitch over a minute or so, the lines stay clear.') : null),
-            section('boards', h('h4', {}, 'Boards'),
+                f.weather !== 'clear' ? h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.weather.strength')), amount, amountLabel) : null,
+                h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.wind')), wind, windLabel),
+                f.weather === 'snow' ? h('p', { class: 'muted small' }, t('fieldpage.weather.snowNote')) : null),
+            section('boards', h('h2', {}, t('fieldpage.boards')),
                 chips(BOARDS, f.boards, 'boards'),
                 f.boards === 'custom' ? boards : h('p', { class: 'muted small' }, f.boards === 'sponsors'
-                    ? 'The sponsors of both teams in turn, the shipped boards when they have none.'
-                    : 'The boards that ship with cuju and the team names.')),
-            section('crowd', h('h4', {}, 'Crowd'),
+                    ? t('fieldpage.boards.sponsorsNote')
+                    : t('fieldpage.boards.shippedNote'))),
+            section('crowd', h('h2', {}, t('fieldpage.crowd')),
                 chips(CROWDS, f.crowd, 'crowd', CROWD_LABELS),
                 f.crowd !== 'grf' ? h('div', {},
-                    h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, 'Density'), density),
-                    f.crowd === 'custom' ? h('div', { class: 'field-row' }, h('span', { class: 'field-label' }, 'Shirts'), crowdColors)
-                        : h('p', { class: 'muted small' }, 'Fans wear their team colors.')) : null),
-            h('p', { class: 'muted small' }, 'Export settings to use them elsewhere.'),
-            h('p', { class: 'muted small' }, 'Drag to look. WASD moves, Q and E change height.'));
+                    h('label', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.crowd.density')), density),
+                    f.crowd === 'custom' ? h('div', { class: 'field-row' }, h('span', { class: 'field-label' }, t('fieldpage.crowd.shirts')), crowdColors)
+                        : h('p', { class: 'muted small' }, t('fieldpage.crowd.teamsNote'))) : null),
+            h('p', { class: 'muted small' }, t('fieldpage.exportNote')),
+            h('p', { class: 'muted small' }, t('fieldpage.keys')));
         // Touching a control flies the preview to what it changes.
         const focusFrom = (e) => {
             const el = e.target && e.target.closest && e.target.closest('[data-focus]');
@@ -307,7 +317,7 @@ export class FieldPage {
             return;
         }
         const hour = h('input', {
-            id: 'env-hour', type: 'range', min: '0', max: '24', step: '0.25', 'aria-label': 'Time of day',
+            id: 'env-hour', type: 'range', min: '0', max: '24', step: '0.25', 'aria-label': t('fieldpage.time'),
         });
         const value = h('span', { id: 'env-hour-value', class: 'env-hour-value' });
         hour.addEventListener('input', () => {
@@ -330,9 +340,9 @@ export class FieldPage {
             return item;
         });
         host.replaceChildren(
-            h('label', { class: 'env-hour-row', role: 'presentation' }, h('span', { class: 'env-hour-label' }, 'Hour'), hour, value),
+            h('label', { class: 'env-hour-row', role: 'presentation' }, h('span', { class: 'env-hour-label' }, t('fieldpage.hour')), hour, value),
             ...this.quickWeather,
-            menuHeading('Arena'),
+            menuHeading(t('fieldpage.arena')),
             ...this.quickArena);
         this.syncQuick();
     }
@@ -426,7 +436,7 @@ export class FieldPage {
         if (this.field.customBoards.length < MAX_BOARDS) {
             return false;
         }
-        this.app.hud.toast(`The field holds at most ${MAX_BOARDS} boards. Remove one to add another.`, 'error');
+        this.app.hud.toast(t('fieldpage.board.full', { count: MAX_BOARDS }), 'error');
         return true;
     }
 
@@ -458,22 +468,22 @@ export class FieldPage {
             return;
         }
         this.painter.open({
-            title: 'Board',
+            title: t('fieldpage.painter.title'),
             width: 1024,
             height: 128,
-            note: 'A wide board, 1024 by 128 pixels.',
+            note: t('fieldpage.painter.note'),
             onSave: async (png) => {
                 const url = await new Promise((resolve, reject) => {
                     const r = new FileReader();
                     r.onload = () => resolve(r.result);
-                    r.onerror = () => reject(r.error || new Error('the drawing could not be read'));
+                    r.onerror = () => reject(r.error || new Error(t('fieldpage.painter.unreadable')));
                     r.readAsDataURL(png);
                 });
                 if (!this.addBoard(url)) {
-                    throw new Error(`the field already holds ${MAX_BOARDS} boards`);
+                    throw new Error(t('fieldpage.painter.full', { count: MAX_BOARDS }));
                 }
             },
-        }).catch((err) => this.app.hud.toast(`The painter could not open, ${err.message || err}.`, 'error'));
+        }).catch((err) => this.app.hud.toast(t('fieldpage.painter.failed', { reason: err.message || err }), 'error'));
     }
 
     // The preview borrows the match view's canvas while the page is showing, with the free

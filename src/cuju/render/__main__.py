@@ -8,7 +8,8 @@ source, `cuju render team add FOLDER` registers a Kaggle submission folder, `cuj
 records a match between two registered teams, `cuju render challenge` lists the challenges or
 plays one headless with a team, `cuju render tournament` makes, lists, shows, runs
 and cancels tournaments, and `cuju render sample` adds the shipped sample matches and the starter
-team again, or brings them back from the Trash. `cuju render search` finds moments across the
+team again, or brings them back from the Trash. `cuju render recordings` lists the
+library with the group of each challenge run, `cuju render search` finds moments across the
 library, and `cuju render captions` writes the captions of a recording as WebVTT. `cuju render demo`
 streams a live match between the built-in AIs to the page, and `cuju render video` exports a range
 of a recording as an MP4 video, drawn by the page in a headless Chrome and encoded by ffmpeg.
@@ -24,6 +25,7 @@ read it, `cuju render pack new FOLDER` writes a small working team with a packag
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -40,7 +42,9 @@ def main(arguments: list[str] | None = None) -> int:
         prog='cuju render', description="Watch cuju's matches in a browser."
     )
     parser.add_argument(
-        '--home', help=f'the renderer folder, by default {_home.home()} or ${_home.HOME_VARIABLE}'
+        '--home',
+        help=f'the renderer folder, by default the folder of ${_home.HOME_VARIABLE} when set, '
+        'else ~/.cuju/render',
     )
     commands = parser.add_subparsers(dest='command')
     server = commands.add_parser(
@@ -66,19 +70,38 @@ def main(arguments: list[str] | None = None) -> int:
         default=8780,
         help='the port of a server that it starts, 8780 by default',
     )
-    team = commands.add_parser('team', help='add, list, export or remove teams of the registry')
-    team.add_argument('action', choices=('add', 'list', 'export', 'remove'))
+    team = commands.add_parser(
+        'team', help='add, list, show, set, export, remove or give sounds to teams of the registry'
+    )
+    team.add_argument('action', choices=('add', 'list', 'show', 'set', 'export', 'remove', 'sound'))
     team.add_argument(
         'target', nargs='?', help='a submission folder or archive to add, or a team identifier'
     )
-    team.add_argument('--name', help='the name of an added team, by default the folder name')
+    team.add_argument(
+        'sound',
+        nargs='*',
+        metavar='KIND [FILE]',
+        help='for team sound, the moment, goal, shot, pass, tackle, save, kick, celebration or '
+        'chant, and the Ogg, MP3 or WAV file of at most 2 MB that it plays',
+    )
+    team.add_argument(
+        '--remove', action='store_true', help='for team sound, remove the sound of the moment'
+    )
+    team.add_argument(
+        '--name', help='the name of the team, by default the folder name of an added one'
+    )
     team.add_argument(
         '--format',
         choices=('5v5', '11v11'),
-        default='11v11',
-        help='the size of an added team, 11v11 by default, unless its folder holds an export',
+        default=None,
+        help='the size of the team, 11v11 by default for an added team, unless its folder holds '
+        'an export',
     )
+    _team_control_arguments(team)
     team.add_argument('--out', help='the zip file of an export, by default the team name')
+    team.add_argument(
+        '--json', action='store_true', help='print the team, or the list of teams, as JSON'
+    )
     match = commands.add_parser('play', help='record a match between two registered teams')
     match.add_argument('--left', default='builtin', help='a team identifier, or builtin')
     match.add_argument('--right', default='builtin', help='a team identifier, or builtin')
@@ -96,6 +119,7 @@ def main(arguments: list[str] | None = None) -> int:
             default=None,
             help=f"the {side} built-in AI's ability from 0 to 1, the scenario's when absent",
         )
+    match.add_argument('--json', action='store_true', help='print the saved recording as JSON')
     _tournament_parser(commands)
     challenge = commands.add_parser(
         'challenge', help='list the challenges, or play one headless with a registered team'
@@ -106,6 +130,27 @@ def main(arguments: list[str] | None = None) -> int:
         '--attempts', type=int, default=None, help='fewer attempts than the challenge is practice'
     )
     challenge.add_argument('--device', default='cpu', help='cpu or cuda, cpu by default')
+    challenge.add_argument(
+        '--no-recordings',
+        action='store_true',
+        help='score the run without keeping its attempts as recordings',
+    )
+    challenge.add_argument(
+        '--json', action='store_true', help='print the catalog or the result of a run as JSON'
+    )
+    listing = commands.add_parser(
+        'recordings', help='list the recordings with the group of each challenge run'
+    )
+    listing.add_argument('--group', help='list the recordings of one group alone')
+    listing.add_argument('--trash', action='store_true', help='list the Trash')
+    moves = listing.add_mutually_exclusive_group()
+    moves.add_argument(
+        '--delete-group', metavar='GROUP', help='move every recording of a group to the Trash'
+    )
+    moves.add_argument(
+        '--restore-group', metavar='GROUP', help='restore every recording of a group'
+    )
+    listing.add_argument('--json', action='store_true', help='print the recordings as JSON')
     sample = commands.add_parser(
         'sample',
         help='add the sample matches and the starter team again, or restore them from the Trash',
@@ -115,6 +160,9 @@ def main(arguments: list[str] | None = None) -> int:
         nargs='?',
         choices=('11v11', '5v5', 'sample-11v11', 'sample-5v5', 'starter-team', 'list'),
         help='one sample, by default every one, or list to show what the library holds of each',
+    )
+    sample.add_argument(
+        '--json', action='store_true', help='print the list, or the changes, as JSON'
     )
     tutorial = commands.add_parser(
         'tutorial', help='the lessons of the page for an agent, each step checked from the server'
@@ -133,7 +181,12 @@ def main(arguments: list[str] | None = None) -> int:
         'doctor', help='print a diagnostic report of versions, the home folder and the server'
     )
     _doctor.add_arguments(doctor)
-    show = commands.add_parser('demo', help='stream a live match between the built-in AIs')
+    show = commands.add_parser(
+        'demo',
+        help='stream a live match between the built-in AIs',
+        description='Starts the server unless one answers on the port, streams a live match '
+        'between the built-in AIs at real time and opens the page on it, until Ctrl+C.',
+    )
     show.add_argument('--port', type=int, default=8780, help='the port, 8780 by default')
     show.add_argument('--eleven', action='store_true', help='eleven a side, five by default')
     show.add_argument('--scenario', help='another shipped scenario, such as academy_corner')
@@ -189,11 +242,34 @@ def main(arguments: list[str] | None = None) -> int:
             f'--{side}', help=f'the team whose presentation the {side} side draws, or none'
         )
     pack.add_argument('--port', type=int, default=8780, help='the port of a preview server')
-    pack.add_argument('--json', action='store_true', help='print the result of a check as JSON')
+    pack.add_argument(
+        '--json',
+        action='store_true',
+        help='print the result of a check, or the address and team of a preview, as JSON',
+    )
+    pack.add_argument(
+        '--no-open', action='store_true', help='open no browser for a preview, print its address'
+    )
     pack.add_argument(
         '--name', default='My team', help='the name of a new team, by default My team'
     )
+    from ._text import languages as _languages
+
+    _languages.add_arguments(
+        commands.add_parser(
+            'language',
+            help='write, check, list, add or remove a language of the page',
+            description='Writes a new language file from English, checks a file against English, '
+            'and lists, adds or removes the languages of the home folder.',
+        )
+    )
     options = parser.parse_args(arguments)
+    as_json = bool(getattr(options, 'json', False))
+    if as_json:
+        # A command that fails under --json answers with JSON on standard output alone.
+        parser.error = _json_usage  # type: ignore[method-assign]
+    if options.command == 'language' and options.action in ('check', 'new'):
+        return _languages.run(options)
     if options.command == 'pack' and options.action in ('check', 'new'):
         if not options.target:
             parser.error(f'expected the path that pack {options.action} reads or writes')
@@ -206,8 +282,35 @@ def main(arguments: list[str] | None = None) -> int:
         check_home()
         return _run(parser, options)
     except (Error, OSError) as error:
+        return _failed(error, as_json)
+
+
+def _failed(error: BaseException, as_json: bool) -> int:
+    """Prints the error of a command that failed and returns the exit status 1.
+
+    Under --json the error goes to standard output alone, as a JSON object of `error`, its text,
+    and `error_id` and `error_values`, the message that the error carries or null, so a script
+    reads one answer whatever happens. Otherwise a line goes to standard error.
+    """
+    if not as_json:
         print(f'cuju render: {error}', file=sys.stderr)
         return 1
+    from ._text import messages as _messages
+
+    # An error raised again with the same text keeps the message of its cause.
+    cause = error.__cause__
+    if getattr(error, 'message_id', None) is None and isinstance(cause, _messages.Message):
+        error, shown = cause, str(error)
+    else:
+        shown = str(error)
+    print(json.dumps(_messages.entry_fields(error, shown), indent=1))
+    return 1
+
+
+def _json_usage(message: str) -> None:
+    """Ends a command whose arguments do not fit, under --json, with the error as JSON."""
+    print(json.dumps({'error': message, 'error_id': None, 'error_values': None}, indent=1))
+    sys.exit(2)
 
 
 def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
@@ -215,13 +318,25 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
     if options.command == 'team':
         from ._registry import teams as _teams
 
-        if options.action in ('export', 'remove') and not options.target:
+        if options.action in ('show', 'set', 'export', 'remove', 'sound') and not options.target:
             parser.error(f'team {options.action} needs the identifier of a team')
         if options.action == 'add' and not options.target:
             parser.error('team add needs a submission folder or archive')
+        control = _team_control(options)
         if options.action == 'add':
-            entry = _teams.add_folder(options.target, options.name, options.format)
-            print(f'added {entry["id"]} {entry["name"]}')
+            entry = _teams.add_folder(
+                options.target, options.name, options.format or '11v11', control
+            )
+            _print_team(entry, options.json, 'added')
+        elif options.action == 'show':
+            _print_team(_teams.entry(options.target), options.json, None)
+        elif options.action == 'sound':
+            _team_sound(_teams, options)
+        elif options.action == 'set':
+            if control is not None:
+                control = _changed_control(_teams, options, control)
+            entry = _teams.update(options.target, options.name, None, options.format, control)
+            _print_team(entry, options.json, 'changed')
         elif options.action == 'export':
             filename, data = _teams.export(options.target)
             path = options.out or filename
@@ -231,6 +346,9 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         elif options.action == 'remove':
             if not _teams.remove(options.target):
                 parser.error(f'no team {options.target!r} to remove')
+            print(f'removed {options.target}')
+        elif options.json:
+            print(json.dumps(_teams.teams(), indent=1))
         else:
             for entry in _teams.teams():
                 print(f'{entry["id"]}  {entry["format"]}  {entry["name"]}')
@@ -239,6 +357,9 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         from ._store import samples as _samples
 
         if options.name == 'list':
+            if options.json:
+                print(json.dumps(_samples.listing(), indent=1))
+                return 0
             for entry in _samples.listing():
                 print(f'{entry["id"]}  {entry["kind"]}  {entry["state"]}  {entry["title"]}')
             return 0
@@ -246,6 +367,9 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         if options.name is not None:
             names = [options.name if '-' in options.name else f'sample-{options.name}']
         result = _samples.add(names)
+        if options.json:
+            print(json.dumps(result, indent=1))
+            return 0
         for change in result['changes']:
             target = next(e['target'] for e in result['samples'] if e['id'] == change['id'])
             named = f' as {target}' if target != change['id'] else ''
@@ -265,6 +389,10 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         return _find(options)
     if options.command == 'captions':
         return _write_captions(options)
+    if options.command == 'language':
+        from ._text import languages as _languages
+
+        return _languages.run(options)
     if options.command == 'tournament':
         from ._tournaments.tournament_cli import run_command
 
@@ -279,20 +407,10 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
         return _feed.run(options)
     if options.command == 'challenge':
         return _challenge(parser, options)
+    if options.command == 'recordings':
+        return _recordings(options)
     if options.command == 'play':
-        from ._playing.play import play
-
-        path = play(
-            options.left,
-            options.right,
-            options.scenario,
-            options.seed,
-            None,
-            options.device,
-            (options.left_ability, options.right_ability),
-        )
-        print(f'saved {path}')
-        return 0
+        return _play_match(options)
     if options.command == 'demo':
         from ._playing import demo as _demo
 
@@ -316,6 +434,109 @@ def _run(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
     return serve_page(port, options)
 
 
+def _team_sound(teams: Any, options: argparse.Namespace) -> None:
+    """Runs `cuju render team sound ID [KIND [FILE]]`, which lists, gives or removes sounds.
+
+    A sound is checked as the page's upload is, `PUT /api/teams/ID/sounds/KIND`.
+    """
+    from cuju.errors import ArgumentError
+
+    kind, *rest = options.sound or [None]
+    if kind is not None and kind not in teams.SOUND_SLOTS:
+        raise ArgumentError(
+            f'expected the moment of a sound among {", ".join(teams.SOUND_SLOTS)}, found {kind}'
+        )
+    if kind is not None and options.remove:
+        teams.entry(options.target)
+        teams.remove_sound(options.target, kind)
+    elif kind is not None and rest:
+        teams.set_sound(options.target, kind, Path(rest[0]).expanduser().read_bytes())
+    elif kind is not None:
+        raise ArgumentError('expected the sound file of the moment, or --remove')
+    entry = teams.entry(options.target)
+    if options.json:
+        print(json.dumps({'team': entry['id'], 'sounds': entry['sounds']}))
+    else:
+        print(f'{entry["name"]}, sounds {", ".join(entry["sounds"]) or "none"}')
+
+
+def _team_control_arguments(team: Any) -> None:
+    """Adds the options of `cuju render team` that set the players a submission controls."""
+    team.add_argument(
+        '--players', type=int, help='the players that the submission controls, 1 by default'
+    )
+    team.add_argument(
+        '--assignment',
+        choices=('dynamic', 'fixed'),
+        help='dynamic for the players nearest the ball, fixed for those of --selection',
+    )
+    team.add_argument(
+        '--selection',
+        help='the fixed players, as indices of the formation or GRF roles, such as 1,2,3 or CB,CM',
+    )
+    team.add_argument(
+        '--goalkeeper',
+        choices=('agent', 'builtin', 'scenario'),
+        help='who plays the goalkeeper, the submission, the built-in AI or as the scenario says',
+    )
+    team.add_argument(
+        '--action-set',
+        choices=('default', 'v2'),
+        help="the submission's action set, GRF's default or v2",
+    )
+
+
+def _team_control(options: argparse.Namespace) -> dict[str, Any] | None:
+    """Returns the control that the options of `cuju render team` name, or `None` for none."""
+    control: dict[str, Any] = {}
+    if options.players is not None:
+        control['players'] = options.players
+    if options.selection is not None:
+        parts = [part.strip() for part in options.selection.split(',') if part.strip()]
+        control['selection'] = [int(part) if part.isdigit() else part for part in parts]
+        control['assignment'] = 'fixed'
+        control.setdefault('players', len(parts))
+    if options.assignment is not None:
+        control['assignment'] = options.assignment
+    if options.goalkeeper is not None:
+        control['goalkeeper'] = options.goalkeeper
+    if options.action_set is not None:
+        control['action_set'] = options.action_set
+    return control or None
+
+
+def _changed_control(teams: Any, options: argparse.Namespace, control: dict[str, Any]) -> Any:
+    """Returns a team's control with the changes of `cuju render team set` applied to it."""
+    current = teams.entry(options.target)
+    try:
+        known = teams.check_control(current.get('control'), options.format or current['format'])
+    except Error:
+        known = dict(teams.DEFAULT_CONTROL)
+    if control.get('assignment', known['assignment']) == 'dynamic':
+        # Dynamic assignment keeps no selection, and the goalkeeper goes back to the scenario.
+        known['selection'] = []
+        if known['goalkeeper'] == 'builtin':
+            known['goalkeeper'] = 'scenario'
+    return {**known, **control}
+
+
+def _print_team(entry: dict[str, Any], as_json: bool, change: str | None) -> None:
+    """Prints a team of the registry, as JSON or as lines of its name, format and control."""
+    if as_json:
+        print(json.dumps(entry, indent=1))
+        return
+    head = f'{change} ' if change else ''
+    print(f'{head}{entry["id"]} {entry["name"]}')
+    control = entry.get('control')
+    if entry.get('kind') != 'builtin' and isinstance(control, dict):
+        selection = ','.join(str(item) for item in control.get('selection') or []) or 'none'
+        print(
+            f'  format {entry["format"]}, {control["players"]} controlled, assignment '
+            f'{control["assignment"]}, selection {selection}, goalkeeper '
+            f'{control["goalkeeper"]}, action set {control["action_set"]}'
+        )
+
+
 _QUERY_HELP = (
     'Words name kinds, such as goal, shot, save, pass, tackle, card, corner or penalty, and '
     'filters such as team:, player:, after:, before:, score:, source: and outcome: narrow them.'
@@ -323,19 +544,35 @@ _QUERY_HELP = (
 
 
 def _find(options: argparse.Namespace) -> int:
-    """Prints the moments that a search finds, one a line or as JSON."""
+    """Prints the moments that a search finds, under the identifier and title of each recording,
+    or as JSON.
+
+    Each moment shows its clock, its time `t` in seconds of the recording, its line of text and the
+    whole address that opens Watch a few seconds before it, on the running server or, when none
+    runs, on the port that `cuju render serve` takes by default.
+    """
     import json
 
+    from ._http import launch as _launch
     from ._moments import search as _search
 
     found = _search.search(' '.join(options.query), options.limit)
     if options.json:
         print(json.dumps(found, indent=1))
         return 0
+    server = _launch.running()
+    base = server.url if server is not None else 'http://127.0.0.1:8780/'
+    match = None
     for result in found['results']:
-        print(f'{result["match"]}  {result["minute"]:>6}  t={result["seek"]:g}  {result["text"]}')
+        if result['match'] != match:
+            match = result['match']
+            print(f'{match}  {result["title"]}')
+        print(f'  {result["minute"]:>6}  t={result["t"]:g}  {result["text"]}')
+        print(f'          {base}{result["url"]}')
     shown = len(found['results'])
     print(f'{shown} of {found["total"]} moments in {found["recordings"]} recordings')
+    if shown and server is None:
+        print('No server runs, and cuju render open with an address above in quotes starts one.')
     return 0
 
 
@@ -361,7 +598,6 @@ def _pack_home(options: argparse.Namespace, port: int) -> int:
     """Runs `cuju render pack preview` and `cuju render pack sides`, which use the home."""
     import json
 
-    from ._http.commands import open_target
     from ._packages import pack
     from ._packages import presentation as _presentation
 
@@ -372,17 +608,16 @@ def _pack_home(options: argparse.Namespace, port: int) -> int:
                 for side in ('left', 'right')
                 if (value := getattr(options, side)) is not None
             }
-            print(json.dumps(_presentation.assign(changes) if changes else _presentation.sides()))
+            sides = _presentation.assign(changes) if changes else _presentation.sides()
+            print(json.dumps(sides) if options.json else '\n'.join(pack.sides_lines(sides)))
             return 0
         if not options.target:
-            print('cuju render: expected the package to preview', file=sys.stderr)
-            return 1
-        place = pack.preview(options.target, options.side)
+            return _failed(Error('expected the package to preview'), options.json)
+        return pack.run_preview(
+            options.target, options.side, port, not options.no_open, options.json
+        )
     except (Error, OSError) as error:
-        print(f'cuju render: {error}', file=sys.stderr)
-        return 1
-    print(f'previewing on the {options.side} side, {place}')
-    return open_target(f'http://127.0.0.1:{port}/{place}', port)
+        return _failed(error, options.json)
 
 
 def _pack(options: argparse.Namespace) -> int:
@@ -399,11 +634,11 @@ def _pack(options: argparse.Namespace) -> int:
         if options.action == 'new':
             for path in pack.new(options.target, options.name):
                 print(f'wrote {path}')
+            print('\n'.join(pack.next_steps(options.target)))
             return 0
         result = pack.check(options.target)
     except (Error, OSError) as error:
-        print(f'cuju render: {error}', file=sys.stderr)
-        return 1
+        return _failed(error, options.json)
     if options.json:
         print(json.dumps(result, indent=2))
     else:
@@ -423,8 +658,26 @@ def _tournament_parser(commands: Any) -> None:
             entrants.append((kind, value))
             namespace.entrants = entrants
 
-    cup = commands.add_parser('tournament', help='make, list, show, run or cancel tournaments')
-    cup.add_argument('action', choices=('new', 'list', 'show', 'run', 'cancel', 'presets'))
+    cup = commands.add_parser(
+        'tournament', help='make, check, list, show, run, change or delete tournaments'
+    )
+    cup.add_argument(
+        'action',
+        choices=(
+            'new',
+            'check',
+            'list',
+            'show',
+            'run',
+            'cancel',
+            'delete',
+            'presets',
+            'ratings',
+            'forfeit',
+            'award',
+            'resume',
+        ),
+    )
     cup.add_argument('target', nargs='?', help='the identifier of a tournament')
     cup.add_argument('--preset', help='a preset of formats, quick_cup when neither it nor --config')
     cup.add_argument('--config', help='a JSON file with the whole configuration of a tournament')
@@ -440,12 +693,73 @@ def _tournament_parser(commands: Any) -> None:
     cup.add_argument('--length', type=int, help='the steps of every match')
     cup.add_argument('--concurrency', type=int, help='the matches of agents at once, 1 by default')
     cup.add_argument('--run', action='store_true', help='run the new tournament at once')
+    cup.add_argument('--rounds', type=int, help='the rounds of every Swiss or ladder stage')
+    cup.add_argument('--match', help='the key of the match that forfeit or award gives')
+    cup.add_argument(
+        '--winner', choices=('home', 'away'), help='the side that forfeit or award gives it to'
+    )
+    cup.add_argument('--json', action='store_true', help='print what the action prints as JSON')
+
+
+def _progress_line() -> Any:
+    """Returns a function that shows the progress of a match on one line of a terminal.
+
+    The line goes to standard error and only to a terminal, so the output of a script or a pipe
+    holds the result alone.
+    """
+    if not sys.stderr.isatty():
+        return None
+
+    def show(share: float) -> None:
+        print(f'\rplaying, {share:.0%}', end='', file=sys.stderr, flush=True)
+
+    return show
+
+
+def _play_match(options: argparse.Namespace) -> int:
+    """Plays a match between two registered teams and prints the recording it saved.
+
+    What the submissions print goes to standard error, so standard output holds the result alone.
+    """
+    import contextlib
+    import json
+
+    from ._playing.play import play
+
+    progress = None if options.json else _progress_line()
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            path = play(
+                options.left,
+                options.right,
+                options.scenario,
+                options.seed,
+                None,
+                options.device,
+                (options.left_ability, options.right_ability),
+                progress=progress,
+                policy_errors=True,
+            )
+    finally:
+        if progress is not None:
+            print('\r\033[K', end='', file=sys.stderr, flush=True)
+    if options.json:
+        print(json.dumps({'match': path.stem, 'path': str(path)}))
+    else:
+        print(f'saved {path}')
+    return 0
 
 
 def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
     """Lists the challenges, or plays one headless and prints each attempt and the result."""
+    import contextlib
+    import json
+
     from ._playing import challenges as _challenges
 
+    if options.name == 'list' and options.json:
+        print(json.dumps(_challenges.challenges(), indent=1))
+        return 0
     if options.name == 'list':
         for entry in _challenges.challenges():
             targets = ', '.join(
@@ -459,36 +773,94 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
         parser.error('challenge needs --team, a team identifier or builtin')
     from ._playing.play import PolicyError
 
+    spec = _challenges.find(options.name)
+
     def show(result: dict) -> None:
         if result['scored']:
             seconds = f'scored after {result["seconds"]:g} seconds'
+            if not result['counts'] and spec['limit'] is not None:
+                seconds += f', past the limit of {spec["limit"]:g} seconds'
         else:
             seconds = 'no goal'
         goals = f'{result["goals"][0]} for, {result["goals"][1]} against'
+        kept = f'recording {result["match"]}' if result['match'] else 'no recording kept'
         print(
-            f'attempt {result["index"] + 1}, seed {result["seed"]}, {seconds}, {goals}, '
-            f'recording {result["match"]}',
+            f'attempt {result["index"] + 1}, seed {result["seed"]}, {seconds}, {goals}, {kept}',
             flush=True,
         )
 
     try:
-        outcome = _challenges.run(
-            options.name,
-            team=options.team,
-            attempts=options.attempts,
-            device=options.device,
-            progress=show,
-        )
+        # What a team prints goes to standard error, so standard output holds the result alone.
+        with contextlib.redirect_stdout(sys.stderr if options.json else sys.stdout):
+            outcome = _challenges.run(
+                options.name,
+                team=options.team,
+                attempts=options.attempts,
+                device=options.device,
+                progress=None if options.json else show,
+                keep_recordings=not options.no_recordings,
+            )
     except PolicyError as error:
-        print(f'cuju render: {error}', file=sys.stderr)
-        return 1
-    print(f'value {outcome["value"]:g}, {outcome["seconds"]:g} seconds to score')
+        return _failed(error, options.json)
+    if options.json:
+        print(json.dumps(outcome, indent=1))
+        return 0
+    if any(result['counts'] for result in outcome['attempts']):
+        print(f'value {outcome["value"]:g}, {outcome["seconds"]:g} seconds to score')
+    elif spec['measure'] == 'margin':
+        print(f'value {outcome["value"]:g}, no goal scored')
+    else:
+        print(f'value {outcome["value"]:g}, no attempt counts towards it')
     if outcome['practice']:
         print('practice, fewer attempts than the challenge, so no medal and no leaderboard')
     else:
         print(f'medal {outcome["medal"] or "none"}, rank {outcome["rank"] or "outside the board"}')
         best = outcome['personal_best']
         print(f'personal best {best["value"]:g} in {best["seconds"]:g} seconds')
+    if outcome['group']:
+        print(f'group {outcome["group"]}, list it with cuju render recordings --group')
+    return 0
+
+
+def _recordings(options: argparse.Namespace) -> int:
+    """Lists the library by group, or one group, or moves a group to the Trash or back."""
+    from ._store import library as _library
+
+    moved = options.delete_group or options.restore_group
+    if moved:
+        restore = bool(options.restore_group)
+        changed = _library.trash_group(moved, restore=restore)
+        if options.json:
+            print(json.dumps({'group': moved, 'restored' if restore else 'trashed': changed}))
+        elif changed:
+            where = 'from the Trash' if restore else 'to the Trash'
+            print(f'moved {len(changed)} recordings of {moved} {where}')
+        if not changed:
+            place = 'the Trash' if restore else 'the library'
+            print(f'cuju render: no group {moved} in {place}', file=sys.stderr)
+            return 1
+        return 0
+    entries = _library.matches(options.trash, options.group)
+    if options.json:
+        print(json.dumps(entries, indent=1))
+        return 0
+    if options.group and not entries:
+        print(f'cuju render: no group {options.group}', file=sys.stderr)
+        return 1
+    listed = set()
+    for entry in entries:
+        group = entry.get('group')
+        if group is None:
+            print(f'{entry["id"]}  {entry["title"]}')
+            continue
+        if group['id'] in listed:
+            continue
+        listed.add(group['id'])
+        members = [item for item in entries if (item.get('group') or {}).get('id') == group['id']]
+        members.sort(key=lambda item: item['group'].get('attempt', 0))
+        print(f'{group["id"]}  {group["title"]}, {group["result"]}, {len(members)} recordings')
+        for member in members:
+            print(f'    {member["id"]}  attempt {member["group"].get("attempt", 0) + 1}')
     return 0
 
 

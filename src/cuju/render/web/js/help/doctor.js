@@ -11,6 +11,7 @@
 // the same in a test.
 
 import { lastDecoder } from '../recording/decode.js';
+import { formatList, formatNumber, serverText, t, tOr, tn } from '../core/i18n.js';
 
 function h(tag, attributes = {}, ...children) {
     const node = document.createElement(tag);
@@ -25,11 +26,14 @@ function h(tag, attributes = {}, ...children) {
     return node;
 }
 
-const yes = (value) => (value ? 'yes' : 'no');
+const yes = (value) => (value ? t('doctor.yes') : t('doctor.no'));
+
+// A number with one decimal, in the language's way, without grouping, as the server writes it.
+const oneDecimal = (value) => formatNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false });
 
 function size(bytes) {
     if (typeof bytes !== 'number' || !Number.isFinite(bytes)) {
-        return 'unknown';
+        return t('doctor.unknown');
     }
     const units = ['bytes', 'KB', 'MB', 'GB'];
     let value = bytes;
@@ -38,66 +42,165 @@ function size(bytes) {
         value /= 1024;
         unit++;
     }
-    return unit === 0 ? `${value} bytes` : `${value.toFixed(1)} ${units[unit]}`;
+    return unit === 0 ? t('doctor.size.bytes', { count: value }) : `${oneDecimal(value)} ${units[unit]}`;
+}
+
+// The checks of the server by the words of their details. Each name is the message
+// doctor.check.<key>.name, and a detail that one of the patterns matches is the message
+// doctor.check.<key>.<variant>, with the named parts of the pattern as its values. Any other
+// detail shows as the server wrote it.
+const CHECKS = {
+    'home folder': ['home_folder', [
+        ['file', /^the home folder is a file$/],
+        ['under', /^the home folder lies under a file$/],
+        ['missing', /^the home folder is missing, the server makes it as it starts$/],
+        ['readonly', /^the home folder is not writable$/],
+        ['exists', /^(?<path>.+) exists$/],
+    ]],
+    writing: ['writing', [
+        ['ok', /^the server can write its folder$/],
+        ['fail', /^the server cannot write its folder, choose another with --home$/],
+    ]],
+    'disk space': ['disk_space', [
+        ['unknown', /^unknown$/],
+        ['low', /^(?<size>\d+\.\d) GB free, recordings may fail to save$/],
+        ['free', /^(?<size>\d+\.\d) GB free$/],
+    ]],
+    samples: ['samples', [
+        ['count', /^(?<count>\d+) sample recordings ship with the package$/],
+    ]],
+    'page files': ['page_files', [
+        ['ok', /^the files of the page are in place$/],
+        ['missing', /^the page is missing, install cuju again$/],
+    ]],
+    'server file': ['server_file', [
+        ['stale', /^a stale server\.json names a server that does not answer, the next start replaces it$/],
+        ['running', /^the server of the folder answers$/],
+        ['none', /^no server runs$/],
+    ]],
+    'video export': ['video_export', [
+        ['found', /^Chrome and ffmpeg are found$/],
+    ]],
+};
+
+// The name of a check of the server in the page's language.
+// The status line of a report. It names the checks that fail and those that warn, and says that
+// every check passes only when none does either.
+export function reportStatus(report) {
+    const server = report && report.server;
+    if (!server || server.error) {
+        return t('doctor.status.noServer');
+    }
+    const checks = Array.isArray(server.checks) ? server.checks : [];
+    const failed = checks.filter((check) => !check.ok);
+    const warned = checks.filter((check) => check.ok && check.warning);
+    if (!failed.length && !warned.length) {
+        return t('doctor.status.passing');
+    }
+    const parts = [];
+    if (failed.length) {
+        parts.push(t('doctor.status.failing', { count: failed.length, names: formatList(failed.map(checkName)) }));
+    }
+    if (warned.length) {
+        parts.push(t('doctor.status.warning', { count: warned.length, names: formatList(warned.map(checkName)) }));
+    }
+    return t('doctor.status.ready', { parts: parts.join(' ') });
+}
+
+export function checkName(check) {
+    if (check.name_id) {
+        return serverText(check, 'name');
+    }
+    const known = CHECKS[check.name];
+    return known ? tOr(`doctor.check.${known[0]}.name`, check.name) : String(check.name ?? '');
+}
+
+// The detail of a check of the server in the page's language.
+export function checkDetail(check) {
+    if (check.detail_id) {
+        return serverText(check, 'detail');
+    }
+    const detail = String(check.detail ?? '');
+    const known = CHECKS[check.name];
+    if (!known) {
+        return detail;
+    }
+    for (const [variant, pattern] of known[1]) {
+        const match = detail.match(pattern);
+        if (match) {
+            const values = { ...(match.groups || {}) };
+            if (values.size !== undefined) {
+                values.size = oneDecimal(Number(values.size));
+            }
+            if (values.count !== undefined) {
+                values.count = Number(values.count);
+            }
+            return tOr(`doctor.check.${known[0]}.${variant}`, detail, values);
+        }
+    }
+    return detail;
 }
 
 // The report as lines of text, the page's side first and then the server's.
 export function reportText(report) {
     const page = report.page || {};
-    const lines = [`cuju render diagnostic report, ${report.created || ''}`, ''];
-    const section = (title, rows) => {
-        lines.push(title);
-        for (const [key, value] of rows) {
-            lines.push(`  ${key}: ${value === null || value === undefined || value === '' ? 'unknown' : value}`);
+    const lines = [t('doctor.report.head', { created: report.created || '' }), ''];
+    // Each section's title is the message doctor.section.<key>, and each row's name the message
+    // doctor.row.<key>, unless the row names a package, a folder or a count of the server.
+    const row = (key, value) => [t(`doctor.row.${key}`), value];
+    const section = (key, rows) => {
+        lines.push(t(`doctor.section.${key}`));
+        for (const [name, value] of rows) {
+            lines.push(`  ${name}: ${value === null || value === undefined || value === '' ? t('doctor.unknown') : value}`);
         }
         lines.push('');
     };
-    section('Page', [
-        ['version', page.version], ['address', page.origin], ['page', page.page], ['drawing', page.drawing],
-        ['reduced motion', yes(page.reducedMotion)], ['theme', page.theme], ['installed', page.standalone ? 'yes, as an app' : 'no'],
-        ['service worker', page.serviceWorker],
+    section('page', [
+        row('version', page.version), row('address', page.origin), row('page', page.page), row('drawing', page.drawing),
+        row('reducedMotion', yes(page.reducedMotion)), row('theme', page.theme), row('installed', page.standalone ? t('doctor.installed.app') : t('doctor.no')),
+        row('serviceWorker', page.serviceWorker),
     ]);
     const browser = report.browser || {};
-    section('Browser', [
-        ['name', browser.name], ['platform', browser.platform], ['mobile', yes(browser.mobile)],
-        ['language', browser.language], ['screen', browser.screen], ['window', browser.window],
-        ['pixel ratio', browser.pixelRatio], ['cores', browser.cores], ['storage', browser.storage],
+    section('browser', [
+        row('name', browser.name), row('platform', browser.platform), row('mobile', yes(browser.mobile)),
+        row('language', browser.language), row('screen', browser.screen), row('window', browser.window),
+        row('pixelRatio', browser.pixelRatio), row('cores', browser.cores), row('storage', browser.storage),
     ]);
     const gl = report.webgl || {};
-    section('Graphics', [
-        ['WebGL', yes(gl.webgl1)], ['WebGL 2', yes(gl.webgl2)], ['renderer', gl.renderer],
-        ['largest texture', gl.maxTexture], ['WebGPU', report.webgpu ? report.webgpu.state : 'unknown'],
+    section('graphics', [
+        ['WebGL', yes(gl.webgl1)], ['WebGL 2', yes(gl.webgl2)], row('renderer', gl.renderer),
+        row('largestTexture', gl.maxTexture), ['WebGPU', report.webgpu ? report.webgpu.state : t('doctor.unknown')],
     ]);
     const decode = report.decode || {};
-    section('Decoding', [['worker', decode.worker], ['last recording read by', decode.last || 'none yet']]);
+    section('decoding', [row('worker', decode.worker), row('lastDecoder', decode.last || t('doctor.noneYet'))]);
     const audio = report.audio || {};
-    section('Sound', [
-        ['muted', yes(audio.muted)], ['volume', audio.volume], ['audio context', audio.context],
+    section('sound', [
+        row('muted', yes(audio.muted)), row('volume', audio.volume), row('audioContext', audio.context),
     ]);
     const server = report.server;
     if (!server || server.error) {
-        lines.push('Server', `  ${server && server.error ? server.error : 'not asked'}`, '');
+        lines.push(t('doctor.section.server'), `  ${server && server.error ? server.error : t('doctor.server.notAsked')}`, '');
         return lines.join('\n').trimEnd();
     }
     const versions = server.versions || {};
-    section('Server versions', Object.entries(versions).map(([key, value]) => [key, value === null ? 'not installed' : value]));
+    section('versions', Object.entries(versions).map(([key, value]) => [key, value === null ? t('doctor.notInstalled') : value]));
     const home = server.home || {};
-    section('Home folder', [
-        ['path', home.path], ['exists', yes(home.exists)], ['writable', yes(home.writable)], ['free space', size(home.free_bytes)],
+    section('home', [
+        row('path', home.path), row('exists', yes(home.exists)), row('writable', yes(home.writable)), row('freeSpace', size(home.free_bytes)),
     ]);
     const folders = Object.entries(server.folders || {});
     if (folders.length) {
-        section('Folders', folders.map(([name, entry]) => [name, `${entry.files} files, ${size(entry.bytes)}`]));
+        section('folders', folders.map(([name, entry]) => [name, t('doctor.folder', { count: entry.files, size: size(entry.bytes) })]));
     }
-    section('Library', Object.entries(server.library || {}).map(([key, value]) => [key.replaceAll('_', ' '), value]));
-    lines.push('Checks');
+    section('library', Object.entries(server.library || {}).map(([key, value]) => [tOr(`doctor.library.${key}`, key.replaceAll('_', ' ')), value]));
+    lines.push(t('doctor.section.checks'));
     for (const check of server.checks || []) {
-        lines.push(`  ${check.ok ? 'ok' : 'FAIL'}  ${check.name}, ${check.detail}`);
+        lines.push(`  ${!check.ok ? t('doctor.check.fail') : check.warning ? t('doctor.check.warn') : t('doctor.check.ok')}  ${checkName(check)}, ${checkDetail(check)}`);
     }
-    lines.push('', 'Recent warnings and errors');
+    lines.push('', t('doctor.section.errors'));
     const errors = server.errors || [];
     if (!errors.length) {
-        lines.push('  none');
+        lines.push(`  ${t('doctor.none')}`);
     }
     for (const entry of errors) {
         lines.push(`  ${entry.at ? `${entry.at} ` : ''}${entry.level} ${entry.message}`);
@@ -116,8 +219,8 @@ function browserFacts() {
         platform: (data && data.platform) || navigator.platform || '',
         mobile: !!(data && data.mobile),
         language: navigator.language || '',
-        screen: `${screen.width} by ${screen.height}`,
-        window: `${window.innerWidth} by ${window.innerHeight}`,
+        screen: t('doctor.by', { width: screen.width, height: screen.height }),
+        window: t('doctor.by', { width: window.innerWidth, height: window.innerHeight }),
         pixelRatio: Math.round((window.devicePixelRatio || 1) * 100) / 100,
         cores: navigator.hardwareConcurrency || null,
         storage: null,
@@ -152,7 +255,7 @@ function webglFacts() {
 
 async function webgpuFacts() {
     if (!navigator.gpu || typeof navigator.gpu.requestAdapter !== 'function') {
-        return { state: 'not offered by this browser' };
+        return { state: t('doctor.webgpu.none') };
     }
     try {
         const adapter = await Promise.race([
@@ -160,16 +263,16 @@ async function webgpuFacts() {
             new Promise((resolve) => setTimeout(() => resolve('late'), 2000)),
         ]);
         if (adapter === 'late') {
-            return { state: 'offered, the adapter did not answer in time' };
+            return { state: t('doctor.webgpu.late') };
         }
         if (!adapter) {
-            return { state: 'offered, no adapter found' };
+            return { state: t('doctor.webgpu.noAdapter') };
         }
         const info = adapter.info || {};
         const named = [info.vendor, info.architecture].filter(Boolean).join(' ');
-        return { state: `available${named ? `, ${named}` : ''}` };
+        return { state: named ? t('doctor.webgpu.named', { adapter: named }) : t('doctor.webgpu.available') };
     } catch (err) {
-        return { state: `offered, ${err.message}` };
+        return { state: t('doctor.webgpu.failed', { error: err.message }) };
     }
 }
 
@@ -177,31 +280,31 @@ async function webgpuFacts() {
 // worker shows it runs without reading a recording.
 function workerFacts() {
     if (typeof Worker !== 'function') {
-        return Promise.resolve('workers are not offered, recordings decode on the page');
+        return Promise.resolve(t('doctor.worker.none'));
     }
     return new Promise((resolve) => {
         let worker;
         const timer = setTimeout(() => {
             worker?.terminate();
-            resolve('the worker did not answer in time, recordings decode on the page');
+            resolve(t('doctor.worker.late'));
         }, 3000);
         try {
             worker = new Worker(new URL('../recording/decode-worker.js', import.meta.url), { type: 'module' });
         } catch (err) {
             clearTimeout(timer);
-            resolve(`the worker did not start, ${err.message}`);
+            resolve(t('doctor.worker.start', { error: err.message }));
             return;
         }
         worker.onmessage = (event) => {
             clearTimeout(timer);
             worker.terminate();
-            resolve(event.data && event.data.format ? 'runs' : 'answers in an unexpected way');
+            resolve(event.data && event.data.format ? t('doctor.worker.runs') : t('doctor.worker.odd'));
         };
         worker.onerror = (event) => {
             clearTimeout(timer);
             worker.terminate();
             event.preventDefault?.();
-            resolve(`the worker failed, ${(event && event.message) || 'it did not load'}`);
+            resolve(t('doctor.worker.failed', { error: (event && event.message) || t('doctor.worker.notLoaded') }));
         };
         worker.postMessage({ id: -1, bytes: new Uint8Array([1, 2, 3]) });
     });
@@ -210,7 +313,7 @@ function workerFacts() {
 async function getJson(path) {
     const res = await fetch(path, { cache: 'no-store' });
     if (!res.ok) {
-        throw new Error(`the server answered ${res.status}`);
+        throw new Error(t('doctor.error.status', { status: res.status }));
     }
     return res.json();
 }
@@ -220,17 +323,17 @@ export class DoctorSection {
         this.app = app;
         this.host = host;
         this.report = null;
-        this.makeButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.make() }, 'Make the report');
-        this.copyButton = h('button', { type: 'button', class: 'btn', disabled: true, onclick: () => this.copy() }, 'Copy');
-        this.saveButton = h('button', { type: 'button', class: 'btn', disabled: true, onclick: () => this.save() }, 'Save as a file');
+        this.makeButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.make() }, t('doctor.make'));
+        this.copyButton = h('button', { type: 'button', class: 'btn', disabled: true, onclick: () => this.copy() }, t('doctor.copy'));
+        this.saveButton = h('button', { type: 'button', class: 'btn', disabled: true, onclick: () => this.save() }, t('doctor.save'));
         this.status = h('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' });
         this.output = h('textarea', {
             id: 'doctor-text', class: 'doctor-text', readonly: true, rows: '14', spellcheck: 'false', hidden: true,
-            'aria-label': 'Diagnostic report',
+            'aria-label': t('doctor.title'),
         });
         host.replaceChildren(
-            h('h3', { id: 'help-doctor-title' }, 'Diagnostic report'),
-            h('p', {}, 'The report gathers the versions, the browser, WebGL and WebGPU, the decode worker, the sound, the home folder, the library and the recent errors of the server, to copy into an issue. It names no folder beyond the home folder of the renderer and holds no secret. The command ', h('code', {}, 'cuju render doctor'), ' prints the server side too.'),
+            h('h2', { id: 'help-doctor-title' }, t('doctor.title')),
+            h('p', {}, tn('doctor.text', { command: h('code', {}, 'cuju render doctor') })),
             h('div', { class: 'help-row' }, this.makeButton, this.copyButton, this.saveButton),
             this.status,
             this.output);
@@ -263,11 +366,11 @@ export class DoctorSection {
             version,
             origin: location.origin,
             page: app.page,
-            drawing: app.noWebGL ? '2D view, WebGL did not start' : (app.flat && app.flat.wanted ? '2D view' : '3D'),
+            drawing: app.noWebGL ? t('doctor.drawing.noWebGL') : (app.flat && app.flat.wanted ? t('doctor.drawing.flat') : '3D'),
             reducedMotion: !!app.reducedMotion,
             theme: theme ? theme.value : null,
             standalone: !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches),
-            serviceWorker: worker ? `controls the page, ${new URL(worker.scriptURL).pathname}${new URL(worker.scriptURL).search}` : 'none',
+            serviceWorker: worker ? t('doctor.serviceWorker', { path: `${new URL(worker.scriptURL).pathname}${new URL(worker.scriptURL).search}` }) : t('doctor.none'),
         };
         report.webgl = webglFacts();
         const [gpu, decoder, estimate] = await Promise.all([
@@ -278,18 +381,18 @@ export class DoctorSection {
         report.webgpu = gpu;
         report.decode = { worker: decoder, last: lastDecoder };
         if (estimate && typeof estimate.usage === 'number') {
-            report.browser.storage = `${size(estimate.usage)} of ${size(estimate.quota)}`;
+            report.browser.storage = t('doctor.storage', { used: size(estimate.usage), quota: size(estimate.quota) });
         }
         const sound = app.sound;
         report.audio = {
             muted: !!(app.settings && app.settings.muted),
             volume: app.settings ? app.settings.volume : null,
-            context: sound && sound.ctx ? sound.ctx.state : 'not started, the page starts it on Watch or Play',
+            context: sound && sound.ctx ? sound.ctx.state : t('doctor.audio.notStarted'),
         };
         try {
             report.server = await getJson('/api/help/doctor');
         } catch (err) {
-            report.server = { error: `The server did not answer, ${err.message}. Start it with cuju render.` };
+            report.server = { error: t('doctor.server.failed', { error: err.message }) };
         }
         this.report = report;
         return report;
@@ -297,20 +400,17 @@ export class DoctorSection {
 
     async make() {
         this.makeButton.disabled = true;
-        this.status.textContent = 'Making the report.';
+        this.status.textContent = t('doctor.status.making');
         try {
             const report = await this.gather();
             this.output.value = reportText(report);
             this.output.hidden = false;
             this.copyButton.disabled = false;
             this.saveButton.disabled = false;
-            const failed = report.server && Array.isArray(report.server.checks) ? report.server.checks.filter((check) => !check.ok).length : 0;
-            this.status.textContent = report.server && report.server.error
-                ? 'The report is ready, without the server, which did not answer.'
-                : `The report is ready, ${failed ? `${failed} ${failed === 1 ? 'check fails' : 'checks fail'}` : 'every check passes'}.`;
+            this.status.textContent = reportStatus(report);
             return report;
         } catch (err) {
-            this.status.textContent = `The report failed, ${err.message}`;
+            this.status.textContent = t('doctor.status.failed', { error: err.message });
             throw err;
         } finally {
             this.makeButton.disabled = false;
@@ -328,14 +428,14 @@ export class DoctorSection {
         const text = await this.text();
         try {
             await navigator.clipboard.writeText(text);
-            this.status.textContent = 'The report is copied.';
+            this.status.textContent = t('doctor.status.copied');
             return true;
         } catch {
             // Without the clipboard, the text is selected for the person to copy.
             this.output.hidden = false;
             this.output.focus();
             this.output.select();
-            this.status.textContent = 'The report is selected, Ctrl C copies it.';
+            this.status.textContent = t('doctor.status.selected');
             return false;
         }
     }
@@ -350,7 +450,7 @@ export class DoctorSection {
         link.click();
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        this.status.textContent = `The report is saved as ${name}.`;
+        this.status.textContent = t('doctor.status.saved', { name });
         return name;
     }
 

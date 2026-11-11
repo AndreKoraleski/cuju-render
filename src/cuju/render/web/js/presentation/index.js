@@ -17,13 +17,13 @@ import { BehaviourSet, checkBehaviour, emptyOutputs } from './behaviors.js';
 import { Budget, LADDER } from './budget.js';
 import { CONTACT_KINDS, Catalog, contactEstimate } from './catalog.js';
 import { Clocks } from './clocks.js';
-import { SAFETY, dispatch, dropped, handlerOf, reflexActions, reflexesFor, register } from './commands.js';
+import { SAFETY, checkOverlay, dispatch, dropped, handlerOf, reflexActions, reflexesFor, register } from './commands.js';
 import {
     CONTRACT, FEATURES, driverOf, level, modelOf, normalize, pickClip, roleOf, seed, seedBase, selects,
 } from './contract.js';
 import { evaluate as evaluateCurve } from './values.js';
 import { ModuleHost } from './host.js';
-import { checkResponse, frameMessage, helloMessage } from './protocol.js';
+import { MAXIMUM_COMMANDS, appendLog, checkResponse, frameMessage, helloMessage } from './protocol.js';
 import {
     anchorOf, applyLook, applyOutputs, boneIndex, disposeObject, matches, measure, poseLayers, rootFrame, socketMatrix,
     stopLayers, writeBones,
@@ -39,6 +39,7 @@ import { chainOf, maskLayers, reach } from './rigging.js';
 import { checkShader, extendMaterial, shaderMaterial, teamUniforms, tryCompile } from './shaders.js';
 import { TeamAudio } from './teamaudio.js';
 import { SIDES, readSides } from './assign.js';
+import { t } from '../core/i18n.js';
 
 const LINEUP_LENGTH = 9;
 const tmpMatrix = new THREE.Matrix4();
@@ -214,7 +215,8 @@ class Entity {
         this.number = roster && Number.isInteger(roster.number) ? roster.number : p.index + 1;
         this.roster = { name: roster ? roster.name || null : null, number: this.number, goalkeeper: this.goalkeeper, celebration: roster ? roster.celebration || null : null };
         const m = pkg.manifest;
-        this.driver = driverOf(m, this);
+        // GRF's figure plays no clip of a package, so it keeps GRF's own driver.
+        this.driver = entry.rig && entry.rig.grf ? 'grf' : driverOf(m, this);
         this.seeds = { entity: seed(base, this.side, this.id), number: hash(`number:${this.number}`), index: hash(`index:${this.index}`) };
         this.envelope = m.rig.bounds ? { radius: m.rig.bounds.radius, height: m.rig.bounds.height } : null;
         this.current = null;
@@ -353,7 +355,7 @@ export class Presentation {
         if (source && this.program(pkg, file, 'material')) {
             material = shaderMaterial(source, { shared: this.uniforms[pkg.side], seed: hash(`${pkg.side}:${file}`), ...options });
             if (!tryCompile(this.app.view && this.app.view.renderer, material, this.app.view && this.app.view.camera)) {
-                this.notice(`A shader of ${pkg.manifest.name || 'a team'} did not compile, it draws its standard look`);
+                this.notice(t('presentation.notice.shader', { team: pkg.manifest.name || t('presentation.notice.aTeam') }));
                 pkg.errors.push(`shader ${file} did not compile`);
                 material.dispose();
                 material = null;
@@ -420,7 +422,7 @@ export class Presentation {
             if (entity.pkg !== pkg || !entity.visible) {
                 continue;
             }
-            const entry = this.players && this.players.rigged ? this.players.rigged.byK.get(entity.k) : null;
+            const entry = this.entryOf(entity.k);
             for (const [name, l] of Object.entries(lights)) {
                 if (!selects(l.when, entity)) {
                     continue;
@@ -605,7 +607,7 @@ export class Presentation {
     async load(side, team, served, manifest, key) {
         const pkg = new TeamPackage(side, team, served, manifest, key);
         if (pkg.levels.level === 'stock') {
-            this.notice(`The presentation of ${team.name || 'a team'} needs ${pkg.levels.missing.join(', ')}, the team shows its stock look`);
+            this.notice(t('presentation.notice.stock', { team: team.name || t('presentation.notice.aTeam'), missing: pkg.levels.missing.join(', ') }));
             return null;
         }
         await pkg.load();
@@ -613,12 +615,17 @@ export class Presentation {
             console.warn(`presentation of ${team.name || team.id}:`, w);
         }
         if (pkg.levels.missing.length) {
-            this.notice(`The presentation of ${team.name || 'a team'} runs without its worker, it needs ${pkg.levels.missing.join(', ')}`);
+            this.notice(t('presentation.notice.noWorker', { team: team.name || t('presentation.notice.aTeam'), missing: pkg.levels.missing.join(', ') }));
         }
         return pkg;
     }
 
+    // A notice for people, as a text or as the id and values of a message, which a module that
+    // loads without the page's messages sends.
     notice(text) {
+        if (text && typeof text === 'object') {
+            text = t(text.id, text.values);
+        }
         if (!this.statusShown.has(text)) {
             this.statusShown.add(text);
             if (this.app.hud) {
@@ -663,10 +670,14 @@ export class Presentation {
                 pkg.budget.used = Object.fromEntries(Object.keys(pkg.budget.used).map((k) => [k, 0]));
                 pkg.programs = new Set();
                 this.startWorker(pkg);
+                // The meter reads the package once it settled, after its worker's first answer,
+                // or a second after the players were built for a package without a worker, so
+                // the page's own loading never counts against the team.
+                pkg.budget.arm(pkg.host || pkg.hostPending ? Infinity : this.clocks.cosmetic + 1);
             }
         }
-        const rigged = players.rigged;
-        for (const e of rigged ? rigged.entries : []) {
+        const entries = players.packageEntries ? players.packageEntries() : [];
+        for (const { entry: e, group } of entries) {
             const pkg = this.packages[e.team];
             if (!pkg) {
                 continue;
@@ -674,12 +685,12 @@ export class Presentation {
             const entity = new Entity(pkg, e, header, styles, this.base);
             e.presentation = entity;
             this.entities.set(entity.id, entity);
-            this.dress(pkg, entity, e, rigged.group);
+            this.dress(pkg, entity, e, group);
             this.emit({ kind: 'appearance', team: entity.side, player: entity.k, data: { player: entity.k } });
         }
         for (const pkg of this.packages) {
             if (pkg && pkg.developer) {
-                this.notice(`Developer mode, the presentation of ${pkg.manifest.name || 'a team'} runs from a local folder`);
+                this.notice(t('presentation.notice.developer', { team: pkg.manifest.name || t('presentation.notice.aTeam') }));
             }
         }
         for (const [key, g] of this.geometries) {
@@ -706,6 +717,12 @@ export class Presentation {
                 this.uniforms[side].uTeamColor2.value.setRGB(...kit.secondary.map((c) => c / 255), THREE.SRGBColorSpace);
             }
         });
+    }
+
+    // What the page draws of player k for a package, the entry of his rigged model or of GRF's
+    // figure, or null.
+    entryOf(k) {
+        return this.players && this.players.packageEntry ? this.players.packageEntry(k) : null;
     }
 
     // A player's look, the material looks that select him, his shaders and his attachments.
@@ -770,16 +787,30 @@ export class Presentation {
                 if (!mat || !mat.isMeshStandardMaterial || (mat.userData && mat.userData.cuju)) {
                     return mat;
                 }
-                const hit = custom ? looks.find(([name, look]) => matches({ match: look.match || name }, mat.name)) : null;
-                const source = hit ? this.shaderSource(pkg, hit[1].shader) : null;
+                let hit = custom ? looks.find(([name, look]) => matches({ match: look.match || name }, mat.name)) : null;
+                let source = hit ? this.shaderSource(pkg, hit[1].shader) : null;
                 if (hit && source && !this.program(pkg, hit[1].shader, 'chunks')) {
                     return mat;
                 }
                 const textures = hit ? Object.fromEntries(Object.entries(hit[1].textures || {}).map(([k, f]) => [k, pkg.textures && pkg.textures.get(f)]).filter(([, t]) => t)) : null;
-                const copy = extendMaterial(mat, {
+                const options = () => ({
                     shared: this.uniforms[pkg.side], seed: entity.seeds.entity, source,
                     spec: hit ? { ...hit[1], seeds: entity.seeds } : null, textures, key: hit ? `${pkg.side}:${hit[1].shader}` : `${pkg.side}:local`,
                 });
+                // A chunks shader that does not compile leaves the material standard, with only
+                // the local lights when the package has lights, and the page names it once.
+                if (hit && source && !this.chunksCompile(pkg, hit[1].shader, mat, options())) {
+                    hit = null;
+                    source = null;
+                    if (!lights) {
+                        return mat;
+                    }
+                }
+                const copy = extendMaterial(mat, options());
+                // GRF's figure keeps its own edit of the program, the head it hides.
+                if (instance.repatch) {
+                    instance.repatch(mat, copy);
+                }
                 originals.push({ obj, original: mat, copy });
                 if (instance.materials) {
                     instance.materials.push(copy);
@@ -791,6 +822,27 @@ export class Presentation {
         });
     }
 
+    // Whether a chunks shader of a package compiles, tried once for each file on a copy of the
+    // first material it extends. A shader that fails is named in a notice and in the package's
+    // errors, and the materials it would extend stay standard.
+    chunksCompile(pkg, file, material, options) {
+        pkg.chunksCompiled = pkg.chunksCompiled || new Map();
+        if (!pkg.chunksCompiled.has(file)) {
+            const copy = extendMaterial(material, options);
+            const view = this.app.view;
+            const logs = [];
+            const ok = tryCompile(view && view.renderer, copy, view && view.camera, null, logs);
+            copy.dispose();
+            if (!ok) {
+                this.notice(t('presentation.notice.shader', { team: pkg.manifest.name || t('presentation.notice.aTeam') }));
+                pkg.errors.push(`shader ${file} did not compile`);
+                console.warn(`presentation of ${pkg.manifest.name || pkg.teamId}: shader ${file} did not compile`, ...logs);
+            }
+            pkg.chunksCompiled.set(file, ok);
+        }
+        return pkg.chunksCompiled.get(file);
+    }
+
     // Hands the standard materials back to every player of a package, the ladder's rung
     // standardMaterials.
     unshade(pkg) {
@@ -798,9 +850,23 @@ export class Presentation {
             if (entity.pkg !== pkg) {
                 continue;
             }
-            const entry = this.players && this.players.rigged ? this.players.rigged.byK.get(entity.k) : null;
+            const entry = this.entryOf(entity.k);
             for (const o of (entry && entry.instance.cujuOriginals) || []) {
                 o.obj.material = Array.isArray(o.obj.material) ? o.obj.material.map((m) => (m === o.copy ? o.original : m)) : (o.obj.material === o.copy ? o.original : o.obj.material);
+            }
+        }
+    }
+
+    // Gives the package's own materials back to every player of a package, as the ladder climbs
+    // back past standardMaterials.
+    reshade(pkg) {
+        for (const entity of this.entities.values()) {
+            if (entity.pkg !== pkg) {
+                continue;
+            }
+            const entry = this.entryOf(entity.k);
+            for (const o of (entry && entry.instance.cujuOriginals) || []) {
+                o.obj.material = Array.isArray(o.obj.material) ? o.obj.material.map((m) => (m === o.original ? o.copy : m)) : (o.obj.material === o.original ? o.copy : o.obj.material);
             }
         }
     }
@@ -865,9 +931,25 @@ export class Presentation {
     // A worker that failed or restarts hands what it drove back to the manifest's own look,
     // faded so nothing snaps.
     workerStatus(pkg, status, detail) {
+        // A worker that failed for good keeps its status and reason, a later disposal included.
+        if (pkg.status === 'failed') {
+            return;
+        }
         pkg.status = status;
         pkg.detail = detail;
-        if (status === 'restarting' || status === 'failed') {
+        if (status === 'failed') {
+            // The team draws its manifest alone from now on, and the viewer learns why.
+            pkg.levels.level = pkg.levels.level === 'stock' ? 'stock' : 'manifest';
+            this.notice(t('presentation.notice.workerStopped', { team: pkg.manifest.name || t('presentation.notice.aTeam'), detail }));
+        }
+        if (status === 'stopped') {
+            this.notice(t('presentation.notice.workerResting', { team: pkg.manifest.name || t('presentation.notice.aTeam') }));
+        }
+        if (status === 'failed' || status === 'stopped') {
+            // The meter goes on reading the package without its worker.
+            pkg.budget.armAt = Math.min(pkg.budget.armAt, this.clocks.cosmetic + 1);
+        }
+        if (status === 'restarting' || status === 'failed' || status === 'stopped') {
             console.warn(`presentation worker of ${pkg.manifest.name || pkg.teamId} ${status}, ${detail}`);
             for (const entity of this.entities.values()) {
                 if (entity.pkg === pkg) {
@@ -1120,6 +1202,9 @@ export class Presentation {
         if (!tl || !this.players || !this.header || (!this.packages[0] && !this.packages[1])) {
             return;
         }
+        const drawn = performance.now();
+        this.drawingMs = this.lastDrawing == null ? 0 : drawn - this.lastDrawing;
+        this.lastDrawing = drawn;
         const director = app.director;
         const ceremony = !!(director && director.running) || !!(app.postMatch && app.postMatch.running);
         this.clocks.advance({ dt, t: tl.t, sps: tl.sps || 10, ceremony, held: !!app.userPaused && ceremony, audio: app.sound && app.sound.ctx ? app.sound.ctx.currentTime : null });
@@ -1221,7 +1306,7 @@ export class Presentation {
             u.uSceneColor.value = pkg && high && this.hasFeature(pkg, 'shader.sceneColor') && this.app.view.frame ? this.app.view.frame : u.uLayer.value;
         }
         for (const entity of this.entities.values()) {
-            const entry = this.players && this.players.rigged ? this.players.rigged.byK.get(entity.k) : null;
+            const entry = this.entryOf(entity.k);
             for (const o of (entry && entry.instance.cujuOriginals) || []) {
                 o.copy.userData.cuju.instance.uSpeed.value = entity.inputs.speed || 0;
             }
@@ -1359,8 +1444,10 @@ export class Presentation {
         if (!entity || !this.entities.has(entity.id) || entity.pkg.budget.past('stock')) {
             return false;
         }
-        // What posing costs counts against the team's main thread budget.
+        // What posing costs counts against the team's main thread budget, apart from the page's
+        // own pose of the figure, which it draws without a package too.
         const started = performance.now();
+        let own = 0;
         const rig = e.rig;
         const instance = e.instance;
         const m = entity.pkg.manifest;
@@ -1398,12 +1485,14 @@ export class Presentation {
         } else {
             stopLayers(instance);
             const clip = overlay ? rig.clip(overlay.clip) : null;
+            const before = performance.now();
             if (clip) {
                 const time = entity.outputs.clipTime.has(clip.name) ? entity.outputs.clipTime.get(clip.name) : overlay.time;
                 rig.poseClip(instance, clip, time % (clip.duration || 1), overlay.weight, nodes, base, false);
             } else {
                 rig.pose(instance, nodes, base, false);
             }
+            own += performance.now() - before;
             if (entity.driver === 'grf+layers' && (m.rig.layers || []).length && !overlay) {
                 maskLayers(rig, instance, m.rig.layers.map((l) => {
                     const entry = l.clip ? { clip: l.clip } : pickClip(m, l.role, entity.seeds.entity);
@@ -1415,9 +1504,15 @@ export class Presentation {
         this.reachFor(entity, rig, instance);
         const pivot = m.rig.sockets.root && !m.rig.sockets.root.node ? tmpVector.fromArray(m.rig.sockets.root.offset || [0, 0, 0]) : tmpVector.set(0, 0, 0);
         applyOutputs(rig, instance, frame, entity.outputs, pivot, m.rig.sockets.gaze || null, entity.cosmetic);
-        writeBones(rig, instance, e.hideHead);
+        const before = performance.now();
+        if (rig.write) {
+            rig.write(instance);
+        } else {
+            writeBones(rig, instance, e.hideHead);
+        }
+        own += performance.now() - before;
         entity.posed = true;
-        entity.pkg.spent = (entity.pkg.spent || 0) + performance.now() - started;
+        entity.pkg.spent = (entity.pkg.spent || 0) + performance.now() - started - own;
         return true;
     }
 
@@ -1505,7 +1600,7 @@ export class Presentation {
         });
         // Material parameters of the core, a numeric property of the entity's own materials.
         for (const p of entity.outputs.materials) {
-            const entry = this.players && this.players.rigged ? this.players.rigged.byK.get(entity.k) : null;
+            const entry = this.entryOf(entity.k);
             if (p.attachment) {
                 const a = entity.attachments.find((x) => x.name === p.attachment);
                 if (a) {
@@ -1560,7 +1655,7 @@ export class Presentation {
         const step = this.clocks.cosmeticStep;
         for (const entity of this.entities.values()) {
             const started = performance.now();
-            const entry = this.players.rigged ? this.players.rigged.byK.get(entity.k) : null;
+            const entry = this.entryOf(entity.k);
             const visible = !!(entry && entry.instance.root.visible && entity.posed);
             entity.visible = visible;
             if (visible) {
@@ -1599,31 +1694,47 @@ export class Presentation {
                 continue;
             }
             pkg.lastSpent = pkg.spent || 0;
-            const rung = this.settings.metering ? pkg.budget.meter(pkg.lastSpent, now) : null;
+            const rung = this.settings.metering ? pkg.budget.meter(pkg.lastSpent, now, this.drawingMs || 0) : null;
             pkg.spent = 0;
-            if (rung) {
+            if (rung && pkg.budget.stepped === 'up') {
+                // A team that ran well under its budget for a while climbs back one rung.
+                console.info(`presentation of ${pkg.manifest.name || pkg.teamId} steps up to ${rung}`);
+                if (!pkg.budget.past('standardMaterials')) {
+                    this.reshade(pkg);
+                }
+                if (!pkg.budget.past('noWorker') && !pkg.host && pkg.status === 'stopped') {
+                    this.startWorker(pkg);
+                }
+            } else if (rung) {
                 console.warn(`presentation of ${pkg.manifest.name || pkg.teamId} steps down to ${rung}`);
                 this.effects.degrade(pkg);
                 if (pkg.budget.past('standardMaterials')) {
                     this.unshade(pkg);
                 }
-                if (pkg.budget.past('noWorker') && pkg.host) {
+                // The ladder rests the worker, which starts again when the team climbs back.
+                if (pkg.budget.past('noWorker') && pkg.host && pkg.host.status !== 'failed') {
                     pkg.host.dispose();
                     pkg.host = null;
-                    this.workerStatus(pkg, 'failed', 'the team is past its time budget');
+                    this.workerStatus(pkg, 'stopped', 'the team is past its time budget');
                 }
             }
             if (pkg.host && pkg.host.wants()) {
+                const sent = performance.now();
                 pkg.host.send(this.frame(pkg));
+                pkg.spent += performance.now() - sent;
             }
         }
-        const started = performance.now();
         this.effects.update(this.clocks.cosmeticStep);
+        const started = performance.now();
         this.placeGeometries();
-        const spent = performance.now() - started;
+        const placed = performance.now() - started;
+        // Each team's effects count against its own budget, and the geometries of the workers
+        // against the teams that hold them.
+        const holders = new Set([...this.geometries.values()].map((g) => g.pkg));
         for (const pkg of this.packages) {
             if (pkg) {
-                pkg.spent = (pkg.spent || 0) + spent / 2;
+                const team = this.effects.teams[pkg.side];
+                pkg.spent = (pkg.spent || 0) + (team ? team.spent || 0 : 0) + (holders.has(pkg) ? placed / holders.size : 0);
             }
         }
     }
@@ -1730,8 +1841,21 @@ export class Presentation {
         return message;
     }
 
-    // A reply of a worker, checked, then applied when it answers this epoch.
+    // A reply of a worker, checked, then applied when it answers this epoch. The time it takes
+    // counts against the team's budget, and the first answer arms the team's meter.
     respond(pkg, message) {
+        const started = performance.now();
+        try {
+            this.apply(pkg, message);
+        } finally {
+            pkg.spent = (pkg.spent || 0) + performance.now() - started;
+            if (pkg.budget.armAt === Infinity) {
+                pkg.budget.arm(this.clocks.cosmetic + 0.5);
+            }
+        }
+    }
+
+    apply(pkg, message) {
         const own = new Set([...this.entities.values()].filter((e) => e.pkg === pkg).map((e) => e.id));
         const checked = checkResponse(message, {
             instanceId: pkg.instanceId, epoch: this.epoch, own, files: pkg.files,
@@ -1744,7 +1868,13 @@ export class Presentation {
         const r = checked.response;
         this.drop.rejected += r.rejected;
         pkg.lastResponse = { frameId: r.sourceFrameId, ms: r.ms, roundTrip: message.roundTrip || 0 };
-        pkg.log = r.log;
+        // The log keeps the newest lines across replies, and each line shows in the console.
+        if (r.log.length) {
+            pkg.log = appendLog(pkg.log, r.log);
+            for (const line of r.log) {
+                console.info(`presentation worker of ${pkg.manifest.name || pkg.teamId}: ${line}`);
+            }
+        }
         const mine = (id) => (id == null ? [...this.entities.values()].filter((e) => e.pkg === pkg) : [this.entities.get(id)].filter((e) => e && e.pkg === pkg));
         for (const b of r.behaviours) {
             for (const entity of mine(b.entity)) {
@@ -1779,8 +1909,10 @@ export class Presentation {
         for (const c of r.audio) {
             dispatch('audio', c, context);
         }
+        // The overlays the check kept, in order, each beside the raw command it came from.
+        const raws = Array.isArray(message.overlays) ? message.overlays.slice(0, MAXIMUM_COMMANDS).filter((o) => checkOverlay(o)) : [];
         r.overlays.forEach((c, i) => {
-            const raw = Array.isArray(message.overlays) ? message.overlays[i] : null;
+            const raw = raws[i] || null;
             const bitmap = raw && typeof ImageBitmap !== 'undefined' && raw.bitmap instanceof ImageBitmap ? raw.bitmap : null;
             dispatch('overlays', c, { ...context, bitmap });
         });

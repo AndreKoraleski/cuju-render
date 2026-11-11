@@ -8,22 +8,11 @@
 
 import * as THREE from 'three';
 import { FULL_HALF_H, FULL_HALF_W } from './pitch.js';
+import { t } from '../core/i18n.js';
 
 export const ARENAS = ['stadium', 'beach', 'rooftop', 'space', 'neon'];
-export const ARENA_LABELS = {
-    stadium: 'Classic stadium',
-    beach: 'Beach',
-    rooftop: 'City rooftop',
-    space: 'Space station',
-    neon: 'Neon arcade',
-};
-export const ARENA_NOTES = {
-    stadium: 'Two tiers of fans under a roof, floodlights on four towers.',
-    beach: 'Sand, palms and the sea behind the far touch line, fans under umbrellas.',
-    rooftop: 'A pitch on top of a tower, small stands of fans and the city lights all around.',
-    space: 'A deck in orbit with galleries of fans, the Earth turning below.',
-    neon: 'A glowing grid to the horizon, a crowd of light, neon pylons and a striped sun, best at night.',
-};
+export const ARENA_LABELS = Object.fromEntries(ARENAS.map((name) => [name, t(`arenas.${name}`)]));
+export const ARENA_NOTES = Object.fromEntries(ARENAS.map((name) => [name, t(`arenas.${name}.note`)]));
 // The sound bed of each arena, for app.sound.setAmbience.
 export const ARENA_AMBIENCE = { beach: 'waves', rooftop: 'city', space: 'hum', neon: 'hum' };
 

@@ -6,9 +6,11 @@
 // in 3D. The presentations that need the 3D view, replays, celebrations, lineups, restart
 // transitions and the show after the match, are skipped while it draws, and the goal graphic of
 // the scoreboard stays. A browser without WebGL gets a view without a renderer and the 2D view
-// alone, and a page whose 3D picture runs very slowly is offered the 2D view once.
+// alone, and a page whose 3D picture runs very slowly is offered the 2D view once, except in a
+// clean feed or a video export.
 
 import * as THREE from 'three';
+import { t } from '../core/i18n.js';
 import { drawPitch, drawScene, pitchTransform, playerNumber, sceneFromFrames, teamPaint } from './pitch2d.js';
 
 // The settings of presentations that need the 3D view, read as off while the 2D view draws.
@@ -17,6 +19,20 @@ export const NEEDS_3D = ['replays', 'celebrations', 'lineups', 'transitions', 'd
 // of playback.
 export const SLOW_FPS = 12;
 const SLOW_WINDOW = 5;
+
+// Whether a page of the address search may offer the 2D view. A clean feed and a video export
+// draw on a clock or a frame rate of their own, so their pace says nothing of the computer, and
+// their picture never shows the offer.
+export function offersView2d(search) {
+    const params = new URLSearchParams(search);
+    return !params.has('capture') && !params.has('feed');
+}
+
+// The text of the offer, for a measured rate of fps frames a second.
+export function slowText(fps) {
+    const rate = Math.max(1, Math.round(fps));
+    return t('flat.suggest', { count: rate });
+}
 
 function load(key, fallback) {
     try {
@@ -114,6 +130,7 @@ export class FlatMode {
         this.seconds = 0;
         this.lastNow = 0;
         this.suggested = false;
+        this.offers = offersView2d(location.search) && !window.cujuFeed;
         this.prompt = this.buildPrompt();
         this.box = document.getElementById('view-2d');
         if (this.box) {
@@ -123,7 +140,7 @@ export class FlatMode {
         }
         this.sync();
         if (forced) {
-            app.hud.toast('This browser cannot draw 3D, so Watch shows the 2D view.', 'info', 6000);
+            app.hud.toast(t('flat.forced'), 'info', 6000);
         }
     }
 
@@ -163,7 +180,7 @@ export class FlatMode {
         this.sync();
         this.app.cameras.jump();
         if (!quiet) {
-            this.app.hud.toast(this.wanted ? 'The 2D view. Replays and shows wait for the 3D view.' : 'The 3D view.', 'info', 2500);
+            this.app.hud.toast(this.wanted ? t('flat.on') : t('flat.off'), 'info', 2500);
         }
     }
 
@@ -203,15 +220,15 @@ export class FlatMode {
         }
         if (!this.told.has(kind)) {
             this.told.add(kind);
-            this.app.hud.toast('Replays need the 3D view, which the View menu turns back on.', 'info', 3500);
+            this.app.hud.toast(t('flat.blocked'), 'info', 3500);
         }
         return true;
     }
 
     // The entry of the View menu, a check box, disabled without WebGL.
     menuItems(menuItem) {
-        return [menuItem('2D view', {
-            hint: this.forced ? 'This browser draws no 3D, so the 2D view is the only one' : 'A flat drawing from above, for slow or older computers',
+        return [menuItem(t('flat.menu'), {
+            hint: this.forced ? t('flat.menu.hint_forced') : t('flat.menu.hint'),
             checked: this.wanted,
             check: true,
             disabled: !!this.forced,
@@ -227,7 +244,7 @@ export class FlatMode {
         const dt = this.lastNow ? (now - this.lastNow) / 1000 : 0;
         this.lastNow = now;
         if (page !== 'watch' || !this.wanted) {
-            if (page === 'watch') {
+            if (page === 'watch' && this.offers) {
                 this.measure(dt);
             }
             return false;
@@ -249,7 +266,7 @@ export class FlatMode {
         const ctx = this.ctx;
         ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
         const room = Math.min(96, h * 0.16);
-        const t = pitchTransform(w, h, { top: room, bottom: room, side: 16 });
+        const transform = pitchTransform(w, h, { top: room, bottom: room, side: 16 });
         // The pitch is drawn once for each size and copied on every frame.
         if (!this.pitch) {
             this.pitch = document.createElement('canvas');
@@ -257,7 +274,7 @@ export class FlatMode {
             this.pitch.height = this.canvas.height;
             const p = this.pitch.getContext('2d');
             p.setTransform(ratio, 0, 0, ratio, 0, 0);
-            drawPitch(p, t);
+            drawPitch(p, transform);
         }
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.drawImage(this.pitch, 0, 0);
@@ -278,7 +295,7 @@ export class FlatMode {
             this.numbers = source.header.players.map((p) => playerNumber(app.styles, p));
         }
         const scene = sceneFromFrames(source.header, s.a, s.b, s.w);
-        drawScene(ctx, t, scene, this.paint, { numberOf: (p) => this.numbers[p.slot] });
+        drawScene(ctx, transform, scene, this.paint, { numberOf: (p) => this.numbers[p.slot] });
     }
 
     // The frame rate of the 3D picture while a match plays, in windows of SLOW_WINDOW seconds. A
@@ -304,12 +321,11 @@ export class FlatMode {
     }
 
     suggest(fps) {
-        if (this.suggested || this.wanted || load('view2dDeclined', false)) {
+        if (!this.offers || this.suggested || this.wanted || load('view2dDeclined', false)) {
             return;
         }
         this.suggested = true;
-        this.prompt.querySelector('.flat-suggest-text').textContent =
-            `The 3D picture draws ${Math.max(1, Math.round(fps))} frames a second here. The 2D view plays the same match from above and needs much less.`;
+        this.prompt.querySelector('.flat-suggest-text').textContent = slowText(fps);
         this.prompt.hidden = false;
     }
 
@@ -318,7 +334,7 @@ export class FlatMode {
         card.id = 'flat-suggest';
         card.className = 'flat-suggest';
         card.setAttribute('role', 'region');
-        card.setAttribute('aria-label', 'Offer of the 2D view');
+        card.setAttribute('aria-label', t('flat.suggest.label'));
         card.setAttribute('aria-live', 'polite');
         card.dataset.prompt = '';
         card.hidden = true;
@@ -327,7 +343,7 @@ export class FlatMode {
         const yes = document.createElement('button');
         yes.type = 'button';
         yes.className = 'btn small';
-        yes.textContent = 'Use the 2D view';
+        yes.textContent = t('flat.suggest.yes');
         yes.addEventListener('click', () => {
             card.hidden = true;
             this.set(true);
@@ -335,7 +351,7 @@ export class FlatMode {
         const no = document.createElement('button');
         no.type = 'button';
         no.className = 'btn small';
-        no.textContent = 'Keep 3D';
+        no.textContent = t('flat.suggest.no');
         no.addEventListener('click', () => {
             card.hidden = true;
             save('view2dDeclined', true);

@@ -7,6 +7,7 @@
 // under the roof and out of the stands.
 
 import * as THREE from 'three';
+import { t } from '../core/i18n.js';
 import { FULL_HALF_H, FULL_HALF_W, HALF_W } from './pitch.js';
 import { NODE_FLOATS, PLAYER_FLOATS } from '../recording/format.js';
 import * as stadium from './stadium.js';
@@ -14,19 +15,19 @@ import { stillCut } from '../core/comfort.js';
 import { aspectFov, leadScale, narrowShare, trackRate } from './framing.js';
 
 export const CAMERA_MODES = [
-    { id: 'broadcast', label: 'Broadcast', key: 'V' },
-    { id: 'tactical', label: 'Tactical', key: 'V' },
-    { id: 'goal', label: 'Behind the goal', key: 'V' },
-    { id: 'player', label: 'Follow player', key: 'V' },
-    { id: 'free', label: 'Free camera', key: 'V' },
-    { id: 'ball', label: 'Follow the ball', key: 'B' },
-    { id: 'owner', label: 'Follow the player on the ball', key: 'P' },
+    { id: 'broadcast', label: t('cameras.mode.broadcast'), key: 'V' },
+    { id: 'tactical', label: t('cameras.mode.tactical'), key: 'V' },
+    { id: 'goal', label: t('cameras.mode.goal'), key: 'V' },
+    { id: 'player', label: t('cameras.mode.player'), key: 'V' },
+    { id: 'free', label: t('cameras.mode.free'), key: 'V' },
+    { id: 'ball', label: t('cameras.mode.ball'), key: 'B' },
+    { id: 'owner', label: t('cameras.mode.owner'), key: 'P' },
 ];
 
 // Modes used by replays, first person and the podium, not offered in the camera list.
 export const EXTRA_MODES = ['fpp', 'lowside', 'orbit', 'podium', 'scripted'];
 // Views of one player, cycled by pressing that player's key again.
-export const PLAYER_VIEWS = ['over the shoulder', 'first person', 'side', 'face'];
+export const PLAYER_VIEWS = [t('cameras.view.shoulder'), t('cameras.view.firstPerson'), t('cameras.view.side'), t('cameras.view.face')];
 
 const FOLLOW = new Set(['ball', 'owner']);
 // Modes whose shot lives in the shared springs, which carry on from one such mode to the next.

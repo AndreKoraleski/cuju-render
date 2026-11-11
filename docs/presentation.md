@@ -13,8 +13,9 @@ the same with a package, without one, watched or unwatched. A package changes wh
 draws and plays, never the simulation, its observations, rewards, actions, recordings or seeds.
 
 This page is the reference of the presentation contract, version 1.1, written so that a team
-author can build a package from it. A package of version 1.0 plays as it is. The test package in
-`tests/support/team` is a small working example of every part described here.
+author can build a package from it. A package of version 1.0 plays as it is. The template that
+`cuju render pack new` writes is the small example to start from, and the test package in
+`tests/support/team` is the full example, with every part described here.
 [Rendering](rendering.md) describes the renderer itself.
 
 ## Principle
@@ -42,6 +43,83 @@ events to actions that the renderer runs at once. Behaviours and tracks that the
 evaluates on every drawing give continuous motion. An optional worker holds arbitrary logic and
 answers each frame of the match with commands.
 
+## Making a package
+
+`cuju render pack new FOLDER` writes a small working team into an empty folder, with an agent, a
+team file, a manifest, a worker, a shader, a ring to attach and a short sound, and prints the
+commands that come next. `--name` gives the team and its package a name of their own. The team
+draws GRF's own figure, which carries the package's parts, so its players wear the spinning ring
+over their heads, glow with each event of the team, bob gently and spark on every touch.
+
+```
+cuju render pack new my-team --name Lanterns
+cuju render pack check my-team
+cuju render pack preview my-team
+cuju render team add my-team
+```
+
+`cuju render pack check PATH` reads a team folder, its `cuju-team` folder, its `presentation`
+folder, the manifest `presentation.json` itself or an exported zip as the server and the page read
+it. It runs every check of an import and of serving, the paths, kinds and sizes of the files, the
+limits of a package and the manifest's own check, and adds what the page meets as it draws, the
+static rules of the shaders of the section Shaders, the budgets by static count, the references
+to nodes, clips, sockets and files, the contact markers, the loudness of every WAV sample and the
+team's own `model.glb` by the rule of an import. It prints a readable report, or JSON with
+`--json` for agents, and exits with 1 when anything is an error.
+
+An error is what makes the server leave a part out or refuse the package, or what the page can
+never run, a required feature this renderer lacks, a team model that import sets aside or a module
+that does not parse. A warning is what the page holds back or degrades as it draws, and the rest
+is information. Messages count reflexes, actions, behaviours and layers from 1, and a behaviour
+with an `id` goes by its id.
+
+The check also names the figures the team draws. Each player draws a model of the package, the
+team's own `model.glb`, a shipped character or GRF's own figure, as the section GRF's figure
+describes, and the information says how many players draw GRF's figure. On GRF's figure a node
+of a socket or a behaviour that the figure lacks is a warning, which lists GRF's nodes, and so is
+a clip role, a layer or a driver other than `grf`, since GRF's figure shows them on a model of
+the package or the team's own model alone.
+
+The check reads shaders by their static rules, and one rule of syntax catches an operator with
+nothing after it, such as `return e + ;`. The page alone compiles shaders, before it draws, and a
+shader of either mode that fails draws the standard material and the page names it in a notice.
+The report's information counts the shaders it read and says it compiled none.
+The check parses the worker and the worklet with Node.js when Node.js is installed, and says so
+in its information when it is not, in which case the page is the first to read their syntax and
+names a worker that does not load in a notice. A WAV sample shorter than one block of 400 ms
+reads its integrated loudness as its mean over its own length, so the report shows it above the
+momentary loudness, which spreads the sample over 400 ms, and the check says so.
+
+`cuju render pack preview PATH` registers the package as a team under the name of its manifest, sets
+it on a side, `--side left` by default, and opens the shipped five a side sample with the preview
+panel. The package draws on that side alone, so a preview on the right after one on the left moves
+it there. A second preview of the same folder or zip updates that team in place and keeps its
+identifier and its kit. A team whose `team.json` names no kit takes the next kit of the renderer's
+turn, as a team added on the Teams page does, so two such teams differ, and a match between teams of
+alike shirts dresses the right team in its away kit. The sample's players draw the models of the
+package's `models` and GRF's figure otherwise, so a package made for the team's own model shows on
+GRF's figure in the preview and on that model in a match of the team. A server of the home that
+already runs serves the page, and otherwise the command serves it until interrupted. `--no-open`
+opens no browser and prints the address, and `--json` prints the address, the team's identifier, its
+name and the side as one line of JSON for agents. The browser opens only on a machine with a
+display.
+
+The preview panel's buttons send the team's own events, and its meters show the team's budgets, the
+flash governor, the loudness of the master and of the team's buses, and the newest lines of the
+worker's log, in the page's language with its own decimal sign. The panel opens with `preview=left`
+or `preview=right` in the page's address on that side, or with `preview=1` on the side whose package
+loads. When the page offers its 2D view in the same corner, the panel sits below the offer. An agent
+reads the same figures from `cuju.presentation.status()`, which also shows the level each package
+runs at, its worker's state and sandbox, its budgets, the entities with their drivers, bounds and
+behaviours, and the commands that wait for later renderer work. Setting
+`cuju.presentation.settings.metering` to false holds every team at its rung of the ladder, which
+helps when a slow machine or a headless browser draws an author's package.
+
+The test package in `tests/support/team` is the full example, a manifest and a worker that use
+every level of the contract, and `tests/support/package.py` builds its binary files and packs the
+team as a zip. Import the zip on the Teams page, play a match of the team, and the browser
+console lists any part of the manifest the server left out and why.
+
 ## Layout of a package
 
 A package is the folder `presentation` inside the team's `cuju-team` folder.
@@ -60,9 +138,9 @@ my-team/
             audio/strike.wav
 ```
 
-The manifest is `presentation/presentation.json`. Every other file sits in the folder or in
-subfolders of it, up to four levels deep, under lowercase names of letters, digits, dots, dashes
-and underscores. The folder holds at most 256 files and 80 MB.
+The manifest is `presentation/presentation.json`. Every other file sits in the folder or in at
+most three levels of subfolders of it, under lowercase names of letters, digits, dots, dashes and
+underscores. The folder holds at most 256 files and 80 MB.
 
 | Kind | Extensions | Largest file | Check on import |
 |---|---|---|---|
@@ -78,6 +156,22 @@ The server checks every file when a team is imported, deletes what fails, and ch
 again when it serves or exports them, so a file changed on disk after the import stays out. A
 team's own `model.glb`, roster, kit, images and sounds keep their roles from `team.json`, and a
 package adds to them.
+
+The server reads each module as JavaScript does, past its comments, strings, templates and
+regular expressions, and refuses one whose code holds the keyword `import`, as a static import, a
+dynamic `import()` or `import.meta`, or an `export` with `from`. A slash right after a closing
+brace reads as a division or as a regular expression depending on what the brace closes, so a
+module writes that expression in parentheses. The server sends the sound worklet as JavaScript,
+since the page loads it by its address, and every other module as plain text, which the page
+reads and hands to the sandbox of its worker.
+
+A team's own `model.glb` is a skinned binary glTF file of at most 30 MB. Its joints, the bones
+that stand for GRF's nodes, come from `model.joints` in `team.json`, as the team editor saves
+them, with a bone for `body` at least. A model without `model.joints` takes the joints the team
+editor guesses from its bone names, such as `Hips` or `mixamorig:Hips` for `body`, and draws as
+the team's model unless `team.json` names another in its style. A model whose joints give no
+bone for `body`, or name bones the model lacks, is set aside on import, and
+`cuju render pack check` reports it as an error.
 
 ## The manifest
 
@@ -121,8 +215,9 @@ its stock look on this renderer.
 `requires` and `prefers` list features by name. A required feature the renderer lacks drops the
 package to the highest level it supports. A missing feature that only a worker uses, such as
 `drivers.worker` or `overlay.offscreen`, drops the worker and keeps the manifest. Any other drops
-the package to the stock look, and the page names the feature in a short notice. A preferred
-feature the renderer lacks is reported to the worker in its Hello, so it can choose another way.
+the package to the stock look, the page names the feature in a short notice, and
+`cuju render pack check` reports it as an error. A preferred feature the renderer lacks is
+reported to the worker in its Hello, so it can choose another way.
 
 This renderer implements these features.
 
@@ -193,6 +288,28 @@ skinned binary glTF file, and its animations become the clips of its players.
 
 A selector `when` picks players by `role`, `goalkeeper` or `outfield`, by shirt `number` and by
 roster `index`, each a value or a list. Every key it gives must match.
+
+### GRF's figure
+
+A player whom no model of the package picks, and whose team draws GRF's own figure, wears the
+package on GRF's figure. Its sockets, attachments, behaviours, material looks, shaders and lights
+apply there as on a model, and a socket or a behaviour may name GRF's nodes `player`, `body`,
+`middle`, `neck`, `left_shoulder`, `left_elbow`, `right_shoulder`, `right_elbow`, `left_thigh`,
+`left_knee`, `left_ankle`, `right_thigh`, `right_knee` and `right_ankle`. A node's frame at rest
+has y up and z toward where the player faces, and a node the figure lacks gives the root of the
+figure. A chain of `ik` may join GRF's nodes too. GRF's figure plays no clip of a package, so it
+keeps the driver `grf`, and the package's clip roles, its layers and the drivers `team`, `worker`
+and `grf+layers` show on a model of the package or the team's own model. GRF's kit, skin, hair
+and shirt numbers stay, and a material look matches GRF's materials `kit`, `skin`, `shoe` and
+`sole` by name.
+
+| Part | Model of the package or the team | GRF's figure |
+|---|---|---|
+| Sockets, attachments, lights | yes | yes, on GRF's nodes |
+| Behaviours, material looks, shaders | yes | yes |
+| Effects, sound, reflexes, worker, moments | yes | yes |
+| Reach of `ik` | yes | yes, on GRF's nodes |
+| Clip roles, layers, drivers `team`, `worker` and `grf+layers` | yes | no, GRF's own motion |
 
 ### Clips
 
@@ -315,10 +432,10 @@ draws in, with the feature `overlay.offscreen`, among `badge`, `lowerThird`, `st
 ### Effects, audio and reflexes
 
 `effects` names effects by a `type`, each described in the section Effects. `audio` holds `cues`,
-each a file or a list of files that play in turn by seed, `music`, each a list of `stems` with a
-`bpm`, its `beats` in a bar and a `gain`, a `worklet` module and its `processors`, each a
-registered `processor` name of the module, a `bus`, `parameters` and `options`. The section Sound
-describes how they play.
+each a file or a list of files that play in turn by seed, `music`, each a list of `stems`, files
+of sound, with a `bpm`, its `beats` in a bar and a `gain`, a `worklet` module and its
+`processors`, each a registered `processor` name of the module, a `bus`, `parameters` and
+`options`. The section Sound describes how they play.
 
 `reflexes` bind events to actions the renderer runs at once, with no worker.
 
@@ -340,7 +457,7 @@ is one of these.
 | `clip` | a clip role played on the event's player, or on the whole team with `"on": "team"` |
 | `behaviour` | a behaviour set on the event's player or the team |
 | `claim` | `ball`, `goal`, `sky`, `floodlights` or `fans` |
-| `music` | music of the audio, its `stems` and a `fade`, or `"stop": true` |
+| `music` | music of the audio, its `stems` as places in the music's list of stems from 0, every stem by default, and a `fade`, or `"stop": true` |
 | `camera` | a `shot`, `closeup`, `orbit`, `low`, `behindBall` or `path`, a `duration` and a `priority` |
 | `time` | a `freeze` of at most 0.3 seconds or a `slow` with its `speed` and `seconds` |
 | `environment` | a moment of the `sky`, the `floodlights`, the `fog`, `lightning` or a `tifo` image |
@@ -443,8 +560,13 @@ file, so a file declares none. The server checks each shader on import and when 
 
 - Every loop is a `for` loop with constant bounds, integer literals or `const int` names of the
   file, of at most 256 iterations. `while` and `do` loops are refused.
+- Loops nested inside each other run their body at most 1024 times, counted through the
+  functions they call too, so a loop of 256 holds at most a loop of 4.
 - A fragment fetches a texture at most 16 times, counted through the loops and the functions
   around each fetch.
+- A vertex or a fragment runs at most 65536 words of code, names and numbers, each counted with
+  the trip counts of the loops around it, through the functions it calls and with the words of
+  the macros it names, and the file holds at most 262144 words once its macros expand.
 - The one include is `#include <cuju_noise>`, with `cujuHash` and `cujuNoise`.
 
 In the mode `chunks`, the default, a shader extends the standard material of a team's player, so
@@ -460,7 +582,7 @@ after `#pragma cuju fragment`.
 |---|---|
 | `uTime`, `uSim`, `uCeremony` | the cosmetic, simulation and ceremony clocks in seconds |
 | `uSeed` | a number from 0 to 1 of the player's seed |
-| `uTeamColor`, `uTeamColor2` | the first and second colours of the team's kit |
+| `uTeamColor`, `uTeamColor2` | the first and second colors of the team's kit |
 | `uPulse` | 1 at the team's own touch, shot, save, goal or reveal, falling after it |
 | `uSpeed`, `uExcitement` | the player's speed and the match's excitement |
 | `uBall`, `uResolution` | the drawn ball and the size of the view |
@@ -490,17 +612,21 @@ A team holds its budget of voices, a new one ending the oldest, and a seek ends 
 one team plays a sound of class `moment`, the other team's beds lose 6 dB and its actions 3 dB.
 
 Music stems loop on the team's musical clock, set by `bpm` and `beats`, and a `music` command or
-action crossfades the stems it names, at once or on the next beat or bar of `at.quantize`. Stems
-are scaled to a bed's loudness, under the renderer's crowd, and sink under the crowd's swell after
-a goal.
+action crossfades the stems it names, at once or on the next beat or bar of `at.quantize`.
+The command or action names its stems by their places in the list of the music from 0, so
+`{"music": "anthem", "stems": [0, 1], "fade": 1}` brings in the first two stems of `anthem`, and
+one without `stems` plays them all. Stems are scaled to a bed's loudness, under the renderer's
+crowd, and sink under the crowd's swell after a goal.
 
-With the feature `audio.worklet`, the module `worklet` loads into the page's AudioWorklet scope,
-after the renderer's own meters and limiters and after the renderer froze the built in objects of
-that scope. Each of `processors` becomes a node within the team's worklet budget, playing through
-the effects bus or the music bus, and the page sends it the team's own events on its port.
-`audioParam` behaviours and worker commands `{"op": "param", "node", "param", "value"}` drive its
-parameters. A processor that fails, an audio thread that stalls or a bus that runs away stops the
-team's processors, and its samples play on.
+With the feature `audio.worklet`, the module `worklet` loads into an audio context of the team's
+own, at the sample rate of the page's context, whose AudioWorklet scope holds the team's module
+alone, apart from the renderer's meters, governors and limiters. Each of `processors` becomes a
+node there within the team's worklet budget, and its sound streams into the effects bus or the
+music bus of the team, through its governor and limiter like every other sound of the team. The
+page sends each processor the team's own events on its port. `audioParam` behaviours and worker
+commands `{"op": "param", "node", "param", "value"}` drive its parameters. A processor that fails,
+an audio thread that stalls or a bus that runs away stops the team's processors, and its samples
+play on. A browser that makes no second audio context plays the samples alone.
 
 ## Moments
 
@@ -519,7 +645,7 @@ Camera, time and environment suggestions count only for the team's own events.
   the team defends with `fans.tifo`. A moment lasts at most six seconds, one at a time, 20
   seconds apart for a team, and fades in and out over 0.3 seconds through the flash governor.
 - **Overlays.** With `overlay.offscreen`, the worker's Hello holds an OffscreenCanvas in
-  `canvases` for each slot of `overlays`. The worker draws in it and answers
+  `canvases` for each slot of `overlays`. The worker draws in it with the 2D context and answers
   `{"slot", "op": "draw"}`, and the page shows what it drew in the slot. The badge sits under the
   score on the team's side, the lower third shows on the team's goal, the sting on its goal or
   win, the card on its reveals and the lineup slot in the lineups. No slot covers the score, the
@@ -539,7 +665,8 @@ A side draws the package of the team that plays it, or the package of a register
 viewer chose for it, which serves matches whose teams are no registered teams, such as the live
 batches of a training run. The settings panel holds the choice of each side, the route
 `/api/presentation/sides` answers it and takes `{"left": id, "right": null}`, and
-`cuju render pack sides --left ID --right none` sets it from the command line.
+`cuju render pack sides --left ID --right none` sets it from the command line, which prints the
+choice of each side as a line, or as JSON with `--json`.
 
 ## Clocks
 
@@ -694,7 +821,23 @@ its bootstrap, blob scripts and WebAssembly, and no connection at all. The page 
 the sandbox as text with a message port, the sandbox turns it into a blob, starts a worker that
 imports it, and from then on the page and the worker talk over the port alone. Before the module
 runs, the worker tries the network and the storage of its origin, and the page refuses a worker that
-reaches the network.
+reaches either.
+
+The route's own policy carries the same sandbox, so the route opened as a whole window also has an
+opaque origin, and every page of the server keeps its window apart from a window of another site
+that opened it. The bootstrap starts a worker only inside a frame, in an opaque origin, for a
+message of the page right above it from the server's own origin.
+
+A worker draws with the 2D context alone. Before the module loads, every OffscreenCanvas of the
+worker, the canvases of its overlay slots among them, offers `getContext('2d')` and answers
+`null` for every other context, a `getContext` that the module can neither replace nor redefine.
+`navigator.gpu` is gone and the worker starts no workers of its own, so a package reaches the GPU
+only through the shaders that the renderer checks and compiles, with the limits of the section
+Shaders. Each slot's canvas has a fixed size, 96 by 96 pixels for `badge`, 360 by 90 for
+`lowerThird`, 320 by 180 for `sting`, 200 by 200 for `card` and 384 by 270 for `lineup`, and the
+page shows a drawing of that size alone. The wrapper that loads the module runs in a closure of
+its own and keeps its port to the page out of the module's reach, and the module draws in its
+slots through the canvases that `init` receives.
 
 `init` receives the Hello once.
 
@@ -744,6 +887,9 @@ Response {
 }
 ```
 
+The lines of `log` add up across replies, the newest 50 kept, show in the preview panel and in
+the browser console, and `cuju.presentation.status()` lists them under the package's `log`.
+
 The page fills `instanceId`, `epoch` and `sourceFrameId` of a reply itself. It drops a reply of
 an older epoch, checks every command, holds it to its ranges and to the team's own entities,
 and keeps at most 64 commands of each kind. A behaviour or track without an entity applies to
@@ -753,12 +899,16 @@ Gains only lower a sound, a camera shot lasts at most four seconds, a freeze at 
 and a slow motion goes no slower than a quarter of the speed for at most 1.5 seconds. Current
 bounds lie inside the rig's envelope.
 
-A reply later than 50 milliseconds is used and counted late. A worker that throws, answers with
-more than 512 KB, refuses its sandbox or stays silent for two seconds and three drawings is ended,
-so a page that draws slowly waits for the reply its own slowness held back. The page then fades
-what it drove, its behaviours, tracks and bounds, back to the manifest's own look over half
-a second, starts a new epoch and starts the worker once more. A second failure leaves the team
-with its manifest alone.
+A reply later than 50 milliseconds is used and counted late. A worker that throws, answers with more
+than 512 KB, refuses its sandbox or stays silent for five seconds of drawing and three drawings is
+ended. So is a worker whose reply holds anything but plain data, objects, arrays, typed arrays,
+strings, numbers and booleans, more than eight overlays, or a bitmap anywhere but in an overlay at
+the size of its slot. Each drawing adds at most a tenth of a second to the silence, so a page that draws slowly, or
+stalls while it loads models and compiles programs, waits for the reply its own slowness held back,
+and a worker has ten seconds of drawing for its first answer. The page then fades what it drove, its
+behaviours, tracks and bounds, back to the manifest's own look over half a second, starts a new
+epoch and starts the worker once more. A second failure leaves the team with its manifest alone, its
+level reads `manifest` in `cuju.presentation.status()`, and the page names the failure in a notice.
 
 ## Budgets
 
@@ -766,7 +916,7 @@ Each team has budgets by quality, provisional numbers that real packages will ca
 
 | Resource, per team | High | Medium | Low |
 |---|---|---|---|
-| Main thread time, 95th percentile over 2 s | 0.75 ms | 0.75 ms | 0.5 ms |
+| Main thread time, mean of each drawing over 2 s | 0.75 ms | 0.75 ms | 0.5 ms |
 | GPU time | 2.5 ms | 2.0 ms | 1.0 ms |
 | Draw calls | 150 | 100 | 60 |
 | Triangles | 400 000 | 200 000 | 80 000 |
@@ -783,10 +933,22 @@ Each team has budgets by quality, provisional numbers that real packages will ca
 | Full screen passes | 1, on its moments | none | none |
 
 Attachments count against draw calls, triangles and texture memory as they load, and one past a
-budget stays off with a warning. A team whose main thread time runs over its budget for two
+budget stays off with a warning. A team whose main thread time runs over its budget for three
 seconds steps one rung down the degrade ladder, fewer particles, no passes, local lights,
 standard materials, no worker, the manifest alone and the stock look, each step crossfaded over
-half a second.
+half a second. A team that runs under 60 percent of its budget for ten seconds climbs back one
+rung, the worker at rest starting again, and each fall after a climb doubles that wait. After a
+third such fall the team stays on its rung, so a package that truly overruns ends at the stock
+look.
+
+The main thread time is the package's own work on each drawing, its behaviours, clips, reach,
+attachments, effects, worker messages and geometry, and leaves out the page's own pose of the
+figure, which the page draws without a package too. The meter reads the mean of each drawing over
+the last two seconds, which a browser's clock of a tenth of a millisecond reads as well as a fine
+one. It starts once the package settled, half a second after its worker's first answer, or a
+second after the players are built for a package without a worker, and leaves out a drawing that
+takes longer than a quarter of a second, a stall of the whole page. The preview panel and
+`cuju.presentation.status()` show the mean as `mainMs`, beside the 95th percentile as `p95`.
 
 ## Safety
 
@@ -821,8 +983,9 @@ quarter of its opacity within 0.15 seconds and recovers in 0.3 seconds.
 Developer mode serves a team's package from a folder of the author's own, read afresh on every
 request, so each change shows when the team is drawn again. It runs the worker on the page itself
 with direct access, its `init` receiving the page and three.js as `developer`, and the page shows
-a notice that the team runs from a local folder. It is off unless the file `developer.json` in
-the renderer's home names the folder.
+a notice that the team runs from a local folder. The page imports the worker by its address, so
+the server sends every module of the folder as JavaScript. It is off unless the file
+`developer.json` in the renderer's home names the folder.
 
 ```json
 {"presentation": {"t-20261110-101500-ab12": "/home/me/my-team/cuju-team"}}
@@ -830,30 +993,9 @@ the renderer's home names the folder.
 
 Each key is the identifier of a registered team, and each folder an absolute path to a
 `cuju-team` folder holding `presentation/presentation.json`. An imported archive never turns
-developer mode on, only the home's own file does.
-
-## Making a package
-
-`cuju render pack new FOLDER` writes a small working team to start from, with a manifest, a
-worker, a shader, a ring to attach and a short sound. `cuju render pack check PATH` checks a team
-folder, its `cuju-team` folder, its `presentation` folder or an exported zip as the server and the
-page read it, with the shaders, the budgets by static count, the references to nodes, clips,
-sockets and files, the contact markers and the loudness of every WAV sample, and exits with 1 when
-anything fails, printing JSON with `--json` for agents. `cuju render pack preview PATH` registers
-the package as a team, sets it on a side and opens the shipped five a side sample with the
-preview panel, whose buttons send the team's own events and whose meters show its budgets, the
-flash governor, the loudness of the master and of its buses and the worker's log. The panel also
-opens with `preview=1` in the page's address, and an agent reads the same figures from
-`cuju.presentation.status()`.
-
-The test package in `tests/support/team` is a larger example, a manifest and a worker that use every
-level of the contract, and `tests/support/package.py` builds its binary files and packs the team as
-a zip. Import the zip on the Teams page, play a match of the team, and the browser console lists any
-part of the manifest the server left out and why. The page's `cuju.presentation.status()` shows the
-level each package runs at, its worker's state and sandbox, its budgets, the entities with their
-drivers, bounds and behaviours, and the commands that wait for later renderer work. Setting
-`cuju.presentation.settings.metering` to false holds every team at its rung of the ladder, which
-helps when a slow machine or a headless browser draws an author's package.
+developer mode on, only the home's own file does. A second `cuju render pack preview` of the same
+folder updates the team of the first and keeps its identifier, so a `developer.json` that names it
+goes on working.
 
 ## See also
 

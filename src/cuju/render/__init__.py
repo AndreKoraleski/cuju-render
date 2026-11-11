@@ -30,26 +30,32 @@ from ._format import keep as _keep
 from ._format import recording as _recording
 from ._format import writer as _writer
 from ._http.server import serve
+from ._playing.errors import PolicyError
 from ._registry.teams import add_folder as add_team
 from ._store import library as _library
 from ._store.home import home
+from ._text import messages as _messages
 from ._watch import live as _live
 from ._watch.live import LiveSource
 from ._watch.show import View, show
 
 __all__ = [
     'LiveSource',
+    'PolicyError',
     'Recorder',
     'View',
     'add_team',
     'captions',
     'challenge',
     'challenges',
+    'delete_group',
     'feed_url',
     'home',
     'on_batch_created',
     'play',
     'record',
+    'recordings',
+    'restore_group',
     'search',
     'serve',
     'show',
@@ -105,7 +111,7 @@ class Recorder:
                 RGB list of three integers from 0 to 255, each optional.
             scenario: The name of the scenario that the header records, by default the batch's.
             version: The version of the recording files, 2, or 1 for the readers of cuju 0.2.0,
-                which takes about three times the room.
+                which takes about two and a half times the room.
             keep: Which episodes to save, `all` or `None` for every one, `goals` for those with a
                 goal, or a function that takes the summary of the episode and returns whether to
                 save it. The summary holds the `episode` number, counted from 0 over the episodes
@@ -113,7 +119,8 @@ class Recorder:
                 team, the number of `goals`, the `length` in frames, the last `steps` number, the
                 `rewards` of each agent summed over the captured steps, their sum, `reward`, and
                 the `annotations` of the episode, each with its `frame`, `step`, `player`,
-                `values`, `text`, `action` and `probabilities`.
+                `values`, `text`, `action` and `probabilities`, the player numbered as
+                `annotate` takes it.
             every: Saves the first episode and every `every`-th after it, counting every episode
                 that ends, saved or not.
             min_reward: Saves only episodes whose `reward` is at least this.
@@ -165,6 +172,20 @@ class Recorder:
         # Whether the caller captures by hand, as with cuju 0.2.0, which ends automatic capture.
         self._manual = False
         batch.add_observer(self)
+
+    def __repr__(self) -> str:
+        batch = self._batch()
+        if batch is None:
+            state = 'its batch gone'
+        elif any(observer is self for observer in batch.observers):
+            state = 'by hand' if self._manual else 'capturing'
+        else:
+            state = 'detached'
+        return (
+            f'Recorder(environment {self.environment}, {self._scenario!r}, version {self.version}, '
+            f'{state}, {len(self._frames)} frames of the current episode, {self.episodes} '
+            f'episodes ended, {len(self.saved)} saved, {self.dropped} dropped)'
+        )
 
     def __call__(self, batch: Any, done: Any, information: dict[str, Any]) -> None:
         """Captures a reset of the environment or a step, as a step observer of the batch.
@@ -262,7 +283,9 @@ class Recorder:
         if not self._frames or self._lineup is None:
             self._rewards = []
             return None
-        notes = [_annotations.public(note, self._frames) for note in self._notes.values()]
+        notes = [
+            _annotations.public(note, self._frames, self._lineup) for note in self._notes.values()
+        ]
         summary = _keep.episode_summary(
             self.episodes, self._frames, self._rewards, self.environment, notes
         )
@@ -292,8 +315,10 @@ class Recorder:
             values: Named numbers, such as `{'value': 0.4, 'reward': 1.0}`, at most 16 names of at
                 most 40 characters. Each number is kept to six significant digits.
             text: A short text, cut at 200 characters.
-            player: The player, an index in the header's list of players or a pair of team, 0 for
-                the left, and the index within the team, or `None` for the whole match.
+            player: The player, a number that counts the left team's players first and then the
+                right team's, as the batch counts its agents, or a pair of team, 0 for the left,
+                and the index within the team, or `None` for the whole match. The summary that a
+                filter reads names the player by the same number.
             step: The step of the current episode, as the frame's step counts it, by default the
                 step captured last.
             probabilities: The probability of each action, a sequence indexed by action or a
@@ -352,7 +377,12 @@ class Recorder:
         """
         if not self._frames or self._lineup is None:
             return None
-        title = self._title or f'{self._scenario}, environment {self.environment}'
+        # A title of the recorder's own is a label, which the page shows in its own language.
+        title = self._title or _messages.label(
+            'server.names.recorder',
+            scenario=_messages.scenario(self._scenario),
+            environment=self.environment,
+        )
         # A batch may have been reset with another seed before the capture, so the recording
         # names its environment alone and leaves the seed unknown.
         head = _recording.header(
@@ -476,13 +506,14 @@ def challenge(
     attempts: int | None = None,
     device: str = 'cpu',
     progress: Any = None,
+    keep_recordings: bool = True,
 ) -> dict[str, Any]:
     """Plays a challenge headless with a team of the registry or a Python policy, and scores it.
 
     Every attempt plays the challenge's seed of its index, as fast as the policy answers, and is
-    saved as a recording. A full run reaches the challenge's leaderboard, and a run of fewer
-    attempts is practice. A team of one dynamic agent faces the very episodes that a person faces
-    on the Play page.
+    saved as a recording, and the recordings of the run form one group of the library. A full run
+    reaches the challenge's leaderboard, and a run of fewer attempts is practice. A team of one
+    dynamic agent faces the very episodes that a person faces on the Play page.
 
     Args:
         challenge: The challenge, an identifier that `challenges` lists, such as
@@ -496,17 +527,21 @@ def challenge(
         attempts: The attempts to play, by default the challenge's count.
         device: `cpu` or `cuda`.
         progress: A function called with the result of each attempt as it ends.
+        keep_recordings: Whether the library keeps the attempts as recordings. A run with false
+            scores, ranks and earns exactly as one that keeps them, and adds nothing to the library.
 
     Returns:
         A plain dictionary of the run, its `value`, `seconds`, `medal`, `rank`, `personal_best`,
-        whether it was `practice` and the result and recording of each of its `attempts`.
+        whether it was `practice`, the result and recording of each of its `attempts`, `None` for
+        a run without recordings, and the `group` of its recordings or `None`.
 
     Raises:
         ArgumentError: If the challenge, the team, the control or the attempts do not fit.
+        PolicyError: If the policy fails, answers with anything but actions, or stops answering.
     """
     from ._playing.challenges import run
 
-    return run(challenge, team, policy, name, control, attempts, device, progress)
+    return run(challenge, team, policy, name, control, attempts, device, progress, keep_recordings)
 
 
 def challenges() -> list[dict[str, Any]]:
@@ -514,6 +549,35 @@ def challenges() -> list[dict[str, Any]]:
     from ._playing.challenges import challenges as catalog
 
     return catalog()
+
+
+def recordings(group: str | None = None, trash: bool = False) -> list[dict[str, Any]]:
+    """Returns the summaries of the library, as the Recordings page lists them, newest first.
+
+    Each summary of a recording of a challenge run holds its `group`, with the run's identifier
+    `id`, its `title`, `competitor` and `result`, the `attempt` of the recording and the run's
+    `attempts`, `state`, `value`, `seconds`, `medal` and `practice`.
+
+    Args:
+        group: The identifier of a group, to list its recordings alone in the order of their
+            attempts.
+        trash: Whether to list the Trash in place of the library.
+    """
+    return _library.matches(trash, group)
+
+
+def delete_group(group: str) -> list[str]:
+    """Moves every recording of a group to the Trash at once, and returns their identifiers.
+
+    Each recording restores from the Trash like any other, and `restore_group` restores them all.
+    An unknown group, or one already in the Trash, returns an empty list.
+    """
+    return _library.trash_group(group)
+
+
+def restore_group(group: str) -> list[str]:
+    """Restores every recording of a group from the Trash, and returns their identifiers."""
+    return _library.trash_group(group, restore=True)
 
 
 def search(query: str = '', limit: int | None = None) -> dict[str, Any]:
@@ -547,15 +611,15 @@ def captions(recording: str | Path, path: str | Path | None = None) -> list[dict
         path: A file to write the captions to as WebVTT, or `None`.
 
     Returns:
-        The cues, each with its `start` and `end` in seconds, its message `id` and `params` of
-        the table of captions and its `text`.
+        The cues, each with its `start` and `end` in seconds to the millisecond, its message `id`
+        and `params` of the table of captions and its `text`.
     """
-    from ._moments import captions as _captions
     from ._moments import search as _search
 
     cues = _search.captions(recording)
     if path is not None:
-        Path(path).write_text(_captions.to_vtt(cues), encoding='utf-8', newline='\n')
+        text = _search.captions_vtt(recording)
+        Path(path).write_text(text, encoding='utf-8', newline='\n')
     return cues
 
 
@@ -582,12 +646,18 @@ def watch(
     Returns:
         The source, which the batch holds as one of its observers, in place of any source that
         `watch` or `CUJU_RENDER` gave it before.
+
+    Raises:
+        ArgumentError: If the batch shows no live source or `environment` is not one of its
+            environments, which leaves any earlier source of the batch as it was.
     """
     if not callable(getattr(batch, 'add_observer', None)):
         raise ArgumentError(
             'expected a BatchEnvironment, found a batch whose steps show no live source; watch '
             'one of the batches of a MultiDeviceBatch instead'
         )
+    # The environment is checked before the batch's earlier source closes, so a mistake leaves it.
+    _live.check_environment(batch, environment)
     for observer in batch.observers:
         if isinstance(observer, LiveSource):
             observer.close()
@@ -646,6 +716,7 @@ def on_batch_created(batch: Any) -> LiveSource | None:
 
 # The modules keep `cuju.render` as the module of the public names.
 for _name in (
+    PolicyError,
     Recorder,
     watch,
     on_batch_created,
@@ -662,3 +733,10 @@ for _name in (
 ):
     _name.__module__ = __name__
 del _name
+# The errors that only add the id of a message read as the public class they stand for.
+_messages.public_names()
+
+
+def __dir__() -> list[str]:
+    """Returns the public names of the module, those of `__all__`."""
+    return sorted(__all__)

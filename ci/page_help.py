@@ -274,21 +274,38 @@ def lesson_checks(client):
             """
             const panel = document.getElementById('lesson-panel');
             const stored = JSON.parse(localStorage.getItem('cuju.lessons'));
-            const server = await (await fetch('/api/help/tutorial')).json();
-            const reported = ['open_sample', 'seek_goal', 'switch_camera', 'follow_player',
-                'make_photo'].every((id) => server.page.includes(id));
+            // A lesson counts as reported when the page reported it, or when the server already
+            // knew it done, which Help takes in each time it shows. The reports travel on their
+            // own, so the check asks again for a while.
+            const reportedNow = async () => {
+                const server = await (await fetch('/api/help/tutorial')).json();
+                const known = (id) => server.page.includes(id)
+                    || (server.lessons || []).some((entry) => entry.id === id && entry.done);
+                return ['open_sample', 'seek_goal', 'switch_camera', 'follow_player',
+                    'make_photo'].every(known);
+            };
+            let reported = await reportedNow();
+            for (let i = 0; i < 50 && !reported; i++) {
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                reported = await reportedNow();
+            }
             const status = document.querySelector('#lesson-panel .lesson-status').textContent;
             panel.querySelector('h2').focus();
             panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
             const closed = panel.hidden;
             cuju.showPage('help');
-            const summary = document.querySelector('#help-learn [aria-live]').textContent;
+            // Help takes in what the server knows as it shows, then counts the lessons again.
+            await new Promise((resolve) => setTimeout(resolve, 800));
+            const counted = cuju.tutorial.state();
+            const summary = counted.done.length >= 6
+                && document.querySelector('#help-learn [aria-live]').textContent
+                    .startsWith(`${counted.done.length} of ${counted.count}`);
             await cuju.tutorial.reset();
             const cleared = cuju.tutorial.state().done.length === 0
                 && (await (await fetch('/api/help/tutorial')).json()).page.length === 0;
             const all = {
-                stored: 'make_photo' in stored.done, reported, praised: status.startsWith('Done.'),
-                closed, summary: summary.startsWith('6 of 8'), cleared,
+                stored: 'make_photo' in stored.done, reported, praised: status.startsWith('Done'),
+                closed, summary, cleared,
             };
             return Object.values(all).every(Boolean) || JSON.stringify(all);
             """,
@@ -434,7 +451,9 @@ def main():
     client = None
     checks = 0
     try:
-        with tempfile.TemporaryDirectory(prefix='cuju-page-help-') as profile:
+        with tempfile.TemporaryDirectory(
+            prefix='cuju-page-help-', ignore_cleanup_errors=True
+        ) as profile:
             processes.append(
                 subprocess.Popen(
                     [
@@ -455,6 +474,8 @@ def main():
                         options.chrome,
                         '--headless=new',
                         '--mute-audio',
+                        # The checks read the English page, whatever the language of the machine.
+                        '--lang=en-US',
                         '--no-sandbox',
                         '--disable-background-networking',
                         '--proxy-server=http://127.0.0.1:9',

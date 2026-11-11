@@ -6,6 +6,7 @@ The end to end test draws two seconds of a sample match when Chrome and ffmpeg a
 and is skipped otherwise, unless `CUJU_VIDEO_REQUIRED` is set, which makes it fail instead.
 """
 
+import argparse
 import json
 import os
 import shutil
@@ -186,6 +187,36 @@ def test_preload_keeps_sound_off_and_follows_the_clock():
     assert '"cuju.replays", "true"' in broadcast and 'cuju.field' not in broadcast
 
 
+def _preloaded(options):
+    settings = {}
+    for line in _video.preload_script(options).splitlines():
+        if line.startswith('localStorage.setItem('):
+            key, value = json.loads('[' + line[len('localStorage.setItem(') : -2] + ']')
+            settings[key] = json.loads(value)
+    return settings
+
+
+def test_annotations_show_in_a_video_only_when_asked():
+    """An export shows the clean picture, and the labels and box of annotations on request."""
+    hidden = {'players': False, 'actions': False, 'text': False}
+    assert _preloaded(_video.Options())['cuju.annotations'] == hidden
+    assert _preloaded(_video.Options(broadcast=True))['cuju.annotations'] == hidden
+    shown = _preloaded(_video.Options(annotations=True))['cuju.annotations']
+    assert shown == {'players': True, 'actions': True, 'text': True}
+    with pytest.raises(_video.ArgumentError, match='annotations'):
+        _video.Options(annotations='yes').check()
+    parser = argparse.ArgumentParser()
+    _video.add_arguments(parser)
+    assert not _video.options_from(parser.parse_args([str(SAMPLE)])).annotations
+    assert _video.options_from(parser.parse_args([str(SAMPLE), '--annotations'])).annotations
+    arguments, options = _video_jobs.options_from({'end': 5, 'annotations': True})
+    assert options.annotations and arguments[-1] == '--annotations'
+    arguments, options = _video_jobs.options_from({'end': 5})
+    assert not options.annotations and '--annotations' not in arguments
+    with pytest.raises(_video.ArgumentError, match='annotations'):
+        _video_jobs.options_from({'end': 5, 'annotations': 1})
+
+
 def test_missing_tools(monkeypatch, tmp_path):
     monkeypatch.delenv('CUJU_CHROME', raising=False)
     monkeypatch.delenv('CUJU_FFMPEG', raising=False)
@@ -203,6 +234,56 @@ def test_missing_tools(monkeypatch, tmp_path):
     monkeypatch.setenv('CUJU_FFMPEG', str(program))
     assert _video.find_ffmpeg() == str(program)
     assert not list(tmp_path.glob('*.mp4'))
+
+
+def test_export_checks_the_range_before_the_programs(monkeypatch, tmp_path):
+    """A mistake in the range shows at once, before the export looks for Chrome and ffmpeg."""
+    looked = []
+
+    def tools(options):
+        looked.append(options)
+        return None, None, ['Video export needs ffmpeg, found none.']
+
+    monkeypatch.setattr(_video, 'tools', tools)
+    output = tmp_path / 'out.mp4'
+    for options, message in (
+        (_video.Options(start=_video.Moment(70.0), end=_video.Moment(65.0)), 'holds frames'),
+        (_video.Options(goal=99), 'expected a goal'),
+        (_video.Options(max_seconds=60), 'at most 60 seconds'),
+    ):
+        with pytest.raises(_video.ArgumentError, match=message):
+            _video.export(SAMPLE, output, options)
+    assert not looked
+    with pytest.raises(_video.VideoError, match='needs ffmpeg'):
+        _video.export(SAMPLE, output, _video.Options(end=_video.Moment(1.0)))
+    assert len(looked) == 1 and not list(tmp_path.iterdir())
+
+
+def test_missing_tools_name_what_the_server_takes(render_home, monkeypatch):
+    """The page's server takes the variables alone, so its message names no option."""
+    from cuju.render._guide import doctor as _doctor
+
+    monkeypatch.delenv('CUJU_CHROME', raising=False)
+    monkeypatch.delenv('CUJU_FFMPEG', raising=False)
+    monkeypatch.setattr(_video.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(_video, '_chrome_locations', lambda: [])
+    command = ' '.join(_video.tools(_video.Options())[2])
+    assert '--chrome or $CUJU_CHROME' in command and '--ffmpeg or $CUJU_FFMPEG' in command
+    status = _video_jobs.availability()
+    served = ' '.join(status['missing'])
+    assert not status['available'] and '--' not in served
+    assert '$CUJU_FFMPEG in the environment of cuju render serve' in served
+    # The doctor warns of a missing program, which video export alone needs, and still passes.
+    check = next(c for c in _doctor.server_report()['checks'] if c['name'] == 'video export')
+    assert check['ok'] and check['warning']
+    lines = _doctor.text({'checks': [check]}).splitlines()
+    assert any(line.startswith('  warn  video export, Video export needs') for line in lines)
+
+
+def test_file_sizes_read_in_kilobytes_below_a_megabyte():
+    assert _video.file_size(22_000) == '22 KB'
+    assert _video.file_size(300) == '1 KB'
+    assert _video.file_size(2_500_000) == '2.5 MB'
 
 
 def test_export_refuses_long_ranges_and_other_files(monkeypatch, tmp_path):
@@ -305,6 +386,11 @@ def test_page_request_options():
         '--fps', '60', '--quality', 'high', '--no-score', '--arena', 'space', '--time', '6.5',
     ]  # fmt: skip
     assert (options.start, options.end) == (_video.Moment(1.5), _video.Moment(9.0))
+    # The page offers common rates, and a request takes any whole rate from 1 to 60, as the command
+    # line does.
+    for fps in (1, 10, 29, 60):
+        arguments, options = _video_jobs.options_from({'end': 5, 'fps': fps})
+        assert options.fps == fps and arguments[arguments.index('--fps') + 1] == str(fps)
     for wrong in (
         {'end': 5, 'start': 5},
         {'end': 'soon'},
@@ -312,7 +398,9 @@ def test_page_request_options():
         {'end': 5, 'width': 3840, 'height': 3840},
         {'end': 5, 'scale': 3},
         {'end': 5, 'safe': 'wide'},
-        {'end': 5, 'fps': 29},
+        {'end': 5, 'fps': 0},
+        {'end': 5, 'fps': 61},
+        {'end': 5, 'fps': 29.5},
         {'end': 5, 'fps': True},
         {'end': 5, 'score': 'yes'},
         {'end': 5, 'camera': 'free'},
@@ -410,7 +498,7 @@ def test_server_exports(render_home, monkeypatch):
         for path, document, code in (
             ('/api/matches/no-match/video', {'start': 0, 'end': 2}, 400),
             ('/api/matches/sample-5v5/video', {'start': 0, 'end': 2, 'width': 641}, 400),
-            ('/api/matches/sample-5v5/video', {'start': 0, 'end': 2, 'fps': 7}, 400),
+            ('/api/matches/sample-5v5/video', {'start': 0, 'end': 2, 'fps': 61}, 400),
             ('/api/matches/sample-5v5/video', {'start': 400, 'end': 500}, 400),
         ):
             with pytest.raises(urllib.error.HTTPError) as refused:

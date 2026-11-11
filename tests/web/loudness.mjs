@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const folder = mkdtempSync(join(tmpdir(), 'cuju-loudness-'));
 const inner = join(folder, 'presentation');
 mkdirSync(inner);
-for (const name of ['loudness', 'loudness-worklet']) {
+for (const name of ['loudness', 'loudness-worklet', 'teamaudio', 'commands', 'values']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/presentation/${name}.js`, import.meta.url)), join(inner, `${name}.js`));
 }
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
@@ -521,4 +521,73 @@ test('the meter and the limiter are cheap', (t) => {
     t.diagnostic(report);
     console.log(report);
     assert.ok(meterCost < 200 && limiterCost < 200, report);
+});
+
+test('a package worklet loads in an audio context of the team’s own and streams into its bus', async () => {
+    const { TeamAudio, TeamBus, teamContext } = await load('teamaudio');
+    const made = [];
+    globalThis.AudioWorkletNode = class {
+        constructor(context, name) {
+            this.context = context;
+            this.name = name;
+            this.to = [];
+            this.parameters = new Map();
+            made.push(this);
+        }
+        connect(node) {
+            this.to.push(node);
+            return node;
+        }
+        disconnect() {}
+    };
+    const modules = [];
+    class OwnContext {
+        constructor(options) {
+            this.sampleRate = options.sampleRate;
+            this.currentTime = 7;
+            this.state = 'running';
+            this.audioWorklet = { addModule: async (url) => modules.push({ context: this, url }) };
+        }
+        createMediaStreamDestination() {
+            return { stream: { of: this } };
+        }
+        close() {
+            this.state = 'closed';
+            return Promise.resolve();
+        }
+    }
+    // The page's context has no worklet scope a package could reach, only a way to take a stream.
+    const page = {
+        sampleRate: 44100, currentTime: 2, state: 'running',
+        createMediaStreamSource: (stream) => ({ stream, connect(node) { this.to = node; return node; }, disconnect() {} }),
+    };
+    const pkg = {
+        side: 0, errors: [],
+        manifest: { audio: { worklet: 'audio/hum.js', processors: { hum: { processor: 'test-hum' }, bed: { processor: 'test-hum', bus: 'music' } } } },
+        budget: { take: () => true, give() {}, used: { worklets: 0 } },
+    };
+    const audio = new TeamAudio({ app: { sound: { ctx: page } }, fileUrl: (p, file) => `/api/teams/t/presentation/${file}` });
+    const team = new TeamBus(audio, pkg);
+    team.effects = { classes: { action: { name: 'effects action' } } };
+    team.musicBus = { classes: { action: { name: 'music action' } } };
+    await audio.loadProcessors(team, OwnContext);
+    assert.equal(modules.length, 1);
+    assert.ok(modules[0].context instanceof OwnContext && modules[0].context !== page, 'the module loads apart from the page');
+    assert.equal(modules[0].context.sampleRate, 44100);
+    assert.deepEqual(made.map((n) => n.context === team.context), [true, true]);
+    assert.equal(team.bridges.effects.source.to, team.effects.classes.action, 'the effects stream feeds the effects bus');
+    assert.equal(team.bridges.music.source.to, team.musicBus.classes.action, 'the music stream feeds the music bus');
+    assert.equal(made[0].to[0], team.bridges.effects.out);
+    assert.equal(made[1].to[0], team.bridges.music.out);
+    assert.equal(team.contextAt(page.currentTime + 0.5), 7.5, 'a time of the page maps to the team’s own clock');
+    const own = team.context;
+    team.stopProcessors();
+    assert.equal(own.state, 'closed');
+    assert.equal(team.context, null);
+    // Without a context of its own the module never loads, least of all into the page's context.
+    assert.equal(teamContext(page, undefined), null);
+    const bare = new TeamBus(audio, pkg);
+    await assert.rejects(audio.loadProcessors(bare, undefined), /no audio context/);
+    assert.equal(modules.length, 1);
+    delete globalThis.AudioWorkletNode;
 });

@@ -8,6 +8,8 @@
 // tries a preset and comes back to Custom finds their own choices again. The rules at the top of
 // the file touch nothing of the page, so they hold the same in a test.
 
+import { t } from '../core/i18n.js';
+
 // Each setting of a preset, its key in the page's settings and the box of the settings panel.
 export const PRESET_SETTINGS = [
     ['lineups', 'lineups-on'],
@@ -22,7 +24,8 @@ export const PRESETS = {
     quick: Object.fromEntries(KEYS.map((key) => [key, false])),
     broadcast: Object.fromEntries(KEYS.map((key) => [key, true])),
 };
-export const PRESET_NAMES = [['quick', 'Quick look'], ['broadcast', 'Full broadcast'], ['custom', 'Custom']];
+// Each preset with its name in the page's language, the message presets.<name>.
+export const PRESET_NAMES = ['quick', 'broadcast', 'custom'].map((name) => [name, t(`presets.${name}`)]);
 export const CUSTOM_KEY = 'cuju.presetCustom';
 
 // The values of the preset settings, each true unless it is false, as the page's defaults are.
@@ -100,11 +103,11 @@ export class SettingsPresets {
         this.group.id = 'presets';
         this.group.className = 'presets';
         this.group.setAttribute('role', 'radiogroup');
-        this.group.setAttribute('aria-label', 'Presentation preset');
+        this.group.setAttribute('aria-label', t('presets.label'));
         this.group.append(...this.buttons);
         const note = document.createElement('p');
         note.className = 'muted small preset-note';
-        note.textContent = 'Quick look leaves out the lineups, celebrations, replays, restart transitions and the show after the match. Custom keeps your own mix.';
+        note.textContent = t('presets.note');
         const title = panel.querySelector('.panel-title');
         (title || panel.firstChild).after(this.group, note);
         // A change of any one box makes a mix of its own, which Custom keeps.
@@ -160,7 +163,7 @@ export class SettingsPresets {
             this.applying = false;
         }
         this.sync(false);
-        this.app.hud.toast(`${PRESET_NAMES.find(([n]) => n === name)[1]} preset`, 'info', 1500);
+        this.app.hud.toast(t('presets.toast', { name: PRESET_NAMES.find(([n]) => n === name)[1] }), 'info', 1500);
     }
 
     // Marks the preset in force, and keeps a custom mix when keep is set.
@@ -177,7 +180,7 @@ export class SettingsPresets {
             button.tabIndex = on ? 0 : -1;
             const off = button.dataset.preset === 'custom' && !this.custom;
             button.setAttribute('aria-disabled', off ? 'true' : 'false');
-            button.title = off ? 'Custom holds your own mix once you change one of the settings below' : '';
+            button.title = off ? t('presets.customOff') : '';
         }
     }
 

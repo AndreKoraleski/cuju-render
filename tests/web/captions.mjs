@@ -23,7 +23,8 @@ const { FrameStore } = await load('recording/timeline.js');
 const { MOMENT_DATA, MOMENT_KINDS, momentsOf } = await load('recording/moments.js');
 const C = await load('recording/captions.js');
 const { composeQuery, looksLikeMoments } = await load('recording/moments-query.js');
-const table = JSON.parse(readFileSync(new URL('../../src/cuju/render/web/captions.json', import.meta.url), 'utf8'));
+const language = JSON.parse(readFileSync(new URL('../../src/cuju/render/web/languages/en.json', import.meta.url), 'utf8'));
+const table = { messages: Object.fromEntries(Object.entries(language).filter(([id]) => id.startsWith('caption.'))) };
 const M = table.messages;
 
 const parsed = {};
@@ -51,25 +52,43 @@ test('every message of the table is plain text with known values', () => {
     }
 });
 
+test('a caption puts no article before a team and names every player of the team the same way', () => {
+    const portuguese = JSON.parse(readFileSync(new URL('../../src/cuju/render/web/languages/pt.json', import.meta.url), 'utf8'));
+    const own = (id) => id.startsWith('caption.') || id.startsWith('describe.');
+    for (const [id, text] of Object.entries(language).filter(([key]) => own(key))) {
+        assert.doesNotMatch(text, /\bthe \{(team|otherTeam)\}/i, id);
+        if (text.includes('{player}') && /\{(team|otherTeam)\}/.test(text)) {
+            assert.match(text, /\{player\} of \{(team|otherTeam)\}/, id);
+        }
+    }
+    for (const [id, text] of Object.entries(portuguese).filter(([key]) => own(key))) {
+        // Do, da, no and pelo hold an article, and a name such as Esquerda or Você takes none.
+        assert.doesNotMatch(text, /(^|\s)(o|a|do|da|dos|das|no|na|pelo|pela) \{(team|otherTeam)\}/i, id);
+        if (text.includes('{player}') && /\{(team|otherTeam)\}/.test(text)) {
+            assert.match(text, /\{player\} de \{(team|otherTeam)\}/, id);
+        }
+    }
+});
+
 test('a caption names the player, the team and the score', () => {
     const goal = { id: 'g', kind: 'goal', t: 10, team: 0, player: 1, data: { score: [2, 1], ownGoal: false } };
     assert.deepEqual(C.captionOf(goal, context, M), {
         id: 'caption.goal', params: { player: 'number 9 Okafor', team: 'Greens', left: 2, right: 1 },
     });
-    assert.equal(C.format(M, 'caption.goal', C.captionOf(goal, context, M).params), 'Goal, number 9 Okafor for the Greens, 2 to 1');
+    assert.equal(C.format(M, 'caption.goal', C.captionOf(goal, context, M).params), 'Goal, number 9 Okafor of Greens, 2 to 1');
     const own = { ...goal, team: 1, data: { score: [2, 2], ownGoal: true } };
-    assert.equal(C.cuesOf([own], context, M)[0].text, 'Own goal, number 9 Okafor of the Greens, 2 to 2');
+    assert.equal(C.cuesOf([own], context, M)[0].text, 'Own goal, number 9 Okafor of Greens, 2 to 2');
     const unknown = { ...goal, player: undefined, team: 1 };
-    assert.equal(C.cuesOf([unknown], context, M)[0].text, 'Goal for the right team, 2 to 1');
+    assert.equal(C.cuesOf([unknown], context, M)[0].text, 'Goal for Right, 2 to 1');
     const text = (moment) => (C.cuesOf([{ id: 'x', t: 1, ...moment }], context, M)[0] || {}).text;
-    assert.equal(text({ kind: 'shot', team: 1, player: 2, data: { header: true } }), 'Header at goal, number 4 for the right team');
-    assert.equal(text({ kind: 'save', team: 0, player: 0, data: {} }), 'Save, number 1 for the Greens');
-    assert.equal(text({ kind: 'card', team: 1, player: 2, data: { colour: 'red', second: true } }), 'Second yellow card and off, number 4 of the right team');
-    assert.equal(text({ kind: 'card', team: 1, player: 2, data: { colour: 'yellow' } }), 'Yellow card, number 4 of the right team');
+    assert.equal(text({ kind: 'shot', team: 1, player: 2, data: { header: true } }), 'Header at goal, number 4 of Right');
+    assert.equal(text({ kind: 'save', team: 0, player: 0, data: {} }), 'Save, number 1 of Greens');
+    assert.equal(text({ kind: 'card', team: 1, player: 2, data: { colour: 'red', second: true } }), 'Second yellow card and off, number 4 of Right');
+    assert.equal(text({ kind: 'card', team: 1, player: 2, data: { colour: 'yellow' } }), 'Yellow card, number 4 of Right');
     assert.equal(text({ kind: 'woodwork', data: { part: 'bar' } }), 'Off the bar');
     assert.equal(text({ kind: 'nearMiss', data: { line: 'wide' } }), 'Just wide');
-    assert.equal(text({ kind: 'restart', team: 0, data: { restart: 'corner' } }), 'Corner for the Greens');
-    assert.equal(text({ kind: 'fulltime', data: { winner: 0, score: [3, 1] } }), 'Full time, the Greens win 3 to 1');
+    assert.equal(text({ kind: 'restart', team: 0, data: { restart: 'corner' } }), 'Corner for Greens');
+    assert.equal(text({ kind: 'fulltime', data: { winner: 0, score: [3, 1] } }), 'Full time, Greens win 3 to 1');
     assert.equal(text({ kind: 'fulltime', data: { winner: null, draw: true, score: [1, 1] } }), 'Full time, a draw, 1 to 1');
     // Passes, changes of possession, kick offs and moments without a player stay silent.
     assert.equal(text({ kind: 'pass', team: 0, player: 1, data: {} }), undefined);
@@ -124,7 +143,7 @@ test('the captions of a sample time each event and read the score', () => {
     const store = storeOf('sample-5v5');
     const cues = C.cuesOf(momentsOf(store), C.captionContext(store.header), M);
     const texts = cues.map((c) => c.text);
-    assert.ok(texts.some((t) => /^Goal, number \d+ for the .+, 1 to 0$/.test(t)), texts.join('\n'));
+    assert.ok(texts.some((t) => /^Goal, number \d+ of .+, 1 to 0$/.test(t)), texts.join('\n'));
     assert.match(texts.at(-1), /^Full time, a draw, 1 to 1$/);
     for (let i = 1; i < cues.length; i++) {
         assert.ok(cues[i].start >= cues[i - 1].start);
@@ -180,4 +199,21 @@ test('three events of one step show together', () => {
     const at = (id) => ({ id, kind: 'woodwork', t: 36.6, data: {} });
     const cues = C.cuesOf([at('a'), at('b'), at('c')], context, M);
     assert.equal(C.activeCues(cues, 36.7).length, 3);
+});
+
+test('a name in a cue stays on its line and its markup stays text in the WebVTT file', () => {
+    const name = 'Reds\n\n00:00:00.000 --> 99:00:00.000\n<b>Hi</b> & <c.x>';
+    const header = { teams: [{ name }, { name: 'Blues\r\n' }], players: [{ team: 0, index: 0, goalkeeper: false }] };
+    const local = C.captionContext(header);
+    const cues = C.cuesOf([{ id: 'g', kind: 'goal', t: 1, team: 0, player: 0, data: { score: [1, 0], ownGoal: false } }], local, M);
+    assert.ok(cues[0].text.includes(name.trim()), cues[0].text);
+    const vtt = C.toVtt(cues);
+    const lines = vtt.split('\n');
+    assert.equal(lines.length, 6, vtt);
+    assert.equal(lines.filter((line) => line.includes('-->')).length, 1, vtt);
+    assert.ok(!/[<>]/.test(lines[4]) && lines[4].includes('&lt;b&gt;Hi&lt;/b&gt; &amp; &lt;c.x&gt;'), lines[4]);
+    assert.ok(lines[4].includes('Reds 00:00:00.000 --&gt; 99:00:00.000 &lt;b&gt;'), lines[4]);
+    assert.equal(C.vttText('a \r\n\r\n  b\rc\nd'), 'a b c d');
+    assert.equal(C.vttText('1 < 2 > 0 && -->'), '1 &lt; 2 &gt; 0 &amp;&amp; --&gt;');
+    assert.equal(C.vttText(null), '');
 });

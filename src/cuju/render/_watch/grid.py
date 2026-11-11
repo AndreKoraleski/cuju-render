@@ -6,12 +6,15 @@
 A viewer asks the source for a range of environments, and the source answers at once with the
 tiles it holds, each the score, the clock, the ball and the positions of the players of one
 environment at the step it was read. The source reads states for the grid only while a viewer
-asks, at most `_LINGER` seconds after the last request, and at the end of a step of the batch, as
-the stream does. The reads are bounded four ways. No step reads more than `_PER_STEP` states, and
-the grid reads at most `_RATE` states a second, the pace at which a watched stream reads its own.
-A pass over the range starts at most once every `_PERIOD` seconds, so each tile is read at most
-twice a second, and after each step that read, the grid waits until its reads amount to at most
-`_SHARE` of the wall time. Reading a state leaves every output of the batch as it is.
+asks, at most `_LINGER` seconds after it last answered, and at the end of a step of the batch, as
+the stream does. The tiles stay until the range changes or the source closes, so a request that
+arrives late, as on a busy machine, gets the tiles read before it while the grid reads again, and
+a pass that stopped goes on where it stopped. The reads are bounded four ways. No step reads more
+than `_PER_STEP` states, and the grid reads at most `_RATE` states a second, the pace at which a
+watched stream reads its own. A pass over the range starts at most once every `_PERIOD` seconds,
+so each tile is read at most twice a second, and after each step that read, the grid waits until
+its reads amount to at most `_SHARE` of the wall time. Reading a state leaves every output of the
+batch as it is.
 """
 
 from __future__ import annotations
@@ -30,8 +33,10 @@ from .._format import recording as _recording
 
 # The most environments that one request may ask for.
 MAXIMUM = 64
-# A grid that no viewer asked for within this many seconds stops reading.
-_LINGER = 3.0
+# A grid that answered no request within this many seconds stops reading and keeps its tiles. A
+# loaded machine relays the page's requests late, ten seconds apart and more, so the grid waits
+# well past that before it stops.
+_LINGER = 15.0
 # A pass over the range starts at most once in this many seconds.
 _PERIOD = 0.5
 # The most states that one step of the batch reads for the grid.
@@ -213,6 +218,7 @@ class Grid:
                     for index, tile in self._tiles.items()
                     if first <= index < first + count
                 }
+            # The linger runs from this answer, the last that the viewer received.
             self._until = self._clock() + _LINGER
             tiles = [self._tiles.get(index) for index in range(first, first + count)]
         return {
@@ -227,11 +233,9 @@ class Grid:
         now = self._clock()
         with self._lock:
             if now >= self._until:
-                # Nobody watches any more, so the grid stops reading and forgets its tiles.
+                # Nobody watches any more, so the grid stops reading. It keeps its tiles and its
+                # pass for the next request, which then answers at once with what it read.
                 self._until = 0.0
-                self._tiles = {}
-                self._queue = []
-                self._pass_start = -float('inf')
                 return
             if now < self._next:
                 return

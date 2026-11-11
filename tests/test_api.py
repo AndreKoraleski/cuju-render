@@ -6,9 +6,11 @@ import gzip
 import json
 import logging
 import os
+import re
 import struct
 import subprocess
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -24,6 +26,7 @@ from support.common import (
     _filtered_episodes,
     _get,
     _goals,
+    _short_challenges,
     _short_matches,
     _toy_team,
 )
@@ -192,6 +195,8 @@ def test_default_submission_rejects_builtin_action(render_home, tmp_path, monkey
 def test_demo_starts_its_server_and_ends_cleanly_on_ctrl_c(render_home):
     """Without a server the demo starts one, and Ctrl+C ends the match, the server and itself."""
     import signal
+    import subprocess
+    import sys
 
     process = subprocess.Popen(
         [sys.executable, '-m', 'cuju.render', 'demo', '--port', '0', '--no-open'],
@@ -330,3 +335,86 @@ def test_annotations_leave_the_outputs_as_they_were(render_home):
     for first, second in zip(outputs[0][1:-1], outputs[1][1:-1], strict=True):
         assert all(torch.equal(a, b) for a, b in zip(first, second, strict=True))
     assert outputs[0][-1] == outputs[1][-1]
+
+
+def test_policy_errors_are_public_and_quiet(render_home, monkeypatch, capsys):
+    """A failing policy raises the public PolicyError in one line, with a traceback on request."""
+    _short_challenges(monkeypatch, 4)
+    assert issubclass(cuju.render.PolicyError, cuju.errors.Error)
+    assert issubclass(cuju.render.PolicyError, RuntimeError)
+    assert 'PolicyError' in cuju.render.__all__
+    message = 'the policy of wild failed, it answered the action 99, outside its action set of 19'
+    with pytest.raises(cuju.render.PolicyError, match=re.escape(message)) as caught:
+        cuju.render.challenge('corner', policy=lambda obs: [99], name='wild', attempts=1)
+    assert str(caught.value).endswith('actions, 0 to 18')
+    assert isinstance(caught.value.__cause__, IndexError)
+    assert 'Traceback' not in capsys.readouterr().err
+    monkeypatch.setenv('CUJU_RENDER_DEBUG', 'on')
+    with pytest.raises(cuju.render.PolicyError):
+        cuju.render.challenge('corner', policy=lambda obs: [99], name='wild', attempts=1)
+    assert 'Traceback' in capsys.readouterr().err
+
+
+def test_watch_checks_the_environment_before_closing_the_earlier_source(render_home):
+    batch = cuju.BatchEnvironment('5_vs_5', environment_count=2, device='cpu', seed=3)
+    try:
+        source = cuju.render.watch(batch)
+        assert repr(source).startswith(f'LiveSource({source.identifier!r}, environment 0 of 2')
+        with pytest.raises(cuju.errors.ArgumentError, match='from 0 to 1, found 5'):
+            cuju.render.watch(batch, environment=5)
+        with pytest.raises(cuju.errors.ArgumentError, match='as an integer'):
+            cuju.render.watch(batch, environment=1.5)
+        # The mistake leaves the earlier source streaming and listed.
+        assert not source._closed and source in batch.observers
+        source.close()
+        assert repr(source).endswith('closed)')
+    finally:
+        batch.close()
+
+
+def test_recorder_repr_names_its_state(render_home):
+    batch = cuju.BatchEnvironment(
+        'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu'
+    )
+    recorder = cuju.render.Recorder(batch)
+    batch.reset()
+    batch.step(torch.tensor([[5]], dtype=torch.int32))
+    shown = repr(recorder)
+    assert shown.startswith('Recorder(environment 0, ') and 'version 2, capturing, ' in shown
+    assert '2 frames of the current episode, 0 episodes ended, 0 saved, 0 dropped)' in shown
+    recorder.close()
+    assert 'detached, 0 frames' in repr(recorder) and '1 saved' in repr(recorder)
+    batch.close()
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='sends SIGINT to the group as Ctrl+C does')
+def test_demo_ends_within_about_a_second_of_ctrl_c(render_home):
+    """Ctrl+C reaches the command, the match and the server, and all of them end at once."""
+    import contextlib
+    import signal
+
+    process = subprocess.Popen(
+        [sys.executable, '-m', 'cuju.render', 'demo', '--port', '0', '--no-open'],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        for line in process.stdout:
+            if 'Ctrl+C' in line:
+                break
+        time.sleep(1)
+        started = time.monotonic()
+        os.killpg(process.pid, signal.SIGINT)
+        assert process.wait(30) == 0
+        took = time.monotonic() - started
+        assert took < 2.5, took
+        assert not list((render_home / 'live').glob('*.json'))
+        time.sleep(0.5)
+        with pytest.raises(ProcessLookupError):
+            os.killpg(process.pid, 0)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)

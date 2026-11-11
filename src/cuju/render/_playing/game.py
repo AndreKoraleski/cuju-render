@@ -39,14 +39,15 @@ from typing import Any, TextIO
 import torch
 
 from cuju import BatchEnvironment, bundled_scenarios
-from cuju.errors import ArgumentError
 
 from .._format import recording as _recording
 from .._registry import teams as _teams
 from .._store import library as _library
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from .._watch import live as _live
 from . import achievements as _achievements
-from .play import Policies, PolicyError, PolicyRunner
+from .play import Policies, PolicyError, PolicyMessageError, PolicyRunner, game_title, side_names
 
 # The names of the inputs that the page sends, four directions on the screen and the buttons.
 DIRECTIONS = ('left', 'right', 'up', 'down')
@@ -183,6 +184,7 @@ class Game:
         teams: The left and right team, as a recording's header holds them.
         runner: The runner of the submissions, or `None` when the built-in AI plays every player.
         error: Why a submission ended the game, or `None`.
+        error_ids: The id and values of the message of `error`, when it has one, for the page.
         controlled: The player in its team that each person controls, on a side shared with a
             submission, where the frames mark every player of the side's agents, or `None`.
     """
@@ -226,15 +228,15 @@ class Game:
         """
         ability = _teams.check_ability(ability)
         if scenario not in [*bundled_scenarios(), *_teams.renderer_scenarios()]:
-            raise ArgumentError(f'expected a shipped scenario, found {scenario!r}')
+            raise MessageError('server.scenario', scenario=repr(scenario))
         if not any(humans):
-            raise ArgumentError('expected a person on at least one side')
+            raise MessageError('server.game.person')
         if (
             not isinstance(teams, (tuple, list))
             or len(teams) != 2
             or not all(isinstance(value, str) for value in teams)
         ):
-            raise ArgumentError(f'expected two registry teams, found {teams!r}')
+            raise MessageError('server.game.registry_teams', teams=repr(teams))
         self.humans = (bool(humans[0]), bool(humans[1]))
         self.scenario = scenario
         self.seed = int(time.time()) % 2**31 if seed is None else int(seed)
@@ -276,6 +278,7 @@ class Game:
         self.batch.reset()
         self.runner: PolicyRunner | None = None
         self.error: str | None = None
+        self.error_ids: dict[str, Any] = {}
         self._failure: PolicyError | None = None
         if any(agents):
             firsts = [int(self.humans[0]), self.counts[0] + int(self.humans[1])]
@@ -286,9 +289,8 @@ class Game:
                 )
                 runner.request()
                 if not runner.wait(first_call_seconds):
-                    raise PolicyError(
-                        f'the policy did not answer its first observation within '
-                        f'{first_call_seconds:g} seconds'
+                    raise PolicyMessageError(
+                        'server.policy.first', seconds=f'{first_call_seconds:g}'
                     )
             except BaseException:
                 runner.close()
@@ -302,24 +304,39 @@ class Game:
         self.done = False
         played = [round(float(value), 4) for value in self.batch.difficulty[0].tolist()]
         two = all(self.humans)
-        named = (tournament or {}).get('names') or [None, None]
+        named = side_names(tournament)
         self.teams = []
         for side, team in enumerate(_teams.match_teams(*self.team_ids)):
-            name = team['name']
-            if self.humans[side]:
-                person = named[side] or (f'Player {side + 1}' if two else 'You')
-                name = person if team['id'] == _teams.BUILTIN else f'{person} with {name}'
+            # A tournament names the side of an agent as its entrant, such as Built-in AI 0.80.
+            # Names that cuju makes, such as You, travel as labels, and a person's name as text.
+            name = _teams.shown_name(team)
+            if not self.humans[side]:
+                name = named[side] or name
+            else:
+                person = named[side] or (
+                    _messages.label('server.names.player', number=side + 1)
+                    if two
+                    else _messages.label('server.names.you')
+                )
+                if team['id'] != _teams.BUILTIN:
+                    person = _messages.label('server.names.person_with', person=person, team=name)
+                name = person
+            made = ('name_id', 'name_values')
+            kept = {key: value for key, value in team.items() if key not in made}
             self.teams.append(
-                {**team, 'name': name, 'ability': played[side], 'person': self.humans[side]}
+                {
+                    **kept,
+                    **_messages.named('name', name),
+                    'ability': played[side],
+                    'person': self.humans[side],
+                }
             )
 
     @property
-    def title(self) -> str:
-        """Returns the title of the game, its teams by name, after its tournament match."""
-        title = f'{self.teams[0]["name"]} against {self.teams[1]["name"]}'
-        if self.tournament is not None:
-            title = f'{self.tournament.get("name")}, {self.tournament.get("label")}, {title}'
-        return title
+    def title(self) -> dict[str, Any]:
+        """Returns the title of the game as a label, its teams by name, after its tournament
+        match, which reads as English text in `title['text']`."""
+        return game_title([_teams.shown_name(team) for team in self.teams], self.tournament)
 
     def step(
         self,
@@ -479,6 +496,7 @@ def run(game: Game, commands: _Commands, source: _live.LiveSource, pace: float) 
             frame = game.step(inputs, POLICY_BUDGET / pace)
         except PolicyError as error:
             game.error = str(error)
+            game.error_ids = _messages.id_fields(error)
             return 'policy'
         source.push(frame, game.lineup)
         # A late step starts the clock again, so a slow moment never brings a burst of steps.
@@ -513,9 +531,37 @@ def _status(game: Game) -> dict[str, Any]:
     return report
 
 
+def _waited_arguments(stream: TextIO) -> list[str] | None:
+    """Returns the arguments of a game that a process kept ready reads from its first line.
+
+    The server writes them as one JSON list of strings, and a closed or unreadable channel yields
+    `None`, for a process the server no longer needs.
+    """
+    try:
+        arguments = json.loads(stream.readline() or 'null')
+    except (OSError, ValueError):
+        return None
+    if isinstance(arguments, list) and all(isinstance(value, str) for value in arguments):
+        return arguments
+    return None
+
+
 def main(arguments: list[str] | None = None) -> None:
-    """Plays the game that the command line names, as the server asks."""
+    """Plays the game that the command line names, as the server asks.
+
+    With `--warm` alone, the process has already loaded torch, cuju and every module of a game,
+    and waits for the arguments of its game as one JSON list on the first line of standard input,
+    so the game starts as soon as the server sends them. Such a process plays that one game exactly
+    as a process started with the arguments would, and it ends without a game when its input
+    closes.
+    """
     global _reports
+    if arguments is None:
+        arguments = sys.argv[1:]
+    if arguments == ['--warm']:
+        arguments = _waited_arguments(sys.stdin)
+        if arguments is None:
+            return
     parser = argparse.ArgumentParser(prog='python -m cuju.render._playing.game')
     parser.add_argument('--scenario', default='11_vs_11_kaggle')
     parser.add_argument('--left', choices=('person', 'builtin'), default='person')
@@ -548,16 +594,24 @@ def main(arguments: list[str] | None = None) -> None:
             tournament=options.tournament,
         )
     except PolicyError as error:
-        _report(error=str(error))
+        _report(error=str(error), **_messages.id_fields(error))
         sys.exit(1)
     except Exception as error:
-        _report(error=f'{type(error).__name__}: {error}')
+        _report(error=_messages.described(error), **_messages.id_fields(error))
         sys.exit(1)
     source = _live.LiveSource(game.batch, 0, game.title, game.teams, game.scenario, announce=False)
     saved = None
     try:
         source.push(game.frames[0], game.lineup)
-        _report(port=source.port, seed=game.seed, teams=[team['name'] for team in game.teams])
+        _report(
+            port=source.port,
+            seed=game.seed,
+            teams=[team['name'] for team in game.teams],
+            team_labels=[
+                label if isinstance(label := _teams.shown_name(team), dict) else None
+                for team in game.teams
+            ],
+        )
         ending = run(game, commands, source, max(0.1, options.pace))
         if options.record and len(game.frames) > 1:
             saved = game.save().stem
@@ -571,6 +625,7 @@ def main(arguments: list[str] | None = None) -> None:
             step=len(game.actions),
             match=saved,
             error=game.error,
+            **game.error_ids,
             achievements=earned,
             **_status(game),
         )
@@ -581,7 +636,7 @@ def main(arguments: list[str] | None = None) -> None:
         if options.record and saved is None and len(game.frames) > 1:
             with contextlib.suppress(Exception):
                 saved = game.save().stem
-        _report(error=f'{type(error).__name__}: {error}', match=saved)
+        _report(error=_messages.described(error), match=saved, **_messages.id_fields(error))
         sys.exit(1)
     finally:
         source.close()

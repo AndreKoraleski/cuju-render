@@ -265,10 +265,12 @@ def _library_counts() -> dict[str, Any]:
 
 def _server_facts() -> dict[str, Any]:
     path = _home.home() / _launch.SERVER_FILE
+    # The file is looked at first, since asking for the running server removes a stale one.
+    found = path.is_file()
     server = _launch.running()
     if server is not None:
         return {'file': True, 'running': True, 'port': server.port, 'stale': False}
-    return {'file': path.is_file(), 'running': False, 'port': None, 'stale': path.is_file()}
+    return {'file': found, 'running': False, 'port': None, 'stale': found}
 
 
 def _checks(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -333,17 +335,19 @@ def _checks(report: dict[str, Any]) -> list[dict[str, Any]]:
         from .._export import video_jobs as _video_jobs
 
         video = _video_jobs.availability()
+        # Video export is optional, so a missing program warns and passes.
         checks.append(
             {
                 'name': 'video export',
                 'ok': True,
+                'warning': not video['available'],
                 'detail': 'Chrome and ffmpeg are found'
                 if video['available']
                 else scrub(' '.join(video['missing'])),
             }
         )
     except Exception as error:
-        checks.append({'name': 'video export', 'ok': True, 'detail': scrub(error)})
+        checks.append({'name': 'video export', 'ok': True, 'warning': True, 'detail': scrub(error)})
     return checks
 
 
@@ -466,7 +470,8 @@ def text(document: dict[str, Any]) -> str:
         lines.append('  no server runs' + (', server.json is stale' if server.get('stale') else ''))
     lines += ['', 'Checks']
     for check in document.get('checks', []):
-        lines.append(f'  {"ok" if check["ok"] else "FAIL"}  {check["name"]}, {check["detail"]}')
+        mark = 'FAIL' if not check['ok'] else 'warn' if check.get('warning') else 'ok'
+        lines.append(f'  {mark}  {check["name"]}, {check["detail"]}')
     errors = document.get('errors', [])
     lines += ['', 'Recent warnings and errors']
     if not errors:

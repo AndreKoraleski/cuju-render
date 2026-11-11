@@ -13,9 +13,17 @@ vertex section after the line `#pragma cuju vertex` and a fragment section after
 
 The checks keep a shader cheap and its cost known before it compiles. A loop is a `for` loop of a
 fixed count, with integer literals or `const int` names of the file for its bounds and step, of
-at most 256 iterations. A fragment fetches textures at most 16 times, counted with the trip counts
-of the loops around each fetch and through the helper functions it calls, and every hook of a
-chunks file counts as fragment. The only include is `<cuju_noise>`.
+at most 256 iterations, and loops nested inside each other, through the helper functions they
+call too, run their body at most 1024 times. A fragment fetches textures at most 16 times,
+counted with the trip counts of the loops around each fetch and through the helper functions it
+calls, and every hook of a chunks file counts as fragment. The code that a vertex or a fragment
+runs holds at most 65536 words, names and numbers, each counted with the trip counts of the loops
+around it, through the helper functions it calls and with the words of the macros it names, and
+the whole file holds at most 262144 words once its macros expand. The only include is
+`<cuju_noise>`. One rule of syntax catches the commonest slip, an operator with nothing after it,
+and braces and parentheses must pair up.
+Everything else of GLSL waits for the page, which compiles each shader before it draws and names
+one that fails in a notice.
 
 The server runs `check` on the shaders of a manifest, `cuju render pack check` runs it for an
 author, and the page runs the same rules before it compiles. Each check reads the text with its
@@ -31,7 +39,14 @@ from typing import Any
 MODES = ('chunks', 'material')
 MAXIMUM_BYTES = 256 * 1024
 MAXIMUM_ITERATIONS = 256
+# The most times the body of loops nested in each other runs, through helper calls too.
+MAXIMUM_NESTED = 1024
 MAXIMUM_FETCHES = 16
+# The most words a vertex or a fragment runs, and the most words of the file with its macros.
+MAXIMUM_WORK = 65536
+MAXIMUM_EXPANDED = 262144
+# The largest count the checks keep, far past every limit, so a count stays a small integer.
+_CAP = 1 << 62
 # The programs a team may compile at each quality, one for each distinct shader file and mode.
 BUDGET = {'high': 16, 'medium': 16, 'low': 8}
 INCLUDES = ('cuju_noise',)
@@ -125,8 +140,18 @@ _HEAD = re.compile(
 _RENDERER_NAME = re.compile(r'cuju\w*|u[A-Z]\w*')
 _COMMENT = re.compile(r'//[^\n]*|/\*.*?(?:\*/|\Z)|\\\n', re.S)
 _WORD = re.compile(r'[A-Za-z_]\w*')
+# A word of the code that counts toward its work, a name or a number.
+_TOKEN = re.compile(r'[A-Za-z_]\w*|\d+(?:\.\d*)?|\.\d+')
 _BRACKETS = {'(': re.compile(r'[()]'), '{': re.compile(r'[{}]')}
 _STATEMENT = re.compile(r'[(){};]')
+# A name that an assignment, an increment or a decrement changes, the counter check of a loop.
+_CHANGE = re.compile(
+    r'(?<![\w.])(?:([A-Za-z_]\w*)\s*(?:(?:[-+*/%&|^]|<<|>>)?=(?!=)|\+\+|--)'
+    r'|(?:\+\+|--)\s*([A-Za-z_]\w*))'
+)
+# An operator that a statement, an argument or a bracket ends right after, the commonest slip of a
+# shader that then fails to compile, such as `return e + ;`.
+_DANGLING = re.compile(r'([-+*/%=<>!&|^~]+)\s*[;),\]}]')
 
 
 def _blank(match: re.Match[str]) -> str:
@@ -330,11 +355,9 @@ class _Reader:
         """Notes a loop whose body changes its counter, which would void its trip count."""
         name = _INIT.fullmatch(parts[0].strip()).group(1)
         text = self.code[body:end]
-        pattern = re.compile(
-            rf'(?<![\w.])(?:{name}\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)|{name}\s*(?:\+\+|--)'
-            rf'|(?:\+\+|--)\s*{name}\b)'
-        )
-        for match in pattern.finditer(text):
+        for match in _CHANGE.finditer(text):
+            if (match.group(1) or match.group(2)) != name:
+                continue
             if re.search(r'\bint\s*$', text[: match.start()]):
                 continue
             self.note(body + match.start(), f'changes the counter {name} inside its loop')
@@ -347,19 +370,36 @@ class _Reader:
         self.loops.sort()
         self.starts = [start for start, _, _ in self.loops]
 
-    def weight(self, offset: int, low: int) -> int:
-        """Returns how many times the code at an offset runs, the product of its loops' counts.
+    def weights(self, offsets: list[int], low: int, high: int) -> tuple[list[int], int]:
+        """Returns how many times the code at each offset runs, and the most a loop body runs.
 
-        Only the loops that begin from `low` on count, the start of the enclosing function.
+        Each count is the product of the trip counts of the loops around the offset, held at
+        `_CAP`. Only the loops of the function from `low` to `high` count, and the offsets come
+        in order, so one pass over them and the loops does.
         """
-        product = 1
-        for index in range(bisect.bisect_left(self.starts, low), len(self.starts)):
-            start, end, trips = self.loops[index]
-            if start > offset:
-                break
-            if offset < end:
-                product *= trips
-        return product
+        stack: list[tuple[int, int]] = []
+        out = []
+        deepest = 1
+        k = bisect.bisect_left(self.starts, low)
+
+        def enter(limit: int) -> None:
+            nonlocal k, deepest
+            while k < len(self.loops) and self.loops[k][0] <= limit and self.loops[k][0] < high:
+                start, end, trips = self.loops[k]
+                k += 1
+                while stack and stack[-1][0] <= start:
+                    stack.pop()
+                product = min(_CAP, (stack[-1][1] if stack else 1) * trips)
+                stack.append((end, product))
+                deepest = max(deepest, product)
+
+        for offset in offsets:
+            enter(offset)
+            while stack and stack[-1][0] <= offset:
+                stack.pop()
+            out.append(stack[-1][1] if stack else 1)
+        enter(high)
+        return out, deepest
 
     def functions(self) -> list[dict[str, Any]]:
         """Returns the functions the code defines, each with its name, type, offset and body."""
@@ -386,43 +426,103 @@ class _Reader:
         return found
 
 
-def _fetches(reader: _Reader, functions: list[dict[str, Any]], problems: list[str]) -> dict:
-    """Returns the texture fetches of each function, counted through loops and helper calls."""
+def _costs(
+    reader: _Reader,
+    functions: list[dict[str, Any]],
+    problems: list[str],
+    sizes: dict[str, int] | None = None,
+) -> dict[str, tuple[int, int, int]]:
+    """Returns the cost of each function, counted through loops and helper calls.
+
+    Each cost is the texture fetches, the words of code the function runs, a macro counting as
+    the words it expands to by `sizes`, and the most times a body of its nested loops runs.
+    """
     code = reader.code
+    sizes = sizes or {}
     by_name: dict[str, list[dict[str, Any]]] = {}
     for function in functions:
         by_name.setdefault(function['name'], []).append(function)
-    counts: dict[str, int] = {}
+    costs: dict[str, tuple[int, int, int]] = {}
     busy: set[str] = set()
 
-    def count(name: str) -> int:
-        if name in counts:
-            return counts[name]
+    def cost_of(name: str) -> tuple[int, int, int]:
+        if name in costs:
+            return costs[name]
         if name in busy:
             message = f'calls {name} back from itself, which GLSL refuses'
             if message not in problems:
                 problems.append(message)
-            return 0
+            return (0, 0, 1)
         busy.add(name)
         # Overloads share a name, so a call counts the costliest of them.
-        total = 0
+        fetches, work, nested = 0, 0, 1
         for function in by_name[name]:
             start, end = function['body']
-            cost = 0
+            tokens = list(_TOKEN.finditer(code, start, end))
+            counts, deepest = reader.weights([m.start() for m in tokens], start, end)
+            at = dict(zip((m.start() for m in tokens), counts, strict=True))
+            own = [0, 0, deepest]
+            for match, weight in zip(tokens, counts, strict=True):
+                own[1] = min(_CAP, own[1] + weight * sizes.get(match.group(0), 1))
             for match in _CALL.finditer(code, start, end):
                 callee = match.group(1)
+                weight = at.get(match.start(), 1)
                 if callee in FETCHES:
-                    cost += reader.weight(match.start(), start)
+                    own[0] = min(_CAP, own[0] + weight)
                 elif callee in by_name:
-                    cost += reader.weight(match.start(), start) * count(callee)
-            total = max(total, cost)
+                    inner = cost_of(callee)
+                    own[0] = min(_CAP, own[0] + weight * inner[0])
+                    own[1] = min(_CAP, own[1] + weight * inner[1])
+                    own[2] = max(own[2], min(_CAP, weight * inner[2]))
+            fetches, work, nested = max(fetches, own[0]), max(work, own[1]), max(nested, own[2])
         busy.discard(name)
-        counts[name] = total
-        return total
+        costs[name] = (fetches, work, nested)
+        return costs[name]
 
     for name in by_name:
-        count(name)
-    return counts
+        cost_of(name)
+    return costs
+
+
+def _limits(where: str, cost: tuple[int, int, int], problems: list[str]) -> None:
+    """Notes where the cost of a vertex or a fragment passes the limits of loops and work."""
+    _, work, nested = cost
+    if nested > MAXIMUM_NESTED:
+        problems.append(
+            f'holds nested loops in {where} that run their body {nested} times, at most '
+            f'{MAXIMUM_NESTED}'
+        )
+    if work > MAXIMUM_WORK:
+        problems.append(f'runs {work} words of code in {where}, at most {MAXIMUM_WORK}')
+
+
+def _sizes(defines: list[tuple[int, str]]) -> dict[str, int]:
+    """Returns the words each macro of the file expands to, through the macros it names."""
+    bodies: dict[str, list[str]] = {}
+    for _, rest in defines:
+        match = re.match(r'([A-Za-z_]\w*)(?:\(([^)]*)\))?(.*)', rest)
+        if match:
+            parameters = set(_WORD.findall(match.group(2) or ''))
+            words = [w for w in _TOKEN.findall(match.group(3)) if w not in parameters]
+            bodies[match.group(1)] = words
+    sizes: dict[str, int] = {}
+    busy: set[str] = set()
+
+    def size(name: str) -> int:
+        if name in sizes:
+            return sizes[name]
+        if name in busy:
+            # The preprocessor never expands a macro inside its own expansion.
+            return 1
+        busy.add(name)
+        total = sum(size(word) if word in bodies else 1 for word in bodies[name])
+        busy.discard(name)
+        sizes[name] = max(1, total)
+        return sizes[name]
+
+    for name in bodies:
+        size(name)
+    return sizes
 
 
 def _directives(
@@ -497,6 +597,14 @@ def check(text: str, mode: str = 'chunks') -> list[str]:
     """
     if mode not in MODES:
         return [f'expected the mode chunks or material, found {mode!r}']
+    try:
+        return _check(text, mode)
+    except RecursionError:
+        return ['nests its loops or its helper calls too deeply to count']
+
+
+def _check(text: str, mode: str) -> list[str]:
+    """Checks a shader of a known mode, as `check` describes."""
     problems: list[str] = []
     if len(text.encode('utf-8', 'surrogatepass')) > MAXIMUM_BYTES:
         problems.append(f'holds more than {MAXIMUM_BYTES // 1024} KB')
@@ -519,11 +627,20 @@ def check(text: str, mode: str = 'chunks') -> list[str]:
             reader.note(match.start(), message)
     if code.count('{') != code.count('}') or code.count('(') != code.count(')'):
         problems.append('holds braces or parentheses that do not pair up')
+    for match in _DANGLING.finditer(code):
+        if match.group(1) not in ('++', '--'):
+            reader.note(match.start(), f'holds the operator {match.group(1)} with nothing after it')
     reader.loops_of()
     functions = reader.functions()
     _macros(reader, defines, {f['name'] for f in functions})
+    sizes = _sizes(defines)
+    expanded = sum(sizes.get(word, 1) for word in _TOKEN.findall(code))
+    if expanded > MAXIMUM_EXPANDED:
+        problems.append(
+            f'holds {expanded} words once its macros expand, at most {MAXIMUM_EXPANDED}'
+        )
     if mode == 'chunks':
-        counts = _fetches(reader, functions, problems)
+        costs = _costs(reader, functions, problems, sizes)
         names = {f['name']: f for f in functions}
         hooks = [name for name in HOOKS if name in names]
         if not hooks:
@@ -540,10 +657,20 @@ def check(text: str, mode: str = 'chunks') -> list[str]:
                 )
         if 'main' in names:
             reader.note(names['main']['at'], 'defines main, which the standard material holds')
-        fetches = sum(counts.get(name, 0) for name in hooks)
+        none = (0, 0, 1)
+        fetches = sum(costs.get(name, none)[0] for name in hooks)
+        _limits(
+            'the hooks',
+            (
+                fetches,
+                sum(costs.get(name, none)[1] for name in hooks),
+                max([costs.get(name, none)[2] for name in hooks] or [1]),
+            ),
+            problems,
+        )
         where = 'the hooks fetch'
     else:
-        fetches = _material(reader, functions, sections, problems)
+        fetches = _material(reader, functions, sections, problems, sizes)
         where = 'the fragment section fetches'
     if fetches > MAXIMUM_FETCHES:
         problems.append(f'{where} textures {fetches} times, at most {MAXIMUM_FETCHES}')
@@ -555,6 +682,7 @@ def _material(
     functions: list[dict[str, Any]],
     sections: list[tuple[str, int]],
     problems: list[str],
+    sizes: dict[str, int] | None = None,
 ) -> int:
     """Checks the two sections of a file of mode material and returns the fragment's fetches."""
     kinds = [kind for kind, _ in sections]
@@ -578,9 +706,10 @@ def _material(
             continue
         names = {f['name'] for f in own}
         visible = [f for f in shared if f['name'] not in names] + own
-        counts = _fetches(reader, visible, problems)
+        costs = _costs(reader, visible, problems, sizes)
+        _limits(f'the {kind} section', costs.get('main', (0, 0, 1)), problems)
         if kind == 'fragment':
-            fetches = counts.get('main', 0)
+            fetches = costs.get('main', (0, 0, 1))[0]
     return fetches
 
 

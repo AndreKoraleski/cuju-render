@@ -16,7 +16,7 @@ import cuju.state
 from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
 from cuju.render._store import home as _home
-from support.common import _get, _package_team
+from support.common import _get, _package_team, _template_variant, _zip_folder
 
 
 @pytest.mark.parametrize(
@@ -73,9 +73,75 @@ def test_presentation_developer_mode_reads_a_trusted_folder(render_home, tmp_pat
     manifest.write_text(json.dumps(document))
     assert _presentation.served(team['id'])['manifest']['name'] == 'Edited'
     assert _presentation.file_path(team['id'], 'worker.js') == folder / 'presentation/worker.js'
+    # Developer mode imports its modules by their address, so every module goes out as JavaScript.
+    assert _presentation.content_type(team['id'], 'worker.js') == 'text/javascript'
     # An imported archive never turns developer mode on, only the home's own file does.
     other = _package_team('Other')
     assert _presentation.served(other['id'])['developer'] is False
+    assert _presentation.content_type(other['id'], 'worker.js') == 'text/plain; charset=utf-8'
+    assert _presentation.content_type(other['id'], 'audio/hum.js') == 'text/javascript'
+    assert _presentation.content_type(other['id'], 'shaders/blink.glsl') == 'text/plain'
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        # The ways around the line by line rule of 0.2.0, each an import of the page's own module.
+        '0;import{Governor as G,Limiter as L}from"/js/presentation/loudness.js";',
+        '/**/import x from "y"',
+        'a();import x from "y"',
+        ';export{a}from"y"',
+        'const u = import.meta.url',
+        'import("x")',
+        'let a = `${import("x")}`',
+        'let a = `a${`b${ import("x") }`}`',
+        '// a line\u2028import x from "y"',
+        '// a line\rimport x from "y"',
+        "if (a) /'/.test(b); import('y'); //'",
+        'for await (const a of b) /"/; import("y"); "/',
+        'a\n++/"/.lastIndex; import("x"); "/',
+        'x = {}\n/a/; import("x")',
+        'export * from "y"',
+        'export * as n from "y"',
+        'export { a as b } from "y"',
+        'im\\u0070ort("x")',
+        '"open',
+        '/* open',
+        '`open ${',
+        'x = /open',
+    ],
+)
+def test_presentation_modules_refuse_every_import(text):
+    """The reader of modules finds an import however the text hides it, or refuses the text."""
+    from cuju.render._packages import presentation as _presentation
+
+    assert _presentation.module_problem(text), text
+    with pytest.raises(cuju.errors.ArgumentError, match='without imports'):
+        _presentation.check_file('worker.js', text.encode())
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        'export function frame() {}',
+        'export {}\nexport { a }',
+        'const s = "import x from \'y\'"',
+        '// import x from "y"\n/* import */ let a',
+        r'let r = /import\/"/g; let b = a / 2 / c',
+        'x.import(); y?.import',
+        'let t = `import ${a} import`',
+        'a = (b) / 2; c = d[0] / 3; e = f.return / 2',
+        '#!/usr/bin/env node\nexport const a = 1',
+        'class A { #import = 1; m() { return this.#import } }',
+        'x = a ? .5 : 1; y = a?.b',
+        'x = typeof /a/; if (a) { b() }\nc()',
+        'this.tick-- / (0.05 * r); a = b++ / 2',
+    ],
+)
+def test_presentation_modules_without_imports_pass(text):
+    from cuju.render._packages import presentation as _presentation
+
+    assert _presentation.module_problem(text) is None
 
 
 # Presentation pack tools.
@@ -209,14 +275,73 @@ def test_pack_glsl_refuses_each_case(text, mode, message):
     assert any(message in problem for problem in problems), problems
 
 
-def _zip_folder(folder, path):
-    import zipfile
+def _loop(n, body, name='i'):
+    return f'for (int {name} = 0; {name} < {n}; {name}++) {{ {body} }}'
 
-    with zipfile.ZipFile(path, 'w') as archive:
-        for item in sorted(folder.rglob('*')):
-            if item.is_file():
-                archive.write(item, item.relative_to(folder).as_posix())
-    return path
+
+@pytest.mark.parametrize(
+    'text, mode, message',
+    [
+        (
+            _hook(_loop(256, _loop(256, _loop(256, 'emissive.x += 0.0001;', 'k'), 'j'))),
+            'chunks',
+            'nested loops in the hooks that run their body 16777216 times, at most 1024',
+        ),
+        (
+            'float h(float x) { '
+            + _loop(256, 'x += 0.1;')
+            + ' return x; }\n'
+            + _hook(_loop(256, 'emissive.x += h(emissive.y);')),
+            'chunks',
+            'run their body 65536 times',
+        ),
+        (
+            ''.join(
+                f'float f{n}(float x) {{ return f{n + 1}(x) + f{n + 1}(x) + f{n + 1}(x); }}\n'
+                for n in range(20)
+            )
+            + 'float f20(float x) { return x; }\n'
+            + _hook('    emissive.x += f0(emissive.y);'),
+            'chunks',
+            'words of code in the hooks, at most 65536',
+        ),
+        (
+            '#define A x+x+x+x+x+x+x+x\n#define B A A A A A A A A\n#define C B B B B B B B B\n'
+            '#define D C C C C C C C C\n#define E D D D D D D D D\n#define F E E E E E E E E\n'
+            + _hook('    float x = 1.0; emissive.x += F;'),
+            'chunks',
+            'once its macros expand, at most 262144',
+        ),
+        (
+            '#pragma cuju vertex\nvoid main() { '
+            + _loop(64, _loop(64, 'gl_Position += vec4(0.0);', 'j'))
+            + ' }\n#pragma cuju fragment\nvoid main() { gl_FragColor = vec4(1.0); }\n',
+            'material',
+            'in the vertex section that run their body 4096 times',
+        ),
+    ],
+)
+def test_pack_glsl_bounds_the_work_of_a_shader(text, mode, message):
+    """Nested loops, helper calls and macros count together, so no shader runs without end."""
+    from cuju.render._packages import glsl as _glsl
+
+    problems = _glsl.check(text, mode)
+    assert any(message in problem for problem in problems), problems
+
+
+def test_pack_glsl_counts_many_loops_quickly_and_deep_nesting_safely():
+    """A large shader checks in one pass, and nesting past the stack names a problem."""
+    import time
+
+    from cuju.render._packages import glsl as _glsl
+
+    assert _glsl.check(_hook(_loop(32, _loop(32, 'emissive.x += 0.001;', 'j')))) == []
+    many = _hook('\n'.join(_loop(2, 'emissive.x += 0.0;', f'i{n}') for n in range(4000)))
+    start = time.perf_counter()
+    _glsl.check(many)
+    assert time.perf_counter() - start < 10
+    deep = _hook(''.join(f'for (int i{n} = 0; i{n} < 2; i{n}++) ' for n in range(3000)) + ';')
+    assert _glsl.check(deep)
 
 
 def test_pack_new_writes_a_template_that_checks_and_imports(render_home, tmp_path):
@@ -448,13 +573,13 @@ def test_presentation_contract_1_1_sections_are_checked(render_home):
         ({'post': {'layer': {'pass': 'warp'}}}, 'post left out'),
         ({'overlays': {'scorebug': {}}}, 'overlays left out'),
         ({'rig': {'ik': {'x': {'chain': ['a']}}}}, 'ik chain x left out'),
-        ({'rig': {'layers': [{'mask': ['a']}]}}, 'layer 0 left out'),
-        ({'reflexes': [{'on': 'goal', 'do': [{'time': {'freeze': 2}}]}]}, 'reflex 0 left out'),
+        ({'rig': {'layers': [{'mask': ['a']}]}}, 'layer 1 left out'),
+        ({'reflexes': [{'on': 'goal', 'do': [{'time': {'freeze': 2}}]}]}, 'reflex 1 left out'),
         (
             {'reflexes': [{'on': 'goal', 'do': [{'environment': {'rain': {}}}]}]},
-            'reflex 0 left out',
+            'reflex 1 left out',
         ),
-        ({'reflexes': [{'on': 'goal', 'do': [{'music': 'none'}]}]}, 'reflex 0 left out'),
+        ({'reflexes': [{'on': 'goal', 'do': [{'music': 'none'}]}]}, 'reflex 1 left out'),
         (
             {'materials': {'x': {'match': '*', 'shader': 'shaders/bad.glsl'}}},
             'material x left out, shaders/bad.glsl',
@@ -518,13 +643,206 @@ def test_presentation_sides_through_the_server_and_the_command_line(render_home,
     finally:
         server.shutdown()
         server.server_close()
-    assert main(['pack', 'sides', '--right', 'none', '--left', team['id']]) == 0
+    assert main(['pack', 'sides', '--right', 'none', '--left', team['id'], '--json']) == 0
     assert json.loads(capsys.readouterr().out) == {'left': team['id'], 'right': None}
     from support.package import package_zip
 
     archive = render_home / 'preview.zip'
     archive.write_bytes(package_zip('Previewed'))
     place = _pack.preview(archive, 'right')
-    assert place.startswith('#match=') and place.endswith('&preview=1')
+    assert place.startswith('#match=') and place.endswith('&preview=right')
     chosen = _presentation.sides()['right']
     assert chosen and _presentation.served(chosen)['manifest']['name'] == 'Test package'
+
+
+def test_pack_check_names_what_it_finds(tmp_path):
+    """Each message names the value it refuses, counts from 1 and skips refused budgets."""
+    import shutil
+
+    from cuju.render._packages import pack as _pack
+
+    def deep(package, manifest):
+        (package / 'a/b/c/d').mkdir(parents=True)
+        shutil.copy(package / 'audio/tick.wav', package / 'a/b/c/d/t.wav')
+
+    cases = {
+        'event': (
+            lambda p, m: m['reflexes'][0].__setitem__('on', 'goal_scored'),
+            'reflex 1 left out, expected reflex 1 on an event of the catalog, found '
+            "'goal_scored', the nearest is goal",
+        ),
+        'cue': (
+            lambda p, m: m['reflexes'][0]['do'][0].__setitem__('audio', 'nosuchcue'),
+            "expected action 1 to play a cue of the audio, found 'nosuchcue', the cues are tick",
+        ),
+        'stems': (
+            lambda p, m: m['audio'].__setitem__(
+                'music', {'anthem': {'stems': {'bass': 'audio/tick.wav'}}}
+            ),
+            'expected the stems of music anthem as a list of files, found a mapping',
+        ),
+        'behaviour': (
+            lambda p, m: m['behaviours'].append({'type': 'wobble'}),
+            'behaviour 2 left out, expected behaviour 2 of a type among',
+        ),
+        'deep': (
+            deep,
+            "expected a file in at most 3 folders of the package, found 'a/b/c/d/t.wav'",
+        ),
+        'feature': (
+            lambda p, m: m['requires'].append('nonexistent.feature'),
+            'the package requires nonexistent.feature, a feature no renderer names, so the page '
+            'draws the team in its stock look',
+        ),
+        'shader': (
+            lambda p, m: (p / 'shaders/glow.glsl').write_text(
+                'vec3 cujuEmissive(vec3 e, vec2 uv) { return e + ; }\n'
+            ),
+            'shaders/glow.glsl of mode chunks line 1 holds the operator + with nothing after it',
+        ),
+    }
+    for name, (change, message) in cases.items():
+        result = _pack.check(_template_variant(tmp_path, name, change))
+        assert not result['ok'], name
+        assert any(message in error for error in result['errors']), (name, result['errors'])
+    # A refused count of particles is an error alone, with no budget warning of its own.
+    count = _template_variant(
+        tmp_path, 'count', lambda p, m: m['effects']['spark'].__setitem__('count', 100000)
+    )
+    result = _pack.check(count)
+    assert any('effect spark left out' in error for error in result['errors'])
+    assert not any('particles' in warning for warning in result['warnings']), result['warnings']
+    assert result['budgets']['low']['particles'][0] == 0
+    # The manifest itself is a path the check reads, and a file of another kind says so.
+    plain = _template_variant(tmp_path, 'plain', lambda p, m: None)
+    assert _pack.check(plain / 'cuju-team/presentation/presentation.json')['ok']
+    (tmp_path / 'notes.txt').write_text('hello')
+    with pytest.raises(cuju.errors.ArgumentError, match=r'presentation.json or a .zip export'):
+        _pack.check(tmp_path / 'notes.txt')
+    # A sample shorter than one block of 400 ms says why its integrated loudness reads higher.
+    info = ' | '.join(_pack.check(plain)['info'])
+    assert 'audio/tick.wav lasts 0.15 seconds, less than one block of 400 ms' in info
+
+
+def test_pack_check_parses_the_worker_with_node(tmp_path):
+    """A worker that does not parse is an error when Node.js is at hand, information otherwise."""
+    import shutil
+
+    from cuju.render._packages import pack as _pack
+
+    folder = _template_variant(
+        tmp_path,
+        'worker',
+        lambda p, m: (p / 'worker.js').write_text('export function frame(f) { return { ; }\n'),
+    )
+    result = _pack.check(folder)
+    if shutil.which('node') is None:
+        assert result['ok'] and any('Node.js is not installed' in i for i in result['info'])
+    else:
+        assert not result['ok']
+        assert any(
+            'the worker worker.js does not parse, SyntaxError' in e and 'at line 1' in e
+            for e in result['errors']
+        ), result['errors']
+        assert _pack.check(_template_variant(tmp_path, 'fine', lambda p, m: None))['ok']
+
+
+def test_pack_check_names_the_figures_of_the_team(tmp_path):
+    """The check says which players draw GRF's figure and what of a package shows on it."""
+    from cuju.render._packages import pack as _pack
+
+    plain = _pack.check(_template_variant(tmp_path, 'plain', lambda p, m: None))
+    assert plain['ok'] and plain['warnings'] == [], plain['warnings']
+    info = ' | '.join(plain['info'])
+    assert "11 players draw GRF's figure, which carries the sockets, attachments" in info
+    assert 'the check read 1 shader by the static rules of the section Shaders' in info
+    assert 'compiled none, and the page compiles each before it draws' in info
+
+    def tail(package, manifest):
+        manifest['rig']['sockets']['crown']['node'] = 'tail'
+        manifest['rig']['driver'] = 'team'
+        manifest['clips'] = {'idle.calm': 'Idle'}
+
+    result = _pack.check(_template_variant(tmp_path, 'tail', tail))
+    assert result['ok'], result['errors']
+    warnings = ' | '.join(result['warnings'])
+    assert "socket crown names the node tail, which GRF's figure lacks" in warnings
+    assert 'player, body, middle, neck, ' in warnings and 'right_knee and right_ankle' in warnings
+    assert "the role idle.calm shows only on a model of the package or the team's own model" in (
+        warnings
+    )
+    assert "GRF's figure keeps the grf driver, so the team driver of the rig" in warnings
+    # A node of GRF's figure passes, and the test package's own model checks its own nodes.
+    body = _template_variant(
+        tmp_path, 'body', lambda p, m: m['rig']['sockets']['crown'].__setitem__('node', 'neck')
+    )
+    assert _pack.check(body)['warnings'] == []
+
+
+def test_presentation_messages_list_their_choices_in_words():
+    from cuju.render._packages import presentation as _presentation
+
+    with pytest.raises(cuju.errors.ArgumentError) as caught:
+        _presentation.behaviour({'type': 'twirl'})
+    message = str(caught.value)
+    assert 'among spin, oscillate, spring, lookAt, bank, follow, curve, materialParam, ' in message
+    assert 'audioParam or lightParam' in message and "('" not in message
+    with pytest.raises(cuju.errors.ArgumentError, match=r'channel of behaviour 1 among x, y, z'):
+        _presentation.behaviour({'type': 'oscillate', 'channel': 'w'})
+    assert _presentation.words(['a']) == 'a' and _presentation.words('ab', 'and') == 'a and b'
+
+
+def test_pack_examples_agree_and_spell_color():
+    """The template and the test package call themselves the small and the full example."""
+    from pathlib import Path
+
+    from cuju.render._packages import pack as _pack
+
+    docs = (Path(__file__).resolve().parents[1] / 'docs/presentation.md').read_text()
+    tests = (Path(__file__).resolve().parent / 'support' / 'package.py').read_text()
+    assert 'the test package in\n`tests/support/team` is the full example' in docs
+    assert 'full example' in tests and 'small test package' not in tests
+    assert 'colour' not in _pack._GLOW and 'color' in _pack._GLOW
+
+
+def test_pack_sides_prints_lines_and_a_preview_moves_its_side(render_home, tmp_path, capsys):
+    from cuju.render.__main__ import main
+    from cuju.render._packages import pack as _pack
+    from cuju.render._packages import presentation as _presentation
+
+    folder = _template_variant(tmp_path, 'team', lambda p, m: m.__setitem__('name', 'Lanterns'))
+    left = _pack.register_preview(folder, 'left')
+    assert _presentation.sides() == {'left': left['team'], 'right': None}
+    right = _pack.register_preview(folder, 'right')
+    assert right['team'] == left['team']
+    assert _presentation.sides() == {'left': None, 'right': left['team']}
+    assert main(['pack', 'sides']) == 0
+    printed = capsys.readouterr().out.splitlines()
+    assert printed == [
+        'left  draws the package of the team that plays it',
+        f'right  draws the package of Lanterns, team {left["team"]}',
+    ]
+    assert main(['pack', 'sides', '--json']) == 0
+    assert json.loads(capsys.readouterr().out) == {'left': None, 'right': left['team']}
+    assert main(['pack', 'sides', '--left', left['team'], '--right', 'none', '--json']) == 0
+    assert json.loads(capsys.readouterr().out) == {'left': left['team'], 'right': None}
+
+
+def test_team_sound_command_line(render_home, tmp_path, capsys):
+    from cuju.render.__main__ import main
+    from cuju.render._packages import pack as _pack
+
+    team = _teams.add('Singers', 'main.py', b'def agent(obs):\n    return 0\n')
+    sound = tmp_path / 'shot.wav'
+    sound.write_bytes(_pack.tone_bytes())
+    assert main(['team', 'sound', team['id'], 'shot', str(sound)]) == 0
+    assert capsys.readouterr().out.strip() == 'Singers, sounds shot'
+    assert main(['team', 'sound', team['id'], '--json']) == 0
+    assert json.loads(capsys.readouterr().out) == {'team': team['id'], 'sounds': ['shot']}
+    (tmp_path / 'bad.wav').write_bytes(b'RIFF\x08\x00\x00\x00WAVEfmt ')
+    assert main(['team', 'sound', team['id'], 'goal', str(tmp_path / 'bad.wav')]) == 1
+    assert 'expected a whole WAV sound' in capsys.readouterr().err
+    assert main(['team', 'sound', team['id'], 'cheer', str(sound)]) == 1
+    assert 'expected the moment of a sound among goal, shot, pass' in capsys.readouterr().err
+    assert main(['team', 'sound', team['id'], 'shot', '--remove']) == 0
+    assert capsys.readouterr().out.strip() == 'Singers, sounds none'

@@ -93,6 +93,41 @@ test('the page checks shaders before it compiles them', () => {
     assert.deepEqual(G.checkShader(blink, 'chunks'), [], 'the test package’s blink passes');
 });
 
+// The shaders of the cost rules, the same as the Python tests of _glsl.py read.
+const hook = (body) => `vec4 cujuColor(vec4 c, vec2 uv) {\n${body}\n    return c;\n}\n`;
+const loop = (n, body, name = 'i') => `for (int ${name} = 0; ${name} < ${n}; ${name}++) { ${body} }`;
+const COSTLY = {
+    three: hook(loop(256, loop(256, loop(256, 'c.r += 0.0001;', 'k'), 'j'))),
+    helper: `float h(float x) { ${loop(256, 'x += 0.1;')} return x; }\n${hook(loop(256, 'c.r += h(c.g);'))}`,
+    tree: Array.from({ length: 20 }, (_, n) => `float f${n}(float x) { return f${n + 1}(x) + f${n + 1}(x) + f${n + 1}(x); }\n`).join('')
+        + `float f20(float x) { return x; }\n${hook('c.r += f0(c.g);')}`,
+    macros: '#define A x+x+x+x+x+x+x+x\n#define B A A A A A A A A\n#define C B B B B B B B B\n#define D C C C C C C C C\n'
+        + `#define E D D D D D D D D\n#define F E E E E E E E E\n${hook('float x = 1.0; c.r += F;')}`,
+    poisoned: hook(Array.from({ length: 140 }, (_, n) => `for (int i${n} = 0; i${n} < 256; i${n}++) {`).join('')
+        + loop(0, 'c.r += 1.0;', 'z') + '}'.repeat(140)),
+    material: `#pragma cuju vertex\nvoid main() { ${loop(64, loop(64, 'gl_Position += vec4(0.0);', 'j'))} }\n`
+        + '#pragma cuju fragment\nvoid main() { gl_FragColor = vec4(1.0); }\n',
+};
+
+test('the page counts the cost of a shader through nested loops, helpers and macros', () => {
+    const has = (problems, words) => problems.some((p) => p.includes(words));
+    assert.ok(has(G.checkShader(COSTLY.three), 'run their body 16777216 times, at most 1024'));
+    assert.ok(has(G.checkShader(COSTLY.helper), 'run their body 65536 times'), 'through a helper call');
+    assert.ok(has(G.checkShader(COSTLY.tree), 'words of code in the hooks, at most 65536'), 'a tree of helper calls');
+    assert.ok(has(G.checkShader(COSTLY.macros), 'once its macros expand, at most 262144'), 'macros of macros');
+    assert.ok(has(G.checkShader(COSTLY.poisoned), 'at most 1024'), 'a loop of no trips inside never hides the count');
+    assert.ok(has(G.checkShader(COSTLY.material, 'material'), 'in the vertex section that run their body 4096 times'));
+    assert.ok(has(G.checkShader(hook(loop(300, 'c.r += 0.1;'))), 'runs a loop 300 times, at most 256'));
+    assert.deepEqual(G.checkShader(hook(loop(32, loop(32, 'c.r += 0.001 * float(i * j);', 'j')))), [], '32 by 32 passes');
+    // A large file of many loops is counted at once, in one pass over its loops.
+    const many = hook(Array.from({ length: 4000 }, (_, n) => loop(2, 'c.r += 0.0;', `i${n}`)).join('\n'));
+    const start = Date.now();
+    G.checkShader(many);
+    assert.ok(Date.now() - start < 2000, 'four thousand loops check within two seconds');
+    const deep = hook(Array.from({ length: 20000 }, (_, n) => `for (int i${n} = 0; i${n} < 2; i${n}++) `).join('') + ';');
+    assert.ok(G.checkShader(deep).length, 'nesting past the stack names a problem');
+});
+
 test('behaviours drive attachments and lights', () => {
     const set = new BehaviourSet({ entity: 7 });
     set.set(checkBehaviour({ id: 'bob', type: 'oscillate', attachment: 'halo', channel: 'y', amp: 0.1, freq: 1 }));

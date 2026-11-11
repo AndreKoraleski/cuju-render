@@ -26,6 +26,7 @@
 
 import * as THREE from 'three';
 import { NODE_COUNT, NODE_PARENTS, PLAYER_FLOATS } from '../recording/format.js';
+import { t } from '../core/i18n.js';
 
 export const REST_LOCAL = [
     [0, 0, 0], [0, 0, 0.96], [0, 0, 0.15], [0, -0.03, 0.5], [0.16, -0.01, 0.48], [-0.01, 0, -0.33],
@@ -486,7 +487,7 @@ const HEART = 0.36;
 const LIBRARY = {
     // Celebrations.
     arms_up: {
-        label: 'Arms up', kind: 'celebration', duration: 1.6, loop: true, hands: 'lr',
+        label: t('animate.arms_up'), kind: 'celebration', duration: 1.6, loop: true, hands: 'lr',
         base: { lp: [1, -0.3, -0.4], rp: [-1, -0.3, -0.4], neck: [-18], middle: [-6] },
         keys: [
             { t: 0, lh: [0.42, 0.08, 1.0], rh: [-0.42, 0.08, 1.0], lift: 0 },
@@ -496,7 +497,7 @@ const LIBRARY = {
         ],
     },
     knee_slide: {
-        label: 'Knee slide', kind: 'celebration', duration: 3.2, loop: false, footLocal: true, hands: 'lr',
+        label: t('animate.knee_slide'), kind: 'celebration', duration: 3.2, loop: false, footLocal: true, hands: 'lr',
         base: { lp: [1, -0.5, 0], rp: [-1, -0.5, 0] },
         keys: [
             {
@@ -530,7 +531,7 @@ const LIBRARY = {
         ],
     },
     jump_fist: {
-        label: 'Jump and punch', kind: 'celebration', duration: 1.5, loop: true, plant: true, hands: 'lr',
+        label: t('animate.jump_fist'), kind: 'celebration', duration: 1.5, loop: true, plant: true, hands: 'lr',
         base: { lp: [1, -0.6, -0.3], rp: [-1, -0.3, -0.2] },
         keys: [
             { t: 0, hz: -0.05, lh: [0.2, 0.15, -0.05], rh: [-0.25, 0.1, 0.15] },
@@ -542,7 +543,7 @@ const LIBRARY = {
         ],
     },
     team_huddle: {
-        label: 'Team huddle', kind: 'celebration', duration: 1.0, loop: true, plant: true, hands: 'lr',
+        label: t('animate.team_huddle'), kind: 'celebration', duration: 1.0, loop: true, plant: true, hands: 'lr',
         base: {
             body: [30], middle: [12], neck: [-25], lp: [1, -0.2, 0.6], rp: [-1, -0.2, 0.6],
             lf: [0.2, 0.05, 0], rf: [-0.2, 0.05, 0],
@@ -553,7 +554,7 @@ const LIBRARY = {
         ],
     },
     dance: {
-        label: 'Dance', kind: 'celebration', duration: 2.0, loop: true, hands: 'lr',
+        label: t('animate.dance'), kind: 'celebration', duration: 2.0, loop: true, hands: 'lr',
         fn(t, v) {
             const beat = (t / 0.5) * Math.PI;
             const s = Math.sin(beat);
@@ -575,7 +576,7 @@ const LIBRARY = {
         },
     },
     airplane: {
-        label: 'Airplane', kind: 'celebration', duration: 6.0, loop: true,
+        label: t('animate.airplane'), kind: 'celebration', duration: 6.0, loop: true,
         fn(t, v) {
             const r = 3.2;
             const turn = (t / 6.0) * Math.PI * 2;
@@ -594,7 +595,7 @@ const LIBRARY = {
         },
     },
     backflip: {
-        label: 'Backflip', kind: 'celebration', duration: 2.2, loop: false, footLocal: true, trunk: false, hands: 'lr',
+        label: t('animate.backflip'), kind: 'celebration', duration: 2.2, loop: false, footLocal: true, trunk: false, hands: 'lr',
         base: { lp: [1, -0.4, -0.2], rp: [-1, -0.4, -0.2] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R },
@@ -609,7 +610,7 @@ const LIBRARY = {
         ],
     },
     salute: {
-        label: 'Salute', kind: 'celebration', duration: 2.4, loop: false, hands: 'lr', ease: 'inout',
+        label: t('animate.salute'), kind: 'celebration', duration: 2.4, loop: false, hands: 'lr', ease: 'inout',
         base: { lp: [1, -0.6, -0.5], rp: [-1, 0.1, 0.35], middle: [-4], neck: [-4] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R, rp: POLE_R },
@@ -618,7 +619,7 @@ const LIBRARY = {
         ],
     },
     shush: {
-        label: 'Shush', kind: 'celebration', duration: 2.4, loop: false, hands: 'lr', ease: 'inout',
+        label: t('animate.shush'), kind: 'celebration', duration: 2.4, loop: false, hands: 'lr', ease: 'inout',
         base: { lp: [1, -0.6, -0.5], rp: [-1, -0.2, -0.8] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R },
@@ -627,7 +628,7 @@ const LIBRARY = {
         ],
     },
     heart_hands: {
-        label: 'Heart hands', kind: 'celebration', duration: 2.6, loop: false, hands: 'lr', ease: 'inout',
+        label: t('animate.heart_hands'), kind: 'celebration', duration: 2.6, loop: false, hands: 'lr', ease: 'inout',
         base: { lp: [1, -0.1, -0.6], rp: [-1, -0.1, -0.6] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R },
@@ -637,7 +638,7 @@ const LIBRARY = {
         ],
     },
     robot_dance: {
-        label: 'Robot dance', kind: 'celebration', duration: 2.4, loop: true, hands: 'lr', ease: 'snap',
+        label: t('animate.robot_dance'), kind: 'celebration', duration: 2.4, loop: true, hands: 'lr', ease: 'snap',
         base: { lp: [1, 0, -0.2], rp: [-1, 0, -0.2], lk: [12], rk: [12], lt: [-6], rt: [-6] },
         keys: [
             { t: 0, lh: [0.38, 0.22, 0.42], rh: [-0.3, 0.28, 0.0], middle: [0, 0, 20], neck: [0, 0, -20] },
@@ -647,7 +648,7 @@ const LIBRARY = {
         ],
     },
     bow: {
-        label: 'Bow', kind: 'celebration', duration: 2.6, loop: false, hands: 'lr', ease: 'inout',
+        label: t('animate.bow'), kind: 'celebration', duration: 2.6, loop: false, hands: 'lr', ease: 'inout',
         base: { lp: [1, 0.3, -0.3], rp: [-1, -0.2, -0.3] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R },
@@ -658,7 +659,7 @@ const LIBRARY = {
         ],
     },
     worm: {
-        label: 'The worm', kind: 'celebration', duration: 4.0, loop: false, footLocal: true, trunk: false,
+        label: t('animate.worm'), kind: 'celebration', duration: 4.0, loop: false, footLocal: true, trunk: false,
         fn(t, v) {
             const down = smoothstep(Math.min(1, t / 0.7));
             const wave = Math.max(0, t - 0.7);
@@ -687,7 +688,7 @@ const LIBRARY = {
         },
     },
     clap: {
-        label: 'Clap', kind: 'celebration', duration: 0.6, loop: true, hands: 'lr',
+        label: t('animate.clap'), kind: 'celebration', duration: 0.6, loop: true, hands: 'lr',
         base: { lp: [1, -0.3, -0.7], rp: [-1, -0.3, -0.7], middle: [-2], neck: [-5] },
         keys: [
             { t: 0, lh: [0.03, 0.32, 0.36], rh: [-0.03, 0.32, 0.36] },
@@ -697,25 +698,25 @@ const LIBRARY = {
 
     // Utility.
     idle: {
-        label: 'Idle', kind: 'utility', duration: 6.0, loop: true,
+        label: t('animate.idle'), kind: 'utility', duration: 6.0, loop: true,
         fn(t, v) {
             stance(v, t, 6);
         },
     },
     walk: {
-        label: 'Walk', kind: 'utility', duration: 1.1, loop: true, speed: 1.4,
+        label: t('animate.walk'), kind: 'utility', duration: 1.1, loop: true, speed: 1.4,
         fn(t, v) {
             gait(v, t / 1.1, 0);
         },
     },
     jog: {
-        label: 'Jog', kind: 'utility', duration: 0.7, loop: true, speed: 3.4,
+        label: t('animate.jog'), kind: 'utility', duration: 0.7, loop: true, speed: 3.4,
         fn(t, v) {
             gait(v, t / 0.7, 0.6);
         },
     },
     card_raise: {
-        label: 'Card raised', kind: 'utility', duration: 2.0, loop: false, hands: 'lr', ease: 'inout',
+        label: t('animate.card_raise'), kind: 'utility', duration: 2.0, loop: false, hands: 'lr', ease: 'inout',
         base: { lp: [1, -0.6, -0.5], rp: [-1, 0.2, -0.4] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R },
@@ -725,7 +726,7 @@ const LIBRARY = {
         ],
     },
     point: {
-        label: 'Point', kind: 'utility', duration: 1.6, loop: false, hands: 'lr', ease: 'inout',
+        label: t('animate.point'), kind: 'utility', duration: 1.6, loop: false, hands: 'lr', ease: 'inout',
         base: { lp: [1, -0.6, -0.5], rp: [-1, 0, -0.2] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R },
@@ -734,7 +735,7 @@ const LIBRARY = {
         ],
     },
     whistle: {
-        label: 'Whistle', kind: 'utility', duration: 1.6, loop: false, hands: 'lr', ease: 'inout',
+        label: t('animate.whistle'), kind: 'utility', duration: 1.6, loop: false, hands: 'lr', ease: 'inout',
         base: { lp: [1, -0.2, -0.3], rp: [-1, -0.3, -0.7] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R },
@@ -743,7 +744,7 @@ const LIBRARY = {
         ],
     },
     throw_in_hold: {
-        label: 'Throw-in hold', kind: 'utility', duration: 1.2, loop: true, hands: 'lr',
+        label: t('animate.throw_in_hold'), kind: 'utility', duration: 1.2, loop: true, hands: 'lr',
         base: { lp: [1, -0.4, 0.5], rp: [-1, -0.4, 0.5], middle: [-8], neck: [-6], lt: [-4], rt: [6], lk: [6] },
         keys: [
             { t: 0, lh: [0.11, -0.12, 0.84], rh: [-0.11, -0.12, 0.84] },
@@ -751,7 +752,7 @@ const LIBRARY = {
         ],
     },
     place_ball: {
-        label: 'Place the ball', kind: 'utility', duration: 2.2, loop: false, plant: true, hands: 'lr', handFrame: 'ground', ease: 'inout',
+        label: t('animate.place_ball'), kind: 'utility', duration: 2.2, loop: false, plant: true, hands: 'lr', handFrame: 'ground', ease: 'inout',
         base: { lp: [1, 0.2, 0.2], rp: [-1, 0.2, 0.2], lf: [0.15, -0.05, 0], rf: [-0.15, 0.1, 0] },
         keys: [
             { t: 0, hz: 0, lh: [0.12, 0.2, 1.0], rh: [-0.12, 0.2, 1.0] },
@@ -761,7 +762,7 @@ const LIBRARY = {
         ],
     },
     hands_on_head: {
-        label: 'Hands on head', kind: 'utility', duration: 2.0, loop: false, hands: 'lr', ease: 'inout',
+        label: t('animate.hands_on_head'), kind: 'utility', duration: 2.0, loop: false, hands: 'lr', ease: 'inout',
         base: { lp: [1, -0.1, 0.4], rp: [-1, -0.1, 0.4] },
         keys: [
             { t: 0, lh: HAND_REST_L, rh: HAND_REST_R, lp: POLE_L, rp: POLE_R },
@@ -772,7 +773,7 @@ const LIBRARY = {
 
     // Idles and entrances for the podium and the stage of the player of the match.
     idle_confident: {
-        label: 'Hands on hips', kind: 'idle', duration: 4.0, loop: true, hands: 'lr',
+        label: t('animate.idle_confident'), kind: 'idle', duration: 4.0, loop: true, hands: 'lr',
         base: { lp: [1, -0.6, 0.1], rp: [-1, -0.6, 0.1] },
         fn(t, v) {
             stance(v, t, 4);
@@ -787,7 +788,7 @@ const LIBRARY = {
         },
     },
     idle_bounce: {
-        label: 'Bouncing', kind: 'idle', duration: 4.0, loop: true,
+        label: t('animate.idle_bounce'), kind: 'idle', duration: 4.0, loop: true,
         fn(t, v) {
             const p = (t / 0.8) * Math.PI * 2;
             stance(v, t, 4);
@@ -805,7 +806,7 @@ const LIBRARY = {
         },
     },
     walkon_wave: {
-        label: 'Walk on and wave', kind: 'walkon', duration: 2.2, loop: true, hands: 'r', speed: 1.4,
+        label: t('animate.walkon_wave'), kind: 'walkon', duration: 2.2, loop: true, hands: 'r', speed: 1.4,
         fn(t, v) {
             gait(v, t / 1.1, 0);
             const w = Math.sin(t * Math.PI * 2 / 0.55);

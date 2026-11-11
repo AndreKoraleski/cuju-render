@@ -28,6 +28,7 @@ from support.common import (
     _challenge_frames,
     _frames,
     _person_recording,
+    _shipped_language,
     _short_challenges,
     _short_matches,
     _toy_team,
@@ -271,7 +272,7 @@ def test_game_policy_first_call_and_load_allowances(render_home, tmp_path):
     with pytest.raises(PolicyError, match=r'did not load within 0\.2 seconds'):
         Game('5_vs_5', (True, False), seed=1, teams=('builtin', heavy['id']), load_seconds=0.2)
     broken = _toy_team(tmp_path, 'broken', 'def agent(obs):\n    return [99]\n', '5v5')
-    with pytest.raises(PolicyError, match='the policy of broken failed, IndexError'):
+    with pytest.raises(PolicyError, match='the policy of broken failed, it answered the action 99'):
         Game('5_vs_5', (True, False), seed=1, teams=('builtin', broken['id']))
 
 
@@ -412,7 +413,9 @@ def test_cli_dispatch_options(render_home, tmp_path, monkeypatch):
     monkeypatch.setattr(_server, 'serve', lambda *args: calls.append(args))
     assert __main__.main(['serve', '--port', '8799', '--open']) == 0
     assert calls.pop() == (8799, True)
-    monkeypatch.setattr(_play, 'play', lambda *args: calls.append(args) or tmp_path / 'game')
+    monkeypatch.setattr(
+        _play, 'play', lambda *args, **options: calls.append(args) or tmp_path / 'game'
+    )
     assert (
         __main__.main(
             [
@@ -853,7 +856,7 @@ def test_challenge_runs_award_achievements(render_home, tmp_path, monkeypatch):
     outcome = _challenges.person_run('one_on_one', 'Ana', matches)
     assert outcome['medal'] == 'gold'
     assert outcome['achievements'] == ['off_the_mark', 'podium', 'gold_standard']
-    # A team earns the achievements of its attempts and medals on disk, a policy only in its run.
+    # A team earns the achievements of its attempts and medals on disk, and a policy keeps none.
     team = _toy_team(tmp_path, 'toy', _SINGLE, '11v11')
     _short_challenges(monkeypatch, 4)
     monkeypatch.setattr(_challenges, 'medal', lambda challenge, value: 'gold')
@@ -861,7 +864,7 @@ def test_challenge_runs_award_achievements(render_home, tmp_path, monkeypatch):
     assert run['achievements'] == ['podium', 'gold_standard']
     assert set(_achievements.earned(team['id'])) == {'podium', 'gold_standard'}
     policy = _challenges.run('corner', policy=lambda obs: [0], name='calm')
-    assert policy['achievements'] == ['podium', 'gold_standard']
+    assert policy['achievements'] == []
     assert set(_achievements.public()['teams']) == {team['id']}
     practice = _challenges.run('corner', team=team['id'], attempts=1)
     assert practice['achievements'] == []
@@ -873,3 +876,203 @@ def test_challenge_runs_award_achievements(render_home, tmp_path, monkeypatch):
     graduate = _challenges.run('corner', team=team['id'])
     assert graduate['achievements'] == ['podium', 'gold_standard', 'academy_graduate']
     assert _achievements.earned(team['id'])['podium']['count'] == 2
+
+
+def test_play_reports_progress_only_to_its_function(render_home, tmp_path, monkeypatch, capsys):
+    """A match in the caller's process prints no progress, and the command prints one line."""
+    from cuju.render.__main__ import main
+    from cuju.render._playing import play as _play
+
+    _short_matches(monkeypatch, 120)
+    seen = []
+    path = _play.play('builtin', 'builtin', '5_vs_5', seed=1, progress=seen.append)
+    assert path.is_file() and seen and all(0 < share < 1 for share in seen)
+    assert 'progress' not in capsys.readouterr().out
+    assert main(['play', '--scenario', '5_vs_5', '--seed', '1', '--json']) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert (render_home / 'matches' / f'{printed["match"]}.cjr').is_file()
+    assert printed['path'].endswith(f'{printed["match"]}.cjr')
+    crash = _toy_team(
+        tmp_path, 'crash', 'def agent(obs):\n    raise RuntimeError("broke")\n', '5v5'
+    )
+    assert main(['play', '--left', crash['id'], '--scenario', '5_vs_5']) == 1
+    captured = capsys.readouterr()
+    assert captured.err.strip() == 'cuju render: the policy of crash failed, RuntimeError: broke'
+    # A Python caller still gets the submission's own error.
+    with pytest.raises(RuntimeError, match='broke') as caught:
+        cuju.render.play(crash['id'], 'builtin', '5_vs_5', seed=1)
+    assert not isinstance(caught.value, cuju.render.PolicyError)
+
+
+def test_challenge_agents_keep_names_and_only_stored_achievements(render_home, monkeypatch, capsys):
+    """A lambda plays as Python policy, and the runs that keep nothing return no achievements."""
+    from cuju.render.__main__ import main
+    from cuju.render._playing import achievements as _achievements
+    from cuju.render._playing import challenges as _challenges
+
+    _short_challenges(monkeypatch, 4)
+    monkeypatch.setattr(_achievements, 'detect', lambda header, frames, side: ['off_the_mark'])
+    run = cuju.render.challenge('corner', policy=lambda obs: [0], attempts=1)
+    assert run['name'] == _challenges.POLICY_NAME == 'Python policy'
+    assert run['achievements'] == []
+
+    def striker(obs):
+        return [12]
+
+    assert cuju.render.challenge('corner', policy=striker, attempts=1)['name'] == 'striker'
+    assert cuju.render.challenge('corner', team='builtin', attempts=1)['achievements'] == []
+    assert _achievements.public()['teams'] == {}
+    assert main(['challenge', 'list', '--json']) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert [entry['id'] for entry in listed] == [entry['id'] for entry in _challenges.CATALOG]
+    assert main(['challenge', 'corner', '--team', 'builtin', '--attempts', '1', '--json']) == 0
+    outcome = json.loads(capsys.readouterr().out)
+    assert outcome['practice'] and outcome['achievements'] == [] and len(outcome['attempts']) == 1
+    # A goal after the time limit says so, and the run names that no attempt counts.
+    late = {'finished': True, 'goals': [1, 0], 'scored': True, 'seconds': 12.2}
+    monkeypatch.setattr(_challenges, 'score_attempt', lambda header, frames, side=0: dict(late))
+    assert main(['challenge', 'empty_goal_close', '--team', 'builtin', '--attempts', '1']) == 0
+    out = capsys.readouterr().out
+    assert 'scored after 12.2 seconds, past the limit of 3 seconds' in out
+    assert 'value 0, no attempt counts towards it' in out and '0 seconds to score' not in out
+
+
+def test_server_catalogs_match_the_language_files():
+    from cuju.render._playing import achievements as _achievements
+    from cuju.render._playing import challenges as _challenges
+    from cuju.render._store import samples as _samples
+    from cuju.render._tournaments import tournament as _tournament
+
+    english = _shipped_language('en')
+    portuguese = _shipped_language('pt')
+    expected = {}
+    for entry in _challenges.CATALOG:
+        expected[f'challenge.{entry["id"]}.title'] = entry['title']
+        expected[f'challenge.{entry["id"]}.goal'] = entry['goal']
+    for entry in _achievements.CATALOG:
+        expected[f'achievement.{entry["id"]}.name'] = entry['name']
+        expected[f'achievement.{entry["id"]}.description'] = entry['description']
+        # A badge's letters come in the language of the page too.
+        expected[f'achievement.{entry["id"]}.glyph'] = entry['glyph']
+    for key, preset in _tournament.PRESETS.items():
+        expected[f'tournament.preset.{key}.title'] = preset['title']
+        expected[f'tournament.preset.{key}.description'] = preset['description']
+    for name, (title, about) in _samples._TITLES.items():
+        expected[f'helpcenter.sample.{name}.title'] = title
+        expected[f'helpcenter.sample.{name}.about'] = about
+    for name, team in _samples.TEAMS.items():
+        expected[f'helpcenter.sample.{name}.title'] = team['name']
+        expected[f'helpcenter.sample.{name}.about'] = team['about']
+    lessons = json.loads((_server._WEB / 'lessons.json').read_text(encoding='utf-8'))['lessons']
+    for lesson in lessons:
+        for field in ('title', 'ask', 'praise'):
+            expected[f'lesson.{lesson["id"]}.{field}'] = lesson[field]
+    assert {key: english.get(key) for key in expected} == expected
+    prefixes = ('challenge.', 'achievement.', 'tournament.preset.', 'lesson.')
+    assert sorted(k for k in english if k.startswith(prefixes) and k not in expected) == []
+    assert all(key in portuguese and portuguese[key] != english[key] for key in expected)
+    from cuju.render._moments import captions as _captions
+
+    table = _captions.messages()
+    assert 'caption.goal' in table and 'describe.pass' in table
+    assert all(key.startswith(('caption.', 'describe.')) for key in table)
+
+
+def test_policy_errors_carry_message_ids():
+    from cuju.render._playing import play as _play
+    from cuju.render._text import messages as _messages
+
+    outside = IndexError('expected an action from -19 to 18, found 25')
+    error = _play._policy_error(outside, 'Reds')
+    assert str(error) == (
+        'the policy of Reds failed, it answered the action 25, outside its action set of 19 '
+        'actions, 0 to 18'
+    )
+    assert isinstance(error, cuju.render.PolicyError)
+    assert _messages.id_fields(error) == {
+        'error_id': 'server.policy.failed_action',
+        'error_values': {'player': 'Reds', 'value': '25', 'count': '19', 'last': '18'},
+    }
+    error = _play._policy_error(ValueError('no'))
+    assert str(error) == 'the policy failed, ValueError: no'
+    assert (error.message_id, error.values) == ('server.policy.error', {'reason': 'ValueError: no'})
+
+
+def test_tournament_failures_carry_message_ids(render_home):
+    from cuju.render._playing import play as _play
+    from cuju.render._text import messages as _messages
+    from cuju.render._tournaments import tournament_runner as runner
+
+    def player(match, teams, provenance, progress):
+        if match['key'] == '0/w4-1/1':
+            raise _play.PolicyMessageError(
+                'server.policy.failed', player='Reds', reason='ValueError: no'
+            )
+        return None
+
+    entrants = [{'kind': 'builtin', 'ability': index / 4} for index in range(4)]
+    stage = {'format': 'knockout', 'scenario': 'academy_empty_goal_close', 'settle': ['lots']}
+    config = {'name': 'Spring cup', 'seed': 9, 'entrants': entrants, 'stages': [stage]}
+    cups = runner.Tournaments(player=player, start=False)
+    try:
+        entry = cups.create(config)
+        assert cups.run(entry['id'], report=lambda line: None) == 'stopped'
+        view = cups.get(entry['id'])
+        matches = {match['key']: match for match in view['matches']}
+        first, second = matches['0/w4-1/1'], matches['0/w4-2/1']
+        assert first['error'] == 'the policy of Reds failed, ValueError: no'
+        assert (first['error_id'], first['error_values']) == (
+            'server.policy.failed',
+            {'player': 'Reds', 'reason': 'ValueError: no'},
+        )
+        assert (second['error'], second['error_id']) == (
+            'the match gave no result',
+            'server.tournament.no_result',
+        )
+        assert view['error'] == (
+            'Semi-final 1 failed, the policy of Reds failed, ValueError: no, and 1 more match '
+            'failed'
+        )
+        assert view['error_id'] == 'server.tournament.match_failed_one_more'
+        assert _messages.text(view['error_id'], **view['error_values']) == view['error']
+        # A file of an earlier version, without the ids of its failures, loads all the same.
+        stored = json.loads((runner.folder() / f'{entry["id"]}.json').read_text())
+        del stored['failure_ids']
+        (runner.folder() / f'{entry["id"]}.json').write_text(json.dumps(stored))
+        cups.close()
+        cups = runner.Tournaments(player=player, start=False)
+        failed = {match['key']: match for match in cups.get(entry['id'])['matches']}
+        assert failed['0/w4-1/1']['error'] == first['error']
+        assert failed['0/w4-1/1']['error_id'] is None
+        cups.cancel(entry['id'])
+        with pytest.raises(cuju.errors.ArgumentError) as caught:
+            cups.cancel(entry['id'])
+        assert str(caught.value) == 'expected a tournament that runs or stopped, found it cancelled'
+        assert caught.value.message_id == 'server.tournament.cancel_state'
+    finally:
+        cups.close()
+
+
+def test_render_errors_read_as_public_classes_and_dir_lists_the_public_names():
+    import pickle
+    import traceback
+
+    from cuju.render._playing import errors as _errors
+    from cuju.render._playing import play as _play
+    from cuju.render._text import messages as _messages
+
+    error = _messages.MessageError('server.game.unknown')
+    assert (type(error).__module__, type(error).__qualname__) == ('cuju.errors', 'ArgumentError')
+    assert repr(error).startswith('ArgumentError(')
+    shown = traceback.format_exception_only(type(error), error)[-1]
+    assert shown.startswith('cuju.errors.ArgumentError: ')
+    assert isinstance(error, cuju.errors.ArgumentError) and _messages.kind(error) == 'ArgumentError'
+    again = pickle.loads(pickle.dumps(error))
+    assert type(again) is _messages.MessageError and again.message_id == 'server.game.unknown'
+    assert str(again) == str(error)
+    policy = _play.PolicyMessageError('server.game.unknown')
+    assert f'{type(policy).__module__}.{type(policy).__qualname__}' == 'cuju.render.PolicyError'
+    assert isinstance(policy, cuju.render.PolicyError)
+    assert _errors.PolicyError.__module__ == 'cuju.render'
+    assert dir(cuju.render) == sorted(cuju.render.__all__)
+    assert 'threading' not in dir(cuju.render) and 'Recorder' in dir(cuju.render)

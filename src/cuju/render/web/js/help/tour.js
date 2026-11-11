@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The guided tour, a card that walks through the pages and points at the real control of each
-// step with a ring around it. The card is a dialog that leaves the page usable, so a person can
-// try each control while it shows. Next and Back move through the steps, the arrow keys too while
+// step with a ring around it. The card is a dialog that leaves the page usable, marked with
+// aria-modal false, so menu.js leaves the focus and the Tab key free and a person can try each
+// control while it shows. Next and Back move through the steps, the arrow keys too while
 // the card has the focus, and Esc or Leave the tour closes it, keeping the step for the next start.
 // The focus moves to the title of each step and the text is read out. A step that needs a
 // recording or a team offers to add a sample first. Under reduced motion the ring and the card
@@ -11,6 +12,7 @@
 
 import { NEED_OFFERS, TOUR_KEY, TOUR_STEPS, moveTour, needMet, placeCard, resumeStep, stepAnnouncement, tourState } from './tour-core.js';
 import { openPanel } from '../core/comfort.js';
+import { t } from '../core/i18n.js';
 
 function h(tag, attributes = {}, ...children) {
     const node = document.createElement(tag);
@@ -33,6 +35,13 @@ function readState() {
     }
 }
 
+// How long after a step shows its target is scrolled back into view when the page moves it.
+const SETTLE_MS = 2000;
+
+// Whether a box lies whole inside the window, or fills it when it is larger.
+const inView = (box, view) => (box.top >= 0 || box.height > view.height) && (box.bottom <= view.height || box.height > view.height)
+    && (box.left >= 0 || box.width > view.width) && (box.right <= view.width || box.width > view.width);
+
 const shown = (node) => !!node && node.isConnected && node.getClientRects().length > 0 && !node.closest('[hidden]');
 
 export class GuidedTour {
@@ -53,17 +62,18 @@ export class GuidedTour {
         this.offerText = h('span', {});
         this.offerButton = h('button', { type: 'button', class: 'btn small', onclick: () => this.fillNeed() });
         this.offer = h('div', { class: 'tour-offer', hidden: true }, this.offerText, this.offerButton);
-        this.backButton = h('button', { type: 'button', class: 'btn', onclick: () => this.back() }, 'Back');
-        this.nextButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.next() }, 'Next');
-        this.tryButton = h('button', { type: 'button', class: 'btn', onclick: () => this.focusTarget() }, 'Try it');
+        this.backButton = h('button', { type: 'button', class: 'btn', onclick: () => this.back() }, t('tour.back'));
+        this.nextButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.next() }, t('tour.next'));
+        this.tryButton = h('button', { type: 'button', class: 'btn', onclick: () => this.focusTarget() }, t('tour.try'));
+        // The focus on the title reads the title, and the live region reads the count and the
+        // text once, so the card names no description that a screen reader would read again.
         this.card = h('div', {
-            id: 'tour', class: 'tour', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'tour-title',
-            'aria-describedby': 'tour-text', hidden: true,
+            id: 'tour', class: 'tour', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'tour-title', hidden: true,
         },
         this.count, this.title, this.text, this.offer,
         h('div', { class: 'tour-actions' }, this.backButton, this.nextButton, this.tryButton,
-            h('button', { type: 'button', class: 'link small', onclick: () => this.leave() }, 'Leave the tour')),
-        h('p', { class: 'muted small tour-keys' }, 'Esc leaves, Help resumes the tour. The arrows move while the card has the focus.'),
+            h('button', { type: 'button', class: 'link small', onclick: () => this.leave() }, t('tour.leave'))),
+        h('p', { class: 'muted small tour-keys' }, t('tour.keys')),
         this.live);
         this.ring = h('div', { id: 'tour-ring', class: 'tour-ring', 'aria-hidden': 'true', hidden: true });
         (document.getElementById('app') || document.body).append(this.ring, this.card);
@@ -139,13 +149,14 @@ export class GuidedTour {
         this.card.hidden = false;
         this.card.classList.toggle('still', !!this.app.reducedMotion);
         this.ring.classList.toggle('still', !!this.app.reducedMotion);
-        this.count.textContent = `Step ${index + 1} of ${this.steps.length}`;
+        this.count.textContent = t('tour.count', { index: index + 1, count: this.steps.length });
         this.title.textContent = step.title;
         this.text.textContent = step.text;
         this.backButton.disabled = index === 0;
-        this.nextButton.textContent = index === this.steps.length - 1 ? 'Finish' : 'Next';
+        this.nextButton.textContent = index === this.steps.length - 1 ? t('tour.finish') : t('tour.next');
         this.updateOffer(step);
         this.target = null;
+        this.settleUntil = 0;
         this.ring.hidden = true;
         this.position();
         this.title.focus({ preventScroll: true });
@@ -164,7 +175,10 @@ export class GuidedTour {
         }
         this.target = found;
         if (found) {
-            found.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+            found.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+            // A page that is still laying out can push the target down after this scroll, so
+            // position scrolls it back into view for a moment.
+            this.settleUntil = performance.now() + SETTLE_MS;
         }
         this.tryButton.hidden = !found;
         this.live.textContent = stepAnnouncement(step, index, this.steps.length, !!found);
@@ -192,12 +206,12 @@ export class GuidedTour {
             return;
         }
         this.offerButton.disabled = true;
-        this.live.textContent = 'Adding the sample.';
+        this.live.textContent = t('tour.adding');
         try {
             await this.helpers.ensure(step.needs);
         } catch (err) {
             this.offerButton.disabled = false;
-            this.live.textContent = `The sample could not be added. ${err.message}`;
+            this.live.textContent = t('tour.addFailed', { error: err.message });
             return;
         }
         if (this.isOpen && this.steps[this.index] === step) {
@@ -210,7 +224,20 @@ export class GuidedTour {
             return;
         }
         const view = { width: window.innerWidth, height: window.innerHeight };
-        const target = shown(this.target) ? this.target.getBoundingClientRect() : null;
+        let whole = shown(this.target) ? this.target.getBoundingClientRect() : null;
+        if (whole && performance.now() < (this.settleUntil || 0) && !inView(whole, view)) {
+            this.target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+            whole = this.target.getBoundingClientRect();
+        }
+        // A region taller or wider than the window is ringed where it shows.
+        const target = whole && whole.width > 0 ? (() => {
+            const left = Math.max(whole.left, 4);
+            const top = Math.max(whole.top, 4);
+            const right = Math.min(whole.right, view.width - 4);
+            const bottom = Math.min(whole.bottom, view.height - 4);
+            return right > left && bottom > top
+                ? { left, top, right, bottom, width: right - left, height: bottom - top } : null;
+        })() : null;
         if (target && target.width > 0) {
             const pad = 4;
             Object.assign(this.ring.style, {
@@ -259,6 +286,7 @@ export class GuidedTour {
 
     close() {
         this.token++;
+        this.settleUntil = 0;
         clearInterval(this.timer);
         this.card.hidden = true;
         this.ring.hidden = true;
@@ -278,7 +306,7 @@ export class GuidedTour {
             return this.scriptState();
         }
         this.close();
-        this.app.hud?.toast(`The tour stopped at step ${this.index + 1}. Help resumes it.`, 'info', 3500);
+        this.app.hud?.toast(t('tour.stopped', { index: this.index + 1 }), 'info', 3500);
         return this.scriptState();
     }
 
@@ -286,7 +314,7 @@ export class GuidedTour {
         this.state = { step: 0, done: true, started: false };
         this.save();
         this.close();
-        this.app.hud?.toast('The tour is done. The lessons on Help try each part by hand.', 'info', 4500);
+        this.app.hud?.toast(t('tour.done'), 'info', 4500);
         return this.scriptState();
     }
 

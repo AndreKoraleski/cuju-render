@@ -1,12 +1,12 @@
 # Copyright 2026 The cuju Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Builds the small test package of team presentation, a team with a model, clips and a package.
+"""Builds the full example of team presentation, a team with a model, clips and a package.
 
-The manifest and the worker are files of `tests/support/team`, which an author may read as an
-example. This module adds what is binary, the team's rigged model with four clips named for their
-roles and a contact marker on the kick, the same model as the package's keeper model, a small ring
-to attach, a short sound and a small striped image for its tifo, and packs it all with a
-submission as a zip, as a team is exported.
+The manifest and the worker are files of `tests/support/team`, which an author may read as the
+full example, with every part of the contract. This module adds what is binary, the team's rigged
+model with four clips named for their roles and a contact marker on the kick, the same model as
+the package's keeper model, a small ring to attach, a short sound and a small striped image for
+its tifo, and packs it all with a submission as a zip, as a team is exported.
 Run it as a script to write the zip to a file.
 """
 
@@ -267,7 +267,7 @@ def wav_bytes(seconds=0.2, rate=22050):
 
 
 def png_bytes(width=64, height=24):
-    """Returns a small PNG of stripes in two colours, the tifo of the test package."""
+    """Returns a small PNG of stripes in two colors, the tifo of the test package."""
     rows = b''
     for y in range(height):
         color = (230, 120, 40) if (y // 4) % 2 else (250, 230, 200)

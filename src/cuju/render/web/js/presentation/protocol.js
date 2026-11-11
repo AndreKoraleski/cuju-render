@@ -20,6 +20,14 @@ import { clamp } from './values.js';
 // The most commands of each kind one reply may carry, and the largest reply in characters.
 export const MAXIMUM_COMMANDS = 64;
 export const MAXIMUM_REPLY = 512 * 1024;
+// The lines of a worker's log that the page keeps, the newest last.
+export const LOG_LINES = 50;
+
+// The log of a worker with the lines of a new reply added, the oldest dropped past max.
+export function appendLog(log, lines, max = LOG_LINES) {
+    const out = (log || []).concat(lines || []);
+    return out.length > max ? out.slice(out.length - max) : out;
+}
 
 const round = (x) => Math.round(x * 1e4) / 1e4;
 const roundAll = (v) => (Array.isArray(v) ? v.map(round) : v);

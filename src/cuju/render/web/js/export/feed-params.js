@@ -61,6 +61,24 @@ export const FEED_DEFAULTS = Object.freeze({
 const ORDER = ['source', 'size', 'scale', 'safe', 'bg', 'layer', 'audio', 'volume', 'fps', 'camera', 'loop',
     'broadcast', 'show', 'score', 'captions', 'slate', 'quality', 'theme', 'arena', 'time', 't'];
 
+// The rows of the server's list of feeds that name one live source or one tournament, as entries
+// of the Follows list of the Copy feed address dialog, each with its label made a sentence.
+export function namedSources(rows, taken = []) {
+    return (Array.isArray(rows) ? rows : [])
+        .filter((row) => row && typeof row.source === 'string' && /^(live|tournament):./.test(row.source)
+            && !taken.includes(row.source))
+        .map((row) => {
+            // A row without a label shows its source as the address writes it.
+            const label = row.label ? String(row.label) : '';
+            return [row.source, label ? label.charAt(0).toUpperCase() + label.slice(1) : row.source];
+        });
+}
+
+// The color scheme of the frame of /feed for a feed's theme, the scheme of the page inside it.
+export function frameScheme(theme) {
+    return theme === 'light' ? 'light' : 'dark';
+}
+
 // Returns what a source names, its kind and the identifier, title or tournament it picks.
 export function parseSource(text) {
     const value = String(text ?? '').trim();

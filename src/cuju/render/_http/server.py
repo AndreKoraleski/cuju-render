@@ -19,6 +19,7 @@ import logging
 import mimetypes
 import os
 import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -28,10 +29,11 @@ from pathlib import Path
 from typing import Any
 
 from cuju import __version__, bundled_scenarios
-from cuju.errors import ArgumentError
+from cuju.errors import ArgumentError, Error
 
 from .._export import feed as _feed
 from .._export import video_jobs as _video_jobs
+from .._format import recording as _recording
 from .._guide import doctor as _doctor
 from .._guide import help as _help
 from .._moments import search as _search
@@ -42,9 +44,13 @@ from .._registry import clips as _clips
 from .._registry import teams as _teams
 from .._store import home as _home
 from .._store import library as _library
+from .._text import languages as _languages
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from .._tournaments import tournament_runner as _tournament_runner
 from .._watch import grid as _grid
 from . import launch as _launch
+from . import pwa as _pwa
 
 _WEB = Path(__file__).parents[1] / 'web'
 _LOGGER = logging.getLogger('cuju')
@@ -64,12 +70,13 @@ _TYPES = {
 }
 
 
-# The states of a request, and the error of one that a restart of the server interrupted.
+# The states of a request, and the error of one that a restart of the server interrupted, by
+# the id of its message and its English text.
 _STATES = ('queued', 'running', 'done', 'failed')
-_INTERRUPTED = 'interrupted by a server restart'
-_INTERRUPTED_PLAYING = (
-    'interrupted by a server restart while playing, its recording may still appear in the library'
-)
+_INTERRUPTED_ID = 'server.requests.interrupted'
+_INTERRUPTED_PLAYING_ID = 'server.requests.interrupted_playing'
+_INTERRUPTED = _messages.text(_INTERRUPTED_ID)
+_INTERRUPTED_PLAYING = _messages.text(_INTERRUPTED_PLAYING_ID)
 # The history keeps this many finished requests, the newest, with every waiting or playing one.
 _KEPT_REQUESTS = 200
 
@@ -102,6 +109,15 @@ _REQUEST_FIELDS: dict[str, Any] = {
     'started': lambda value: value is None or _number(value),
     'finished': lambda value: value is None or _number(value),
 }
+# The fields that a request of an earlier version lacks, the id and values of the message of its
+# error, which the page shows in its own language, `None` for an error without an id.
+_OPTIONAL_REQUEST_FIELDS: dict[str, Any] = {
+    'error_id': lambda value: value is None or value in _messages.MESSAGES,
+    'error_values': lambda value: (
+        value is None
+        or (isinstance(value, dict) and all(isinstance(item, str) for item in value.values()))
+    ),
+}
 
 
 def _stored_request(path: Path) -> dict[str, Any] | None:
@@ -117,6 +133,11 @@ def _stored_request(path: Path) -> dict[str, Any] | None:
     wrong = [
         key for key, check in _REQUEST_FIELDS.items() if key not in entry or not check(entry[key])
     ]
+    wrong += [
+        key
+        for key, check in _OPTIONAL_REQUEST_FIELDS.items()
+        if key in entry and not check(entry[key])
+    ]
     if wrong or entry['id'] != path.stem:
         _LOGGER.warning(
             'cuju render skips the request file %s, whose fields %s are missing or invalid',
@@ -124,7 +145,11 @@ def _stored_request(path: Path) -> dict[str, Any] | None:
             ', '.join(wrong or ['id']),
         )
         return None
-    return {key: entry[key] for key in _REQUEST_FIELDS}
+    stored = {key: entry[key] for key in _REQUEST_FIELDS}
+    stored.update({key: entry.get(key) for key in _OPTIONAL_REQUEST_FIELDS})
+    if stored['error_id'] is None or stored['error_values'] is None:
+        stored['error_id'] = stored['error_values'] = None
+    return stored
 
 
 class _Requests:
@@ -151,8 +176,8 @@ class _Requests:
             if entry is None:
                 continue
             if entry['state'] in ('queued', 'running'):
-                error = _INTERRUPTED_PLAYING if entry['state'] == 'running' else _INTERRUPTED
-                entry.update(state='failed', error=error, finished=time.time())
+                error = _INTERRUPTED_PLAYING_ID if entry['state'] == 'running' else _INTERRUPTED_ID
+                entry.update(state='failed', finished=time.time(), **_messages.fields(error))
                 self._checkpoint(entry)
             self._entries.append(entry)
         self._entries.sort(key=lambda entry: entry['created'])
@@ -176,6 +201,7 @@ class _Requests:
         path = self._folder / f'{entry["id"]}.json'
         temporary = path.with_name(path.name + '.part')
         stored = {key: entry[key] for key in _REQUEST_FIELDS}
+        stored.update({key: entry.get(key) for key in _OPTIONAL_REQUEST_FIELDS})
         try:
             temporary.write_text(json.dumps(stored), encoding='utf-8')
             os.replace(temporary, path)
@@ -186,11 +212,13 @@ class _Requests:
 
     def _checkpoint(self, entry: dict[str, Any]) -> None:
         """Writes a request, and notes a failed write on the entry instead of stopping the queue."""
-        entry.pop('persistence_error', None)
+        for key in ('persistence_error', 'persistence_error_id', 'persistence_error_values'):
+            entry.pop(key, None)
         try:
             self._persist(entry)
         except OSError as error:
-            entry['persistence_error'] = f'could not save the request history, {error}'
+            found = _messages.fields('server.requests.history', error=error)
+            entry.update({f'persistence_{key}': value for key, value in found.items()})
 
     def _new_identifier(self) -> str:
         """Draws an identifier that no request and no file of the history holds, with the lock held.
@@ -219,7 +247,7 @@ class _Requests:
             OSError: If the request cannot be written to the history, and then it is not queued.
         """
         if scenario not in _scenarios():
-            raise ArgumentError(f'expected a shipped scenario, found {scenario!r}')
+            raise MessageError('server.scenario', scenario=repr(scenario))
         _teams.check_scenario([_teams.entry(left), _teams.entry(right)], scenario)
         ability = list(_teams.check_ability(ability))
         seed = _seed(seed)
@@ -237,6 +265,8 @@ class _Requests:
             'created': 0.0,
             'started': None,
             'finished': None,
+            'error_id': None,
+            'error_values': None,
         }
         with self._lock:
             entry['id'] = self._new_identifier()
@@ -277,7 +307,8 @@ class _Requests:
             if entry is None or entry['state'] not in ('queued', 'running'):
                 return False
             process = self._processes.get(identifier)
-            entry['state'], entry['error'] = 'failed', 'cancelled'
+            entry['state'] = 'failed'
+            entry.update(_messages.fields('server.requests.cancelled'))
             entry['finished'] = time.time()
             self._checkpoint(entry)
         if process is not None:
@@ -290,7 +321,8 @@ class _Requests:
             self._play_child(entry)
         except Exception as error:
             with self._lock:
-                entry['state'], entry['error'] = 'failed', f'{type(error).__name__}: {error}'
+                entry['state'] = 'failed'
+                entry.update(_messages.entry_fields(error, _messages.described(error)))
                 entry['finished'] = time.time()
                 self._checkpoint(entry)
 
@@ -355,7 +387,7 @@ class _Requests:
                     if isinstance(report.get('match'), str):
                         entry['match'] = report['match']
                     if isinstance(report.get('error'), str):
-                        entry['error'] = report['error']
+                        entry.update(_messages.report_fields(report))
             code = process.wait()
         finally:
             timer.cancel()
@@ -369,22 +401,22 @@ class _Requests:
             else:
                 entry['state'] = 'failed'
                 if expired.is_set():
-                    entry['error'] = f'the match ran past {_MATCH_SECONDS // 60} minutes'
+                    entry.update(
+                        _messages.fields('server.requests.timeout', minutes=_MATCH_SECONDS // 60)
+                    )
                 elif not entry['error']:
                     tail = ''.join(stderr).strip()
-                    entry['error'] = f'the match ended with exit code {code}' + (
-                        f', {tail}' if tail else ''
-                    )
+                    entry.update(_messages.exit_fields('server.requests.exit', code, tail))
             entry['finished'] = time.time()
             self._checkpoint(entry)
 
 
-class GameBusyError(Exception):
-    """Raised when a game is asked for while another one plays."""
+class GameBusyError(_messages.Message, Exception):
+    """Raised when a game is asked for while another one plays, with the id of its message."""
 
 
-class NoGameError(Exception):
-    """Raised for a game that is not the latest one."""
+class NoGameError(_messages.Message, Exception):
+    """Raised for a game that is not the latest one, with the id of its message."""
 
 
 # A game plays this many steps a second, real time, and a test may play faster.
@@ -393,6 +425,8 @@ _GAME_PACE = 10
 _GAME_INPUTS = 16
 # A stream waits this long for the game's process to start and announce its port.
 _GAME_START_SECONDS = 120
+# The process of the next game, kept ready by the server, ends after this long without a game.
+_WARM_IDLE_SECONDS = 600
 
 
 class _Games:
@@ -401,13 +435,25 @@ class _Games:
     The process reads its commands, the input of each person's side, pause and quit, as JSON lines
     on its standard input, and reports its state, its port and the recording it saved as JSON lines
     on its standard output.
+
+    With `warm`, the server keeps the process of the next game ready once a game's stream opens, a
+    process that has loaded torch and cuju and waits for the arguments of its game, so the next
+    game starts at once. Each process still plays one game and ends. A process kept ready that
+    died, or whose environment changed, gives way to a new process, and one left without a game
+    for `_WARM_IDLE_SECONDS` ends.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, warm: bool = False) -> None:
         self._lock = threading.Lock()
         self._entry: dict[str, Any] | None = None
         self._process: subprocess.Popen | None = None
         self._started = threading.Condition(self._lock)
+        self._warm = warm
+        self._closed = False
+        self._spare: subprocess.Popen | None = None
+        self._spare_key: Any = None
+        self._spare_timer: threading.Timer | None = None
+        self._last = time.monotonic()
 
     def start(
         self,
@@ -439,25 +485,23 @@ class _Games:
             GameBusyError: If another game still plays.
         """
         if scenario not in _scenarios():
-            raise ArgumentError(f'expected a shipped scenario, found {scenario!r}')
+            raise MessageError('server.scenario', scenario=repr(scenario))
         if (
             not isinstance(humans, (list, tuple))
             or len(humans) != 2
             or not all(isinstance(value, bool) for value in humans)
             or not any(humans)
         ):
-            raise ArgumentError(
-                f'expected two flags for a person on the left and right, one true, found {humans!r}'
-            )
+            raise MessageError('server.game.humans', humans=repr(humans))
         ability = list(_teams.check_ability(ability))
         if not isinstance(record, bool):
-            raise ArgumentError(f'expected record as true or false, found {record!r}')
+            raise MessageError('server.game.record', record=repr(record))
         if (
             not isinstance(teams, (list, tuple))
             or len(teams) != 2
             or not all(isinstance(value, str) for value in teams)
         ):
-            raise ArgumentError(f'expected two registry teams, left and right, found {teams!r}')
+            raise MessageError('server.game.teams', teams=repr(teams))
         teams = [str(value) for value in teams]
         _teams.game_agents([_teams.entry(value) for value in teams], scenario, humans)
         entry = {
@@ -474,16 +518,16 @@ class _Games:
             'step': 0,
             'score': [0, 0],
             'teams': None,
+            'team_labels': None,
             'match': None,
             'error': None,
+            'error_id': None,
+            'error_values': None,
             'late': 0,
             'streak': 0,
             'tournament': tournament,
         }
         command = [
-            sys.executable,
-            '-m',
-            'cuju.render._playing.game',
             '--scenario',
             scenario,
             '--left',
@@ -510,23 +554,118 @@ class _Games:
             command += ['--tournament', json.dumps(tournament)]
         with self._lock:
             if self._entry is not None and self._entry['state'] not in ('ended', 'failed'):
-                raise GameBusyError('a game already plays, quit it first')
-            # The child runs in the renderer's folder and writes its errors to a pipe of its own.
-            _home.home().mkdir(parents=True, exist_ok=True)
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                cwd=_home.home(),
-                env=os.environ.copy(),
-            )
+                raise GameBusyError('server.game.busy')
+            process = self._take(command) or self._spawn(command)
             self._entry, self._process = entry, process
+            self._last = time.monotonic()
         threading.Thread(target=self._watch, args=(entry, process), daemon=True).start()
         return self._public(entry)
+
+    @staticmethod
+    def _key() -> Any:
+        """Returns what a process takes from the server as it starts, for a kept one to match."""
+        return sys.executable, str(_home.home()), dict(os.environ)
+
+    @staticmethod
+    def _spawn(arguments: list[str]) -> subprocess.Popen:
+        """Starts the process of a game with its arguments, or with `--warm` to keep it ready."""
+        # The child runs in the renderer's folder and writes its errors to a pipe of its own.
+        _home.home().mkdir(parents=True, exist_ok=True)
+        return subprocess.Popen(
+            [sys.executable, '-m', 'cuju.render._playing.game', *arguments],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            cwd=_home.home(),
+            env=os.environ.copy(),
+        )
+
+    def _take(self, arguments: list[str]) -> subprocess.Popen | None:
+        """Hands the arguments of a game to the process kept ready and returns it, under the lock.
+
+        Returns `None`, after ending the kept process, when there is none, it died, its
+        environment differs from the server's now or it cannot read the arguments, and the game
+        then starts in a new process.
+        """
+        spare, self._spare = self._spare, None
+        if self._spare_timer is not None:
+            self._spare_timer.cancel()
+            self._spare_timer = None
+        if spare is None:
+            return None
+        if spare.poll() is None and self._spare_key == self._key():
+            try:
+                spare.stdin.write(json.dumps(arguments) + '\n')
+                spare.stdin.flush()
+                return spare
+            except (OSError, ValueError):
+                pass
+        self._end(spare)
+        return None
+
+    def _prepare(self) -> None:
+        """Readies the process of the next game, when the server keeps one and none waits."""
+        with self._lock:
+            if not self._warm or self._closed:
+                return
+            if self._spare is not None:
+                if self._spare.poll() is None:
+                    return
+                self._end(self._spare)
+                self._spare = None
+            try:
+                spare = self._spawn(['--warm'])
+            except OSError:
+                return
+            self._spare, self._spare_key = spare, self._key()
+            self._arm(spare, _WARM_IDLE_SECONDS)
+
+    def _arm(self, spare: subprocess.Popen, seconds: float) -> None:
+        """Ends the kept process after `seconds` without a game, under the lock."""
+        if self._spare_timer is not None:
+            self._spare_timer.cancel()
+        timer = threading.Timer(max(1.0, seconds), self._expire, args=(spare,))
+        timer.daemon = True
+        self._spare_timer = timer
+        timer.start()
+
+    def _expire(self, spare: subprocess.Popen) -> None:
+        """Ends the kept process once no game has started or ended for `_WARM_IDLE_SECONDS`."""
+        with self._lock:
+            if self._spare is not spare:
+                return
+            playing = self._entry is not None and self._entry['state'] not in ('ended', 'failed')
+            idle = time.monotonic() - self._last
+            if playing or idle < _WARM_IDLE_SECONDS:
+                self._arm(spare, _WARM_IDLE_SECONDS - (0 if playing else idle))
+                return
+            self._spare, self._spare_timer = None, None
+        self._end(spare)
+
+    @staticmethod
+    def _end(process: subprocess.Popen) -> None:
+        """Ends a kept process that no game took, and closes its pipes."""
+        with contextlib.suppress(OSError):
+            process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=10)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            with contextlib.suppress(OSError, ValueError):
+                stream.close()
+
+    def close(self) -> None:
+        """Ends the process kept for the next game, as the server ends."""
+        with self._lock:
+            self._closed = True
+            spare, self._spare = self._spare, None
+            if self._spare_timer is not None:
+                self._spare_timer.cancel()
+                self._spare_timer = None
+        if spare is not None:
+            self._end(spare)
 
     def current(self) -> dict[str, Any] | None:
         """Returns a copy of the latest game's entry, or `None` before the first."""
@@ -561,6 +700,7 @@ class _Games:
                     'error',
                     'seed',
                     'teams',
+                    'team_labels',
                     'late',
                     'streak',
                     'controlled',
@@ -569,9 +709,15 @@ class _Games:
                 ):
                     if key in report:
                         entry[key] = report[key]
-                if isinstance(report.get('port'), int):
+                if 'error' in report:
+                    entry.update(_messages.report_fields(report))
+                opened = isinstance(report.get('port'), int)
+                if opened:
                     entry['port'] = report['port']
                     self._started.notify_all()
+            if opened:
+                # The next game's process loads while this game plays, so it starts at once.
+                self._prepare()
         code = process.wait()
         with self._lock:
             if code == 0 and entry['state'] == 'ended':
@@ -580,10 +726,10 @@ class _Games:
                 entry['state'] = 'failed'
                 if not entry['error']:
                     tail = ''.join(stderr).strip()
-                    entry['error'] = f'the game ended with exit code {code}' + (
-                        f', {tail}' if tail else ''
-                    )
+                    entry.update(_messages.exit_fields('server.game.exit', code, tail))
+            self._last = time.monotonic()
             self._started.notify_all()
+        self._prepare()
 
     def port(self, identifier: str) -> int | None:
         """Waits for the game's stream to open and returns its port, or `None` if it never does."""
@@ -606,7 +752,7 @@ class _Games:
         with self._lock:
             entry, process = self._entry, self._process
             if entry is None or entry['id'] != identifier or process is None:
-                raise NoGameError('no such game')
+                raise NoGameError('server.game.unknown')
             if entry['state'] in ('ended', 'failed'):
                 return self._public(entry)
             try:
@@ -629,12 +775,14 @@ class _Games:
 
         unknown = set(document) - {'side', 'held', 'pressed'}
         if unknown:
-            raise ArgumentError(f'expected side, held and pressed, found {sorted(unknown)!r}')
+            raise MessageError('server.game.input_fields', unknown=repr(sorted(unknown)))
         side = document.get('side')
         with self._lock:
             humans = self._entry['humans'] if self._entry is not None else [False, False]
+        if not any(humans):
+            raise NoGameError('server.game.unknown')
         if isinstance(side, bool) or side not in (0, 1) or not humans[side]:
-            raise ArgumentError(f'expected the side of a person, 0 or 1, found {side!r}')
+            raise MessageError('server.game.side', sides=_sides(humans), side=repr(side))
         command: dict[str, Any] = {'side': side}
         for key, allowed in (('held', INPUTS), ('pressed', BUTTONS)):
             value = document.get(key, [])
@@ -643,7 +791,7 @@ class _Games:
                 or len(value) > _GAME_INPUTS
                 or not all(isinstance(name, str) and name in allowed for name in value)
             ):
-                raise ArgumentError(f'expected {key} as a list of {", ".join(allowed)}')
+                raise MessageError('server.game.input_list', key=key, allowed=', '.join(allowed))
             command[key] = sorted(set(value))
         return self.send(identifier, command)
 
@@ -674,7 +822,7 @@ def _seed(value: Any) -> int | None:
     if isinstance(value, str) and value.strip().isdigit():
         value = int(value)
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 2**64:
-        raise ArgumentError(f'expected a seed from 0 to 2**64 - 1, found {value!r}')
+        raise MessageError('server.seed', value=repr(value))
     return value
 
 
@@ -693,7 +841,7 @@ def _control(query: dict[str, str]) -> dict[str, Any] | None:
         return None
     players = query.get('players', '1')
     if not players.isdigit():
-        raise ArgumentError(f'expected a number of controlled players, found {players!r}')
+        raise MessageError('server.teams.controlled_players', players=repr(players))
     return {'players': int(players), 'goalkeeper': query.get('goalkeeper', 'agent')}
 
 
@@ -719,6 +867,18 @@ def _sources() -> list[dict[str, Any]]:
             continue
         sources.append(source)
     return sources
+
+
+def _sides(humans: list[bool]) -> dict[str, Any]:
+    """Returns the sides that a person plays, as a label for the answer to a wrong side."""
+    if all(humans):
+        return _messages.label('server.game.sides_both')
+    return _messages.label('server.game.sides_right' if humans[1] else 'server.game.sides_left')
+
+
+def _interrupt(signum: int, frame: Any) -> None:
+    """Ends `serve` as Ctrl+C does, so that it withdraws its file and closes its tournaments."""
+    raise KeyboardInterrupt
 
 
 def _alive(pid: int) -> bool:
@@ -777,13 +937,18 @@ def make_handler(
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = 'cuju-render'
         timeout = 60
+        # Each answer leaves at once, its headers and body together, rather than after the delay
+        # that holds small writes back, which on Windows costs a fifth of a second a request.
+        disable_nagle_algorithm = True
 
         def end_headers(self) -> None:
             """Adds to every response the headers that keep other sites from framing the page.
 
             A page asked for with the key of the server, which `show` hands to a notebook, may sit
             in the frame of a notebook on this machine, in VS Code or in Google Colab. The sandbox
-            of team presentation workers sends its own policy, which says who may frame it.
+            of team presentation workers sends its own policy, which says who may frame it. Every
+            response also keeps its window apart from a window of another site that opened it, so
+            such a window can neither reach the page nor post to the sandbox opened on its own.
             """
             if getattr(self, '_framed', False):
                 ancestors = _launch.FRAME_ANCESTORS
@@ -796,6 +961,7 @@ def make_handler(
                 self.send_header('X-Frame-Options', 'DENY')
                 self.send_header('Content-Security-Policy', "frame-ancestors 'none'")
             self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
             super().end_headers()
 
         def _allowed(self) -> bool:
@@ -811,7 +977,7 @@ def make_handler(
             domains = getattr(self.server, 'proxy_domains', ())
             hostname = urllib.parse.urlsplit('//' + named).hostname
             if hostname not in allowed_hosts and not _launch.in_domains(hostname, domains):
-                self._error(403, 'expected a request to this server by its loopback address')
+                self._refuse(403, 'server.loopback')
                 return False
             # A page served by another port of this machine is another site, so the whole
             # origin, scheme, host and port, must be this server's own.
@@ -826,15 +992,15 @@ def make_handler(
                 origin_host = urllib.parse.urlsplit(origin).hostname
                 proxied = origin_host == hostname and _launch.in_domains(origin_host, domains)
             if origin is not None and self.command != 'GET' and origin not in own and not proxied:
-                self._error(403, 'expected a request from the page of this server')
+                self._refuse(403, 'server.origin')
                 return False
             try:
                 length = int(self.headers.get('Content-Length') or 0)
             except ValueError:
-                self._error(400, 'expected a Content-Length of digits')
+                self._refuse(400, 'server.content_length')
                 return False
             if length > _MAXIMUM_BODY:
-                self._error(413, 'expected a request body of at most 110 MB')
+                self._refuse(413, 'server.body_size')
                 return False
             return True
 
@@ -849,11 +1015,15 @@ def make_handler(
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
             except (ArgumentError, ValueError, TypeError, KeyError, AttributeError) as error:
-                self._error(400, f'{type(error).__name__}: {error}')
+                # cuju's own errors say what to do in words, the others name their kind as well.
+                if isinstance(error, Error):
+                    self._error(400, str(error), error)
+                else:
+                    self._error(400, _messages.described(error), error)
             except Exception as error:
                 where = self.path.split('?')[0]
-                _doctor.note_error(f'{self.command} {where}, {type(error).__name__}: {error}')
-                self._error(500, f'{type(error).__name__}: {error}')
+                _doctor.note_error(f'{self.command} {where}, {_messages.described(error)}')
+                self._error(500, _messages.described(error), error)
 
         def _json(self, value: Any, status: int = 200) -> None:
             body = json.dumps(value).encode()
@@ -864,8 +1034,43 @@ def make_handler(
             self.end_headers()
             self.wfile.write(body)
 
-        def _error(self, status: int, message: str) -> None:
-            self._json({'error': message}, status)
+        def _error(
+            self,
+            status: int,
+            message: str | BaseException,
+            message_id: str | BaseException | None = None,
+            values: dict[str, Any] | None = None,
+        ) -> None:
+            """Answers with an error, its English text in `error` as always.
+
+            Args:
+                status: The status of the answer.
+                message: The text, or an exception whose text the answer gives.
+                message_id: The id of the message in `_messages.MESSAGES`, or an exception that
+                    carries one, or `None` for the id that `message` carries, if any. The answer
+                    then names it in `error_id`, with `values` in `error_values`, so the page
+                    shows the message in its own language.
+                values: The values of the placeholders of `message_id`.
+            """
+            text = message if isinstance(message, str) else str(message)
+            origin = message_id
+            if origin is None and isinstance(message, BaseException):
+                origin = message
+            if isinstance(origin, str):
+                document = {
+                    'error': text,
+                    'error_id': origin,
+                    'error_values': {key: str(value) for key, value in (values or {}).items()},
+                }
+            elif isinstance(origin, BaseException):
+                document = _messages.error_fields(origin, text)
+            else:
+                document = {'error': text}
+            self._json(document, status)
+
+        def _refuse(self, status: int, message_id: str, **values: Any) -> None:
+            """Answers with the error of a message of `_messages.MESSAGES`, in English and by id."""
+            self._json(_messages.fields(message_id, **values), status)
 
         def _body(self) -> bytes:
             length = int(self.headers.get('Content-Length') or 0)
@@ -874,7 +1079,7 @@ def make_handler(
         def _document(self) -> dict[str, Any]:
             document = json.loads(self._body() or b'{}')
             if not isinstance(document, dict):
-                raise ArgumentError('expected a JSON object')
+                raise MessageError('server.json_object')
             return document
 
         def _route(self) -> tuple[list[str], dict[str, str]]:
@@ -895,10 +1100,10 @@ def make_handler(
                     self._static(['feed.html'])
                 elif parts[:1] != ['api']:
                     self._static(parts)
-                elif parts == ['api', 'matches']:
-                    self._json(_library.matches())
-                elif parts == ['api', 'trash']:
-                    self._json(_library.matches(trash=True))
+                elif parts in (['api', 'matches'], ['api', 'trash']):
+                    # A group names the recordings of one run of a challenge.
+                    group = self._route()[1].get('group') or None
+                    self._json(_library.matches(parts[1] == 'trash', group))
                 elif parts == ['api', 'search']:
                     query = self._route()[1]
                     limit = query.get('limit')
@@ -911,7 +1116,7 @@ def make_handler(
                     try:
                         self._json(_library.details(parts[2]))
                     except ArgumentError as error:
-                        self._error(404, str(error))
+                        self._error(404, error)
                 elif len(parts) == 3 and parts[1] == 'matches':
                     self._recording(parts[2])
                 elif parts == ['api', 'live']:
@@ -924,6 +1129,8 @@ def make_handler(
                                     key: source[key]
                                     for key in ('id', 'title', 'scenario', 'environment')
                                 },
+                                # A title that cuju made comes with its message, as a label.
+                                **_messages.named('title', _recording.label_of(source, 'title')),
                                 'environment_count': source.get('environment_count', 1),
                                 'generation': source.get('generation', 0),
                             }
@@ -948,7 +1155,7 @@ def make_handler(
                 elif len(parts) == 3 and parts[1] == 'videos':
                     entry = videos.entry(parts[2])
                     if entry is None:
-                        self._error(404, 'no such video')
+                        self._refuse(404, 'server.video.unknown')
                     else:
                         self._json(entry)
                 elif len(parts) == 4 and parts[1] == 'videos' and parts[3] == 'file':
@@ -987,14 +1194,16 @@ def make_handler(
                     self._json(_achievements.public())
                 elif parts[:2] == ['api', 'help']:
                     self._json(*_help.get(parts[2:], self._route()[1]))
+                elif parts[:2] == ['api', 'languages']:
+                    self._json(*_languages.get(parts[2:]))
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'stream':
                     port = games.port(parts[2])
                     if port is None:
-                        self._error(404, 'no such game')
+                        self._refuse(404, 'server.game.unknown')
                     else:
                         self._pipe(port, 'game')
                 else:
-                    self._error(404, 'no such resource')
+                    self._refuse(404, 'server.no_resource')
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
 
@@ -1023,7 +1232,13 @@ def make_handler(
                     if _library.trash(parts[2], restore=True):
                         self._json(_library.details(parts[2]))
                     else:
-                        self._error(404, 'no such recording in the Trash')
+                        self._refuse(404, 'server.trash.unknown')
+                elif len(parts) == 4 and parts[1] == 'groups' and parts[3] == 'restore':
+                    restored = _library.trash_group(parts[2], restore=True)
+                    if restored:
+                        self._json({'group': parts[2], 'restored': restored})
+                    else:
+                        self._refuse(404, 'server.library.group_trash')
                 elif parts == ['api', 'presentation', 'sides']:
                     self._json(_presentation.assign(self._document()))
                 elif parts == ['api', 'requests']:
@@ -1053,21 +1268,23 @@ def make_handler(
                     self._json(*_challenges.post(parts[2:], self._document()))
                 elif parts[:2] == ['api', 'help']:
                     self._json(*_help.post(parts[2:], self._document()))
+                elif parts[:2] == ['api', 'languages']:
+                    self._json(*_languages.post(parts[2:], self._body()))
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'input':
                     self._json(games.input(parts[2], self._document()))
                 elif len(parts) == 4 and parts[1] == 'game' and parts[3] == 'pause':
                     paused = self._document().get('paused')
                     if not isinstance(paused, bool):
-                        raise ArgumentError(f'expected paused as true or false, found {paused!r}')
+                        raise MessageError('server.game.paused', paused=repr(paused))
                     self._json(games.send(parts[2], {'paused': paused}))
                 else:
-                    self._error(404, 'no such resource')
+                    self._refuse(404, 'server.no_resource')
             except (GameBusyError, _video_jobs.BusyError) as error:
-                self._error(409, str(error))
+                self._error(409, error)
             except NoGameError as error:
-                self._error(404, str(error))
+                self._error(404, error)
             except (ArgumentError, ValueError) as error:
-                self._error(400, str(error))
+                self._error(400, error)
 
         def do_PUT(self) -> None:
             self._handle(self._put)
@@ -1086,9 +1303,9 @@ def make_handler(
                     joints = json.loads(query['joints']) if 'joints' in query else None
                     self._json(_clips.set_clip(parts[2], parts[4], self._body(), joints))
                 else:
-                    self._error(404, 'no such resource')
+                    self._refuse(404, 'server.no_resource')
             except (ArgumentError, ValueError) as error:
-                self._error(400, str(error))
+                self._error(400, error)
 
         def do_PATCH(self) -> None:
             self._handle(self._patch)
@@ -1123,9 +1340,9 @@ def make_handler(
                         )
                     )
                 else:
-                    self._error(404, 'no such resource')
+                    self._refuse(404, 'server.no_resource')
             except (ArgumentError, ValueError) as error:
-                self._error(400, str(error))
+                self._error(400, error)
 
         def do_DELETE(self) -> None:
             self._handle(self._delete)
@@ -1136,10 +1353,21 @@ def make_handler(
                 try:
                     self._json(games.quit(parts[2]))
                 except NoGameError:
-                    self._error(404, 'no such game')
+                    self._refuse(404, 'server.game.unknown')
                 return
             if parts[:2] == ['api', 'challenges']:
                 self._json(*_challenges.delete(parts[2:]))
+                return
+            if len(parts) == 3 and parts[1] == 'groups':
+                # Deleting a group moves all its recordings to the Trash at once.
+                trashed = _library.trash_group(parts[2])
+                if trashed:
+                    self._json({'group': parts[2], 'trashed': trashed})
+                else:
+                    self._refuse(404, 'server.library.group_unknown')
+                return
+            if parts[:2] == ['api', 'languages']:
+                self._json(*_languages.delete(parts[2:]))
                 return
             if len(parts) == 3 and parts[1] == 'requests':
                 removed = requests.cancel(parts[2])
@@ -1149,7 +1377,7 @@ def make_handler(
                 try:
                     removed = cups().remove(parts[2])
                 except ArgumentError as error:
-                    self._error(409, str(error))
+                    self._error(409, error)
                     return
             elif len(parts) == 3 and parts[1] == 'videos':
                 removed = videos.cancel(parts[2])
@@ -1172,13 +1400,13 @@ def make_handler(
             elif len(parts) == 3 and parts[1] == 'teams':
                 removed = _teams.remove(parts[2])
             else:
-                self._error(404, 'no such resource')
+                self._refuse(404, 'server.no_resource')
                 return
             if removed:
                 self.send_response(204)
                 self.end_headers()
             else:
-                self._error(404, 'no such item')
+                self._refuse(404, 'server.no_item')
 
         def _tournament_get(self, rest: list[str]) -> None:
             """Answers the reads of tournaments, their list, presets, ratings and one in full."""
@@ -1191,11 +1419,11 @@ def make_handler(
             elif len(rest) == 1:
                 entry = cups().get(rest[0])
                 if entry is None:
-                    self._error(404, 'no such tournament')
+                    self._refuse(404, 'server.tournament.unknown')
                 else:
                     self._json(entry)
             else:
-                self._error(404, 'no such resource')
+                self._refuse(404, 'server.no_resource')
 
         def _tournament_post(self, rest: list[str]) -> None:
             """Creates, checks and changes tournaments, and saves presets."""
@@ -1221,9 +1449,9 @@ def make_handler(
                         winner = document.get('winner')
                         self._json(cups().forfeit(identifier, str(document.get('key')), winner))
                 except KeyError:
-                    self._error(404, 'no such tournament')
+                    self._refuse(404, 'server.tournament.unknown')
             else:
-                self._error(404, 'no such resource')
+                self._refuse(404, 'server.no_resource')
 
         def _resolve_feed(self, source: str) -> dict[str, Any]:
             """Returns what the source of a feed names now, from this server's own lists."""
@@ -1248,11 +1476,17 @@ def make_handler(
             relative = Path(*parts) if parts else Path('index.html')
             path = (_WEB / relative).resolve()
             if _WEB.resolve() not in path.parents or not path.is_file():
-                self._error(404, 'no such file')
+                self._refuse(404, 'server.no_file')
                 return
             data = path.read_bytes()
             kind = _TYPES.get(path.suffix) or mimetypes.guess_type(path.name)[0]
+            if relative == Path('manifest.webmanifest'):
+                data = _pwa.manifest(data, self._route()[1].get('lang'))
+            elif relative == Path('sw.js'):
+                data = _pwa.worker(data)
             page = relative == Path('index.html')
+            if page or relative == Path('feed.html'):
+                data = _languages.inline(data)
             key = getattr(self.server, 'frame_key', None)
             given = self._route()[1].get('embed', '').encode()
             self._framed = page and bool(key) and secrets.compare_digest(given, key.encode())
@@ -1285,11 +1519,11 @@ def make_handler(
         def _package_file(self, identifier: str, name: str) -> None:
             path = _presentation.file_path(identifier, name)
             if path is None:
-                self._error(404, 'no such file of the package')
+                self._refuse(404, 'server.no_package_file')
                 return
             data = path.read_bytes()
             self.send_response(200)
-            self.send_header('Content-Type', _presentation.CONTENT_TYPES[path.suffix])
+            self.send_header('Content-Type', _presentation.content_type(identifier, name))
             self.send_header('Content-Length', str(len(data)))
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
@@ -1298,7 +1532,7 @@ def make_handler(
         def _model(self, identifier: str) -> None:
             path = _teams.model_path(identifier)
             if path is None:
-                self._error(404, 'no such model')
+                self._refuse(404, 'server.no_model')
                 return
             data = path.read_bytes()
             self.send_response(200)
@@ -1311,7 +1545,7 @@ def make_handler(
         def _clip(self, identifier: str, name: str) -> None:
             path = _clips.clip_path(identifier, name)
             if path is None:
-                self._error(404, 'no such clip')
+                self._refuse(404, 'server.no_clip')
                 return
             data = path.read_bytes()
             self.send_response(200)
@@ -1325,7 +1559,7 @@ def make_handler(
             try:
                 filename, data = _teams.export(identifier)
             except ArgumentError as error:
-                self._error(404, str(error))
+                self._error(404, error)
                 return
             self.send_response(200)
             self.send_header('Content-Type', 'application/zip')
@@ -1343,7 +1577,7 @@ def make_handler(
         def _image(self, identifier: str, slot: str) -> None:
             path = _teams.image_path(identifier, slot)
             if path is None:
-                self._error(404, 'no such image')
+                self._refuse(404, 'server.no_image')
                 return
             data = path.read_bytes()
             kind = {'.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp'}
@@ -1357,7 +1591,7 @@ def make_handler(
         def _sound(self, identifier: str, slot: str) -> None:
             path = _teams.sound_path(identifier, slot)
             if path is None:
-                self._error(404, 'no such sound')
+                self._refuse(404, 'server.no_sound')
                 return
             data = path.read_bytes()
             kind = {'.ogg': 'audio/ogg', '.mp3': 'audio/mpeg', '.wav': 'audio/wav'}
@@ -1371,7 +1605,7 @@ def make_handler(
         def _video(self, found: tuple[Path, str] | None) -> None:
             """Sends a finished video export as a download, under the name it suggests."""
             if found is None:
-                self._error(404, 'no such video')
+                self._refuse(404, 'server.video.unknown')
                 return
             path, filename = found
             size = path.stat().st_size
@@ -1388,7 +1622,7 @@ def make_handler(
         def _moments(self, identifier: str, vtt: bool) -> None:
             """Sends the moments of a recording of the library, or its captions as WebVTT."""
             if _library.path_of(identifier) is None:
-                self._error(404, 'no such match')
+                self._refuse(404, 'server.no_match')
                 return
             if not vtt:
                 self._json(_search.moments_of(identifier))
@@ -1405,7 +1639,7 @@ def make_handler(
         def _recording(self, identifier: str) -> None:
             path = _library.path_of(identifier)
             if path is None:
-                self._error(404, 'no such match')
+                self._refuse(404, 'server.no_match')
                 return
             size = path.stat().st_size
             self.send_response(200)
@@ -1420,7 +1654,7 @@ def make_handler(
             """Passes a viewer's choice of environment on to the live source `identifier`."""
             source = next((entry for entry in _sources() if entry['id'] == identifier), None)
             if source is None:
-                self._error(404, 'no such live source')
+                self._refuse(404, 'server.live.unknown')
                 return
             environment = self._document().get('environment')
             count = source.get('environment_count', 1)
@@ -1429,8 +1663,8 @@ def make_handler(
                 or not isinstance(environment, int)
                 or not 0 <= environment < count
             ):
-                raise ArgumentError(
-                    f'expected an environment from 0 to {count - 1}, found {environment!r}'
+                raise MessageError(
+                    'server.live.environment', last=count - 1, environment=repr(environment)
                 )
             connection = http.client.HTTPConnection('127.0.0.1', int(source['port']), timeout=10)
             try:
@@ -1443,28 +1677,28 @@ def make_handler(
                 response = connection.getresponse()
                 response.read()
             except OSError as error:
-                self._error(502, f'the live source did not answer, {error}')
+                self._refuse(502, 'server.live.silent', error=error)
                 return
             finally:
                 connection.close()
             if response.status != 202:
-                self._error(502, f'the live source answered {response.status}')
+                self._refuse(502, 'server.live.answered', status=response.status)
                 return
             self._json({'environment': environment, 'generation': source.get('generation', 0)}, 202)
 
         def _live_grid(self, identifier: str) -> None:
             """Relays a viewer's request for the grid of the live source `identifier`.
 
-            Each request makes the source read states for a few seconds, so a page of another
+            Each request makes the source read states for up to 15 seconds, so a page of another
             origin is refused here as for requests that change data.
             """
             origin = self.headers.get('Origin')
             if origin is not None and origin != f'http://{self.headers.get("Host")}':
-                self._error(403, 'expected a request from the page of this server')
+                self._refuse(403, 'server.origin')
                 return
             source = next((entry for entry in _sources() if entry['id'] == identifier), None)
             if source is None:
-                self._error(404, 'no such live source')
+                self._refuse(404, 'server.live.unknown')
                 return
             query = self._route()[1]
             count = source.get('environment_count', 1)
@@ -1472,13 +1706,16 @@ def make_handler(
             for name in ('first', 'count'):
                 text = query.get(name, '')
                 if not text.isdigit() or len(text) > 9:
-                    raise ArgumentError(f'expected a whole number for {name}, found {text!r}')
+                    raise MessageError('server.live.whole_number', name=name, text=repr(text))
                 values.append(int(text))
             first, size = values
             if not 0 <= first < count or not 1 <= size <= _grid.MAXIMUM:
-                raise ArgumentError(
-                    f'expected a first environment from 0 to {count - 1} and a count from 1 to '
-                    f'{_grid.MAXIMUM}, found {first} and {size}'
+                raise MessageError(
+                    'server.live.grid_range',
+                    last=count - 1,
+                    most=_grid.MAXIMUM,
+                    first=first,
+                    count=size,
                 )
             connection = http.client.HTTPConnection('127.0.0.1', int(source['port']), timeout=10)
             try:
@@ -1486,16 +1723,16 @@ def make_handler(
                 response = connection.getresponse()
                 body = response.read()
             except OSError as error:
-                self._error(502, f'the live source did not answer, {error}')
+                self._refuse(502, 'server.live.silent', error=error)
                 return
             finally:
                 connection.close()
             if response.status == 404:
                 # A source of 0.2.0 has no grid.
-                self._error(404, 'this live source offers no grid, it comes from an older cuju')
+                self._refuse(404, 'server.live.no_grid')
                 return
             if response.status != 200:
-                self._error(502, f'the live source answered {response.status}')
+                self._refuse(502, 'server.live.answered', status=response.status)
                 return
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -1507,12 +1744,15 @@ def make_handler(
         def _relay(self, identifier: str) -> None:
             source = next((entry for entry in _sources() if entry['id'] == identifier), None)
             if source is None:
-                self._error(404, 'no such live source')
+                self._refuse(404, 'server.live.unknown')
                 return
-            self._pipe(int(source['port']), 'live source')
+            self._pipe(int(source['port']), 'live')
 
         def _pipe(self, port: int, kind: str) -> None:
-            """Relays the stream of a live source or a game, which listens on `port`."""
+            """Relays the stream of a live source or a game, which listens on `port`.
+
+            The kind, `live` or `game`, names the messages of its errors.
+            """
             connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
             try:
                 connection.connect()
@@ -1530,11 +1770,11 @@ def make_handler(
                 response = connection.getresponse()
             except OSError as error:
                 connection.close()
-                self._error(502, f'the {kind} did not answer, {error}')
+                self._refuse(502, f'server.{kind}.silent', error=error)
                 return
             if response.status != 200:
                 connection.close()
-                self._error(502, f'the {kind} answered {response.status}')
+                self._refuse(502, f'server.{kind}.answered', status=response.status)
                 return
             self.send_response(200)
             self.send_header('Content-Type', 'application/octet-stream')
@@ -1591,7 +1831,7 @@ def serve(
     """
     # The diagnostic report of Help shows the server's recent warnings and errors.
     _doctor.install_capture()
-    games = _Games()
+    games = _Games(warm=True)
     # The tournaments resume as the server starts, each match where it stopped.
     tournaments = _tournament_runner.Tournaments(games)
     try:
@@ -1600,7 +1840,7 @@ def serve(
         )
     except OSError as error:
         tournaments.close()
-        raise _launch.port_error(port, error) from None
+        raise _launch.port_error(port, error, remote) from None
     server.frame_key = secrets.token_urlsafe(18)
     server.proxy_domains = _launch.COLAB_DOMAINS if colab else ()
     # The library receives each shipped sample match once, and keeps a deleted one deleted.
@@ -1631,6 +1871,10 @@ def serve(
             server.shutdown()
 
         threading.Thread(target=watch_parent, daemon=True).start()
+    if threading.current_thread() is threading.main_thread():
+        # A server that `show` started ends with a terminate signal when its parent ends, and it
+        # still removes its file of the home folder on the way out.
+        signal.signal(signal.SIGTERM, _interrupt)
     if open_browser:
 
         def opening() -> None:
@@ -1644,5 +1888,6 @@ def serve(
         pass
     finally:
         tournaments.close()
+        games.close()
         _launch.withdraw(announcement)
         server.server_close()

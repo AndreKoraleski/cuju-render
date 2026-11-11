@@ -30,6 +30,7 @@ import io
 import json
 import mimetypes
 import os
+import queue
 import re
 import secrets
 import struct
@@ -47,6 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mock_feed
 import mock_grid
 import mock_help
+import mock_language
 import mock_sample
 import mock_search
 import mock_tournaments
@@ -511,6 +513,9 @@ def builtin():
         entry.update(
             {key: saved[key] for key in ('name', 'style', 'model', 'format') if key in saved}
         )
+    # The default name travels as a label, which the page shows in its language, as the server's.
+    if entry.get('name') == BUILTIN_ENTRY['name']:
+        entry.update(name_id='server.names.builtin', name_values={})
     return complete(entry, BUILTIN_KIT)
 
 
@@ -541,7 +546,9 @@ def entry(identifier):
 
 def write(identifier, current):
     stored = {
-        key: value for key, value in current.items() if key not in ('images', 'sounds', 'clips')
+        key: value
+        for key, value in current.items()
+        if key not in ('images', 'sounds', 'clips', 'name_id', 'name_values')
     }
     FOLDERS.setdefault(identifier, {})[META] = json.dumps(stored).encode()
 
@@ -554,6 +561,10 @@ def update(identifier, name=None, changes=None, format=None):
         if not name:
             raise ArgumentError('expected a team name with at least one character')
         current['name'] = name
+        current.pop('name_id', None)
+        current.pop('name_values', None)
+        if identifier == BUILTIN and name == BUILTIN_ENTRY['name']:
+            current.update(name_id='server.names.builtin', name_values={})
     if format is not None:
         current['format'] = choice(format, tuple(FORMATS), 'the format')
         current['style'] = resize(current['style'], current['format'])
@@ -1080,6 +1091,7 @@ PRESENTATION_TYPES = {
     '.wasm': 'application/wasm',
 }
 SANDBOX_POLICY = (
+    'sandbox allow-scripts; '
     "default-src 'none'; script-src '{hash}' blob: 'wasm-unsafe-eval'; worker-src blob:; "
     "connect-src 'none'; img-src blob: data:; frame-ancestors 'self'; base-uri 'none'; "
     "form-action 'none'"
@@ -1132,11 +1144,37 @@ def presentation(identifier):
     return out
 
 
+def presentation_type(identifier, name):
+    """Returns the type a file of a package goes out with, a module as text but for the worklet."""
+    kind = PRESENTATION_TYPES[PurePosixPath(name).suffix]
+    if kind != 'text/javascript':
+        return kind
+    manifest = presentation(identifier)['manifest'] or {}
+    audio = manifest.get('audio') if isinstance(manifest.get('audio'), dict) else {}
+    return kind if audio.get('worklet') == name else 'text/plain; charset=utf-8'
+
+
 def presentation_file(identifier, name):
     """Returns the bytes of a file of a team's package, or None."""
     if not presentation_path(name):
         return None
     return FOLDERS.get(identifier, {}).get(f'{TEAM_FOLDER}/{PRESENTATION_FOLDER}/{name}')
+
+
+def page_digests(worker):
+    """Returns the service worker with the SHA-256 of every file of the page, as the server does."""
+    import hashlib
+
+    digests = {}
+    for path in sorted(Path(WEB_ROOT).rglob('*')):
+        if path.is_file():
+            name = path.relative_to(WEB_ROOT).as_posix()
+            data = path.read_bytes()
+            if name in ('index.html', 'feed.html'):
+                data = mock_language.inline(data)
+            digests[name] = hashlib.sha256(data).hexdigest()
+    filled = json.dumps(digests, sort_keys=True, separators=(',', ':')).encode()
+    return worker.replace(b'const DIGESTS = null;', b'const DIGESTS = ' + filled + b';', 1)
 
 
 def sandbox_page():
@@ -1247,15 +1285,153 @@ def save_match(header, frames):
 
 
 @locked
-def matches(trash=False):
-    """Returns the summaries of the library, or of the Trash, newest first."""
+def matches(trash=False, group=None):
+    """Returns the summaries of the library, or of the Trash, newest first, or of one group."""
     entries = [
         dict(item['summary'])
         for item in MATCHES.values()
         if ('deleted_at' in item['summary']) == trash
+        and (group is None or (item['summary'].get('group') or {}).get('id') == group)
     ]
     entries.sort(key=lambda entry: entry.get('created') or '', reverse=True)
+    if group is not None:
+        entries.sort(key=lambda entry: entry['group'].get('attempt', 0))
     return entries
+
+
+@locked
+def trash_group(group, restore=False):
+    """Moves every recording of a group to the Trash, or back, and returns their identifiers."""
+    return [entry['id'] for entry in matches(restore, group) if trash(entry['id'], restore)]
+
+
+def label(message, text, **values):
+    """Returns a label of the server, its message id, English text and values."""
+    return {'id': message, 'text': text, 'values': values}
+
+
+def named(field, value):
+    """Returns the fields of a name, with its message beside the text for a label."""
+    if isinstance(value, dict):
+        return {
+            field: value['text'],
+            f'{field}_id': value['id'],
+            f'{field}_values': value['values'],
+        }
+    return {field: value}
+
+
+def run_group(challenge, identifier, competitor, state, played, outcome=None):
+    """Returns the group of a run's recordings, as cuju.render._playing.challenges keeps it."""
+    count = challenge['attempts']
+    shown = competitor['text'] if isinstance(competitor, dict) else competitor
+    title = label(
+        'server.names.challenge_run',
+        f'{challenge["title"]}, {shown}',
+        challenge={'kind': 'challenge', 'name': challenge['id'], 'text': challenge['title']},
+        competitor=competitor,
+    )
+    if outcome is None:
+        result = label(
+            f'server.names.run_{state}',
+            f'{state} after {played} of {count}',
+            played=str(played),
+            attempts=str(count),
+        )
+    else:
+        value = outcome['value']
+        if challenge['measure'] == 'margin':
+            text = f'{value:+d}' if value else '0'
+            shown_value = label('server.names.run_margin', f'goal difference {text}', value=text)
+        else:
+            shown_value = label(
+                'server.names.run_attempts',
+                f'{value} of {count}',
+                value=str(value),
+                attempts=str(count),
+            )
+        medal = outcome['medal']
+        if medal:
+            result = label(
+                'server.names.run_medal',
+                f'{shown_value["text"]}, {medal} medal',
+                value=shown_value,
+                medal=label(f'server.names.medal_{medal}', medal),
+            )
+        else:
+            result = label(
+                'server.names.run_no_medal', f'{shown_value["text"]}, no medal', value=shown_value
+            )
+    return {
+        'id': identifier,
+        'kind': 'challenge',
+        'challenge': challenge['id'],
+        **named('title', title),
+        **named('competitor', competitor),
+        **named('result', result),
+        'state': state,
+        'attempts': count,
+        'value': None if outcome is None else outcome['value'],
+        'seconds': None if outcome is None else outcome['seconds'],
+        'medal': None if outcome is None else outcome['medal'],
+        'practice': False,
+    }
+
+
+@locked
+def keep_group(group, recordings):
+    """Writes a group into the summary of each recording of its attempts."""
+    for attempt, identifier in enumerate(recordings):
+        if identifier in MATCHES:
+            MATCHES[identifier]['summary']['group'] = {**group, 'attempt': attempt}
+
+
+def end_person_run(challenge, name, recordings, keep, state, outcome):
+    """Groups the recordings of a person's run, or removes them, and returns the group."""
+    named_ = [match for match in recordings if match is not None]
+    if not keep:
+        with LOCK:
+            for match in named_:
+                MATCHES.pop(match, None)
+        return None
+    if not named_:
+        return None
+    group = new_identifier('g')
+    keep_group(run_group(challenge, group, name, state, len(recordings), outcome), recordings)
+    return group
+
+
+def seed_group():
+    """Adds a run of three attempts of One on one by the built-in AI, a day old, as one group."""
+    challenge = find_challenge('one_on_one')
+    builtin = label('server.names.builtin', "GRF's built-in AI")
+    outcome = {'value': 3, 'seconds': 9.5, 'medal': 'silver'}
+    group = new_identifier('g')
+    day = time.strftime('%Y-%m-%dT%H:%M', time.localtime(time.time() - 86400))
+    recordings = []
+    for attempt in range(challenge['attempts']):
+        header, frames = mock_sample.generate_frames(
+            5, 40, 10 + attempt, ('Built-in AI', 'Built-in AI')
+        )
+        header['provenance'] = {
+            'source': 'challenge',
+            'challenge': 'one_on_one',
+            'attempt': attempt,
+            'seed': challenge['seeds'][attempt],
+        }
+        identifier = save_match(header, frames)
+        title = label(
+            'server.names.challenge_attempt',
+            f'One on one, attempt {attempt + 1}, {builtin["text"]}',
+            challenge={'kind': 'challenge', 'name': 'one_on_one', 'text': 'One on one'},
+            attempt=str(attempt + 1),
+            competitor=builtin,
+        )
+        MATCHES[identifier]['summary'].update(
+            scenario='1_vs_1_easy', created=f'{day}:{10 + attempt:02d}', **named('title', title)
+        )
+        recordings.append(identifier)
+    keep_group(run_group(challenge, group, builtin, 'done', 3, outcome), recordings)
 
 
 @locked
@@ -1716,7 +1892,12 @@ def record_run(identifier, kind, name, team, totals, results):
         board[:] = sorted(kept, key=rank_key)[:100]
     rank = next((i for i, e in enumerate(board, 1) if competitor(e) == who), None)
     best = next((e for e in board if competitor(e) == who), entry)
-    return {'personal_best': {**best, 'rank': rank}, 'rank': rank, 'improved': improved}
+    return {
+        'personal_best': {**best, 'rank': rank},
+        'rank': rank,
+        'improved': improved,
+        'first': before is None,
+    }
 
 
 def recording_frames(identifier):
@@ -1752,7 +1933,7 @@ def challenge_list(person):
     return listed
 
 
-def person_run(identifier, person, matches):
+def person_run(identifier, person, matches, keep=True):
     challenge = find_challenge(identifier)
     if not isinstance(person, str) or not 0 < len(person.strip()) <= 40:
         raise ArgumentError(f'expected a name of 1 to 40 characters, found {person!r}')
@@ -1782,6 +1963,9 @@ def person_run(identifier, person, matches):
     outcome['achievements'] = (['podium'] if medal else []) + (
         ['gold_standard'] * (medal == 'gold')
     )
+    if not keep:
+        outcome['attempts'] = [{**result, 'match': None} for result in results]
+    outcome['group'] = end_person_run(challenge, name, matches, keep, 'done', outcome)
     return outcome
 
 
@@ -1851,10 +2035,21 @@ def challenges_get(parts, query):
 
 def challenges_post(parts, document):
     """Answers POST /api/challenges/ID/runs, with a status."""
-    if len(parts) != 2 or parts[1] != 'runs' or parts[0] not in BOARDS:
+    if len(parts) != 2 or parts[1] not in ('runs', 'leave') or parts[0] not in BOARDS:
         return {'error': 'no such resource'}, 404
+    keep = document.get('keep_recordings', True)
+    if not isinstance(keep, bool):
+        raise ArgumentError(f'expected keep_recordings as true or false, found {keep!r}')
+    if parts[1] == 'leave':
+        played = document.get('matches')
+        if not isinstance(played, list) or not played:
+            raise ArgumentError('expected the recordings of the attempts played')
+        challenge = find_challenge(parts[0])
+        group = end_person_run(challenge, str(document.get('person')), played, keep, 'left', None)
+        removed = [] if keep else [match for match in played if match is not None]
+        return {'challenge': parts[0], 'group': group, 'removed': removed}, 200
     if 'person' in document:
-        return person_run(parts[0], document['person'], document.get('matches')), 201
+        return person_run(parts[0], document['person'], document.get('matches'), keep), 201
     challenge = find_challenge(parts[0])
     team = entry(str(document.get('team')))
     attempts = document.get('attempts')
@@ -1900,6 +2095,13 @@ def make_handler(requests):
 
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = 'cuju-render-mock'
+        # Each answer goes out at once, as the server sends it.
+        disable_nagle_algorithm = True
+
+        def end_headers(self):
+            # Every window of the server stays apart from a window of another site that opened it.
+            self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
+            super().end_headers()
 
         def _tournaments(self, method):
             """Answers the tournament routes from the mock's tournaments."""
@@ -2005,10 +2207,8 @@ def make_handler(requests):
                     self._static(parts)
                 elif parts[:2] == ['api', 'tournaments']:
                     self._tournaments('GET')
-                elif parts == ['api', 'matches']:
-                    self._json(matches())
-                elif parts == ['api', 'trash']:
-                    self._json(matches(trash=True))
+                elif parts in (['api', 'matches'], ['api', 'trash']):
+                    self._json(matches(parts[1] == 'trash', query.get('group') or None))
                 elif parts == ['api', 'search']:
                     try:
                         limit = int(query['limit']) if query.get('limit') else None
@@ -2050,6 +2250,8 @@ def make_handler(requests):
                     self._json({'catalog': ACHIEVEMENTS, 'teams': {}})
                 elif parts[:2] == ['api', 'help']:
                     self._json(*mock_help.get(parts[2:], query))
+                elif parts[:2] == ['api', 'languages']:
+                    self._json(*mock_language.get(parts[2:]))
                 elif parts == ['api', 'teams']:
                     self._json(teams())
                 elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':
@@ -2077,8 +2279,7 @@ def make_handler(requests):
                     if data is None:
                         self._error(404, 'no such file of the package')
                     else:
-                        kind = PRESENTATION_TYPES[PurePosixPath(name).suffix]
-                        self._bytes(data, kind, no_store=True)
+                        self._bytes(data, presentation_type(parts[2], name), no_store=True)
                 elif len(parts) == 5 and parts[1] == 'teams' and parts[3] == 'clips':
                     data = clip_bytes(parts[2], parts[4])
                     if data is None:
@@ -2118,6 +2319,12 @@ def make_handler(requests):
                         self._json(details(parts[2]))
                     else:
                         self._error(404, 'no such recording in the Trash')
+                elif len(parts) == 4 and parts[1] == 'groups' and parts[3] == 'restore':
+                    restored = trash_group(parts[2], restore=True)
+                    if restored:
+                        self._json({'group': parts[2], 'restored': restored})
+                    else:
+                        self._error(404, 'no such group of recordings in the Trash')
                 elif parts[1:3] == ['mock', 'live'] and parts[4:] in (['drop'], ['end']):
                     source = LIVE.get(parts[3])
                     if not isinstance(source, LiveSource):
@@ -2139,6 +2346,8 @@ def make_handler(requests):
                     self._json(*challenges_post(parts[2:], self._document()))
                 elif parts[:2] == ['api', 'help']:
                     self._json(*mock_help.post(parts[2:], self._document()))
+                elif parts[:2] == ['api', 'languages']:
+                    self._json(*mock_language.post(parts[2:], self._body()))
                 elif parts == ['api', 'teams']:
                     team = add(
                         query.get('name', ''),
@@ -2242,6 +2451,16 @@ def make_handler(requests):
             if parts[:2] == ['api', 'challenges']:
                 self._json(*challenges_delete(parts[2:]))
                 return
+            if len(parts) == 3 and parts[1] == 'groups':
+                trashed = trash_group(parts[2])
+                if trashed:
+                    self._json({'group': parts[2], 'trashed': trashed})
+                else:
+                    self._error(404, 'no such group of recordings in the library')
+                return
+            if parts[:2] == ['api', 'languages']:
+                self._json(*mock_language.delete(parts[2:]))
+                return
             if len(parts) == 3 and parts[1] == 'requests':
                 removed = requests.cancel(parts[2])
             elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':
@@ -2296,7 +2515,7 @@ def make_handler(requests):
                     )
                 )
             except mock_feed.FeedError as error:
-                self._error(400, f'ArgumentError: {error}')
+                self._error(400, str(error))
 
         def _static(self, parts):
             path = os.path.realpath(os.path.join(WEB_ROOT, *(parts or ['index.html'])))
@@ -2309,10 +2528,13 @@ def make_handler(requests):
                 return
             with open(path, 'rb') as f:
                 data = f.read()
+            if os.path.basename(path) in ('index.html', 'feed.html'):
+                data = mock_language.inline(data)
             kind = TYPES.get(os.path.splitext(path)[1]) or mimetypes.guess_type(path)[0]
-            # The service worker is checked anew on every registration, as the server sends it.
+            # The service worker is checked anew on every registration, as the server sends it,
+            # with the digests of the files it may answer from its cache.
             if parts == ['sw.js']:
-                self._bytes(data, kind, no_store=True)
+                self._bytes(page_digests(data), kind, no_store=True)
                 return
             self._bytes(data, kind or 'application/octet-stream')
 
@@ -2432,6 +2654,50 @@ def load_recordings(folder):
         save_match(header, [body[i : i + size] for i in range(0, len(body) - size + 1, size)])
 
 
+class ReusedThreadsServer(http.server.ThreadingHTTPServer):
+    """Runs each request on a thread of its own, keeping finished threads for the next requests.
+
+    The server of cuju does the same, see cuju.render._http.launch.LoopbackServer, since a new
+    thread is slow to start on a loaded Windows machine and a page asks for some three hundred
+    files.
+    """
+
+    daemon_threads = True
+    idle_seconds = 30.0
+    # The connections that wait to be accepted, as the server of cuju keeps them, since Windows
+    # refuses a connection beyond the queue.
+    request_queue_size = 128
+
+    def __init__(self, *arguments, **options):
+        self._pool_lock = threading.Lock()
+        self._requests = queue.Queue()
+        self._waiting = 0
+        super().__init__(*arguments, **options)
+
+    def process_request(self, request, client_address):
+        with self._pool_lock:
+            spawn = not self._waiting
+            if not spawn:
+                self._waiting -= 1
+        self._requests.put((request, client_address))
+        if spawn:
+            threading.Thread(target=self._serve_requests, daemon=True).start()
+
+    def _serve_requests(self):
+        while True:
+            try:
+                request, client_address = self._requests.get(timeout=self.idle_seconds)
+            except queue.Empty:
+                with self._pool_lock:
+                    if not self._waiting or not self._requests.empty():
+                        continue
+                    self._waiting -= 1
+                return
+            self.process_request_thread(request, client_address)
+            with self._pool_lock:
+                self._waiting += 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--port', type=int, default=8765)
@@ -2449,6 +2715,7 @@ def main():
             per_team, min(steps, 120) if args.short else steps, 1, names, sides
         )
         save_match(header, frames)
+    seed_group()
     if args.recordings:
         load_recordings(args.recordings)
     source = LiveSource(11)
@@ -2464,8 +2731,7 @@ def main():
         lock=LOCK,
         magic=mock_sample.MAGIC,
     )
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', args.port), make_handler(Requests()))
-    server.daemon_threads = True
+    server = ReusedThreadsServer(('127.0.0.1', args.port), make_handler(Requests()))
     print(f'serving {WEB_ROOT} on http://127.0.0.1:{server.server_address[1]}/', flush=True)
     server.serve_forever()
 

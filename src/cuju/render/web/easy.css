@@ -135,6 +135,17 @@ SPDX-License-Identifier: Apache-2.0
     bottom: 120px;
 }
 
+/* A tip that would cover a control of the page or a notice takes another corner. */
+#app .tip[data-spot$="right"] {
+    left: auto;
+    right: 12px;
+}
+
+#app .tip[data-spot^="top"] {
+    top: calc(var(--bar, 46px) + 12px);
+    bottom: auto;
+}
+
 .tip-text {
     margin: 0 0 8px;
 }

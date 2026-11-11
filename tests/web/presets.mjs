@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // loads from a copy beside a package file that names it a module.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-presets-'));
 cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/watch/presets.js', import.meta.url)), join(folder, 'watch/presets.js'));
+cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/core/i18n.js', import.meta.url)), join(folder, 'core/i18n.js'));
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const {

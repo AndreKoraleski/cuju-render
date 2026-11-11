@@ -14,12 +14,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
 // load from copies beside a package file that names them modules.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-palette-'));
-for (const name of ['help/palette.js', 'core/scenarios.js']) {
+for (const name of ['help/palette.js', 'core/names.js', 'core/scenarios.js', 'core/i18n.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
-const { HELP_TOPICS, LIMIT, fold, matchScore, rankActions } = await import(pathToFileURL(join(folder, 'help/palette.js')).href);
+const { HELP_TOPICS, LIMIT, fold, languageChoices, matchScore, rankActions } = await import(pathToFileURL(join(folder, 'help/palette.js')).href);
 
 const ACTIONS = [
     { group: 'Pages', title: 'Go to Recordings', keywords: 'page open' },
@@ -75,4 +75,34 @@ test('the help topics have distinct identifiers and titles', () => {
     assert.equal(new Set(HELP_TOPICS.map(([id]) => id)).size, HELP_TOPICS.length);
     assert.ok(HELP_TOPICS.every(([id, title]) => id.startsWith('help-') && title));
     assert.ok(HELP_TOPICS.some(([id]) => id === 'help-teams'));
+});
+
+test('the example of the docs finds Go to Teams, and photo and surprise find their actions', () => {
+    const pages = ['Home', 'Watch', 'Play', 'Recordings', 'Matches', 'Tournaments', 'Teams', 'Field', 'Help']
+        .map((label) => ({ group: 'Pages', title: `Go to ${label}`, keywords: `page open ${label.toLowerCase()}` }));
+    const actions = [...pages,
+        { group: 'View', title: 'Photo mode', keywords: 'photo picture screenshot capture still image' },
+        { group: 'Teams', title: 'Surprise me, a new team', keywords: 'surprise random generate kit name colors seed team' },
+        { group: 'Play', title: 'Challenge, Empty goal', keywords: 'challenge drill medal leaderboard empty_goal_close' }];
+    assert.equal(rankActions('gotea', actions)[0].title, 'Go to Teams');
+    assert.equal(rankActions('photo', actions)[0].title, 'Photo mode');
+    assert.equal(rankActions('surprise', actions)[0].title, 'Surprise me, a new team');
+    assert.equal(rankActions('challenge', actions)[0].title, 'Challenge, Empty goal');
+});
+
+test('the palette offers each other language and following the browser', () => {
+    const languages = [
+        { code: 'en', name: 'English', usable: true },
+        { code: 'pt', name: 'Português (Brasil)', usable: true },
+        { code: 'xx', name: 'Broken', usable: false },
+    ];
+    // Following the browser in English offers Portuguese alone, a stored choice adds following.
+    assert.deepEqual(languageChoices(languages, 'en'), [{ code: 'pt', name: 'Português (Brasil)' }]);
+    assert.deepEqual(languageChoices(languages, 'pt', 'pt'), [{ code: 'en', name: 'English' }, { code: null, name: null }]);
+    assert.deepEqual(languageChoices(null, 'en'), []);
+    const actions = languageChoices(languages, 'en', 'en').map((choice) => ({
+        group: 'Settings', title: `Language, ${choice.name || 'follow the browser'}`, keywords: `language translation locale ${choice.code || ''} ${choice.name || ''}`,
+    }));
+    assert.equal(rankActions('language', actions)[0].title, 'Language, Português (Brasil)');
+    assert.equal(rankActions('portugues', actions)[0].title, 'Language, Português (Brasil)');
 });

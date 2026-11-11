@@ -6,7 +6,11 @@
 // ends when the page's own state shows it done. The page takes a snapshot of its state a few times
 // a second, and checkLesson compares it with the snapshot taken when the lesson began, keeping
 // what it needs between two looks in a memory of the lesson. The browser keeps the lessons done.
-// Nothing here touches the page, so the rules hold the same in a test.
+// Nothing here touches the page, so the rules hold the same in a test. The page shows the title,
+// the ask and the praise of a lesson as the messages lesson.<id>.title, .ask and .praise, whose
+// English is the catalog's, and the catalog's own text stands in for a lesson without messages.
+
+import { t, tOr } from '../core/i18n.js';
 
 export const LESSONS_KEY = 'cuju.lessons';
 
@@ -107,9 +111,30 @@ export function checkLesson(id, snap, base, memory = {}) {
     case 'open_sample':
         return !!snap.source && (snap.source.kind === 'match' || snap.source.kind === 'file');
     case 'seek_goal': {
-        if (jumped(memory.previous, snap)) {
+        // A replay and the show after the match seek on their own. A snapshot marked show, as
+        // the watching in the background marks them, keeps their seeks out, from the first look
+        // during the show to the first look after it.
+        if (snap.show) {
+            memory.inShow = true;
+            memory.previous = null;
+            return false;
+        }
+        // The timeline counts its jumps, so a jump counts even when the recording opened since
+        // the last look. Jumps made before the lesson began stay out, and a recording opened
+        // later counts from its start.
+        const id = snap.source ? snap.source.id : null;
+        if (!memory.seeks || memory.seeks.id !== id) {
+            const before = !memory.seeks && base && base.source && base.source.id === id ? (base.jumps || 0) : 0;
+            memory.seeks = { id, jumps: before };
+        }
+        if (memory.inShow) {
+            memory.inShow = false;
+            memory.seeks.jumps = snap.jumps || 0;
+        }
+        if (jumped(memory.previous, snap) || (snap.jumps || 0) > memory.seeks.jumps) {
             memory.jumps = (memory.jumps || 0) + 1;
         }
+        memory.seeks.jumps = Math.max(memory.seeks.jumps, snap.jumps || 0);
         memory.previous = snap;
         return !!memory.jumps && atGoal(snap);
     }
@@ -150,7 +175,20 @@ export function checkLesson(id, snap, base, memory = {}) {
     }
 }
 
+// The title, the ask and the praise of a lesson in the page's language.
+export function lessonTitle(lesson) {
+    return tOr(`lesson.${lesson.id}.title`, lesson.title);
+}
+
+export function lessonAsk(lesson) {
+    return tOr(`lesson.${lesson.id}.ask`, lesson.ask);
+}
+
+export function lessonPraise(lesson) {
+    return tOr(`lesson.${lesson.id}.praise`, lesson.praise);
+}
+
 // The words a screen reader hears when a lesson begins.
 export function lessonAnnouncement(lesson, index, count) {
-    return `Lesson ${index + 1} of ${count}. ${lesson.title}. ${lesson.ask}`;
+    return t('lessons.announce', { index: index + 1, count, title: lessonTitle(lesson), ask: lessonAsk(lesson) });
 }

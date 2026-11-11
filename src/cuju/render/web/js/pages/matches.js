@@ -5,12 +5,14 @@
 // queue of requested matches with their progress, cancelling and watching.
 
 import { api, controlLabel, uiLocale } from '../core/api.js';
+import { formatNumber, serverText, t } from '../core/i18n.js';
 import { css, normalizeStyle } from '../players/kits.js';
 import { Dropdown, el as h, enhanceSelect, icon, menuItem } from '../core/menu.js';
+import { teamName } from '../core/names.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
 
 const DEFAULT_SCENARIO = '11_vs_11_kaggle';
-const FORMAT_NAMES = { '5v5': '5 against 5', '11v11': '11 against 11' };
+const FORMAT_NAMES = { '5v5': t('matches.format.5v5'), '11v11': t('matches.format.11v11') };
 // The list of requested matches shows this many more rows each time Show more is pressed.
 export const REQUEST_PAGE = 50;
 
@@ -48,7 +50,15 @@ function stateOf(r) {
     return r.state;
 }
 
-const STATE_LABELS = { queued: 'Waiting', running: 'Playing', done: 'Finished', failed: 'Failed', cancelled: 'Canceled', interrupted: 'Interrupted' };
+const STATE_LABELS = {
+    queued: t('matches.state.queued'), running: t('matches.state.running'), done: t('matches.state.done'),
+    failed: t('matches.state.failed'), cancelled: t('matches.state.cancelled'), interrupted: t('matches.state.interrupted'),
+};
+
+// An ability in the numbers of the language, with two decimals.
+function abilityText(value) {
+    return formatNumber(Number(value), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 // The time a request was made, its saved time, or for an older entry the time in its identifier,
 // r-YYYYMMDD-HHMMSS-xxxx.
@@ -115,12 +125,12 @@ export class MatchesPage {
     }
 
     team(id) {
-        return this.teams.find((t) => t.id === id) || null;
+        return this.teams.find((x) => x.id === id) || null;
     }
 
     teamName(id) {
-        const t = this.team(id);
-        return t ? t.name : id;
+        const x = this.team(id);
+        return x ? teamName(x) : id;
     }
 
     render() {
@@ -128,16 +138,16 @@ export class MatchesPage {
             this.built = false;
             this.root.replaceChildren(h('div', { class: 'page-pad' }, h('div', { class: 'notice error' },
                 h('p', {}, this.error.message),
-                h('p', { class: 'muted' }, 'Start the server with cuju render serve, then try again.'),
-                h('button', { class: 'btn', type: 'button', onclick: () => this.refresh() }, 'Try again'))));
+                h('p', { class: 'muted' }, t('matches.offline.hint')),
+                h('button', { class: 'btn', type: 'button', onclick: () => this.refresh() }, t('matches.offline.retry')))));
             return;
         }
         const s = this.state;
         if (!this.team(s.left)) {
-            s.left = (this.teams.find((t) => t.kind !== 'builtin') || this.teams[0] || {}).id || null;
+            s.left = (this.teams.find((x) => x.kind !== 'builtin') || this.teams[0] || {}).id || null;
         }
         if (!this.team(s.right)) {
-            s.right = (this.teams.find((t) => t.kind === 'builtin') || this.teams[0] || {}).id || null;
+            s.right = (this.teams.find((x) => x.kind === 'builtin') || this.teams[0] || {}).id || null;
         }
         if (!this.built) {
             this.build();
@@ -150,40 +160,39 @@ export class MatchesPage {
     build() {
         this.built = true;
         this.sides = [0, 1].map((side) => this.sidePicker(side));
-        this.scenarioSelect = h('select', { 'aria-label': 'Scenario' });
+        this.scenarioSelect = h('select', { 'aria-label': t('matches.setup.scenario') });
         this.scenarioSelect.addEventListener('change', () => {
             this.state.scenario = this.scenarioSelect.value;
             this.describeScenario();
         });
         this.scenarioText = h('p', { class: 'scenario-text muted small', 'aria-live': 'polite' });
-        this.seedInput = h('input', { type: 'number', min: '0', step: '1', placeholder: 'Random', value: this.state.seed, 'aria-label': 'Seed' });
+        this.seedInput = h('input', { type: 'number', min: '0', step: '1', placeholder: t('matches.setup.seed.placeholder'), value: this.state.seed, 'aria-label': t('matches.setup.seed.label') });
         this.seedInput.addEventListener('input', () => {
             this.state.seed = this.seedInput.value;
         });
         this.clash = h('div', { class: 'clash', role: 'alert', hidden: true });
         this.playButton = h('button', { type: 'button', class: 'btn primary play-btn', onclick: () => this.play() },
-            icon('play'), 'Play match');
+            icon('play'), t('matches.setup.play'));
         this.queueHost = h('div', { class: 'queue-list' });
         this.filterBar = this.buildFilters();
         const setup = h('section', { class: 'match-setup', 'aria-labelledby': 'setup-title' },
             h('header', { class: 'setup-head' },
-                h('h2', { id: 'setup-title' }, 'New match'),
-                h('p', { class: 'muted' }, 'Pick two teams and a scenario. '
-                    + 'The match uses each team setting and lands in Recordings.')),
-            h('div', { class: 'versus' }, this.sides[0].root, h('div', { class: 'vs', 'aria-hidden': 'true' }, 'vs'), this.sides[1].root),
+                h('h2', { id: 'setup-title' }, t('matches.setup.title')),
+                h('p', { class: 'muted' }, t('matches.setup.text'))),
+            h('div', { class: 'versus' }, this.sides[0].root, h('div', { class: 'vs', 'aria-hidden': 'true' }, t('matches.versus')), this.sides[1].root),
             h('div', { class: 'setup-row' },
-                h('label', { class: 'field' }, 'Scenario', this.scenarioSelect),
-                h('label', { class: 'field seed-field' }, 'Seed, empty for a random one',
+                h('label', { class: 'field' }, t('matches.setup.scenario'), this.scenarioSelect),
+                h('label', { class: 'field seed-field' }, t('matches.setup.seed'),
                     h('span', { class: 'row' }, this.seedInput,
-                        h('button', { type: 'button', class: 'btn ghost', title: 'Draw a seed now', onclick: () => this.drawSeed() }, 'Draw')))),
+                        h('button', { type: 'button', class: 'btn ghost', title: t('matches.setup.draw.title'), onclick: () => this.drawSeed() }, t('matches.setup.draw'))))),
             this.scenarioText,
             this.clash,
             h('div', { class: 'play-row' }, this.playButton));
         const queue = h('section', { class: 'match-queue', 'aria-labelledby': 'queue-title' },
-            h('header', { class: 'queue-head' }, h('h2', { id: 'queue-title' }, 'Requested matches'), this.filterBar),
+            h('header', { class: 'queue-head' }, h('h2', { id: 'queue-title' }, t('matches.queue.title')), this.filterBar),
             this.queueHost);
         this.root.replaceChildren(h('div', { class: 'matches-layout' }, setup, queue));
-        enhanceSelect(this.scenarioSelect, { label: 'Scenario', className: 'wide' });
+        enhanceSelect(this.scenarioSelect, { label: t('matches.setup.scenario'), className: 'wide' });
     }
 
     // The short text of the chosen scenario under the list.
@@ -193,17 +202,19 @@ export class MatchesPage {
 
     // One side of the match, a large card of the chosen team that opens a list of every team.
     sidePicker(side) {
-        const button = h('button', { type: 'button', class: 'team-card', 'aria-label': side ? 'Right team' : 'Left team' });
-        const panel = h('div', { role: 'menu', class: 'team-menu', 'aria-label': side ? 'Right team' : 'Left team' });
+        const teamLabel = t(side ? 'matches.side.right.team' : 'matches.side.left.team');
+        const button = h('button', { type: 'button', class: 'team-card', 'aria-label': teamLabel });
+        const panel = h('div', { role: 'menu', class: 'team-menu', 'aria-label': teamLabel });
         document.getElementById('app').appendChild(panel);
         const fill = () => {
             const current = side ? this.state.right : this.state.left;
-            panel.replaceChildren(...this.teams.map((t, i) => menuItem(t.name, {
-                checked: t.id === current,
-                hint: [t.kind === 'builtin' ? 'Built-in AI, plays any scenario' : FORMAT_NAMES[t.format] || '', t.kind !== 'builtin' ? 'submission' : null].filter(Boolean).join(', '),
-                icon: kitShirt(t, i % 2),
+            panel.replaceChildren(...this.teams.map((x, i) => menuItem(teamName(x), {
+                checked: x.id === current,
+                hint: x.kind === 'builtin' ? t('matches.team.builtin.hint')
+                    : FORMAT_NAMES[x.format] ? t('matches.team.submission.hint', { format: FORMAT_NAMES[x.format] }) : t('matches.team.submission'),
+                icon: kitShirt(x, i % 2),
                 onSelect: () => {
-                    this.state[side ? 'right' : 'left'] = t.id;
+                    this.state[side ? 'right' : 'left'] = x.id;
                     this.updateSetup();
                 },
             })));
@@ -211,25 +222,25 @@ export class MatchesPage {
         const dropdown = new Dropdown(button, panel, { onOpen: fill, align: side ? 'right' : 'left' });
         // The ability of the built-in AI on this side, GRF's team difficulty, which steers every
         // player the built-in AI controls. Left alone it is the scenario's own.
-        const name = side ? 'Right' : 'Left';
-        const own = h('input', { type: 'checkbox', 'aria-label': `Set the ability of the ${name.toLowerCase()} side` });
+        const name = side ? 'right' : 'left';
+        const own = h('input', { type: 'checkbox', 'aria-label': t(`matches.side.${name}.ability.set`) });
         const range = h('input', {
             type: 'range', min: '0', max: '1', step: '0.05', value: '0.5', disabled: true,
-            'aria-label': `${name} ability, from 0 to 1`,
+            'aria-label': t(`matches.side.${name}.ability.range`),
         });
-        const shown = h('output', { class: 'ability-value' }, "Scenario's");
+        const shown = h('output', { class: 'ability-value' }, t('matches.ability.scenario'));
         const sync = () => {
             const value = own.checked ? Number(range.value) : null;
             this.state.ability[side] = value;
             range.disabled = !own.checked;
-            shown.textContent = value === null ? "Scenario's" : value.toFixed(2);
+            shown.textContent = value === null ? t('matches.ability.scenario') : abilityText(value);
         };
         own.addEventListener('change', sync);
         range.addEventListener('input', sync);
-        const ability = h('div', { class: 'ability', title: 'How well the built-in AI plays the players it controls, from 0 to 1' },
-            h('label', { class: 'check' }, own, 'Ability'), range, shown);
+        const ability = h('div', { class: 'ability', title: t('matches.ability.title') },
+            h('label', { class: 'check' }, own, t('matches.ability')), range, shown);
         const root = h('div', { class: `side side-${side ? 'right' : 'left'}` },
-            h('div', { class: 'side-label' }, side ? 'Right, plays away' : 'Left, plays at home'), button, ability);
+            h('div', { class: 'side-label' }, t(`matches.side.${name}`)), button, ability);
         return { root, button, dropdown };
     }
 
@@ -239,17 +250,17 @@ export class MatchesPage {
         }
         const s = this.state;
         [s.left, s.right].forEach((id, side) => {
-            const t = this.team(id);
+            const x = this.team(id);
             const card = this.sides[side].button;
-            if (!t) {
-                card.replaceChildren(h('span', { class: 'team-card-empty' }, 'No teams yet'));
+            if (!x) {
+                card.replaceChildren(h('span', { class: 'team-card-empty' }, t('matches.team.none')));
                 return;
             }
             card.replaceChildren(
-                kitShirt(t, side, 'large'),
+                kitShirt(x, side, 'large'),
                 h('span', { class: 'team-card-text' },
-                    h('span', { class: 'team-card-name' }, t.name),
-                    h('span', { class: 'team-card-meta' }, t.kind === 'builtin' ? 'Built-in AI, any scenario' : `${FORMAT_NAMES[t.format] || t.format}, submission, controls ${controlLabel(t.control, t.format)}`)),
+                    h('span', { class: 'team-card-name' }, teamName(x)),
+                    h('span', { class: 'team-card-meta' }, x.kind === 'builtin' ? t('matches.team.builtin.meta') : t('matches.team.submission.meta', { format: FORMAT_NAMES[x.format] || x.format, control: controlLabel(x.control, x.format) }))),
                 h('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
         });
         const l = this.team(s.left);
@@ -258,17 +269,15 @@ export class MatchesPage {
         let ok = this.scenarios.filter((sc) => fits(l, sc) && fits(r, sc));
         if (clash) {
             ok = ok.filter((sc) => sc.startsWith('academy_'));
-            this.clash.replaceChildren(
-                'These teams have different formats. Academy scenarios can accept both, '
-                + 'when each control setting fits the scenario.');
+            this.clash.replaceChildren(t('matches.setup.clash'));
         } else if (!l || !r) {
-            this.clash.replaceChildren('Add a team in Teams to play a match.');
+            this.clash.replaceChildren(t('matches.setup.noTeams'));
         }
         this.clash.hidden = !clash && !!(l && r);
         const keep = ok.includes(s.scenario) ? s.scenario
             : ok.includes(DEFAULT_SCENARIO) ? DEFAULT_SCENARIO
                 : ok.includes('5_vs_5') ? '5_vs_5' : ok[0];
-        this.scenarioSelect.replaceChildren(...(ok.length ? ok : ['No scenario fits both teams']).map((sc) =>
+        this.scenarioSelect.replaceChildren(...(ok.length ? ok : [t('matches.setup.noScenario')]).map((sc) =>
             h('option', { value: ok.length ? sc : '' }, ok.length ? scenarioName(sc) : sc)));
         this.scenarioSelect.value = keep || '';
         this.scenarioSelect.disabled = !ok.length;
@@ -287,13 +296,13 @@ export class MatchesPage {
         const s = this.state;
         const text = this.seedInput.value.trim();
         if (text !== '' && !/^\d+$/.test(text)) {
-            this.app.hud.toast('The seed is a whole number from 0, or empty for a random one.', 'error');
+            this.app.hud.toast(t('matches.setup.seed.invalid'), 'error');
             return;
         }
         this.playButton.disabled = true;
         try {
             await api.requestMatch({ left: s.left, right: s.right, scenario: s.scenario, seed: text === '' ? null : text, ability: s.ability.slice() });
-            this.app.hud.toast(`${this.teamName(s.left)} against ${this.teamName(s.right)} is in the queue.`);
+            this.app.hud.toast(t('matches.toast.queued', { left: this.teamName(s.left), right: this.teamName(s.right) }));
             this.playButton.classList.remove('kicked');
             void this.playButton.offsetWidth;
             this.playButton.classList.add('kicked');
@@ -308,7 +317,7 @@ export class MatchesPage {
 
     buildFilters() {
         const select = (key, label, options) => {
-            const el = h('select', { 'aria-label': label }, options.map(([v, t]) => h('option', { value: v }, t)));
+            const el = h('select', { 'aria-label': label }, options.map(([v, text]) => h('option', { value: v }, text)));
             el.value = this.filters[key];
             el.addEventListener('change', () => {
                 this.filters[key] = el.value;
@@ -316,18 +325,18 @@ export class MatchesPage {
             });
             return el;
         };
-        this.statusFilter = select('status', 'Status', [['all', 'Every state'], ['active', 'Waiting or playing'], ['done', 'Finished'], ['failed', 'Failed'], ['cancelled', 'Canceled'], ['interrupted', 'Interrupted']]);
-        this.teamFilter = select('team', 'Team', [['all', 'Every team']]);
-        this.scenarioFilter = select('scenario', 'Scenario', [['all', 'Every scenario']]);
-        this.dateFilter = select('date', 'Date', [['any', 'Any date'], ['hour', 'Last hour'], ['today', 'Today'], ['week', 'Last 7 days']]);
-        this.sortSelect = select('sort', 'Sort', [['newest', 'Newest first'], ['oldest', 'Oldest first']]);
+        this.statusFilter = select('status', t('matches.filter.status'), [['all', t('matches.filter.status.all')], ['active', t('matches.filter.status.active')], ['done', STATE_LABELS.done], ['failed', STATE_LABELS.failed], ['cancelled', STATE_LABELS.cancelled], ['interrupted', STATE_LABELS.interrupted]]);
+        this.teamFilter = select('team', t('matches.filter.team'), [['all', t('matches.filter.team.all')]]);
+        this.scenarioFilter = select('scenario', t('matches.filter.scenario'), [['all', t('matches.filter.scenario.all')]]);
+        this.dateFilter = select('date', t('matches.filter.date'), [['any', t('matches.filter.date.any')], ['hour', t('matches.filter.date.hour')], ['today', t('matches.filter.date.today')], ['week', t('matches.filter.date.week')]]);
+        this.sortSelect = select('sort', t('matches.filter.sort'), [['newest', t('matches.filter.sort.newest')], ['oldest', t('matches.filter.sort.oldest')]]);
         const bar = h('div', { class: 'filter-bar' }, this.statusFilter, this.teamFilter, this.scenarioFilter, this.dateFilter, this.sortSelect);
         queueMicrotask(() => {
-            enhanceSelect(this.statusFilter, { label: 'Status', prefix: 'Show' });
-            enhanceSelect(this.teamFilter, { label: 'Team', prefix: 'Team' });
-            enhanceSelect(this.scenarioFilter, { label: 'Scenario', prefix: 'Scenario' });
-            enhanceSelect(this.dateFilter, { label: 'Date', prefix: 'Date' });
-            enhanceSelect(this.sortSelect, { label: 'Sort', prefix: 'Sort', align: 'right' });
+            enhanceSelect(this.statusFilter, { label: t('matches.filter.status'), prefix: t('matches.filter.status.prefix') });
+            enhanceSelect(this.teamFilter, { label: t('matches.filter.team'), prefix: t('matches.filter.team') });
+            enhanceSelect(this.scenarioFilter, { label: t('matches.filter.scenario'), prefix: t('matches.filter.scenario') });
+            enhanceSelect(this.dateFilter, { label: t('matches.filter.date'), prefix: t('matches.filter.date') });
+            enhanceSelect(this.sortSelect, { label: t('matches.filter.sort'), prefix: t('matches.filter.sort'), align: 'right' });
         });
         return bar;
     }
@@ -340,14 +349,14 @@ export class MatchesPage {
             const keep = this.filters[key];
             const want = [['all', all], ...entries];
             const now = [...select.options].map((o) => `${o.value}|${o.textContent}`).join('\n');
-            if (now !== want.map(([v, t]) => `${v}|${t}`).join('\n')) {
-                select.replaceChildren(...want.map(([v, t]) => h('option', { value: v }, t)));
+            if (now !== want.map(([v, text]) => `${v}|${text}`).join('\n')) {
+                select.replaceChildren(...want.map(([v, text]) => h('option', { value: v }, text)));
             }
             this.filters[key] = want.some(([v]) => v === keep) ? keep : 'all';
             select.value = this.filters[key];
         };
-        fill(this.teamFilter, 'team', 'Every team', ids.map((id) => [id, this.teamName(id)]));
-        fill(this.scenarioFilter, 'scenario', 'Every scenario', scenarios.map((s) => [s, scenarioName(s)]));
+        fill(this.teamFilter, 'team', t('matches.filter.team.all'), ids.map((id) => [id, this.teamName(id)]));
+        fill(this.scenarioFilter, 'scenario', t('matches.filter.scenario.all'), scenarios.map((s) => [s, scenarioName(s)]));
     }
 
     renderQueue() {
@@ -385,12 +394,12 @@ export class MatchesPage {
         }
         if (!this.requests.length) {
             this.queueHost.replaceChildren(h('div', { class: 'empty-state' },
-                h('p', { class: 'empty-title' }, 'No matches requested yet'),
-                h('p', { class: 'muted' }, 'Choose teams and Play match. Watch opens the result. The built-in AI plays every scenario, so a first match needs no team of your own.')));
+                h('p', { class: 'empty-title' }, t('matches.queue.empty.title')),
+                h('p', { class: 'muted' }, t('matches.queue.empty.text'))));
             return;
         }
         if (!rows.length) {
-            this.queueHost.replaceChildren(h('p', { class: 'muted pad' }, 'No requested match fits these filters.'));
+            this.queueHost.replaceChildren(h('p', { class: 'muted pad' }, t('matches.queue.filtered')));
             return;
         }
         const more = rows.length - this.limit;
@@ -408,7 +417,7 @@ export class MatchesPage {
             const played = li.querySelector('.req-played');
             const seconds = playedSeconds(r);
             if (played && seconds !== null) {
-                played.textContent = `played ${seconds} ${seconds === 1 ? 'second' : 'seconds'}`;
+                played.textContent = t('matches.request.played', { count: seconds });
             }
             const bar = li.querySelector('.progress .bar');
             if (bar) {
@@ -416,7 +425,7 @@ export class MatchesPage {
                 bar.style.width = `${pct}%`;
                 const label = li.querySelector('.pct');
                 if (label) {
-                    label.textContent = `${pct} percent`;
+                    label.textContent = t('matches.request.percent', { pct });
                 }
             }
             return li;
@@ -446,49 +455,49 @@ export class MatchesPage {
             } });
             this.queueHost.appendChild(button);
         }
-        button.textContent = `Show ${Math.min(more, REQUEST_PAGE)} more of ${more}`;
+        button.textContent = t('matches.queue.more', { shown: Math.min(more, REQUEST_PAGE), count: more });
     }
 
     requestCard(r) {
         const st = stateOf(r);
         const when = requestTime(r);
         const side = (id, i) => {
-            const t = this.team(id);
-            return h('span', { class: 'req-team' }, t ? kitShirt(t, i) : null, h('span', { class: 'req-team-name' }, this.teamName(id)));
+            const x = this.team(id);
+            return h('span', { class: 'req-team' }, x ? kitShirt(x, i) : null, h('span', { class: 'req-team-name' }, this.teamName(id)));
         };
         const actions = [];
         if (st === 'queued' || st === 'running') {
-            actions.push(h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.cancel(r) }, 'Cancel'));
+            actions.push(h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => this.cancel(r) }, t('matches.request.cancel')));
         }
         if (st === 'done' && r.match) {
             actions.push(h('button', { type: 'button', class: 'btn small primary', onclick: () => this.app.openMatchInWatch(r.match) },
-                icon('play'), 'Watch'));
+                icon('play'), t('matches.request.watch')));
         }
         if (st !== 'queued' && st !== 'running') {
             // Retry and Repeat queue a new request with the same seed, teams, scenario and ability.
-            const label = st === 'done' ? 'Repeat' : 'Retry';
-            actions.push(h('button', { type: 'button', class: 'btn small', title: `${label} with seed ${r.seed}`,
-                onclick: (event) => this.again(r, event.currentTarget) }, label));
+            const again = st === 'done' ? 'repeat' : 'retry';
+            actions.push(h('button', { type: 'button', class: 'btn small', title: t(`matches.request.${again}.title`, { seed: r.seed }),
+                onclick: (event) => this.again(r, event.currentTarget) }, t(`matches.request.${again}`)));
         }
         const li = h('li', { class: `req-card state-${st}`, 'data-id': r.id },
             h('div', { class: 'req-main' },
-                h('div', { class: 'req-teams' }, side(r.left, 0), h('span', { class: 'req-vs' }, 'vs'), side(r.right, 1)),
+                h('div', { class: 'req-teams' }, side(r.left, 0), h('span', { class: 'req-vs' }, t('matches.versus')), side(r.right, 1)),
                 h('div', { class: 'req-meta' },
                     h('span', { class: `state-pill ${st}` }, STATE_LABELS[st] || st),
                     h('span', {}, scenarioName(r.scenario)),
-                    r.seed != null ? h('span', {}, `seed ${r.seed}`) : null,
+                    r.seed != null ? h('span', {}, t('matches.request.seed', { seed: r.seed })) : null,
                     Array.isArray(r.ability) && r.ability.some((v) => v !== null)
-                        ? h('span', {}, `ability ${r.ability.map((v) => (v === null ? "scenario's" : Number(v).toFixed(2))).join(' and ')}`)
+                        ? h('span', {}, t('matches.request.ability', Object.fromEntries(['left', 'right'].map((key, i) => [key, r.ability[i] === null ? t('matches.request.ability.scenario') : abilityText(r.ability[i])]))))
                         : null,
                     when ? h('span', {}, new Intl.DateTimeFormat(uiLocale(), { timeStyle: 'short', dateStyle: 'medium' }).format(when)) : null,
                     h('span', { class: 'req-played' })),
                 st === 'queued' || st === 'running'
                     ? h('div', { class: 'req-progress' },
                         h('div', { class: `progress${st === 'queued' ? ' waiting' : ''}` }, h('div', { class: 'bar' })),
-                        h('span', { class: 'pct muted small' }, st === 'queued' ? 'In the queue' : ''))
+                        h('span', { class: 'pct muted small' }, st === 'queued' ? t('matches.request.queued') : ''))
                     : null,
-                (st === 'failed' || st === 'interrupted') && r.error ? h('div', { class: 'error-text' }, r.error) : null,
-                r.persistence_error ? h('div', { class: 'error-text' }, r.persistence_error) : null),
+                (st === 'failed' || st === 'interrupted') && r.error ? h('div', { class: 'error-text' }, serverText(r, 'error')) : null,
+                r.persistence_error ? h('div', { class: 'error-text' }, serverText(r, 'persistence_error')) : null),
             h('div', { class: 'req-actions' }, actions));
         if (st === 'queued') {
             li.querySelector('.pct').classList.remove('pct');
@@ -500,7 +509,7 @@ export class MatchesPage {
         button.disabled = true;
         try {
             await api.requestMatch({ left: r.left, right: r.right, scenario: r.scenario, seed: r.seed, ability: r.ability });
-            this.app.hud.toast(`${this.teamName(r.left)} against ${this.teamName(r.right)} is in the queue with seed ${r.seed}.`);
+            this.app.hud.toast(t('matches.toast.queuedSeed', { left: this.teamName(r.left), right: this.teamName(r.right), seed: r.seed }));
             this.requests = await api.requests();
             this.renderQueue();
         } catch (err) {
@@ -513,9 +522,9 @@ export class MatchesPage {
         try {
             await api.cancelRequest(r.id);
             this.seen.add(r.id);
-            this.app.hud.toast('Match canceled.');
+            this.app.hud.toast(t('matches.toast.cancelled'));
         } catch (err) {
-            this.app.hud.toast(err.status === 404 ? 'This match has already ended.' : err.message, 'error');
+            this.app.hud.toast(err.status === 404 ? t('matches.toast.ended') : err.message, 'error');
         }
         try {
             this.requests = await api.requests();
@@ -549,9 +558,9 @@ export class MatchesPage {
             if ((st === 'done' || st === 'failed' || st === 'cancelled') && !this.seen.has(r.id)) {
                 this.seen.add(r.id);
                 if (this.primed && st === 'done') {
-                    this.app.hud.toast(`${this.teamName(r.left)} against ${this.teamName(r.right)} is ready to watch${this.visible ? '.' : ', open it from Matches.'}`, 'info', 6000);
+                    this.app.hud.toast(t(this.visible ? 'matches.toast.ready' : 'matches.toast.ready.away', { left: this.teamName(r.left), right: this.teamName(r.right) }), 'info', 6000);
                 } else if (this.primed && st === 'failed') {
-                    this.app.hud.toast(`A requested match failed. ${r.error || ''}`, 'error', 7000);
+                    this.app.hud.toast(t('matches.toast.failed', { error: r.error ? serverText(r, 'error') : '' }), 'error', 7000);
                 }
             }
         }

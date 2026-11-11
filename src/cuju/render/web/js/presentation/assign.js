@@ -7,7 +7,9 @@
 // lives on the server, at /api/presentation/sides, so the page, the command line and an agent's
 // requests share it, and the settings panel holds a choice for each side.
 
+import { t } from '../core/i18n.js';
 import { h } from '../teams/library.js';
+import { teamName } from '../core/names.js';
 
 export const SIDES = ['left', 'right'];
 
@@ -25,7 +27,7 @@ export async function writeSides(changes) {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes),
     });
     if (!res.ok) {
-        throw new Error(`the sides answered ${res.status}`);
+        throw new Error(t('presentation.sides.status', { status: res.status }));
     }
     return res.json();
 }
@@ -40,11 +42,11 @@ export class SideChoices {
             return;
         }
         const rows = SIDES.map((side) => {
-            const select = h('select', { id: `presentation-${side}`, 'aria-label': `Team presentation of the ${side} side` },
-                h('option', { value: '' }, 'The team that plays'));
+            const select = h('select', { id: `presentation-${side}`, 'aria-label': t(`presentation.sides.${side}.label`) },
+                h('option', { value: '' }, t('presentation.sides.playing')));
             select.addEventListener('change', () => this.choose(side, select.value || null));
             this.selects[side] = select;
-            return h('label', {}, `Team presentation, ${side} side`, select);
+            return h('label', {}, t(`presentation.sides.${side}`), select);
         });
         panel.append(...rows);
         this.refresh();
@@ -61,9 +63,9 @@ export class SideChoices {
         const sides = await readSides();
         for (const side of SIDES) {
             const select = this.selects[side];
-            for (const t of Array.isArray(teams) ? teams : []) {
-                if (t && t.id && t.id !== 'builtin' && ![...select.options].some((o) => o.value === t.id)) {
-                    select.append(h('option', { value: t.id }, t.name || t.id));
+            for (const team of Array.isArray(teams) ? teams : []) {
+                if (team && team.id && team.id !== 'builtin' && ![...select.options].some((o) => o.value === team.id)) {
+                    select.append(h('option', { value: team.id }, teamName(team) || team.id));
                 }
             }
             select.value = sides[side] || '';
@@ -76,7 +78,7 @@ export class SideChoices {
             await this.app.rebuildPlayers();
         } catch (err) {
             if (this.app.hud) {
-                this.app.hud.toast(`The presentation was not changed, ${err.message}`, 'info', 4000);
+                this.app.hud.toast(t('presentation.sides.failed', { reason: err.message }), 'info', 4000);
             }
         }
     }

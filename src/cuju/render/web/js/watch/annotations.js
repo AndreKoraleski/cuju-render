@@ -6,9 +6,11 @@
 // chosen series as lines on the timeline. The Annotations panel picks what shows. A recording or
 // stream without annotations keeps the overlay and its button hidden.
 
+import * as THREE from 'three';
+import { t } from '../core/i18n.js';
 import { h } from '../teams/library.js';
 import { Dropdown } from '../core/menu.js';
-import { noteLines, seriesPath } from '../recording/annotation-data.js';
+import { labelHeight, labelTop, noteLines, seriesPath } from '../recording/annotation-data.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 // The colors of the lines, by the position of a series in the panel.
@@ -44,7 +46,7 @@ export class AnnotationOverlay {
         this.placed = 0;
         const stored = load();
         this.options = Object.fromEntries(['players', 'actions', 'text'].map((key) => [key, stored[key] !== false]));
-        this.button = h('button', { type: 'button', class: 'text-btn', id: 'annotations-button', title: 'Annotations of the recording', hidden: true }, 'Annotations');
+        this.button = h('button', { type: 'button', class: 'text-btn', id: 'annotations-button', title: t('annotations.button.title'), hidden: true }, t('annotations.button'));
         this.list = h('div', { class: 'annotation-series', role: 'group', 'aria-labelledby': 'annotation-series-title' });
         const check = (key, text) => {
             const input = h('input', { type: 'checkbox', id: `annotation-${key}` });
@@ -56,12 +58,12 @@ export class AnnotationOverlay {
             });
             return h('label', { class: 'check' }, input, ` ${text}`);
         };
-        this.panel = h('div', { id: 'annotations-panel', class: 'popover', role: 'dialog', 'aria-label': 'Annotations' },
-            h('h3', { class: 'panel-title' }, 'Annotations'),
-            check('players', 'Numbers under the players'),
-            check('actions', 'Chosen action and likely actions'),
-            check('text', 'Text'),
-            h('p', { id: 'annotation-series-title' }, 'Lines on the timeline'),
+        this.panel = h('div', { id: 'annotations-panel', class: 'popover', role: 'dialog', 'aria-label': t('annotations.title') },
+            h('h3', { class: 'panel-title' }, t('annotations.title')),
+            check('players', t('annotations.players')),
+            check('actions', t('annotations.actions')),
+            check('text', t('annotations.text')),
+            h('p', { id: 'annotation-series-title' }, t('annotations.series.title')),
             this.list);
         document.body.append(this.panel);
         const row = document.querySelector('#controls .button-row');
@@ -71,6 +73,7 @@ export class AnnotationOverlay {
         this.menu = new Dropdown(this.button, this.panel, { align: 'right' });
         this.layer = h('div', { class: 'annotation-labels', 'aria-hidden': 'true', hidden: true });
         document.body.append(this.layer);
+        this.foot = new THREE.Vector3();
         this.matchBox = h('div', { class: 'annotation-match', hidden: true });
         const controls = document.getElementById('controls');
         if (controls) {
@@ -143,7 +146,7 @@ export class AnnotationOverlay {
         const series = this.data.list();
         this.listed = this.data.series.size;
         if (!series.length) {
-            this.list.replaceChildren(h('p', { class: 'muted small' }, 'The annotations hold no numbers.'));
+            this.list.replaceChildren(h('p', { class: 'muted small' }, t('annotations.series.none')));
             return;
         }
         this.list.replaceChildren(...series.map((s, i) => {
@@ -157,8 +160,8 @@ export class AnnotationOverlay {
                 }
                 this.drawn = '';
             });
-            const owner = s.player >= 0 ? app.playerLabel(s.player) : 'match';
-            return h('label', { class: 'check' }, input, h('i', { class: `series-swatch series-${i % COLORS}` }), ` ${s.name}, ${owner}`);
+            const owner = s.player >= 0 ? app.playerLabel(s.player) : t('annotations.series.match');
+            return h('label', { class: 'check' }, input, h('i', { class: `series-swatch series-${i % COLORS}` }), ` ${t('annotations.series.item', { name: s.name, owner })}`);
         }));
     }
 
@@ -211,6 +214,14 @@ export class AnnotationOverlay {
         this.svg.replaceChildren(...paths);
     }
 
+    // The height of a player's feet on the screen, from the pose of the frame shown.
+    feetY(index, rect) {
+        const app = this.app;
+        const world = app.players.position(app.pose, index, this.foot).setY(0);
+        const screen = world.project(app.view.camera);
+        return rect.top + (1 - screen.y) * rect.height / 2;
+    }
+
     // Places the labels under the players in view and fills the box of the whole match.
     place() {
         const app = this.app;
@@ -231,16 +242,24 @@ export class AnnotationOverlay {
         if (entry && entry.players.size) {
             const used = [];
             const rect = app.view.renderer.domElement.getBoundingClientRect();
+            const controls = document.getElementById('controls');
+            const edge = controls && controls.getBoundingClientRect().height ? controls.getBoundingClientRect().top - 8 : rect.bottom;
             for (const point of app.playerTools.points.slice().sort((a, b) => a.depth - b.depth)) {
                 const record = entry.players.get(point.index);
                 const shown = record ? lines(record) : [];
-                if (!shown.length || used.some((other) => Math.abs(other.x - point.x) < 120 && Math.abs(other.y - point.y) < 16 * (shown.length + 1))) {
+                if (!shown.length) {
                     continue;
                 }
-                used.push(point);
+                // The label hangs under the player's feet, so it leaves the player in view.
+                const top = labelTop(point.y, this.feetY(point.index, rect), shown.length, edge);
+                const height = labelHeight(shown.length);
+                if (used.some((other) => Math.abs(other.x - point.x) < 120 && top < other.top + other.height && other.top < top + height)) {
+                    continue;
+                }
+                used.push({ x: point.x, top, height });
                 const label = h('span', { 'data-player': String(point.index) }, ...shown.map((line) => h('b', {}, line)));
                 label.style.left = `${Math.max(rect.left + 90, Math.min(rect.right - 90, point.x))}px`;
-                label.style.top = `${point.y - 10}px`;
+                label.style.top = `${top}px`;
                 nodes.push(label);
             }
         }

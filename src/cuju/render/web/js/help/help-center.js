@@ -11,10 +11,25 @@
 
 import { GuidedTour } from './tour.js';
 import { Lessons, loadCatalog } from './lessons.js';
-import { doneCount } from './lessons-core.js';
-import { HELP_TOPICS } from './palette.js';
+import { doneCount, lessonAsk, lessonTitle } from './lessons-core.js';
+import { HELP_TOPICS, paletteAction, searchWords } from './palette.js';
+import { serverText, t, tOr, tn } from '../core/i18n.js';
 
-const STATES = { library: 'In the library', trash: 'In the Trash', missing: 'Not in the library' };
+// The title and the description of a sample from the server, as the messages
+// helpcenter.sample.<id>.title and .about, with the server's English for a sample without them.
+function sampleTitle(entry) {
+    return tOr(`helpcenter.sample.${entry.id}.title`, entry.title);
+}
+
+function sampleAbout(entry) {
+    return tOr(`helpcenter.sample.${entry.id}.about`, entry.about);
+}
+
+// A team sample lives in the registry of the Teams page, not in the library of recordings.
+function sampleState(entry) {
+    const kind = entry.kind === 'team' ? 'teamState' : 'state';
+    return tOr(`helpcenter.sample.${kind}.${entry.state}`, entry.state);
+}
 
 function h(tag, attributes = {}, ...children) {
     const node = document.createElement(tag);
@@ -39,7 +54,7 @@ async function call(method, path, json) {
     try {
         res = await fetch(path, init);
     } catch {
-        throw new Error(`Cannot reach the cuju server at ${location.origin}. Is it still running?`);
+        throw new Error(t('helpcenter.error.unreachable', { origin: location.origin }));
     }
     const text = await res.text();
     let body = null;
@@ -49,7 +64,7 @@ async function call(method, path, json) {
         body = null;
     }
     if (!res.ok) {
-        throw new Error((body && body.error) || `The server answered ${res.status}.`);
+        throw new Error(body && body.error ? serverText(body) : t('helpcenter.error.status', { status: res.status }));
     }
     return body;
 }
@@ -75,7 +90,7 @@ function injectStyle() {
     border: 1px solid var(--border); border-radius: 6px; }
 .lesson-list li.done { border-style: dashed; }
 .lesson-list .lesson-mark, .sample-list .sample-state { font-size: 12px; }
-.lesson-list h4, .sample-list h4 { margin: 0; font-size: 15px; }
+.lesson-list h3, .sample-list h3 { margin: 0; color: var(--text); font-size: 15px; font-variant: normal; letter-spacing: normal; }
 .lesson-list p, .sample-list p { margin: 0; }
 .tour { position: fixed; z-index: 60; width: min(380px, calc(100vw - 24px)); padding: 14px 16px;
     border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text);
@@ -170,28 +185,28 @@ export class HelpCenter {
             return;
         }
         this.tourButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.tour.start() });
-        this.tourAgain = h('button', { type: 'button', class: 'btn', onclick: () => this.tour.start(0) }, 'Start the tour again');
-        this.lessonSummary = h('p', { class: 'muted', 'aria-live': 'polite' }, 'The lessons are loading.');
-        this.lessonList = h('ol', { class: 'lesson-list', 'aria-label': 'Lessons' });
-        this.continueButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.lessons && this.lessons.start() }, 'Start the lessons');
-        this.resetButton = h('button', { type: 'button', class: 'btn', onclick: () => this.resetLessons() }, 'Reset the lessons');
+        this.tourAgain = h('button', { type: 'button', class: 'btn', onclick: () => this.tour.start(0) }, t('helpcenter.tour.again'));
+        this.lessonSummary = h('p', { class: 'muted', 'aria-live': 'polite' }, t('helpcenter.lessons.loading'));
+        this.lessonList = h('ol', { class: 'lesson-list', 'aria-label': t('helpcenter.lessons.list') });
+        this.continueButton = h('button', { type: 'button', class: 'btn primary', onclick: () => this.lessons && this.lessons.start() }, t('helpcenter.lessons.start'));
+        this.resetButton = h('button', { type: 'button', class: 'btn', onclick: () => this.resetLessons() }, t('helpcenter.lessons.reset'));
         const learn = h('section', { id: 'help-learn', 'aria-labelledby': 'help-learn-title', tabindex: '-1' },
-            h('h3', { id: 'help-learn-title' }, 'Learn by doing'),
-            h('p', {}, 'The guided tour points at the main control of each page, one step at a time. The lessons ask you to do one thing each, such as jumping to a goal or registering a team, and notice when it is done.'),
+            h('h2', { id: 'help-learn-title' }, t('helpcenter.learn.title')),
+            h('p', {}, t('helpcenter.learn.text')),
             h('div', { class: 'help-row' }, this.tourButton, this.tourAgain),
-            h('h3', { id: 'help-lessons' }, 'Lessons'),
+            h('h2', { id: 'help-lessons' }, t('helpcenter.lessons.title')),
             this.lessonSummary,
             this.lessonList,
             h('div', { class: 'help-row' }, this.continueButton, this.resetButton),
-            h('p', { class: 'muted small' }, 'An agent learns the same lessons with ', h('code', {}, 'cuju render tutorial'),
-                ', which prints each step and checks it from the server, and a script that drives this page uses ',
-                h('code', {}, 'window.cuju.tutorial'), '.'));
-        this.sampleList = h('ul', { class: 'sample-list', 'aria-label': 'Samples' });
+            h('p', { class: 'muted small' }, tn('helpcenter.lessons.agent', {
+                command: h('code', {}, 'cuju render tutorial'), script: h('code', {}, 'window.cuju.tutorial'),
+            })));
+        this.sampleList = h('ul', { class: 'sample-list', 'aria-label': t('helpcenter.samples.list') });
         this.sampleNote = h('p', { class: 'muted small', 'aria-live': 'polite' });
-        this.allButton = h('button', { type: 'button', class: 'btn', onclick: () => this.addSamples(null) }, 'Add or restore every sample');
+        this.allButton = h('button', { type: 'button', class: 'btn', onclick: () => this.addSamples(null) }, t('helpcenter.samples.all'));
         const samples = h('section', { id: 'help-samples', 'aria-labelledby': 'help-samples-title' },
-            h('h3', { id: 'help-samples-title' }, 'Samples'),
-            h('p', {}, 'cuju ships two recordings and a starter team. Each one can be added again, or brought back from the Trash, at any time.'),
+            h('h2', { id: 'help-samples-title' }, t('helpcenter.samples.title')),
+            h('p', {}, t('helpcenter.samples.text')),
             this.sampleList,
             h('div', { class: 'help-row' }, this.allButton),
             this.sampleNote);
@@ -199,13 +214,14 @@ export class HelpCenter {
         this.installHost = h('section', { id: 'help-install', 'aria-labelledby': 'help-install-title' });
         const header = card.querySelector('header');
         (header || card.firstChild).after(learn, samples, this.doctorHost, this.installHost);
+        // Each topic's title and words are the messages helpcenter.topic.<key>.title and .words.
         for (const topic of [
-            ['help-learn-title', 'Guided tour', 'tour walkthrough start learn tutorial'],
-            ['help-lessons', 'Lessons', 'tutorial hands on learn practice'],
-            ['help-samples-title', 'Samples', 'sample recording starter team restore'],
-            ['help-doctor-title', 'Diagnostic report', 'doctor report diagnostics webgl versions problem'],
-            ['help-install-title', 'Install the app', 'install app pwa offline'],
-        ]) {
+            ['help-learn-title', 'tour', 'tour walkthrough start learn tutorial'],
+            ['help-lessons', 'lessons', 'tutorial hands on learn practice'],
+            ['help-samples-title', 'samples', 'sample recording starter team restore'],
+            ['help-doctor-title', 'doctor', 'doctor report diagnostics webgl versions problem'],
+            ['help-install-title', 'install', 'install app pwa offline'],
+        ].map(([id, key, words]) => [id, t(`helpcenter.topic.${key}.title`), searchWords(`helpcenter.topic.${key}.words`, words)])) {
             if (!HELP_TOPICS.some((entry) => entry[0] === topic[0])) {
                 HELP_TOPICS.push(topic);
             }
@@ -217,6 +233,9 @@ export class HelpCenter {
                 if (!page.hidden) {
                     this.renderTour();
                     this.refreshSamples();
+                    // A lesson that the command line or another page finished while Help was
+                    // away shows as done each time Help shows.
+                    this.lessons?.sync().then(() => this.renderLessons());
                 }
             }).observe(page, { attributes: true, attributeFilter: ['hidden'] });
         }
@@ -227,7 +246,7 @@ export class HelpCenter {
             return;
         }
         const at = this.tour.resumeAt;
-        this.tourButton.textContent = at > 0 ? `Resume the tour at step ${at + 1}` : 'Take the guided tour';
+        this.tourButton.textContent = at > 0 ? t('helpcenter.tour.resume', { index: at + 1 }) : t('helpcenter.tour.take');
         this.tourAgain.hidden = at === 0;
     }
 
@@ -247,23 +266,23 @@ export class HelpCenter {
             return;
         }
         const done = doneCount(lessons.progress, lessons.ids);
-        this.lessonSummary.textContent = `${done} of ${lessons.ids.length} lessons done.`;
-        this.continueButton.textContent = done === 0 ? 'Start the lessons' : (done === lessons.ids.length ? 'Practice again' : 'Continue the lessons');
+        this.lessonSummary.textContent = t('helpcenter.lessons.summary', { done, count: lessons.ids.length });
+        this.continueButton.textContent = done === 0 ? t('helpcenter.lessons.start') : (done === lessons.ids.length ? t('helpcenter.lessons.again') : t('helpcenter.lessons.continue'));
         this.resetButton.disabled = done === 0;
         this.lessonList.replaceChildren(...lessons.lessons.map((lesson) => {
             const finished = lesson.id in lessons.progress.done;
             return h('li', { class: finished ? 'done' : null, 'data-lesson': lesson.id },
-                h('span', { class: 'lesson-mark' }, finished ? 'Done' : 'To do'),
-                h('h4', {}, lesson.title),
-                h('p', { class: 'muted small' }, lesson.ask),
-                h('div', {}, h('button', { type: 'button', class: 'btn small', 'aria-label': `Start the lesson ${lesson.title}`, onclick: () => lessons.start(lesson.id) }, finished ? 'Again' : 'Start')));
+                h('span', { class: 'lesson-mark' }, finished ? t('helpcenter.lesson.done') : t('helpcenter.lesson.todo')),
+                h('h3', {}, lessonTitle(lesson)),
+                h('p', { class: 'muted small' }, lessonAsk(lesson)),
+                h('div', {}, h('button', { type: 'button', class: 'btn small', 'aria-label': t('helpcenter.lesson.start.label', { title: lessonTitle(lesson) }), onclick: () => lessons.start(lesson.id) }, finished ? t('helpcenter.lesson.again') : t('helpcenter.lesson.start'))));
         }));
     }
 
     async resetLessons() {
         if (this.lessons) {
             await this.lessons.reset();
-            this.app.hud?.toast('The lessons are reset.', 'info', 2500);
+            this.app.hud?.toast(t('helpcenter.lessons.resetDone'), 'info', 2500);
         }
     }
 
@@ -283,34 +302,41 @@ export class HelpCenter {
         }
         if (this.sampleError && !this.samples.length) {
             this.sampleList.replaceChildren();
-            this.sampleNote.textContent = `${this.sampleError} The command cuju render sample adds the samples too.`;
+            this.sampleNote.textContent = t('helpcenter.samples.offline', { error: this.sampleError });
             this.allButton.disabled = true;
             return;
         }
         this.allButton.disabled = this.samples.every((entry) => entry.state === 'library');
         this.sampleList.replaceChildren(...this.samples.map((entry) => {
             const action = entry.state === 'library'
-                ? h('button', { type: 'button', class: 'btn small', 'aria-label': `Open ${entry.title}`, onclick: () => this.openSample(entry) }, 'Open')
-                : h('button', { type: 'button', class: 'btn small', 'aria-label': `${entry.state === 'trash' ? 'Restore' : 'Add'} ${entry.title}`, onclick: () => this.addSamples([entry.id]) }, entry.state === 'trash' ? 'Restore' : 'Add');
+                ? h('button', { type: 'button', class: 'btn small', 'aria-label': t('helpcenter.samples.open.label', { title: sampleTitle(entry) }), onclick: () => this.openSample(entry) }, t('helpcenter.samples.open'))
+                : h('button', {
+                    type: 'button', class: 'btn small',
+                    'aria-label': t(entry.state === 'trash' ? 'helpcenter.samples.restore.label' : 'helpcenter.samples.add.label', { title: sampleTitle(entry) }),
+                    onclick: () => this.addSamples([entry.id]),
+                }, entry.state === 'trash' ? t('helpcenter.samples.restore') : t('helpcenter.samples.add'));
             return h('li', { 'data-sample': entry.id },
-                h('span', { class: 'sample-state' }, STATES[entry.state] || entry.state),
-                h('h4', {}, entry.title),
-                h('p', { class: 'muted small' }, entry.about),
+                h('span', { class: 'sample-state' }, sampleState(entry)),
+                h('h3', {}, sampleTitle(entry)),
+                h('p', { class: 'muted small' }, sampleAbout(entry)),
                 h('div', {}, action));
         }));
     }
 
     async addSamples(names) {
-        this.sampleNote.textContent = 'Adding the samples.';
+        this.sampleNote.textContent = t('helpcenter.samples.adding');
         try {
             const result = await samplesApi.add(names);
             this.samples = result.samples;
             this.sampleError = null;
             const words = result.changes.map((change) => {
                 const entry = this.samples.find((item) => item.id === change.id);
-                return `${change.change} ${entry ? entry.title : change.id}`;
+                const title = entry ? sampleTitle(entry) : change.id;
+                return tOr(`helpcenter.samples.change.${change.change}`, `${change.change} {title}`, { title });
             });
-            this.sampleNote.textContent = words.length ? `${words.join(', ')}.`.replace(/^./, (c) => c.toUpperCase()) : 'The library already holds those samples.';
+            this.sampleNote.textContent = words.length
+                ? t('helpcenter.samples.changes', { list: words.join(', ') }).replace(/^./, (c) => c.toUpperCase())
+                : t('helpcenter.samples.held');
             if (this.app.library && typeof this.app.library.refresh === 'function' && result.changes.some((change) => change.id === 'starter-team')) {
                 this.app.library.refresh();
             }
@@ -334,7 +360,7 @@ export class HelpCenter {
         if (!actions) {
             return;
         }
-        const button = h('button', { type: 'button', class: 'btn small', onclick: () => this.tour.start() }, 'Take the tour');
+        const button = h('button', { type: 'button', class: 'btn small', onclick: () => this.tour.start() }, t('helpcenter.tip.tour'));
         // Got it stays the first button of the tip.
         if (actions.firstElementChild) {
             actions.firstElementChild.after(button);
@@ -355,19 +381,20 @@ export class HelpCenter {
 
     actions() {
         const list = [];
-        const add = (title, run, keywords) => list.push({ group: 'Help', title, run, keywords, hint: '' });
+        // The words of each action are its English words and the message helpcenter.words.<key>.
+        const add = (title, run, key, keywords) => list.push(paletteAction('Help', title, run, searchWords(`helpcenter.words.${key}`, keywords)));
         const at = this.tour.resumeAt;
-        add(at > 0 ? `Resume the guided tour at step ${at + 1}` : 'Take the guided tour', () => this.tour.start(), 'tour walkthrough learn start help');
+        add(at > 0 ? t('helpcenter.action.resume', { index: at + 1 }) : t('helpcenter.tour.take'), () => this.tour.start(), 'tour', 'tour walkthrough learn start help');
         if (this.lessons) {
             const next = this.lessons.state().next;
-            add(next ? 'Continue the lessons' : 'Practice the lessons again', () => this.lessons.start(), 'tutorial lesson learn practice hands on');
+            add(next ? t('helpcenter.lessons.continue') : t('helpcenter.action.practice'), () => this.lessons.start(), 'lessons', 'tutorial lesson learn practice hands on');
             for (const lesson of this.lessons.lessons) {
-                add(`Lesson, ${lesson.title}`, () => this.lessons.start(lesson.id), 'tutorial lesson learn');
+                add(t('helpcenter.action.lesson', { title: lessonTitle(lesson) }), () => this.lessons.start(lesson.id), 'lesson', 'tutorial lesson learn');
             }
         }
-        add('Add or restore the samples', () => this.addSamples(null), 'sample recording starter team restore trash');
-        add('Make the diagnostic report', () => this.openPart('doctor'), 'doctor report diagnostics problem bug webgl');
-        add('Install the app', () => this.openPart('install'), 'install app pwa offline');
+        add(t('helpcenter.action.samples'), () => this.addSamples(null), 'samples', 'sample recording starter team restore trash');
+        add(t('helpcenter.action.doctor'), () => this.openPart('doctor'), 'doctor', 'doctor report diagnostics problem bug webgl');
+        add(t('helpcenter.action.install'), () => this.openPart('install'), 'install', 'install app pwa offline');
         return list;
     }
 

@@ -6,6 +6,7 @@ import json
 import os
 import struct
 import threading
+import time
 import urllib.request
 
 import torch
@@ -19,6 +20,9 @@ from cuju.render._http import server as _server
 from cuju.render._registry import teams as _teams
 from cuju.render._store import home as _home
 from cuju.render._store import library as _library
+
+# The first page of an Ogg Vorbis file, which the server takes as a sound.
+_OGG = b'OggS\x00\x02' + bytes(20) + b'\x01\x1e' + b'\x01vorbis' + bytes(23)
 
 
 def _get(address, path):
@@ -38,6 +42,23 @@ def agent(obs):
         raise ValueError('the policy broke')
     return [7]
 """
+
+
+def _until(condition, seconds=60):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _play_to_end(games, entry):
+    """Plays a game of `_Games` without input until it ends, and returns its last entry."""
+    assert games.port(entry['id']) is not None, games.current()
+    games.send(entry['id'], {'paused': False})
+    _until(lambda: games.current()['state'] in ('ended', 'failed'), 120)
+    return games.current()
 
 
 # A toy submission that controls several players and sends each one a direction of its own, by
@@ -194,6 +215,29 @@ def _package_team(name='Test package', extra=None):
     from support.package import package_zip
 
     return _teams.add(name, 'team.zip', package_zip(name, extra))
+
+
+def _zip_folder(folder, path):
+    import zipfile
+
+    with zipfile.ZipFile(path, 'w') as archive:
+        for item in sorted(folder.rglob('*')):
+            if item.is_file():
+                archive.write(item, item.relative_to(folder).as_posix())
+    return path
+
+
+def _template_variant(tmp_path, name, change):
+    """Writes the template of `pack new` under `name` and changes it, returning its folder."""
+    from cuju.render._packages import pack as _pack
+
+    folder = tmp_path / name
+    _pack.new(folder, 'Lanterns')
+    package = folder / 'cuju-team/presentation'
+    manifest = json.loads((package / 'presentation.json').read_text())
+    change(package, manifest)
+    (package / 'presentation.json').write_text(json.dumps(manifest))
+    return folder
 
 
 # Challenges.
@@ -366,3 +410,36 @@ def _help_json(address, path, document=None, headers=None):
 
 _REPOSITORY = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SAMPLE_FOLDER = os.path.join(_REPOSITORY, 'src', 'cuju', 'render', 'samples')
+
+
+class _FeedRequests:
+    def __init__(self, entries):
+        self.listed = entries
+
+    def entries(self):
+        return list(self.listed)
+
+
+class _FeedTournaments:
+    def __init__(self, full):
+        self.full = full
+
+    def entries(self):
+        return [{key: self.full[key] for key in ('id', 'name')}]
+
+    def get(self, identifier):
+        return self.full if identifier == self.full['id'] else None
+
+
+def _shipped_language(code):
+    return json.loads((_server._WEB / 'languages' / f'{code}.json').read_text(encoding='utf-8'))
+
+
+# Names and titles that cuju makes, which travel as labels.
+
+
+def _names_lineup(count=2):
+    return [
+        {'team': k % 2, 'index': k // 2, 'goalkeeper': False, 'controlled': False}
+        for k in range(count)
+    ]

@@ -27,6 +27,8 @@ from cuju.errors import ArgumentError
 
 from .._store import home as _home
 from .._store import library as _library
+from .._text import messages as _messages
+from .._text.messages import MessageError
 from . import sizes as _sizes
 from . import video as _video
 
@@ -34,28 +36,29 @@ from . import video as _video
 KEPT = 3
 # An export ends after this many seconds, longer than the longest range takes on a slow machine.
 _EXPORT_SECONDS = 3 * 60 * 60
-# The frame rates that the page offers. The page offers the sizes of `_sizes`, and any other size
-# with even sides within its limits.
+# The frame rates that the page's dialog offers. An export over HTTP takes any whole rate from 1
+# to `_video.MAX_FPS`, as the command line does. The page offers the sizes of `_sizes`, and any
+# other size with even sides within its limits.
 RATES = (24, 25, 30, 50, 60)
 
 
-class BusyError(Exception):
-    """Raised when an export is asked for while another one runs."""
+class BusyError(_messages.Message, Exception):
+    """Raised when an export is asked for while another one runs, with the id of its message."""
 
 
 def _seconds(value: Any, name: str) -> float:
     """Returns a number of seconds from the page, or raises `ArgumentError`."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value < 1e6:
-        raise ArgumentError(f'expected {name} as seconds from 0, found {value!r}')
+        raise MessageError('server.video.seconds', name=name, value=repr(value))
     return float(value)
 
 
 def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
     """Returns the command line arguments of an export that the page asks for, and its options.
 
-    The page names the start and end in seconds, the camera, the size, the frame rate from those
-    it offers, the quality, the scale and safe area of the graphics, whether the scoreboard shows
-    and the arena and hour of its field.
+    The page names the start and end in seconds, the camera, the size, the frame rate as a whole
+    number from 1 to `_video.MAX_FPS`, the quality, the scale and safe area of the graphics,
+    whether the scoreboard and the annotations show and the arena and hour of its field.
 
     Raises:
         ArgumentError: If a field is missing, unknown or invalid.
@@ -69,6 +72,7 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
         'fps',
         'quality',
         'score',
+        'annotations',
         'arena',
         'time',
         'scale',
@@ -76,26 +80,29 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
     }
     unknown = set(document) - known
     if unknown:
-        raise ArgumentError(
-            f'expected the fields {", ".join(sorted(known))}, found {sorted(unknown)}'
+        raise MessageError(
+            'server.video.fields', known=', '.join(sorted(known)), unknown=sorted(unknown)
         )
     start = _seconds(document.get('start', 0), 'start')
     end = _seconds(document.get('end'), 'end')
     if end <= start:
-        raise ArgumentError(f'expected an end after the start, found {start:g} to {end:g}')
+        raise MessageError('server.video.range', start=f'{start:g}', end=f'{end:g}')
     size = _sizes.check_size(document.get('width', 1280), document.get('height', 720), even=True)
     graphics = document.get('scale', 1.0)
     if isinstance(graphics, bool) or not isinstance(graphics, (int, float)):
-        raise ArgumentError(f'expected the scale of the graphics as a number, found {graphics!r}')
+        raise MessageError('server.video.scale', graphics=repr(graphics))
     safe = document.get('safe', 'auto')
     if isinstance(safe, bool) or not isinstance(safe, (str, int, float)):
-        raise ArgumentError(f'expected the safe area as text or a percentage, found {safe!r}')
+        raise MessageError('server.video.safe', safe=repr(safe))
     fps = document.get('fps', _video.DEFAULT_FPS)
-    if fps not in RATES or isinstance(fps, bool):
-        raise ArgumentError(f'expected a frame rate of {", ".join(map(str, RATES))}, found {fps!r}')
+    if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= _video.MAX_FPS:
+        raise MessageError('server.video.rate', most=_video.MAX_FPS, fps=repr(fps))
     score = document.get('score', True)
     if not isinstance(score, bool):
-        raise ArgumentError(f'expected score as true or false, found {score!r}')
+        raise MessageError('server.video.score', score=repr(score))
+    annotations = document.get('annotations', False)
+    if not isinstance(annotations, bool):
+        raise MessageError('server.video.annotations', annotations=repr(annotations))
     options = _video.Options(
         start=_video.Moment(start),
         end=_video.Moment(end),
@@ -105,6 +112,7 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
         fps=fps,
         quality=str(document.get('quality', 'standard')),
         score=score,
+        annotations=annotations,
         arena=None if document.get('arena') is None else str(document['arena']),
         hour=document.get('time'),
         graphics=graphics,
@@ -130,6 +138,8 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
         arguments += ['--safe', str(options.safe)]
     if not options.score:
         arguments.append('--no-score')
+    if options.annotations:
+        arguments.append('--annotations')
     if options.arena is not None:
         arguments += ['--arena', options.arena]
     if options.hour is not None:
@@ -140,7 +150,7 @@ def options_from(document: dict[str, Any]) -> tuple[list[str], _video.Options]:
 def availability() -> dict[str, Any]:
     """Returns whether this machine can export videos, and what is missing when it cannot."""
     try:
-        _, _, missing = _video.tools(_video.Options())
+        _, _, missing = _video.tools(_video.Options(), server=True)
     except _video.VideoError as error:
         missing = [str(error)]
     return {'available': not missing, 'missing': missing}
@@ -210,7 +220,7 @@ class VideoJobs:
         """
         path = _library.path_of(match)
         if path is None:
-            raise ArgumentError(f'expected a recording of the library, found {match!r}')
+            raise MessageError('server.video.unknown_match', match=repr(match))
         arguments, options = options_from(document)
         try:
             facts = _video.recording_facts(path)
@@ -218,16 +228,17 @@ class VideoJobs:
             raise ArgumentError(str(error)) from error
         start, end = _video.resolve_range(options, facts)
         if end - start > _video.DEFAULT_MAX_SECONDS:
-            raise ArgumentError(
-                f'expected at most {_video.DEFAULT_MAX_SECONDS:g} seconds of video, found '
-                f'{end - start:.0f} seconds'
+            raise MessageError(
+                'server.video.length',
+                most=f'{_video.DEFAULT_MAX_SECONDS:g}',
+                length=f'{end - start:.0f}',
             )
         status = availability()
         if not status['available']:
             raise ArgumentError(' '.join(status['missing']))
         with self._lock:
             if self._process is not None and self._process.poll() is None:
-                raise BusyError('an export already runs, wait for it or cancel it')
+                raise BusyError('server.video.busy')
             folder = self._folder()
             identifier = _home.new_identifier('v')
             output = folder / f'{identifier}.mp4'
@@ -242,6 +253,8 @@ class VideoJobs:
                 'frame': 0,
                 'frames': _video.frame_count(start, end, options.fps),
                 'error': None,
+                'error_id': None,
+                'error_values': None,
                 'bytes': None,
                 'filename': _filename(facts.title, start, end),
                 'created': time.time(),
@@ -296,7 +309,7 @@ class VideoJobs:
                     if isinstance(report.get('frame'), int):
                         entry['frame'] = report['frame']
                     if isinstance(report.get('error'), str):
-                        entry['error'] = report['error']
+                        entry.update(_messages.report_fields(report))
                     if report.get('stage') == 'encoding':
                         entry['progress'] = 1.0
                     if isinstance(report.get('bytes'), int):
@@ -309,14 +322,13 @@ class VideoJobs:
                 if code == 0 and Path(entry['_path']).is_file():
                     entry['state'] = 'done'
                 elif entry.get('_cancelled'):
-                    entry['state'], entry['error'] = 'cancelled', None
+                    entry['state'] = 'cancelled'
+                    entry.update(_messages.entry_fields(None))
                 else:
                     entry['state'] = 'failed'
                     if not entry['error']:
                         tail = ''.join(stderr).strip()[-400:]
-                        entry['error'] = f'the export ended with exit code {code}' + (
-                            f', {tail}' if tail else ''
-                        )
+                        entry.update(_messages.exit_fields('server.video.exit', code, tail))
             if self._process is process:
                 self._process = None
 

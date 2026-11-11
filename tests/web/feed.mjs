@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
 // load from a copy beside a package file that names them modules.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-feed-'));
-for (const name of ['export/sizes.js', 'export/feed-params.js', 'export/feed.js', 'export/safe-frame.js']) {
+for (const name of ['export/sizes.js', 'export/feed-params.js', 'export/feed.js', 'export/safe-frame.js', 'core/i18n.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
@@ -176,4 +176,38 @@ test('the feed opens, waits, retries, restarts and rests on the slate as its sou
     assert.equal(step({ target: { kind: 'live', id: 'live-2' }, current: live, finished: true }), 'open');
     assert.equal(feed.sameTarget(match, { ...match, title: 'x' }), true);
     assert.equal(feed.sameTarget(match, live), false);
+});
+
+test('the frame of a feed takes the color scheme of its page', () => {
+    assert.equal(params.frameScheme('dark'), 'dark');
+    assert.equal(params.frameScheme('light'), 'light');
+    assert.equal(params.frameScheme(undefined), 'dark');
+    assert.equal(params.frameScheme(params.parseFeed('?theme=light').options.theme), 'light');
+});
+
+test('the Copy feed address dialog offers each live source and tournament of the server', () => {
+    const rows = [
+        { source: 'auto', label: 'a live source while one streams' },
+        { source: 'live', label: 'the newest live source' },
+        { source: 'live:Evaluation', label: 'the live source Evaluation' },
+        { source: 'tournament:cup-1', label: 'the matches of the tournament Cup' },
+        { source: 'recording:m-1', label: 'a recording' },
+    ];
+    assert.deepEqual(params.namedSources(rows, ['auto', 'live:Evaluation']), [
+        ['tournament:cup-1', 'The matches of the tournament Cup'],
+    ]);
+    assert.deepEqual(params.namedSources(rows).map(([source]) => source), ['live:Evaluation', 'tournament:cup-1']);
+    assert.deepEqual(params.namedSources(null), []);
+    assert.deepEqual(params.namedSources([{ source: 'live:live-1' }]), [['live:live-1', 'live:live-1']]);
+});
+
+test('a newer live source replaces a stream that lost its connection', () => {
+    const step = (o) => feed.nextStep({ following: true, loop: false, failed: false, heldFor: 0, finished: false, ...o });
+    const live = { kind: 'live', id: 'live-1' };
+    const newer = { kind: 'live', id: 'live-2' };
+    assert.equal(step({ target: newer, current: live }), 'wait');
+    assert.equal(step({ target: newer, current: live, stalled: true }), 'open');
+    // The stream that reconnects stays while the server names it still.
+    assert.equal(step({ target: live, current: live, stalled: true }), 'wait');
+    assert.equal(step({ target: { kind: 'match', id: 'm-1' }, current: live, stalled: true }), 'wait');
 });

@@ -5,6 +5,7 @@
 // run from the repository root with `node tests/web/help.mjs`.
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +22,7 @@ process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const load = (name) => import(pathToFileURL(join(folder, name)).href);
 const tour = await load('help/tour-core.js');
 const lessons = await load('help/lessons-core.js');
-const { reportText } = await load('help/doctor.js');
+const { reportStatus, reportText } = await load('help/doctor.js');
 const { installable, workerBuild } = await load('help/pwa.js');
 const web = new URL('../../src/cuju/render/web/', import.meta.url);
 const catalog = JSON.parse(readFileSync(new URL('lessons.json', web), 'utf8')).lessons;
@@ -61,7 +62,8 @@ test('a step shows once its need is there, and says so to a screen reader', () =
     assert.equal(tour.needMet(watch, { recording: true }), true);
     assert.equal(tour.needMet(tour.TOUR_STEPS[0], {}), true);
     const words = tour.stepAnnouncement(tour.TOUR_STEPS[0], 0);
-    assert.ok(words.startsWith(`Step 1 of ${tour.TOUR_STEPS.length}. Home.`));
+    // The focus on the title reads the title, so the live region reads the count and the text.
+    assert.equal(words, `Step 1 of ${tour.TOUR_STEPS.length}. ${tour.TOUR_STEPS[0].text}`);
     assert.ok(tour.stepAnnouncement(tour.TOUR_STEPS[0], 0, 11, false).endsWith('This control shows once its page has it.'));
 });
 
@@ -74,8 +76,13 @@ test('the card goes below its target, above it near the bottom, and stays in the
     assert.equal(above.side, 'above');
     assert.ok(above.left + card.width <= view.width - 12 && above.top === 288);
     assert.equal(tour.placeCard(null, card, view).side, 'none');
+    // A tall target leaves room at its sides, and a target that fills the window has the card over it.
     const tall = tour.placeCard({ left: 100, top: 150, width: 60, height: 300, bottom: 450 }, card, view);
-    assert.equal(tall.side, 'over');
+    assert.deepEqual(tall, { left: 172, top: 150, side: 'right' });
+    const wideRight = tour.placeCard({ left: 600, top: 150, width: 100, height: 300, bottom: 450 }, card, view);
+    assert.deepEqual(wideRight, { left: 228, top: 150, side: 'left' });
+    const filled = tour.placeCard({ left: 20, top: 20, width: 760, height: 560, bottom: 580 }, card, view);
+    assert.equal(filled.side, 'over');
     const narrow = tour.placeCard(null, { width: 360, height: 200 }, { width: 320, height: 500 });
     assert.equal(narrow.left, 12);
 });
@@ -130,6 +137,25 @@ test('a jump to a goal counts, playing up to it does not', () => {
     assert.equal(lessons.atGoal(snap({ t: 1040, goals })), true);
     assert.equal(lessons.atGoal(snap({ t: 1041, goals })), false);
     assert.equal(lessons.jumped(snap({ t: 0 }), snap({ t: 900, source: { kind: 'match', id: 'other' } })), false);
+});
+
+test('the jumps the timeline counts end the lesson, even when the recording opened since the last look', () => {
+    const goals = [1000];
+    // A script opens a recording and jumps to a goal between two looks.
+    const fast = {};
+    assert.equal(lessons.checkLesson('seek_goal', snap({ source: null, goals: [] }), null, fast), false);
+    assert.equal(lessons.checkLesson('seek_goal', snap({ t: 940, goals, jumps: 1, at: 400 }), null, fast), true);
+    // Jumps made before the lesson began stay out.
+    const before = {};
+    const base = snap({ t: 940, goals, jumps: 3 });
+    assert.equal(lessons.checkLesson('seek_goal', snap({ t: 940, goals, jumps: 3 }), base, before), false);
+    assert.equal(lessons.checkLesson('seek_goal', snap({ t: 945, goals, jumps: 4, at: 400 }), base, before), true);
+    // The seeks of a replay stay out, those after it count.
+    const replay = {};
+    assert.equal(lessons.checkLesson('seek_goal', snap({ t: 100, goals, jumps: 0 }), null, replay), false);
+    assert.equal(lessons.checkLesson('seek_goal', snap({ t: 950, goals, jumps: 1, show: true, at: 400 }), null, replay), false);
+    assert.equal(lessons.checkLesson('seek_goal', snap({ t: 1010, goals, jumps: 2, at: 800 }), null, replay), false);
+    assert.equal(lessons.checkLesson('seek_goal', snap({ t: 940, goals, jumps: 3, at: 1200 }), null, replay), true);
 });
 
 test('a camera that a person chooses ends the camera lessons, a show of the page does not', () => {
@@ -204,12 +230,27 @@ test('a report without the server says why and keeps the page side', () => {
     assert.ok(empty.endsWith('Recent warnings and errors\n  none'));
 });
 
+test('the status of a report names the checks that fail and those that warn', () => {
+    assert.equal(reportStatus(REPORT), 'The report is ready. 1 check fails, disk space.');
+    const warned = { ...REPORT, server: { ...REPORT.server, checks: [
+        { name: 'home folder', ok: true, detail: 'fine' },
+        { name: 'video export', ok: true, warning: true, detail: 'ffmpeg is missing' },
+    ] } };
+    assert.equal(reportStatus(warned), 'The report is ready. 1 check warns, video export.');
+    const both = { ...REPORT, server: { ...REPORT.server, checks: [...REPORT.server.checks, ...warned.server.checks.slice(1),
+        { name: 'samples', ok: false, detail: 'none' }] } };
+    assert.equal(reportStatus(both), 'The report is ready. 2 checks fail, disk space and samples. 1 check warns, video export.');
+    const fine = { ...REPORT, server: { ...REPORT.server, checks: [REPORT.server.checks[0]] } };
+    assert.equal(reportStatus(fine), 'The report is ready, every check passes.');
+    assert.equal(reportStatus({ ...REPORT, server: { error: 'away' } }), 'The report is ready, without the server, which did not answer.');
+});
+
 // The service worker loads into a context of its own with a fake self, as the browser gives it.
 function loadWorker(href) {
     const listeners = {};
     const self = { location: { href }, addEventListener: (name, fn) => { listeners[name] = fn; } };
     const source = readFileSync(new URL('sw.js', web), 'utf8');
-    vm.runInNewContext(source, { self, URL, Response: class {}, fetch: () => {}, caches: {}, AbortSignal, Date, Promise });
+    vm.runInNewContext(source, { self, URL, Response, fetch: () => {}, caches: {}, crypto: globalThis.crypto, AbortSignal, Date, Promise, Uint8Array, Array, Object });
     return { rules: self.cujuPage, listeners };
 }
 
@@ -250,6 +291,27 @@ test('navigations share the key of the page, and a build decides how the worker 
     assert.equal(rules.modeFor(null), 'offline');
     assert.deepEqual(rules.staleCaches(['cuju-page-abc', 'cuju-page-old', 'other']), ['cuju-page-old']);
     assert.equal(loadWorker('http://127.0.0.1:8780/sw.js').rules.BUILD, 'none');
+});
+
+test('the worker answers only with entries that carry the digest of their file', async () => {
+    const source = readFileSync(new URL('sw.js', web), 'utf8');
+    assert.equal(source.split('const DIGESTS = null;').length, 2, 'one line for the server to fill');
+    const { rules } = loadWorker('http://127.0.0.1:8780/sw.js?build=abc');
+    const scope = new URL('http://127.0.0.1:8780/');
+    assert.equal(rules.DIGESTS, null);
+    assert.equal(rules.digestFor(scope.href, scope), null, 'without digests the worker keeps nothing');
+    const digests = { 'index.html': 'aa', 'js/main.js': 'bb' };
+    assert.equal(rules.digestFor(scope.href, scope, digests), 'aa', 'the page itself');
+    assert.equal(rules.digestFor('http://127.0.0.1:8780/js/main.js', scope, digests), 'bb');
+    assert.equal(rules.digestFor('http://127.0.0.1:8780/js/other.js', scope, digests), null);
+    assert.equal(rules.digestFor('http://127.0.0.1:8780/constructor', scope, digests), null);
+    assert.equal(rules.digestFor('http://example.com/js/main.js', scope, digests), null);
+    const good = new Response('kept');
+    const digest = createHash('sha256').update('kept').digest('hex');
+    assert.equal(await rules.hasDigest(good, digest), true);
+    assert.equal(await rules.hasDigest(new Response('<script>planted</script>'), digest), false);
+    assert.equal(await rules.hasDigest(good, null), false);
+    assert.equal(await good.text(), 'kept', 'the check reads a copy');
 });
 
 test('the page registers its worker only at the top of a loopback http page', () => {

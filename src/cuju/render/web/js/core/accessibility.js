@@ -6,11 +6,10 @@
 // replaces its motion, so camera moves become still shots joined by cuts, wipes become fades, and
 // flashes, confetti, the ball trail and the turning of the editor preview stay out.
 
+import { t } from './i18n.js';
 import { h } from '../teams/library.js';
 import { enhanceSelect } from './menu.js';
 import { SOUND_CHANNELS, motionChoice, motionReduced, soundLevels } from './comfort.js';
-
-const CHANNEL_LABELS = { crowd: 'Crowd', ambience: 'Ambience', effects: 'Action sounds', music: 'Team music' };
 
 function load(key, fallback) {
     try {
@@ -38,10 +37,10 @@ export class AccessibilityControls {
         for (const name of SOUND_CHANNELS) {
             app.sound.setChannel(name, levels[name]);
         }
-        this.motion = h('select', { id: 'motion', 'aria-label': 'Motion' },
-            h('option', { value: 'system' }, 'Follow the system'),
-            h('option', { value: 'reduce' }, 'Reduced'),
-            h('option', { value: 'full' }, 'Full'));
+        this.motion = h('select', { id: 'motion', 'aria-label': t('accessibility.motion') },
+            h('option', { value: 'system' }, t('accessibility.motion.system')),
+            h('option', { value: 'reduce' }, t('accessibility.motion.reduce')),
+            h('option', { value: 'full' }, t('accessibility.motion.full')));
         this.motion.value = this.preference;
         this.motion.addEventListener('change', () => {
             this.preference = motionChoice(this.motion.value);
@@ -57,14 +56,15 @@ export class AccessibilityControls {
                 save('soundLevels', app.sound.levels);
             });
             this.sliders[name] = input;
-            return h('label', {}, `${CHANNEL_LABELS[name]} level`, input);
+            // Each channel names its level in the message accessibility.level.<channel>.
+            return h('label', {}, t(`accessibility.level.${name}`), input);
         });
         // The motion preference follows the theme, and the levels close the panel.
         const theme = document.getElementById('theme');
         const anchor = theme && theme.closest('label');
         const panel = document.getElementById('settings');
-        const parts = [h('label', {}, 'Motion', this.motion),
-            h('p', { class: 'muted small' }, 'Each level lowers its part of the sound under the volume.'), ...rows];
+        const parts = [h('label', {}, t('accessibility.motion'), this.motion),
+            h('p', { class: 'muted small' }, t('accessibility.levels.note')), ...rows];
         if (anchor) {
             anchor.after(...parts);
         } else if (panel) {

@@ -132,12 +132,15 @@ def test_captions_from_the_command_line_and_the_server(render_home, tmp_path, ca
     out = tmp_path / 'five.vtt'
     assert main(['captions', 'sample-5v5', '-o', str(out)]) == 0
     text = out.read_text()
-    assert text.startswith('WEBVTT\n\n1\n00:00:09.148 --> 00:00:10.648\nShot, number 3 for the ')
+    assert text.startswith('WEBVTT\n\n1\n00:00:09.148 --> 00:00:10.648\nShot, number 3 of Lake')
     assert 'Full time, a draw, 1 to 1' in text
     cues = cuju.render.captions(
         os.path.join(_SAMPLE_FOLDER, 'sample-5v5.cjr'), tmp_path / 'file.vtt'
     )
     assert cues[-1]['text'].startswith('Full time')
+    # The cues keep their times to the millisecond, as the file writes them.
+    assert all(cue['start'] == round(cue['start'], 3) for cue in cues)
+    assert (cues[0]['start'], cues[0]['end']) == (9.148, 10.648)
     assert (tmp_path / 'file.vtt').read_text() == text
     capsys.readouterr()
     assert main(['search', 'goal', 'team:left', '--json']) == 0
@@ -179,3 +182,24 @@ def test_captions_from_the_command_line_and_the_server(render_home, tmp_path, ca
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_a_name_never_adds_or_styles_a_cue_of_the_captions_file():
+    from cuju.render._moments import captions as _captions
+
+    name = 'Reds\n\n00:00:00.000 --> 99:00:00.000\r\n<b>Fake</b> & co\u2028end'
+    header = {
+        'teams': [{'name': name}, {'name': 'Blues'}],
+        'players': [{'team': 0, 'index': 0, 'goalkeeper': False}],
+    }
+    moments = [{'id': 'g', 'kind': 'goal', 'step': 10, 't': 1.0, 'team': 0, 'data': {}}]
+    found = _captions.cues(moments, _captions.context(header, []))
+    text = _captions.to_vtt(found)
+    lines = text.split('\n')
+    assert lines[:3] == ['WEBVTT', '', '1'] and lines[3].count('-->') == 1
+    assert len(lines) == 6 and lines[5] == ''
+    assert '<' not in lines[4] and '-->' not in lines[4] and '\r' not in text
+    assert '&lt;b&gt;Fake&lt;/b&gt; &amp; co end' in lines[4]
+    assert '00:00:00.000 --&gt; 99:00:00.000' in lines[4]
+    # The cues themselves keep the name as the page shows it.
+    assert name in found[0]['text']

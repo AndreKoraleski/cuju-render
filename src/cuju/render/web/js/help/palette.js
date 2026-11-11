@@ -8,8 +8,12 @@
 // page, the newest recordings and the live sources, a game in each scenario, a requested match,
 // the settings, the choices of the View menu, the players of the open match and the help topics.
 // The matching at the top of the file touches nothing of the page, so it holds the same in a test.
+// The titles and groups show in the page's language, and every action stays findable by its
+// English words too, as searchWords puts them beside the words of the language.
 
-import { listedScenarios, scenarioName, titleText } from '../core/scenarios.js';
+import { recordingTitle, summaryTeams } from '../core/names.js';
+import { listedScenarios, scenarioName } from '../core/scenarios.js';
+import { language, storedLanguage, t, tOr } from '../core/i18n.js';
 
 // The most entries the list shows at once.
 export const LIMIT = 60;
@@ -75,23 +79,58 @@ export function rankActions(query, actions, limit = LIMIT) {
     return ranked.slice(0, limit).map((entry) => ({ ...entry.action, score: entry.score }));
 }
 
-// The help topics, each a heading of the Help page.
-export const HELP_TOPICS = [
-    ['help-keyboard', 'Keyboard', 'tab focus keys navigation'],
-    ['help-start', 'Getting started', 'first steps record watch live'],
-    ['help-pages', 'Pages', 'home teams field'],
-    ['help-teams', 'Making a team', 'agent submission kaggle main.py idle'],
-    ['help-play', 'Play controls', 'keys controller gamepad touch'],
-    ['help-playback', 'Playback keys', 'pause seek speed goal replay'],
-    ['help-cameras', 'Camera keys', 'broadcast tactical follow free'],
-    ['help-view', 'View keys', 'broadcast mode fullscreen mute'],
-];
+// The words an action is found by, its English words, with the words of the message id in the
+// page's language beside them when they differ, so a query in either language finds it.
+export function searchWords(id, english = '') {
+    const own = id ? tOr(id, english) : english;
+    return own && own !== english ? `${english} ${own}`.trim() : english;
+}
 
-const PAGES = [
-    ['home', 'Home'], ['watch', 'Watch'], ['play', 'Play'], ['recordings', 'Recordings'],
-    ['matches', 'Matches'], ['tournaments', 'Tournaments'], ['teams', 'Teams'], ['field', 'Field'], ['help', 'Help'],
-];
-const TIMES = [['dawn', 'Dawn', 6.5], ['day', 'Day', 15], ['dusk', 'Dusk', 19], ['night', 'Night', 22]];
+// The languages the palette offers, each usable language other than the one shown, then
+// following the browser while a language is chosen. A choice whose code is null follows the
+// browser.
+export function languageChoices(languages, shown, chosen = null) {
+    const list = (Array.isArray(languages) ? languages : [])
+        .filter((entry) => entry && entry.code && entry.usable !== false && entry.code !== (chosen || shown))
+        .map((entry) => ({ code: entry.code, name: entry.name || entry.code }));
+    if (chosen) {
+        list.push({ code: null, name: null });
+    }
+    return list;
+}
+
+// The groups of the list by their English names, each the message palette.group.<key>.
+const GROUPS = {
+    Pages: 'pages', Live: 'live', Recordings: 'recordings', Matches: 'matches', Play: 'play',
+    Teams: 'teams', Follow: 'follow', Settings: 'settings', View: 'view', Help: 'help',
+};
+
+// An action of the list. The group shows in the page's language, and its English name joins the
+// words when the two differ, so English queries keep finding the group.
+export function paletteAction(group, title, run, keywords = '', hint = '') {
+    const key = GROUPS[group];
+    const shown = key ? t(`palette.group.${key}`) : group;
+    const words = shown !== group ? `${keywords} ${group}`.trim() : keywords;
+    return { group: shown, title, run, keywords: words, hint };
+}
+
+// The help topics, each a heading of the Help page, with its title and its words to find it by,
+// the messages palette.topic.<key>.title and .words.
+export const HELP_TOPICS = [
+    ['help-keyboard', 'keyboard', 'tab focus keys navigation'],
+    ['help-start', 'start', 'first steps record watch live'],
+    ['help-pages', 'pages', 'home teams field'],
+    ['help-teams', 'teams', 'agent submission kaggle main.py idle'],
+    ['help-play', 'play', 'keys controller gamepad touch'],
+    ['help-playback', 'playback', 'pause seek speed goal replay'],
+    ['help-cameras', 'cameras', 'broadcast tactical follow free'],
+    ['help-view', 'view', 'broadcast mode fullscreen mute'],
+].map(([id, key, words]) => [id, t(`palette.topic.${key}.title`), searchWords(`palette.topic.${key}.words`, words)]);
+
+// The pages, each named by the message palette.page.<page>.
+const PAGES = ['home', 'watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help'];
+// The times of day, each named by the message palette.time.<key>.
+const TIMES = [['dawn', 6.5], ['day', 15], ['dusk', 19], ['night', 22]];
 
 function h(tag, attributes = {}, ...children) {
     const node = document.createElement(tag);
@@ -124,17 +163,18 @@ export class CommandPalette {
         this.live = [];
         this.recent = [];
         this.scenarios = [];
+        this.challenges = [];
         this.shown = [];
         this.active = 0;
         this.returnTo = null;
         this.input = h('input', {
             id: 'palette-input', type: 'text', role: 'combobox', autocomplete: 'off', spellcheck: 'false',
             'aria-expanded': 'true', 'aria-controls': 'palette-list', 'aria-autocomplete': 'list',
-            'aria-label': 'Search actions', placeholder: 'Type to search, Enter runs, Esc closes',
+            'aria-label': t('palette.search'), placeholder: t('palette.placeholder'),
         });
-        this.list = h('ul', { id: 'palette-list', role: 'listbox', 'aria-label': 'Actions' });
+        this.list = h('ul', { id: 'palette-list', role: 'listbox', 'aria-label': t('palette.list') });
         this.count = h('p', { class: 'palette-count', 'aria-live': 'polite' });
-        this.root = h('div', { id: 'palette', role: 'dialog', 'aria-label': 'Command palette', hidden: true },
+        this.root = h('div', { id: 'palette', role: 'dialog', 'aria-label': t('palette.label'), hidden: true },
             h('div', { class: 'palette-box' }, this.input, this.list, this.count));
         (document.getElementById('app') || document.body).append(this.root);
         this.input.addEventListener('input', () => this.render());
@@ -246,6 +286,10 @@ export class CommandPalette {
             this.recent = (Array.isArray(list) ? list : []).slice().sort((a, b) => when(b) - when(a)).slice(0, 8);
             done();
         }).catch(() => {});
+        import('../play/challenges.js').then((m) => m.challengeApi.list()).then((list) => {
+            this.challenges = Array.isArray(list) ? list : [];
+            done();
+        }).catch(() => {});
         if (!this.scenarios.length) {
             api.scenarios().then((list) => {
                 this.scenarios = listedScenarios(Array.isArray(list) ? list : []);
@@ -259,7 +303,7 @@ export class CommandPalette {
     actions() {
         const app = this.app;
         const list = [];
-        const add = (group, title, run, keywords = '', hint = '') => list.push({ group, title, run, keywords, hint });
+        const add = (group, title, run, keywords = '', hint = '') => list.push(paletteAction(group, title, run, keywords, hint));
         if (app.moments) {
             list.push(...app.moments.paletteActions(this.input.value, () => this.isOpen && this.render(true)));
         }
@@ -268,109 +312,138 @@ export class CommandPalette {
                 app.showPage('watch');
             }
         };
-        for (const [page, label] of PAGES) {
+        for (const page of PAGES) {
             if (page !== app.page) {
-                add('Pages', `Go to ${label}`, () => app.showPage(page), `page open ${page}`);
+                add('Pages', t('palette.go', { page: t(`palette.page.${page}`) }), () => app.showPage(page),
+                    `${searchWords('palette.words.page', 'page open')} ${page}`);
             }
         }
         for (const s of this.live) {
-            add('Live', `Watch live, ${titleText(s.title, s.scenario) || s.id}`, () => {
+            add('Live', t('palette.live', { title: recordingTitle(s) || s.id }), () => {
                 watch();
                 app.openLive(s.id);
-            }, `source stream ${s.id}`, scenarioName(s.scenario));
+            }, `${searchWords('palette.words.live', 'source stream')} ${s.id}`, scenarioName(s.scenario));
         }
         for (const m of this.recent) {
-            add('Recordings', `Open ${titleText(m.title, m.scenario) || m.id}`, () => app.openMatchInWatch(m.id),
-                `recording match ${m.id} ${(m.teams || []).join(' ')}`, scenarioName(m.scenario));
+            add('Recordings', t('palette.open', { title: recordingTitle(m) || m.id }), () => app.openMatchInWatch(m.id),
+                `${searchWords('palette.words.recording', 'recording match')} ${m.id} ${[...(m.teams || []), ...summaryTeams(m)].join(' ')}`, scenarioName(m.scenario));
         }
-        add('Matches', 'Request a match', () => {
+        add('Matches', t('palette.request'), () => {
             app.showPage('matches');
             setTimeout(() => document.querySelector('#page-matches select, #page-matches button')?.focus(), 0);
-        }, 'new play teams queue');
+        }, searchWords('palette.words.request', 'new play teams queue'));
         for (const name of this.scenarios) {
-            add('Play', `Play a game, ${scenarioName(name)}`, () => this.playScenario(name), 'scenario game start person');
+            add('Play', t('palette.play', { scenario: scenarioName(name) }), () => this.playScenario(name),
+                searchWords('palette.words.play', 'scenario game start person'));
         }
+        add('Play', t('palette.challenges'), () => this.showChallenge(null),
+            searchWords('palette.words.challenges', 'challenge drill medal leaderboard achievement'));
+        for (const c of this.challenges) {
+            add('Play', t('palette.challenge', { title: tOr(`challenge.${c.id}.title`, c.title) }), () => this.showChallenge(c.id),
+                `${searchWords('palette.words.challenge', 'challenge drill medal leaderboard')} ${c.id}`, scenarioName(c.scenario));
+        }
+        const editing = !!(app.editor && app.editor.isOpen && app.editor.team);
+        add('Teams', editing ? t('palette.surprise.look') : t('palette.surprise.team'), () => {
+            app.showPage('teams');
+            if (editing && typeof app.surprise === 'function') {
+                app.surprise({ apply: true });
+            }
+            setTimeout(() => document.querySelector(editing ? '#team-editor .surprise-go' : '#teams-side .surprise-go')?.focus(), 0);
+        }, searchWords('palette.words.surprise', 'surprise random generate kit name colors seed team'));
         const players = app.source && app.source.header ? app.source.header.players : [];
         players.forEach((player, k) => {
             let label = '';
             try {
                 label = app.playerLabel(k);
             } catch {
-                label = `Player ${player.index + 1}`;
+                label = t('palette.player', { number: player.index + 1 });
             }
-            add('Follow', `Follow ${label.replace(/\s+/g, ' ')}`, () => {
+            add('Follow', t('palette.follow', { player: label.replace(/\s+/g, ' ') }), () => {
                 watch();
                 app.cameras.followIndex = k;
                 app.setCamera('player');
                 app.announcePlayer();
-            }, 'player camera number name chase');
+            }, searchWords('palette.words.follow', 'player camera number name chase'));
         });
         const muted = !!(app.settings && app.settings.muted);
-        add('Settings', muted ? 'Unmute' : 'Mute', () => app.setMuted(!muted), 'sound volume audio');
-        add('Settings', app.tvMode ? 'Leave broadcast mode' : 'Broadcast mode', () => {
+        add('Settings', muted ? t('palette.unmute') : t('palette.mute'), () => app.setMuted(!muted), searchWords('palette.words.mute', 'sound volume audio'));
+        add('Settings', app.tvMode ? t('palette.tv.leave') : t('palette.tv'), () => {
             watch();
             app.setTvMode(!app.tvMode);
-        }, 'tv television picture alone');
+        }, searchWords('palette.words.tv', 'tv television picture alone'));
         if (app.captions) {
-            add('Settings', app.captions.enabled ? 'Turn captions off' : 'Turn captions on',
-                () => app.captions.setEnabled(!app.captions.enabled), 'subtitles text events accessibility');
+            add('Settings', app.captions.enabled ? t('palette.captions.off') : t('palette.captions.on'),
+                () => app.captions.setEnabled(!app.captions.enabled), searchWords('palette.words.captions', 'subtitles text events accessibility'));
         }
         if (app.feedDialog) {
-            add('View', 'Copy feed address', () => {
+            add('View', t('palette.feed'), () => {
                 watch();
                 app.feedDialog.open();
-            }, 'obs stream streaming browser source clean feed url size vertical');
+            }, searchWords('palette.words.feed', 'obs stream streaming browser source clean feed url size vertical'));
         }
         const labels = document.getElementById('labels-on');
         if (labels) {
-            add('Settings', labels.checked ? 'Hide player labels' : 'Show player labels', () => labels.click(), 'names numbers');
+            add('Settings', labels.checked ? t('palette.labels.hide') : t('palette.labels.show'), () => labels.click(), searchWords('palette.words.labels', 'names numbers'));
         }
         const motion = document.getElementById('motion');
         if (motion) {
-            for (const [value, title] of [['reduce', 'Reduced motion'], ['full', 'Full motion'], ['system', 'Motion follows the system']]) {
+            for (const value of ['reduce', 'full', 'system']) {
                 if (motion.value !== value) {
-                    add('Settings', title, () => this.choose(motion, value), 'animation accessibility');
+                    add('Settings', t(`palette.motion.${value}`), () => this.choose(motion, value), searchWords('palette.words.motion', 'animation accessibility'));
                 }
             }
         }
         const theme = document.getElementById('theme');
         if (theme) {
-            for (const [value, title] of [['dark', 'Dark theme'], ['light', 'Light theme'], ['system', 'Theme follows the system']]) {
+            for (const value of ['dark', 'light', 'system']) {
                 if (theme.value !== value) {
-                    add('Settings', title, () => this.choose(theme, value), 'colors appearance mode');
+                    add('Settings', t(`palette.theme.${value}`), () => this.choose(theme, value), searchWords('palette.words.theme', 'colors appearance mode'));
                 }
+            }
+        }
+        if (app.language && typeof app.language.list === 'function') {
+            const words = searchWords('palette.words.language', 'language translation locale');
+            for (const choice of languageChoices(app.language.list(), language().code, storedLanguage())) {
+                add('Settings', choice.code ? t('palette.language', { name: choice.name }) : t('palette.language.follow'),
+                    () => app.language.choose(choice.code).catch(() => {}), `${words} ${choice.code || ''} ${choice.name || ''}`.trim());
             }
         }
         if (app.presets) {
             for (const [name, title] of app.presets.choices()) {
-                add('Settings', `${title} preset`, () => app.presets.apply(name), 'presentation replays celebrations show');
+                add('Settings', t('palette.preset', { name: title }), () => app.presets.apply(name), searchWords('palette.words.preset', 'presentation replays celebrations show'));
             }
         }
-        add('Settings', 'Open the settings', () => app.menus && app.menus.settings && app.menus.settings.open(true), 'preferences options');
+        add('Settings', t('palette.settings'), () => app.menus && app.menus.settings && app.menus.settings.open(true), searchWords('palette.words.settings', 'preferences options'));
         for (const mode of this.cameraModes) {
-            add('View', `Camera, ${mode.label}`, () => {
+            add('View', t('palette.camera', { camera: mode.label }), () => {
                 watch();
                 app.setCamera(mode.id);
-            }, `camera view ${mode.id}`);
+            }, `${searchWords('palette.words.camera', 'camera view')} ${mode.id}`);
         }
         const field = app.fieldPage;
         if (field) {
             const rerender = () => field.root && !field.root.hidden;
             for (const item of document.querySelectorAll('#view-environment [data-arena]')) {
-                add('View', `Arena, ${item.textContent.trim()}`, () => field.change({ arena: item.dataset.arena }, rerender()), 'stadium ground place');
+                add('View', t('palette.arena', { arena: item.textContent.trim() }), () => field.change({ arena: item.dataset.arena }, rerender()), searchWords('palette.words.arena', 'stadium ground place'));
             }
-            for (const [, title, hour] of TIMES) {
-                add('View', `Time of day, ${title}`, () => field.change({ time: hour }, rerender()), 'hour sky light sun');
+            for (const [key, hour] of TIMES) {
+                add('View', t('palette.time', { time: t(`palette.time.${key}`) }), () => field.change({ time: hour }, rerender()), searchWords('palette.words.time', 'hour sky light sun'));
             }
             for (const item of document.querySelectorAll('#view-environment [data-weather]')) {
-                add('View', `Weather, ${item.textContent.trim()}`, () => field.change({ weather: item.dataset.weather }, rerender()), 'rain snow sky');
+                add('View', t('palette.weather', { weather: item.textContent.trim() }), () => field.change({ weather: item.dataset.weather }, rerender()), searchWords('palette.words.weather', 'rain snow sky'));
             }
         }
-        add('View', document.fullscreenElement ? 'Leave fullscreen' : 'Fullscreen', () => app.toggleFullscreen(), 'screen');
-        for (const [id, title, keywords] of HELP_TOPICS) {
-            add('Help', `Help, ${title}`, () => this.helpTopic(id), `help guide ${keywords}`);
+        if (app.photo) {
+            add('View', t('palette.photo'), () => {
+                watch();
+                app.photo.open();
+            }, searchWords('palette.words.photo', 'photo picture screenshot capture still image'));
         }
-        add('Help', 'The full guide', () => window.open('https://github.com/AndreKoraleski/cuju/blob/main/docs/rendering.md', '_blank', 'noopener'), 'documentation docs manual');
+        add('View', document.fullscreenElement ? t('palette.fullscreen.leave') : t('palette.fullscreen'), () => app.toggleFullscreen(), searchWords('palette.words.fullscreen', 'screen'));
+        for (const [id, title, keywords] of HELP_TOPICS) {
+            add('Help', t('palette.help', { topic: title }), () => this.helpTopic(id), `${searchWords('palette.words.help', 'help guide')} ${keywords}`);
+        }
+        add('Help', t('palette.guide'), () => window.open('https://github.com/AndreKoraleski/cuju/blob/main/docs/rendering.md', '_blank', 'noopener'), searchWords('palette.words.guide', 'documentation docs manual'));
         return list;
     }
 
@@ -398,6 +471,25 @@ export class CommandPalette {
         setTimeout(() => app.play && app.play.startButton && !app.play.setupView.hidden && app.play.startButton.focus(), 0);
     }
 
+    // Shows the Challenges section of Play, and with an identifier moves the focus to Start
+    // challenge of that challenge once the list has it.
+    async showChallenge(id) {
+        this.app.showPage('play');
+        const selector = id ? `.challenge-item[data-id="${CSS.escape(id)}"] [data-action="start"]` : '#challenges-title';
+        for (let i = 0; i < 40; i++) {
+            const node = document.querySelector(selector);
+            if (node && node.getClientRects().length) {
+                if (!id) {
+                    node.tabIndex = -1;
+                }
+                node.scrollIntoView({ block: 'center' });
+                node.focus({ preventScroll: true });
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+    }
+
     helpTopic(id) {
         this.app.showPage('help');
         const heading = document.getElementById(id);
@@ -417,8 +509,8 @@ export class CommandPalette {
             id: `palette-item-${index}`, role: 'option', 'data-index': String(index),
             'aria-selected': index === this.active ? 'true' : 'false',
         }, h('span', { class: 'palette-title' }, action.title),
-        h('span', { class: 'palette-group' }, action.hint ? `${action.group}, ${action.hint}` : action.group))));
-        this.count.textContent = this.shown.length ? `${this.shown.length} ${this.shown.length === 1 ? 'action' : 'actions'}` : 'Nothing matches';
+        h('span', { class: 'palette-group' }, action.hint ? t('palette.groupHint', { group: action.group, hint: action.hint }) : action.group))));
+        this.count.textContent = this.shown.length ? t('palette.count', { count: this.shown.length }) : t('palette.none');
         this.select(this.active);
     }
 
@@ -446,7 +538,7 @@ export class CommandPalette {
         try {
             action.run();
         } catch (err) {
-            this.app.hud.toast(`That action failed, ${err.message}`, 'error');
+            this.app.hud.toast(t('palette.failed', { error: err.message }), 'error');
         }
     }
 

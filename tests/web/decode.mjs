@@ -16,7 +16,7 @@ import { Worker } from 'node:worker_threads';
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
 // load from a copy beside a package file that names them modules.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-decode-'));
-for (const name of ['recording/format.js', 'recording/codec.js', 'recording/decode.js', 'recording/decode-worker.js']) {
+for (const name of ['recording/format.js', 'recording/codec.js', 'recording/decode.js', 'recording/decode-worker.js', 'core/i18n.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');

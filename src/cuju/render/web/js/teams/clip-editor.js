@@ -14,6 +14,7 @@ import {
 import { NODE_NAMES } from '../recording/format.js';
 import { h } from './library.js';
 import { uploadDuration } from '../players/retarget.js';
+import { t } from '../core/i18n.js';
 
 // The moves a team's clips add, by their names in the style.
 export function clipMoves(editor) {
@@ -81,16 +82,16 @@ export async function uploadClip(editor, file) {
         return false;
     };
     if (!/\.glb$/i.test(file.name)) {
-        return fail('Choose a binary glTF clip, a .glb file.');
+        return fail(t('clip-editor.wrongType'));
     }
     if (file.size > MAX_CLIP_BYTES) {
-        return fail(`This clip is ${formatBytes(file.size)}, the limit is 10 MB.`);
+        return fail(t('clip-editor.tooLarge', { size: formatBytes(file.size) }));
     }
     if (others.length >= MAX_CLIPS) {
-        return fail(`A team keeps at most ${MAX_CLIPS} clips. Remove one first.`);
+        return fail(t('clip-editor.tooMany', { max: MAX_CLIPS }));
     }
     if (others.reduce((sum, c) => sum + c.bytes, 0) + file.size > MAX_TEAM_CLIP_BYTES) {
-        return fail('A team keeps at most 40 MB of clips. Remove one first.');
+        return fail(t('clip-editor.tooMuch'));
     }
     let read;
     let bytes;
@@ -98,7 +99,7 @@ export async function uploadClip(editor, file) {
         bytes = await file.arrayBuffer();
         read = await readClip(bytes);
     } catch (err) {
-        return fail(`This clip cannot be used, ${String(err.message || err).replace(/\.$/, '')}.`);
+        return fail(t('clip-editor.unusable', { reason: String(err.message || err).replace(/\.$/, '') }));
     }
     try {
         const entry = await api.putClip(team.id, name, read.guess, bytes);
@@ -116,8 +117,8 @@ export async function uploadClip(editor, file) {
     refresh(editor);
     const count = read.gltf.animations.length;
     const text = read.guess.body
-        ? `${file.name} saved, with ${count} ${count === 1 ? 'animation' : 'animations'} among the moves.`
-        : `${file.name} saved. Map its pelvis under Joint mapping, and its animations join the moves.`;
+        ? t('clip-editor.saved', { file: file.name, count })
+        : t('clip-editor.savedUnmapped', { file: file.name });
     message(editor, text, read.guess.body ? 'info' : 'error');
     editor.app.hud.toast(text);
     if (read.guess.body) {
@@ -128,7 +129,7 @@ export async function uploadClip(editor, file) {
 
 // Removes a clip after asking, with the team's choices of its animations.
 export async function removeClip(editor, name) {
-    if (!confirm(`Remove the clip ${name}? Its animations leave the team's celebrations.`)) {
+    if (!confirm(t('clip-editor.removeConfirm', { name }))) {
         return;
     }
     const team = editor.team;
@@ -165,19 +166,19 @@ export async function removeClip(editor, name) {
         editor.initial = editor.snapshot();
         editor.markDirty();
     }
-    editor.app.hud.toast(`Clip ${name} removed.`);
+    editor.app.hud.toast(t('clip-editor.removed', { name }));
 }
 
 // The table that maps the joints of GRF's skeleton to the bones of a clip, read when opened.
 function mappingTable(editor, clip, host) {
     const token = editor.token;
-    host.replaceChildren(h('p', { class: 'muted small' }, 'Reading the bones of the clip.'));
+    host.replaceChildren(h('p', { class: 'muted small' }, t('clip-editor.reading')));
     (async () => {
         let read;
         try {
             read = await readClip(await api.clipBytes(editor.team.id, clip.name));
         } catch (err) {
-            host.replaceChildren(h('p', { class: 'muted small' }, `The clip could not be read, ${err.message || err}`));
+            host.replaceChildren(h('p', { class: 'muted small' }, t('clip-editor.readFailed', { reason: err.message || err })));
             return;
         }
         if (token !== editor.token || !host.isConnected) {
@@ -186,12 +187,12 @@ function mappingTable(editor, clip, host) {
         const joints = { ...(clip.joints && clip.joints.body ? clip.joints : read.guess) };
         const status = h('span', { class: 'req' });
         const showStatus = () => {
-            status.textContent = joints.body ? ' required' : ' required, choose the pelvis';
+            status.textContent = ` ${joints.body ? t('editor.joints.required') : t('editor.joints.requiredPelvis')}`;
         };
         showStatus();
         const rows = NODE_NAMES.map((node) => {
-            const select = h('select', { 'aria-label': `Bone of ${node.replace('_', ' ')}` },
-                h('option', { value: '' }, node === 'player' ? 'Skeleton root' : 'Unmapped'),
+            const select = h('select', { 'aria-label': t('clip-editor.boneOf', { node: t(`editor.joints.node.${node}`) }) },
+                h('option', { value: '' }, node === 'player' ? t('editor.joints.root') : t('editor.joints.unmapped')),
                 read.bones.map((b) => h('option', { value: b, selected: joints[node] === b }, b)));
             select.addEventListener('change', () => {
                 if (select.value) {
@@ -201,7 +202,7 @@ function mappingTable(editor, clip, host) {
                 }
                 showStatus();
             });
-            return h('tr', {}, h('td', {}, node.replace('_', ' '), node === 'body' ? status : null), h('td', {}, select));
+            return h('tr', {}, h('td', {}, t(`editor.joints.node.${node}`), node === 'body' ? status : null), h('td', {}, select));
         });
         const save = async (mapping) => {
             try {
@@ -215,13 +216,13 @@ function mappingTable(editor, clip, host) {
                     return;
                 }
                 refresh(editor);
-                editor.app.hud.toast(`Mapping of ${clip.name} saved.`);
+                editor.app.hud.toast(t('clip-editor.mappingSaved', { name: clip.name }));
             } catch (err) {
                 editor.app.hud.toast(err.message || String(err), 'error', 7000);
             }
         };
         host.replaceChildren(
-            h('p', { class: 'muted small' }, 'Map joints to the bones of the clip. Body is required.'),
+            h('p', { class: 'muted small' }, t('clip-editor.mappingNote')),
             h('table', {}, h('tbody', {}, rows)),
             h('div', { class: 'row' },
                 h('button', {
@@ -229,13 +230,13 @@ function mappingTable(editor, clip, host) {
                     class: 'btn small',
                     onclick: () => {
                         if (!joints.body) {
-                            editor.app.hud.toast('Choose the bone of the pelvis for body first.', 'error');
+                            editor.app.hud.toast(t('clip-editor.needPelvis'), 'error');
                             return;
                         }
                         save(joints);
                     },
-                }, 'Save mapping'),
-                h('button', { type: 'button', class: 'btn small ghost', onclick: () => save({}) }, 'Map by bone names')));
+                }, t('clip-editor.saveMapping')),
+                h('button', { type: 'button', class: 'btn small ghost', onclick: () => save({}) }, t('clip-editor.mapByNames'))));
     })();
 }
 
@@ -251,24 +252,24 @@ export function clipsPanel(editor) {
     const rows = clips.map((clip) => {
         const count = (clip.animations || []).length;
         const mapping = h('div', { class: 'joints' });
-        const details = h('details', { class: 'joints-box' }, h('summary', {}, 'Joint mapping'), mapping);
+        const details = h('details', { class: 'joints-box' }, h('summary', {}, t('editor.joints.summary')), mapping);
         details.addEventListener('toggle', () => {
             if (details.open && !mapping.childNodes.length) {
                 mappingTable(editor, clip, mapping);
             }
         });
-        const mapped = clip.joints && clip.joints.body ? 'mapped by hand' : 'mapped by bone names';
+        const mapped = clip.joints && clip.joints.body ? t('clip-editor.mappedByHand') : t('clip-editor.mappedByNames');
         return h('li', { class: 'sound-row has clip-row', 'data-clip': clip.name },
             h('span', { class: 'sound-text' },
                 h('span', { class: 'sound-label' }, clip.name),
-                h('span', { class: 'muted small' }, `${count} ${count === 1 ? 'animation' : 'animations'}, ${formatBytes(clip.bytes)}, ${mapped}`)),
+                h('span', { class: 'muted small' }, t('clip-editor.rowMeta', { count, size: formatBytes(clip.bytes), mapped }))),
             h('span', { class: 'row sound-actions' },
-                h('button', { type: 'button', class: 'btn small ghost danger', 'aria-label': `Remove the clip ${clip.name}`, onclick: () => removeClip(editor, clip.name) }, 'Remove')),
+                h('button', { type: 'button', class: 'btn small ghost danger', 'aria-label': t('clip-editor.removeLabel', { name: clip.name }), onclick: () => removeClip(editor, clip.name) }, t('editor.remove'))),
             details);
     });
     const drop = h('div', { class: 'dropzone small' },
-        h('p', {}, 'Drop a .glb clip here, or'),
-        h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, 'Upload a clip'), file);
+        h('p', {}, t('clip-editor.drop')),
+        h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, t('clip-editor.upload')), file);
     drop.addEventListener('dragover', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -282,8 +283,8 @@ export function clipsPanel(editor) {
         uploadClip(editor, e.dataTransfer.files[0]);
     });
     return h('section', { class: 'clips' },
-        h('h4', {}, 'Clips of the team'),
-        h('p', { class: 'muted small' }, 'Upload animations as binary glTF clips, .glb, with a skinned skeleton, up to 10 MB each and 40 MB in all. Their animations join the moves above and play on every model. Clips save immediately.'),
+        h('h4', {}, t('clip-editor.heading')),
+        h('p', { class: 'muted small' }, t('clip-editor.note')),
         rows.length ? h('ul', { class: 'sound-list clip-list' }, rows) : null,
         drop,
         h('p', { class: 'clip-message muted small', role: 'status', 'data-kind': 'info' }));

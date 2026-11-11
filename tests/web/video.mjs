@@ -5,22 +5,25 @@
 // `node tests/web/video.mjs`.
 
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// Node 18 reads a .js file outside a package of type module as CommonJS, so the page's module
-// loads from a copy beside a package file that names it a module.
+// Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
+// load from a copy beside a package file that names them modules. flat.js imports three for its
+// view without WebGL, which an empty stub stands in for, the tests never draw.
 const folder = mkdtempSync(join(tmpdir(), 'cuju-video-'));
-for (const name of ['export/video-range.js', 'export/sizes.js']) {
-    cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
-}
+cpSync(fileURLToPath(new URL('../../src/cuju/render/web/js/', import.meta.url)), folder, { recursive: true });
 writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
+mkdirSync(join(folder, 'node_modules', 'three'), { recursive: true });
+writeFileSync(join(folder, 'node_modules', 'three', 'package.json'), '{"name": "three", "type": "module", "main": "index.js"}\n');
+writeFileSync(join(folder, 'node_modules', 'three', 'index.js'), 'export {};\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
+const { offersView2d, slowText } = await import(pathToFileURL(join(folder, 'watch/flat.js')).href);
 const {
-    VIDEO_MAX_SECONDS, checkRange, exportRequest, formatMoment, goalRange, parseMoment, progressText, videoSize,
+    VIDEO_MAX_SECONDS, checkRange, exportRequest, fileSize, formatMoment, goalRange, parseMoment, progressText, videoSize,
 } = await import(pathToFileURL(join(folder, 'export/video-range.js')).href);
 
 test('moments read as seconds or as minutes and seconds', () => {
@@ -64,6 +67,24 @@ test('the request names only what the server accepts', () => {
     });
 });
 
+test('the annotations join the request only when asked for', () => {
+    const shown = exportRequest({ start: 0, end: 2 }, { size: '720p', annotations: true }, null);
+    assert.equal(shown.annotations, true);
+    for (const annotations of [false, undefined, 'yes', 1]) {
+        assert.equal('annotations' in exportRequest({ start: 0, end: 2 }, { annotations }, null), false);
+    }
+});
+
+test('a video export and a clean feed never offer the 2D view', () => {
+    assert.equal(offersView2d(''), true);
+    assert.equal(offersView2d('?lang=en'), true);
+    assert.equal(offersView2d('?capture=1&safe=auto'), false);
+    assert.equal(offersView2d('?feed=1&source=live&fps=10'), false);
+    assert.equal(slowText(1.2), 'The 3D picture draws 1 frame a second here. The 2D view plays the same match from above and needs much less.');
+    assert.match(slowText(0.2), /draws 1 frame a second/);
+    assert.match(slowText(7.4), /draws 7 frames a second/);
+});
+
 test('the request takes every shared size, a custom even size, the scale and the safe area', () => {
     const vertical = exportRequest({ start: 0, end: 2 }, {
         size: 'vertical', fps: 30, quality: 'standard', camera: 'broadcast', scale: 1.25, safe: 'social',
@@ -86,6 +107,17 @@ test('progress reads as a sentence', () => {
     assert.equal(progressText({ state: 'running', frame: 30, frames: 60, progress: 0.5 }), 'Drawing frame 30 of 60, 50 percent.');
     assert.match(progressText({ state: 'running', frame: 60, frames: 60, progress: 1 }), /Finishing/);
     assert.equal(progressText({ state: 'done', bytes: 2500000 }), 'The video is ready, 2.5 MB.');
+    // A finished export names its range, which may differ from the fields of the dialog.
+    assert.equal(progressText({ state: 'done', bytes: 56000, start: 30, end: 45.5 }), 'The video of 0:30 to 0:45.5 is ready, 56 KB.');
+    assert.equal(progressText({ state: 'done', start: 75, end: 90 }), 'The video of 1:15 to 1:30 is ready.');
     assert.equal(progressText({ state: 'failed', error: 'ffmpeg stopped.' }), 'The export failed. ffmpeg stopped.');
     assert.match(progressText({ state: 'cancelled' }), /cancelled/);
+});
+
+test('a small video reads in KB and a larger one in MB', () => {
+    assert.equal(fileSize(22000), '22 KB');
+    assert.equal(fileSize(400), '1 KB');
+    assert.equal(fileSize(999400), '999 KB');
+    assert.equal(fileSize(2500000), '2.5 MB');
+    assert.equal(progressText({ state: 'done', bytes: 22000 }), 'The video is ready, 22 KB.');
 });

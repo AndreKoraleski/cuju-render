@@ -91,6 +91,7 @@ export class Timeline {
         this.speed = 1;
         this.following = live;
         this.onEnd = null;
+        this.jumps = 0;
         // Frames the view keeps behind the newest one, how strongly it leans towards that, and
         // the gap past which it jumps. A game that a person plays keeps a small delay.
         this.delay = LIVE_DELAY_FRAMES;
@@ -211,8 +212,13 @@ export class Timeline {
     }
 
     seek(t) {
+        const from = this.t;
         this.t = t;
         this.clamp();
+        // Seeks that move more than two seconds count as jumps, which the lessons read.
+        if (Math.abs(this.t - from) > 2 * this.sps) {
+            this.jumps += 1;
+        }
         if (this.live && this.t < this.last - this.delay - 1) {
             this.following = false;
         }

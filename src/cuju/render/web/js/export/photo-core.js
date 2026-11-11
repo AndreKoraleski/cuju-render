@@ -109,7 +109,7 @@ export function resolveResolution(choice, windowWidth, windowHeight, max = MAX_S
             width = Number(m[1]);
             height = Number(m[2]);
         } else {
-            throw new RangeError(`Unknown resolution ${JSON.stringify(choice)}, use window, a width and height, or one of ${RESOLUTIONS.map((r) => r.id).join(', ')}.`);
+            throw new RangeError(`Unknown resolution ${JSON.stringify(choice)}, use window, a width and height such as 1280x720, or a size of ${SIZE_PRESETS.map((p) => p.id).join(', ')}.`);
         }
     }
     const limit = Math.min(MAX_SIDE, Math.max(MIN_SIDE, Math.floor(max)));
@@ -225,8 +225,10 @@ export const RANGES = Object.freeze({
 });
 
 // The settings after a change, each value checked. An unknown name or a value out of place
-// throws with a message that says what fits, so a script learns its mistake.
-export function normalizeSettings(current, patch) {
+// throws with a message that says what fits, so a script learns its mistake. A number out of its
+// range throws when strict, as for a script, and is held to the range otherwise, as for the keys
+// and the controller that step a setting past its end.
+export function normalizeSettings(current, patch, { strict = false } = {}) {
     const next = { ...DEFAULTS, ...current };
     if (patch == null) {
         return next;
@@ -248,7 +250,7 @@ export function normalizeSettings(current, patch) {
         } else if (key === 'focus') {
             if (value === 'auto' || value === null) {
                 next.focus = 'auto';
-            } else if (typeof value === 'number' && Number.isFinite(value)) {
+            } else if (typeof value === 'number' && Number.isFinite(value) && (!strict || (value >= FOCUS_MIN && value <= FOCUS_MAX))) {
                 next.focus = Math.min(FOCUS_MAX, Math.max(FOCUS_MIN, value));
             } else {
                 throw new RangeError(`The focus is 'auto' or a distance in meters from ${FOCUS_MIN} to ${FOCUS_MAX}.`);
@@ -261,8 +263,8 @@ export function normalizeSettings(current, patch) {
                 : typeof value === 'string' && value !== 'window' && listed ? listed.id : value;
         } else if (key in RANGES) {
             const [lo, hi] = RANGES[key];
-            if (typeof value !== 'number' || !Number.isFinite(value)) {
-                throw new RangeError(`The ${key} is a number from ${lo} to ${hi}.`);
+            if (typeof value !== 'number' || !Number.isFinite(value) || (strict && (value < lo || value > hi))) {
+                throw new RangeError(`The ${key} is a number from ${lo} to ${hi}, not ${JSON.stringify(value)}.`);
             }
             next[key] = Math.min(hi, Math.max(lo, value));
         } else {

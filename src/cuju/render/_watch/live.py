@@ -39,6 +39,7 @@ import contextlib
 import http.server
 import json
 import logging
+import operator
 import os
 import queue
 import struct
@@ -53,6 +54,7 @@ from cuju.errors import ArgumentError
 from .._format import annotations as _annotations
 from .._format import recording as _recording
 from .._store import home as _home
+from .._text import messages as _messages
 from . import grid as _grid
 
 # The variable that turns live sources on for every batch, with the environment to show.
@@ -90,6 +92,26 @@ class _Viewer:
         self.annotations = sequence and annotations
 
 
+def check_environment(batch: Any, environment: Any) -> None:
+    """Raises `ArgumentError` unless `environment` is an index of an environment of `batch`."""
+    count = int(batch.environment_count)
+    try:
+        if isinstance(environment, bool):
+            raise TypeError
+        environment = operator.index(environment)
+    except TypeError:
+        raise ArgumentError(
+            f'expected the environment as an integer, found {environment!r}'
+        ) from None
+    if not 0 <= environment < count:
+        raise ArgumentError(f'expected an environment from 0 to {count - 1}, found {environment}')
+
+
+def _text(title: dict[str, Any] | str) -> str:
+    """Returns the English text of a title, a label or a person's text."""
+    return title['text'] if isinstance(title, dict) else str(title)
+
+
 class LiveSource:
     """Streams one environment of a batch to the renderer while a viewer watches.
 
@@ -106,7 +128,7 @@ class LiveSource:
         self,
         batch: Any,
         environment: int = 0,
-        title: str | None = None,
+        title: str | dict[str, Any] | None = None,
         teams: list[dict[str, Any]] | None = None,
         scenario: str | None = None,
         backlog: bool = False,
@@ -117,7 +139,9 @@ class LiveSource:
         Args:
             batch: The batch, which `watch` or `CUJU_RENDER` gives the source as an observer.
             environment: The environment to show.
-            title: The title, by default the scenario, the environment and the process.
+            title: The title, by default the scenario, the environment and the process. A title
+                that cuju makes is a label of `_messages.label`, which the page shows in its own
+                language, and `title` reads as its English text.
             teams: The names and colors of the left and right team, as for a recording.
             scenario: The name of the scenario, for the title and the list of sources, by default
                 the batch's.
@@ -126,6 +150,7 @@ class LiveSource:
             announce: Whether the source joins the renderer's list of live sources. A game that a
                 person plays streams through the server alone, so it stays off the list.
         """
+        check_environment(batch, environment)
         self._batch = weakref.ref(batch)
         self.environment = int(environment)
         self.environment_count = int(batch.environment_count)
@@ -136,7 +161,8 @@ class LiveSource:
         self._scenario = scenario or scenario_name(batch)
         # A title of the caller stays through a switch, the default one names the environment.
         self._title = title
-        self.title = title or self._default_title()
+        self._label: dict[str, Any] | str = title or self._default_title()
+        self.title = _text(self._label)
         self._teams = teams
         # The scenario's timing comes with the first state read, since a batch may announce its
         # source before its first reset.
@@ -171,9 +197,21 @@ class LiveSource:
             self._write_announcement()
         atexit.register(self.close)
 
-    def _default_title(self) -> str:
+    def __repr__(self) -> str:
+        state = 'closed' if self._closed else f'port {self.port}'
+        return (
+            f'LiveSource({self.identifier!r}, environment {self.environment} of '
+            f'{self.environment_count}, {self.title!r}, {state})'
+        )
+
+    def _default_title(self) -> dict[str, Any]:
         """Returns the title that names the scenario, the environment and the process."""
-        return f'{self._scenario}, environment {self.environment}, process {os.getpid()}'
+        return _messages.label(
+            'server.names.live',
+            scenario=_messages.scenario(self._scenario),
+            environment=self.environment,
+            process=os.getpid(),
+        )
 
     def _write_announcement(self) -> None:
         """Writes the small file through which the server lists the source.
@@ -186,7 +224,7 @@ class LiveSource:
                 json.dumps(
                     {
                         'id': self.identifier,
-                        'title': self.title,
+                        **_messages.named('title', self._label),
                         'scenario': self._scenario,
                         'environment': self.environment,
                         'environment_count': self.environment_count,
@@ -312,7 +350,7 @@ class LiveSource:
         if sequence and annotations:
             fields['stream_annotations'] = 1
         return _recording.header(
-            self.title,
+            self._label,
             self._scenario,
             self._lineup,
             self._teams,
@@ -391,7 +429,8 @@ class LiveSource:
             return
         self.environment, self._pending_environment = self._pending_environment, None
         if self._title is None:
-            self.title = self._default_title()
+            self._label = self._default_title()
+            self.title = _text(self._label)
         players = int(batch.left_players[self.environment] + batch.right_players[self.environment])
         self._reader = _recording.StateReader(players)
         self._lineup = self._timing = None

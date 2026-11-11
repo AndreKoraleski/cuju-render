@@ -453,6 +453,9 @@ function drawRoster(rng, n) {
 // color, fan colors and roster names.
 export function surprise(options = {}) {
     const given = options.seed;
+    if (given !== undefined && given !== null && !['string', 'number'].includes(typeof given)) {
+        throw new Error(`expected the seed as text or a number, found ${Array.isArray(given) ? 'a list' : typeof given === 'object' ? 'an object' : `a ${typeof given}`}`);
+    }
     const seed = given === undefined || given === null || String(given).trim() === '' ? drawSeed() : String(given).trim();
     const wanted = options.style === undefined || options.style === null || options.style === '' ? 'any' : String(options.style);
     if (!STYLE_IDS.includes(wanted)) {

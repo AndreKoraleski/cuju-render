@@ -29,10 +29,13 @@ from support.common import (
     _frames,
     _get,
     _library_ids,
+    _names_lineup,
+    _play_to_end,
     _sample_head,
     _serve_once,
     _short_matches,
     _toy_team,
+    _until,
 )
 
 
@@ -290,6 +293,35 @@ def test_game_actions_are_the_actions_of_a_batch(render_home):
     }
     batch.close()
     game.close()
+
+
+def test_game_in_the_warm_process_matches_a_new_process(render_home, monkeypatch):
+    """The process kept ready plays the same game, byte for byte, as a process started for it."""
+    monkeypatch.setattr(_server, '_GAME_PACE', 400)
+    games = _server._Games(warm=True)
+    try:
+        start = ('5_vs_5', [True, False], [None, None], 4, True, ['builtin', 'builtin'], 60)
+        cold = games.start(*start)
+        first = games._process
+        cold = _play_to_end(games, cold)
+        assert cold['state'] == 'ended', cold
+        # The next game's process was readied while the first game played.
+        spare = games._spare
+        assert spare is not None and spare.pid != first.pid
+        warm = games.start(*start)
+        assert games._process is spare and games._spare is not spare
+        warm = _play_to_end(games, warm)
+        assert warm['state'] == 'ended', warm
+        assert warm['seed'] == cold['seed'] == 4 and warm['step'] == cold['step'] > 50
+        paths = [render_home / 'matches' / f'{entry["match"]}.cjr' for entry in (cold, warm)]
+        assert paths[0] != paths[1]
+        assert list(_recording.frames(paths[0])) == list(_recording.frames(paths[1]))
+        # The files differ only in the time that their compression stamps on them.
+        assert gzip.decompress(paths[0].read_bytes()) == gzip.decompress(paths[1].read_bytes())
+        # Each process plays one game and ends.
+        assert _until(lambda: spare.poll() is not None) and spare.returncode == 0
+    finally:
+        games.close()
 
 
 def test_recording_provenance_preserves_frame_format():
@@ -562,16 +594,20 @@ def test_recorder_annotations_round_trip(render_home):
         players['agent'] = next(k for k, entry in enumerate(lineup) if entry['controlled'])
         players['other'] = next(k for k, entry in enumerate(lineup) if not entry['controlled'])
         other = lineup[players['other']]
+        # A number counts the left team first, and the file keeps the index of the header.
+        order = sorted(range(len(lineup)), key=lambda k: (lineup[k]['team'], lineup[k]['index']))
+        number = order.index(players['agent'])
+        players['other_number'] = order.index(players['other'])
         recorder.annotate(
             values={'value': 0.5 + step / 100, 'reward': torch.tensor(0.0)},
-            player=players['agent'],
+            player=number,
             probabilities=torch.tensor([0.05] * 11 + [0.3, 0.15] + [0.05] * 6),
             action=12 if step % 3 else 5,
         )
         if step == 2:
             recorder.annotate(text='first shot', player=(other['team'], other['index']))
-            recorder.annotate(values={'pressure': 1}, step=1, player=players['agent'])
-            recorder.annotate(values={'reward': 0.25}, step=1, player=players['agent'])
+            recorder.annotate(values={'pressure': 1}, step=1, player=number)
+            recorder.annotate(values={'reward': 0.25}, step=1, player=number)
 
     seen = []
     recorder = _shooting_episode(
@@ -595,7 +631,8 @@ def test_recorder_annotations_round_trip(render_home):
     assert len(summary) == len(records)
     note = next(item for item in summary if item['text'] == 'first shot')
     assert note['frame'] == 2 and note['step'] == struct.unpack_from('<i', frames[2])[0]
-    assert note['player'] == players['other'] and note['values'] == {}
+    # The summary numbers the player as annotate takes it, the left team first.
+    assert note['player'] == players['other_number'] and note['values'] == {}
     assert note['probabilities'] == [] and note['action'] is None
     # A file without annotations reads none, and version 1 has no room for them.
     assert _recording.annotations(_library._SAMPLES / 'sample-5v5.cjr') == []
@@ -681,3 +718,96 @@ def test_moments_of_the_samples():
     assert [moment['step'] for moment in found] == sorted(moment['step'] for moment in found)
     assert {moment['kind'] for moment in found} <= set(_events.KINDS)
     assert _events.event_id('goal', goals[0]['step'], ['team0']) == goals[0]['id']
+
+
+def test_annotation_numbers_count_the_left_team_first():
+    from cuju.render._format import annotations as _annotations
+
+    # The header of a match may list the right team first.
+    lineup = [{'team': 1, 'index': i} for i in range(3)] + [
+        {'team': 0, 'index': i} for i in range(3)
+    ]
+    assert [_annotations.player_index(lineup, number) for number in range(6)] == [3, 4, 5, 0, 1, 2]
+    assert _annotations.player_index(lineup, (1, 2)) == 2
+    with pytest.raises(cuju.errors.ArgumentError, match='from 0 to 5'):
+        _annotations.player_index(lineup, 6)
+
+
+def test_names_travel_as_labels_in_a_header(tmp_path):
+    from cuju.render._text import messages as _messages
+
+    title = _messages.label(
+        'server.names.against',
+        left=_messages.label('server.names.you'),
+        right=_messages.label('server.names.builtin'),
+    )
+    head = _recording.header(title, '5_vs_5', _names_lineup(), [{'name': 'Rule bot'}])
+    document = json.loads(head[len(_recording.MAGIC) + 4 :])
+    # The command line and every reader of before see the English text.
+    assert document['title'] == "You against GRF's built-in AI"
+    assert document['title_id'] == 'server.names.against'
+    assert document['title_values']['left'] == _messages.label('server.names.you')
+    left, right = document['teams']
+    # A name that a person gave stays text, a side without a name takes the label of its side.
+    assert left['name'] == 'Rule bot' and 'name_id' not in left
+    assert right['name'] == 'Right' and right['name_id'] == 'server.names.right'
+    assert _recording.label_of(document, 'title')['id'] == 'server.names.against'
+    assert _recording.label_of(left, 'name') == 'Rule bot'
+    # A title that a person gave stays text, and a header of before reads as its text.
+    plain_head = _recording.header('My match', '5_vs_5', _names_lineup())
+    plain = json.loads(plain_head[len(_recording.MAGIC) + 4 :])
+    assert plain['title'] == 'My match' and 'title_id' not in plain
+    assert _recording.label_of({'title': 'Left against Right'}, 'title') == 'Left against Right'
+    unknown = {'title': 'x', 'title_id': 'no.such', 'title_values': {}}
+    assert _recording.label_of(unknown, 'title') == 'x'
+
+
+def test_names_of_the_recorder_and_the_manifest(render_home):
+    from cuju.render._http import pwa as _pwa
+
+    batch = cuju.BatchEnvironment(
+        'academy_empty_goal_close_l1_r0', environment_count=1, device='cpu', seed=3
+    )
+    recorder = cuju.render.Recorder(batch)
+    batch.reset()
+    recorder.capture()
+    for _ in range(3):
+        _, _, done, _ = batch.step(torch.tensor([[5]], dtype=torch.int32))
+        recorder.capture(done)
+    path = recorder.close()
+    document = _recording.read_header(path)
+    assert document['title'].endswith(', environment 0')
+    assert document['title_id'] == 'server.names.recorder'
+    assert document['title_values']['scenario']['kind'] == 'scenario'
+    assert [team['name_id'] for team in document['teams']] == [
+        'server.names.left',
+        'server.names.right',
+    ]
+    web = os.path.join(os.path.dirname(cuju.render.__file__), 'web')
+    with open(os.path.join(web, 'manifest.webmanifest'), 'rb') as file:
+        shipped = file.read()
+    assert _pwa.manifest(shipped, None) == shipped
+    portuguese = json.loads(_pwa.manifest(shipped, 'pt'))
+    assert portuguese['lang'] == 'pt'
+    assert portuguese['description'] != json.loads(shipped)['description']
+    assert [item['name'] for item in portuguese['shortcuts']] == ['Assistir', 'Jogar', 'Ajuda']
+    assert _pwa.manifest(shipped, 'xx') == shipped
+
+
+# The command line, the Python surface and HTTP answers.
+
+
+def test_filter_summary_numbers_players_as_annotate_takes_them():
+    """A header that lists the right team first still gives the filter the number given."""
+    from cuju.render._format import annotations as _annotations
+
+    lineup = [{'team': team, 'index': index} for team in (1, 0) for index in range(5)]
+    frames = [struct.pack('<i', 0) + bytes(60)]
+    for number in (0, 4, 5, 9):
+        record = _annotations.note(lineup, text='x', player=number)
+        assert lineup[record['p']] == {'team': number // 5, 'index': number % 5}
+        record['f'] = 0
+        assert _annotations.public(record, frames, lineup)['player'] == number
+    # Without the header the summary keeps the index of the file, as before.
+    record = {**_annotations.note(lineup, text='x', player=0), 'f': 0}
+    assert _annotations.public(record, frames)['player'] == 5

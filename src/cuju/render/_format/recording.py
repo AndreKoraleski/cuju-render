@@ -24,6 +24,7 @@ from cuju import __version__
 from cuju import state as _state
 from cuju.errors import StateError
 
+from .._text import messages as _messages
 from . import annotations as _annotations
 from . import codec as _codec
 
@@ -61,9 +62,19 @@ _LOCAL_MODE_RELATIVE = 0
 _GOALKEEPER = 0
 # The head of a frame, eight integers, the ball's seven floats and four integers of the referee.
 _FRAME_HEAD = struct.Struct('<8i7f4i')
+# A team without a name of its own takes the name of its side, which the page shows in its own
+# language, with the English text in `name` as before.
 _DEFAULT_TEAMS = (
-    {'name': 'Left', 'color': [214, 48, 49], 'secondary': [255, 255, 255]},
-    {'name': 'Right', 'color': [9, 132, 227], 'secondary': [255, 255, 255]},
+    {
+        **_messages.named('name', _messages.label('server.names.left')),
+        'color': [214, 48, 49],
+        'secondary': [255, 255, 255],
+    },
+    {
+        **_messages.named('name', _messages.label('server.names.right')),
+        'color': [9, 132, 227],
+        'secondary': [255, 255, 255],
+    },
 )
 
 
@@ -373,7 +384,7 @@ def _world_transforms(blocks: np.ndarray) -> np.ndarray:
 
 
 def header(
-    title: str,
+    title: str | dict[str, Any],
     scenario: str,
     lineup: list[dict[str, Any]],
     teams: list[dict[str, Any]] | None = None,
@@ -386,28 +397,40 @@ def header(
     A live stream sends the header as it is, and `write` turns it into the version it writes.
 
     Args:
-        title: The title that the viewer shows.
+        title: The title that the viewer shows, text that a person gave or a label that
+            `_messages.label` returns for a title that cuju made, which the header keeps as its
+            English `title` with `title_id` and `title_values` beside it.
         scenario: The name of the scenario.
         lineup: The entry of each player, as `StateReader.lineup` returns it.
         teams: The name, `color` and `secondary` color of the left and right team, each optional.
+            A name is text or a label, as the title is, and a team without one takes the name of
+            its side, Left or Right, as a label.
         frame_count: The number of frames, or None for a live stream.
         timing: The optional scenario timing fields.
         provenance: What is known of where the recording comes from, such as its source, seed
             and configuration. The version of cuju joins it, and a field left out stays unknown.
     """
     given = [*(teams or ()), {}, {}]
+    sides = []
+    for side in range(2):
+        team = {**_DEFAULT_TEAMS[side], **given[side]}
+        if 'name' in given[side]:
+            # A name given as text is a person's and travels alone, a label keeps its message.
+            team = {key: value for key, value in team.items() if key not in _NAME_FIELDS}
+            team.update(_name_fields(given[side]))
+        sides.append(team)
     document = {
         'version': 1,
         'engine_scorer': True,
         'offside_called': True,
         **(timing or {}),
-        'title': title,
+        **_messages.named('title', title),
         'scenario': scenario,
         'steps_per_second': 10,
         'nodes': list(NODES),
         'parents': list(PARENTS),
         'players': lineup,
-        'teams': [{**_DEFAULT_TEAMS[side], **given[side]} for side in range(2)],
+        'teams': sides,
         'frame_bytes': frame_bytes(len(lineup)),
         'frame_count': frame_count,
         'provenance': {**(provenance or {}), 'cuju_version': __version__},
@@ -417,6 +440,39 @@ def header(
     if isinstance(seed, int) and not isinstance(seed, bool) and seed > 2**53 - 1:
         document['provenance']['seed'] = str(seed)
     return _encode_header(document)
+
+
+# The fields of a name that cuju made, beside its English text.
+_NAME_FIELDS = ('name_id', 'name_values')
+
+
+def _name_fields(team: dict[str, Any]) -> dict[str, Any]:
+    """Returns the name of a team as a header keeps it, its text and, for a label, its message.
+
+    The name is text, a label that `_messages.label` returns, or text beside the `name_id` and
+    `name_values` of an entry of the registry, such as the built-in AI's.
+    """
+    name = team.get('name')
+    if isinstance(name, dict):
+        return _messages.named('name', name)
+    found = {'name': name}
+    if isinstance(team.get('name_id'), str) and isinstance(team.get('name_values'), dict):
+        found.update(name_id=team['name_id'], name_values=dict(team['name_values']))
+    return found
+
+
+def label_of(document: dict[str, Any], field: str) -> dict[str, Any] | str | None:
+    """Returns a name of a header or summary as a label when it holds a valid one, else as text.
+
+    A file of before, or a name that a person gave, holds the text alone and returns it.
+    """
+    text = document.get(field)
+    found = {
+        'id': document.get(f'{field}_id'),
+        'text': text,
+        'values': document.get(f'{field}_values'),
+    }
+    return found if _messages.valid_label(found) else text
 
 
 def _document(head: bytes) -> dict[str, Any]:

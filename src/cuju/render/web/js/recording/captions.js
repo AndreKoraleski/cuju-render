@@ -1,16 +1,19 @@
 // Copyright 2026 The cuju Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Text captions of the events of a match, short and plain, such as "Goal, number 9 for the
-// Greens, 2 to 1", timed to the moments of moments.js. Every caption is a message id of the table
-// captions.json with its values, so a translation replaces the table alone. The server writes
+// Text captions of the events of a match, short and plain, such as "Goal, number 9 of Greens,
+// 2 to 1", timed to the moments of moments.js. Every caption is a message id of the
+// language files, `caption.goal` and the rest, with its values, so the captions follow the
+// language of the page. The server writes
 // the same cues as WebVTT with src/cuju/render/_moments/captions.py, by the same rules.
 //
 // The functions at the top touch nothing of the page, so they hold the same under Node. The
 // overlay at the end shows the cues on Watch and Play, inside the safe areas, and reads each new
 // cue to screen readers through a live region.
 
+import { messages as languageMessages, t, tn } from '../core/i18n.js';
 import { momentsOf } from './moments.js';
+import { teamName as shownTeamName } from '../core/names.js';
 
 // Seconds a cue stays at most, at least, and how many show at once.
 export const CUE_SECONDS = 4;
@@ -38,8 +41,8 @@ export function format(messages, id, params = {}) {
 // and one more than the index of the team otherwise, as the kits do.
 export function captionContext(header, styles = []) {
     const teams = [0, 1].map((side) => {
-        const team = (header.teams || [])[side] || {};
-        return typeof team.name === 'string' && team.name.trim() ? team.name.trim() : null;
+        const name = shownTeamName((header.teams || [])[side]).trim();
+        return name || null;
     });
     const players = (header.players || []).map((p) => {
         const style = styles[p.team] || (((header.teams || [])[p.team] || {}).style) || {};
@@ -153,11 +156,19 @@ export function vttTime(seconds) {
     return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
 }
 
+// The text of a cue as a WebVTT file holds it, on one line with its markup escaped. Each line
+// break, with the spaces around it, becomes one space, so a name can neither end the cue nor
+// start another, and the ampersand and the angle brackets become their character references,
+// which also turns an arrow of a time line into text.
+export function vttText(text) {
+    return String(text ?? '').replace(/\s*[\r\n]+\s*/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // The cues as a WebVTT file.
 export function toVtt(cues) {
     const lines = ['WEBVTT', ''];
     cues.forEach((cue, i) => {
-        lines.push(String(i + 1), `${vttTime(cue.start)} --> ${vttTime(cue.end)}`, cue.text, '');
+        lines.push(String(i + 1), `${vttTime(cue.start)} --> ${vttTime(cue.end)}`, vttText(cue.text), '');
     });
     return lines.join('\n');
 }
@@ -223,15 +234,9 @@ export class CueTrack {
     }
 }
 
-let tableLoad = null;
-
-// The table of messages of the page, read once from captions.json beside it.
-export function loadMessages(url = 'captions.json') {
-    if (!tableLoad) {
-        tableLoad = fetch(url).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`captions.json ${r.status}`))))
-            .then((table) => table.messages || {});
-    }
-    return tableLoad;
+// The caption messages of the page, in its language with English beneath.
+export function loadMessages() {
+    return Promise.resolve(languageMessages('caption.'));
 }
 
 function load(key, fallback) {
@@ -276,7 +281,7 @@ export class CaptionsOverlay {
         this.live.id = 'captions-live';
         this.live.setAttribute('aria-live', 'polite');
         this.live.setAttribute('role', 'log');
-        this.live.setAttribute('aria-label', 'Captions');
+        this.live.setAttribute('aria-label', t('captions.live'));
         this.applySize();
         this.addSettings();
         loadMessages().then((messages) => {
@@ -299,19 +304,19 @@ export class CaptionsOverlay {
         check.addEventListener('change', () => this.setEnabled(check.checked));
         const row = document.createElement('label');
         row.className = 'check';
-        row.append(check, ' Captions of the events of the match');
+        row.append(...tn('captions.settings.on', { check }));
         const size = document.createElement('select');
         size.id = 'captions-size';
-        for (const [value, text] of [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']]) {
+        for (const value of SIZES) {
             const option = document.createElement('option');
             option.value = value;
-            option.textContent = text;
+            option.textContent = t(`captions.size.${value}`);
             size.append(option);
         }
         size.value = this.size;
         size.addEventListener('change', () => this.setSize(size.value));
         const sizeRow = document.createElement('label');
-        sizeRow.append('Size of the captions ', size);
+        sizeRow.append(...tn('captions.settings.size', { size }));
         label.after(row, sizeRow);
         this.check = check;
         this.select = size;
@@ -376,7 +381,7 @@ export class CaptionsOverlay {
         const cues = this.cues();
         if (!this.messages || !app.source) {
             if (app.hud) {
-                app.hud.toast('The captions are not ready yet', 'error');
+                app.hud.toast(t('captions.notReady'), 'error');
             }
             return null;
         }
@@ -394,7 +399,7 @@ export class CaptionsOverlay {
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         if (app.hud) {
-            app.hud.toast(`Saved ${cues.length} captions as ${name}`);
+            app.hud.toast(t('captions.saved', { count: cues.length, name }));
         }
         return text;
     }

@@ -11,6 +11,8 @@ import {
 import { normalizeStyle } from '../players/kits.js';
 import { kitShirt } from '../pages/matches.js';
 import { addFormSurprise } from './surprise-ui.js';
+import { t, tn } from '../core/i18n.js';
+import { teamName } from '../core/names.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -111,14 +113,14 @@ export class TeamsPage {
                 this.setOffline(true);
             }
             this.root.replaceChildren(message('error', err.message,
-                h('p', { class: 'muted' }, 'Start the server with cuju render serve, then try again.'),
-                h('button', { class: 'btn', onclick: () => this.refresh() }, 'Try again')));
+                h('p', { class: 'muted' }, t('library.offline')),
+                h('button', { class: 'btn', onclick: () => this.refresh() }, t('library.retry'))));
             return;
         }
         const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('.teams-list > li');
         const focusId = focused ? focused.dataset.id : null;
-        const list = teams.length ? h('ul', { class: 'list teams-list', 'aria-label': 'Teams' }, teams.map((t, i) => this.teamItem(t, i)))
-            : message('empty', 'No teams yet. Add one below.');
+        const list = teams.length ? h('ul', { class: 'list teams-list', 'aria-label': t('library.list.label') }, teams.map((team, i) => this.teamItem(team, i)))
+            : message('empty', t('library.empty'));
         if (teams.length) {
             listKeys(list, '.teams-list > li');
         }
@@ -127,14 +129,15 @@ export class TeamsPage {
             this.upload = this.uploadForm();
         }
         // With the built-in AI alone, the list points to the way an agent of one's own looks.
-        const first = teams.some((t) => t.kind !== 'builtin') ? null : h('div', { class: 'empty-state teams-first' },
-            h('p', { class: 'muted' }, 'Only the built-in AI so far. Add a submission folder below to play your own agent.'),
-            h('button', { type: 'button', class: 'btn', onclick: () => this.app.palette?.helpTopic('help-teams') }, 'How a team looks'));
+        const first = teams.some((team) => team.kind !== 'builtin') ? null : h('div', { class: 'empty-state teams-first' },
+            h('p', { class: 'muted' }, t('library.firstNote')),
+            h('button', { type: 'button', class: 'btn', onclick: () => this.app.palette?.helpTopic('help-teams') }, t('library.firstHelp')));
         this.root.replaceChildren(
-            h('section', { class: 'panel-section' }, h('h3', {}, 'Teams'), list, first),
-            h('section', { class: 'panel-section' }, h('h3', {}, 'Add a team'), this.upload),
-            h('p', { class: 'muted small side-note' }, 'To play a match between teams, open ',
-                h('button', { type: 'button', class: 'link', onclick: () => this.app.showPage('matches') }, 'Matches'), '.'));
+            h('section', { class: 'panel-section' }, h('h1', {}, t('library.heading')), list, first),
+            h('section', { class: 'panel-section' }, h('h2', {}, t('library.add.heading')), this.upload),
+            h('p', { class: 'muted small side-note' }, ...tn('library.matchesNote', {
+                page: h('button', { type: 'button', class: 'link', onclick: () => this.app.showPage('matches') }, t('library.matchesLink')),
+            })));
         if (focusId) {
             const again = this.root.querySelector(`.teams-list > li[data-id="${CSS.escape(focusId)}"]`);
             if (again) {
@@ -143,29 +146,29 @@ export class TeamsPage {
         }
     }
 
-    teamItem(t, i) {
-        const style = normalizeStyle(t, i % 2);
+    teamItem(team, i) {
+        const style = normalizeStyle(team, i % 2);
         const choose = () => {
-            if (this.app.editor.team && this.app.editor.team.id === t.id) {
+            if (this.app.editor.team && this.app.editor.team.id === team.id) {
                 return;
             }
             if (!this.app.editor.confirmLeave()) {
                 return;
             }
-            this.selectedId = t.id;
+            this.selectedId = team.id;
             for (const el of this.root.querySelectorAll('.teams-list > li')) {
                 el.classList.toggle('selected', el === item);
                 el.setAttribute('aria-selected', el === item ? 'true' : 'false');
             }
-            this.app.editTeam(t);
+            this.app.editTeam(team);
         };
         const item = h('li', {
-            class: `item selectable${t.id === this.selectedId ? ' selected' : ''}`,
-            'data-id': t.id,
-            title: t.kind === 'builtin' ? null : `Added ${formatDate(t.created)}`,
+            class: `item selectable${team.id === this.selectedId ? ' selected' : ''}`,
+            'data-id': team.id,
+            title: team.kind === 'builtin' ? null : t('library.item.added', { date: formatDate(team.created) }),
             tabindex: '0',
             role: 'option',
-            'aria-selected': t.id === this.selectedId ? 'true' : 'false',
+            'aria-selected': team.id === this.selectedId ? 'true' : 'false',
             onclick: choose,
             onkeydown: (e) => {
                 if ((e.key === 'Enter' || e.key === ' ') && e.target === item) {
@@ -174,32 +177,32 @@ export class TeamsPage {
                 }
             },
         },
-        kitShirt(t, i % 2),
+        kitShirt(team, i % 2),
         h('div', { class: 'item-main' },
-            h('div', { class: 'item-title' }, h('span', { class: 'ellipsis' }, t.name)),
+            h('div', { class: 'item-title' }, h('span', { class: 'ellipsis' }, teamName(team))),
             h('div', { class: 'item-meta' }, [
-                t.kind === 'builtin' ? 'Built-in AI' : (t.format === '5v5' ? '5 against 5' : '11 against 11'),
-                t.kind === 'builtin' ? null : `controls ${controlLabel(t.control, t.format)}`,
-                style.model !== 'grf' ? (style.model === 'custom' ? 'own model' : style.model.replace(/^kaykit-/, '').replace(/-/g, ' ')) : null,
-                t.sounds && t.sounds.length ? `${t.sounds.length} ${t.sounds.length === 1 ? 'sound' : 'sounds'}` : null,
+                team.kind === 'builtin' ? t('library.item.builtin') : t(`library.format.${team.format === '5v5' ? '5v5' : '11v11'}`),
+                team.kind === 'builtin' ? null : t('library.item.controls', { players: controlLabel(team.control, team.format) }),
+                style.model !== 'grf' ? (style.model === 'custom' ? t('library.item.ownModel') : style.model.replace(/^kaykit-/, '').replace(/-/g, ' ')) : null,
+                team.sounds && team.sounds.length ? t('library.item.sounds', { count: team.sounds.length }) : null,
             ].filter(Boolean).join(', '))),
-        t.kind === 'builtin' ? null : h('button', {
+        team.kind === 'builtin' ? null : h('button', {
             class: 'btn small ghost danger',
             type: 'button',
-            'aria-label': `Delete ${t.name}`,
-            title: 'Delete this team',
+            'aria-label': t('library.item.deleteLabel', { name: teamName(team) }),
+            title: t('library.item.deleteTitle'),
             onclick: async (e) => {
                 e.stopPropagation();
-                if (!confirm(`Delete the team "${t.name}"? Recordings that used it stay.`)) {
+                if (!confirm(t('library.item.deleteConfirm', { name: teamName(team) }))) {
                     return;
                 }
                 try {
-                    await api.deleteTeam(t.id);
-                    this.app.hud.toast('Team deleted.');
-                    if (this.selectedId === t.id) {
+                    await api.deleteTeam(team.id);
+                    this.app.hud.toast(t('library.item.deleted'));
+                    if (this.selectedId === team.id) {
                         this.selectedId = null;
                     }
-                    if (this.app.editor.team && this.app.editor.team.id === t.id) {
+                    if (this.app.editor.team && this.app.editor.team.id === team.id) {
                         this.app.editor.close(true);
                     }
                 } catch (err) {
@@ -207,13 +210,13 @@ export class TeamsPage {
                 }
                 this.refresh();
             },
-        }, 'Delete'));
+        }, t('library.item.delete')));
         return item;
     }
 
     uploadForm() {
-        const name = h('input', { type: 'text', placeholder: 'Team name', required: true, maxlength: '60' });
-        const format = h('select', {}, h('option', { value: '11v11' }, '11 against 11'), h('option', { value: '5v5' }, '5 against 5'));
+        const name = h('input', { type: 'text', placeholder: t('library.add.namePlaceholder'), required: true, maxlength: '60' });
+        const format = h('select', {}, h('option', { value: '11v11' }, t('library.format.11v11')), h('option', { value: '5v5' }, t('library.format.5v5')));
         const control = controlForm(format.value);
         let controlChanged = false;
         control.addEventListener('change', () => { controlChanged = true; });
@@ -221,14 +224,14 @@ export class TeamsPage {
         format.addEventListener('change', () => control.setFormat(format.value));
         const folderInput = h('input', { type: 'file', webkitdirectory: true, multiple: true, hidden: true });
         const fileInput = h('input', { type: 'file', accept: '.py,.gz,.tgz,.zip', hidden: true });
-        const summary = h('div', { class: 'upload-summary muted' }, 'No folder chosen.');
-        const send = h('button', { class: 'btn primary', type: 'submit', disabled: true }, 'Upload team');
+        const summary = h('div', { class: 'upload-summary muted' }, t('library.add.noFolder'));
+        const send = h('button', { class: 'btn primary', type: 'submit', disabled: true }, t('library.add.upload'));
         const surprise = addFormSurprise(this.app, name, format);
         let pending = null;
         const choose = (p) => {
             pending = p;
             if (!p) {
-                summary.textContent = 'No folder chosen.';
+                summary.textContent = t('library.add.noFolder');
                 send.disabled = true;
                 return;
             }
@@ -236,9 +239,11 @@ export class TeamsPage {
             const hasMain = p.kind === 'file' || p.files.some((f) => /(^|\/)main\.py$/.test(f.path));
             // Only the parts that apply are added, an absent one would print as null.
             summary.replaceChildren(...[
-                h('strong', {}, p.label), `, ${p.kind === 'folder' ? `${p.files.length} files, ` : ''}${formatBytes(p.size)}`,
-                too ? h('div', { class: 'error-text' }, 'This is over the 100 MB limit.') : null,
-                !hasMain ? h('div', { class: 'error-text' }, 'The folder has no main.py.') : null,
+                ...tn(p.kind === 'folder' ? 'library.add.summaryFolder' : 'library.add.summaryFile', {
+                    name: h('strong', {}, p.label), files: p.kind === 'folder' ? p.files.length : 0, count: p.kind === 'folder' ? p.files.length : 0, size: formatBytes(p.size),
+                }),
+                too ? h('div', { class: 'error-text' }, t('library.add.tooLarge')) : null,
+                !hasMain ? h('div', { class: 'error-text' }, t('library.add.noMain')) : null,
             ].filter(Boolean));
             send.disabled = too || !hasMain;
             if (!name.value.trim()) {
@@ -261,10 +266,10 @@ export class TeamsPage {
             }
         });
         const dropZone = h('div', { class: 'dropzone' },
-            h('p', {}, 'Drop a submission folder or archive.'),
+            h('p', {}, t('library.add.drop')),
             h('div', { class: 'row' },
-                h('button', { class: 'btn', type: 'button', onclick: () => folderInput.click() }, 'Choose folder'),
-                h('button', { class: 'btn ghost', type: 'button', onclick: () => fileInput.click() }, 'Choose file')),
+                h('button', { class: 'btn', type: 'button', onclick: () => folderInput.click() }, t('library.add.chooseFolder')),
+                h('button', { class: 'btn ghost', type: 'button', onclick: () => fileInput.click() }, t('library.add.chooseFile'))),
             folderInput, fileInput);
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -287,20 +292,20 @@ export class TeamsPage {
                 const { files, folder } = await filesFromDrop(items);
                 setFolder(files, folder);
             } catch (err) {
-                this.app.hud.toast(`The folder could not be read, ${err.message}`, 'error');
+                this.app.hud.toast(t('library.add.readFailed', { reason: err.message }), 'error');
             }
         });
-        const form = h('form', { class: 'form' }, h('div', { class: 'grid2' }, h('label', {}, 'Name', name), h('label', {}, 'Format', format)),
+        const form = h('form', { class: 'form' }, h('div', { class: 'grid2' }, h('label', {}, t('library.add.name'), name), h('label', {}, t('library.add.format'), format)),
             surprise.element, h('div', {}, control), dropZone, summary,
             h('div', { class: 'form-actions' }, send));
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (!pending || !name.value.trim()) {
-                this.app.hud.toast('Give the team a name and choose its submission.', 'error');
+                this.app.hud.toast(t('library.add.missing'), 'error');
                 return;
             }
             send.disabled = true;
-            send.textContent = 'Uploading';
+            send.textContent = t('library.add.uploading');
             try {
                 let added;
                 if (pending.kind === 'folder') {
@@ -310,26 +315,26 @@ export class TeamsPage {
                     added = await api.uploadTeam(name.value.trim(), pending.label, pending.file, format.value, controlChanged ? controlFromValue(control.value) : null);
                 }
                 await surprise.apply(added);
-                this.app.hud.toast(`Team ${name.value.trim()} added.`);
+                this.app.hud.toast(t('library.add.added', { name: name.value.trim() }));
                 // The form outlives refreshes, so it is emptied here for the next team.
                 controlChanged = false;
                 name.value = '';
                 folderInput.value = '';
                 fileInput.value = '';
                 choose(null);
-                send.textContent = 'Upload team';
+                send.textContent = t('library.add.upload');
                 this.refresh();
             } catch (err) {
                 this.app.hud.toast(err.message, 'error', 7000);
                 send.disabled = false;
-                send.textContent = 'Upload team';
+                send.textContent = t('library.add.upload');
             }
         });
         return form;
     }
 
     teamName(id) {
-        const t = this.teams.find((x) => x.id === id);
-        return t ? t.name : id;
+        const team = this.teams.find((x) => x.id === id);
+        return team ? teamName(team) : id;
     }
 }

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import vm from 'node:vm';
 
 // Node 18 reads a .js file outside a package of type module as CommonJS, so the page's modules
 // load from copies beside a package file that names them modules.
@@ -29,10 +30,11 @@ const C = await load('contract');
 const { BehaviourSet, checkBehaviour } = await load('behaviors');
 const { Animator, actionRole } = await load('animator');
 const T = await load('tracks');
-const { checkResponse, frameMessage, helloMessage, MAXIMUM_COMMANDS } = await load('protocol');
-const { Budget, LADDER } = await load('budget');
+const { appendLog, checkResponse, frameMessage, helloMessage, LOG_LINES, MAXIMUM_COMMANDS } = await load('protocol');
+const { Budget, LADDER, RECOVER_S, RECOVERIES, SUSTAIN_S, WINDOW_S } = await load('budget');
 const K = await load('commands');
-const { ModuleHost, RESTARTS } = await load('host');
+const { MAXIMUM_OVERLAYS, ModuleHost, RESTARTS, SILENT_STEP_MS, replyProblem } = await load('host');
+const { FIRST_SILENT_MS, SILENT_MS } = await load('budget');
 const { unit } = await load('values');
 
 const manifestText = readFileSync(new URL('../support/team/cuju-team/presentation/presentation.json', import.meta.url), 'utf8');
@@ -310,19 +312,95 @@ test('budgets count, refuse and step down the ladder on sustained overruns', () 
     assert.equal(b.snapshot().refused.lights, 1);
     b.give({ lights: 1 });
     assert.ok(b.take({ lights: 1 }));
-    for (let t = 0; t < 1.9; t += 0.016) {
+    const sustained = WINDOW_S * 0.75 + SUSTAIN_S;
+    for (let t = 0; t < sustained - 0.1; t += 0.016) {
         assert.equal(b.meter(2, t), null, 'a short overrun is forgiven');
     }
     let rung = null;
-    for (let t = 1.9; t < 2.2 && !rung; t += 0.016) {
+    for (let t = sustained - 0.1; t < sustained + 0.3 && !rung; t += 0.016) {
         rung = b.meter(2, t);
     }
     assert.equal(rung, LADDER[1]);
+    assert.equal(b.stepped, 'down');
     while (b.level !== 'stock') {
         b.degrade('test');
     }
     assert.ok(b.past('noWorker'));
     assert.equal(b.degrade('again'), 'stock', 'the ladder ends at the stock look');
+});
+
+// A browser that coarsens performance.now() reads each drawing's time in steps of 0.1 ms, here
+// a package of a given mean whose drawings read in coarse steps up to three times the mean.
+function coarse(index, mean) {
+    const steps = [0, 0.1, 0.3, 0.6, 0, 0.1, 0.3, 0.2];
+    return steps[index % steps.length] * (mean / 0.2);
+}
+
+test('the meter reads the mean of a coarse clock and keeps a package under its budget', () => {
+    const b = new Budget('low');
+    assert.equal(b.limits.mainMs, 1);
+    let i = 0;
+    for (let t = 0; t < 60; t += 0.016, i++) {
+        assert.equal(b.meter(coarse(i, 0.5), t), null, 'single drawings over the budget never step down');
+    }
+    assert.ok(Math.abs(b.mainMs - 0.5) < 0.02, `the mean of the window, ${b.mainMs}`);
+    assert.ok(b.p95 > b.limits.mainMs, 'the 95th percentile of the coarse steps reads over the budget');
+    assert.equal(b.level, 'full');
+});
+
+test('the meter waits for the package to settle and leaves out stalled drawings', () => {
+    const b = new Budget('low');
+    b.arm(Infinity);
+    for (let t = 0; t < 20; t += 0.016) {
+        assert.equal(b.meter(5, t), null, 'nothing counts before the package settled');
+    }
+    b.arm(20);
+    for (let t = 20; t < 40; t += 0.5) {
+        assert.equal(b.meter(5, t, 400), null, 'a drawing that stalls the page is left out');
+    }
+    assert.equal(b.samples.length, 0);
+    assert.equal(b.level, 'full');
+});
+
+test('the ladder climbs back after a while under budget, slower after each relapse', () => {
+    const b = new Budget('low');
+    let t = 0;
+    const run = (ms, seconds) => {
+        const steps = [];
+        for (const end = t + seconds; t < end; t += 0.016) {
+            const rung = b.meter(ms, t);
+            if (rung) {
+                steps.push([rung, b.stepped, t]);
+            }
+        }
+        return steps;
+    };
+    const down = run(2, 6);
+    assert.deepEqual(down.map((s) => s[0]), ['fewerParticles'], 'one rung for a sustained overrun');
+    const up = run(0.1, RECOVER_S + 3);
+    assert.deepEqual(up.map((s) => [s[0], s[1]]), [['full', 'up']], 'a team well under budget climbs back');
+    assert.ok(up[0][2] - down[0][2] >= RECOVER_S, 'after RECOVER_S under budget');
+    run(2, 6);
+    assert.equal(b.level, 'fewerParticles');
+    assert.equal(b.relapses, 1, 'a fall after a climb is a relapse');
+    assert.deepEqual(run(0.1, RECOVER_S + 3), [], 'a relapse doubles the wait');
+    assert.equal(run(0.1, RECOVER_S + 3).length, 1);
+    assert.equal(b.level, 'full');
+    // Between the budget and its share UNDER the ladder holds.
+    run(2, 6);
+    assert.deepEqual(run(0.9, 4 * RECOVER_S), [], 'a team just under its budget stays where it is');
+    for (let k = 0; k < 3 * RECOVERIES; k++) {
+        run(2, 6);
+        run(0.1, RECOVER_S * 2 ** RECOVERIES + 3);
+    }
+    assert.ok(b.relapses >= RECOVERIES);
+    const rung = b.rung;
+    run(0.1, 4 * RECOVER_S * 2 ** RECOVERIES);
+    assert.equal(b.rung, rung, `after ${RECOVERIES} relapses the ladder stays down`);
+    while (b.level !== 'stock') {
+        run(5, 6);
+    }
+    assert.equal(b.level, 'stock', 'a package that really overruns still ends at the stock look');
 });
 
 test('reflexes fire for their team and phase, and commands reach their handlers', () => {
@@ -394,12 +472,32 @@ test('the host refuses an open network, restarts a silent worker once and then g
     const host = make();
     doc.frames.at(-1).fire('load');
     host.receive({ type: 'ready', instanceId: 'a.1', network: 'blocked', storage: 'blocked' });
-    assert.ok(host.wants());
-    host.send({ frameId: 1, epoch: 1 }, performance.now() - 5000);
-    assert.equal(host.wants(), false);
-    assert.equal(host.status, 'ready', 'a page that draws slowly waits a few drawings more');
-    host.wants();
-    assert.equal(host.wants(), false);
+    let now = 1000;
+    assert.ok(host.wants(now));
+    host.send({ frameId: 1, epoch: 1 }, now);
+    // The page's own load stalls it for seconds before the worker's first answer.
+    for (const stall of [4000, 6000, 3000]) {
+        now += stall;
+        assert.equal(host.wants(now), false);
+    }
+    assert.equal(host.status, 'ready', 'a stall of the page never counts as the silence of the worker');
+    const drawings = (ms, count) => {
+        for (let i = 0; i < count; i++) {
+            now += ms;
+            host.wants(now);
+        }
+    };
+    drawings(16, Math.ceil(SILENT_MS / 16) + 3);
+    assert.equal(host.status, 'ready', `a worker has ${FIRST_SILENT_MS} ms of drawing for its first answer`);
+    host.receive({ type: 'response', instanceId: 'a.1' });
+    assert.equal(host.answered, 1);
+    assert.ok(host.wants(now));
+    host.send({ frameId: 2, epoch: 1 }, now);
+    drawings(16, Math.floor(SILENT_MS / 16) - 2);
+    assert.equal(host.status, 'ready');
+    drawings(SILENT_STEP_MS * 10, 2);
+    assert.equal(host.status, 'ready', 'a slow page waits a few drawings more');
+    drawings(16, 3);
     assert.equal(host.status, 'restarting', 'a silent worker is restarted');
     assert.equal(RESTARTS, 1);
     host.restarts = RESTARTS;
@@ -408,4 +506,139 @@ test('the host refuses an open network, restarts a silent worker once and then g
     assert.equal(host.status, 'failed', 'a second failure leaves the team without its worker');
     host.dispose();
     assert.equal(host.status, 'disposed');
+});
+
+// Runs the sandbox's bootstrap with the given origin and parent, and returns what it listens to.
+function bootSandbox({ origin, framed, href = 'http://127.0.0.1:8780/sandbox/presentation' }) {
+    const source = readFileSync(new URL('../../src/cuju/render/web/js/presentation/sandbox.js', import.meta.url), 'utf8');
+    const listeners = [];
+    const workers = [];
+    const parent = { postMessage() {} };
+    const win = {};
+    win.parent = framed ? parent : win;
+    class FakeWorker {
+        constructor(url) {
+            this.url = url;
+            this.sent = [];
+            workers.push(this);
+        }
+        postMessage(m) {
+            this.sent.push(m);
+        }
+    }
+    const self = { origin };
+    vm.runInNewContext(source, {
+        self, window: win, location: { href }, URL, Blob, Worker: FakeWorker, JSON, String,
+        addEventListener: (name, fn) => listeners.push([name, fn]),
+    });
+    const start = (source, origin) => {
+        for (const [, fn] of listeners) {
+            fn({ source, origin, data: { type: 'start', module: 'export function frame() {}', instanceId: 'a.1' }, ports: [{}] });
+        }
+    };
+    return { listeners, workers, parent, win, start };
+}
+
+test('the sandbox starts a worker only in an opaque origin, framed, for the page above it', () => {
+    const top = bootSandbox({ origin: 'http://127.0.0.1:8780', framed: false });
+    assert.equal(top.listeners.length, 0, 'a window of the route on its own listens to nothing');
+    assert.equal(bootSandbox({ origin: 'null', framed: false }).listeners.length, 0, 'unframed');
+    assert.equal(bootSandbox({ origin: 'http://127.0.0.1:8780', framed: true }).listeners.length, 0, 'an origin');
+    const box = bootSandbox({ origin: 'null', framed: true });
+    assert.equal(box.listeners.length, 1);
+    box.start({ postMessage() {} }, 'http://127.0.0.1:8780');
+    assert.equal(box.workers.length, 0, 'another window is no sender');
+    box.start(box.parent, 'https://evil.example');
+    assert.equal(box.workers.length, 0, 'a parent of another site starts nothing');
+    box.start(box.parent, 'http://127.0.0.1:8780');
+    assert.equal(box.workers.length, 1, 'the page above it starts the worker');
+    const [sent] = box.workers[0].sent;
+    assert.equal(sent.type, 'port');
+    assert.equal(sent.probe, 'http://127.0.0.1:8780/api/presentation-probe', 'the sandbox names the probe itself');
+});
+
+test('the host keeps a worker off unless both network and storage are blocked', () => {
+    globalThis.location = { href: 'http://127.0.0.1:1/' };
+    globalThis.addEventListener = () => {};
+    globalThis.removeEventListener = () => {};
+    const doc = new FakeDocument();
+    const host = new ModuleHost({
+        source: 'export function frame() { return {}; }', instanceId: 'a.1', hello: { instanceId: 'a.1' }, document: doc,
+        onResponse: () => {}, onStatus: () => {},
+    });
+    doc.frames.at(-1).fire('load');
+    host.receive({ type: 'ready', instanceId: 'a.1', network: 'blocked', storage: 'open' });
+    assert.equal(host.status, 'failed', 'a sandbox that holds storage never runs a worker');
+    const later = new ModuleHost({
+        source: 'export function frame() { return {}; }', instanceId: 'a.1', hello: { instanceId: 'a.1' }, document: doc,
+        onResponse: () => {}, onStatus: () => {},
+    });
+    doc.frames.at(-1).fire('load');
+    later.receive({ type: 'ready', instanceId: 'a.1', network: 'blocked' });
+    assert.equal(later.status, 'failed', 'a sandbox that does not say is not sealed');
+});
+
+// A bitmap of the size given, as the page receives one from the sandbox.
+class FakeBitmap {
+    constructor(width, height) {
+        this.width = width;
+        this.height = height;
+        this.closed = false;
+    }
+    close() {
+        this.closed = true;
+    }
+}
+
+test('a reply of the sandbox holds plain data and bitmaps of its slots alone', () => {
+    globalThis.ImageBitmap = FakeBitmap;
+    const badge = () => ({ slot: 'badge', op: 'draw', bitmap: new FakeBitmap(96, 96) });
+    assert.equal(replyProblem({ type: 'response', log: ['a'], resources: [{ positions: new Float32Array(9) }] }), null);
+    assert.equal(replyProblem({ type: 'response', overlays: [badge(), { slot: 'card', op: 'hide' }, null] }), null);
+    assert.equal(replyProblem({ overlays: [{ slot: 'badge', op: 'draw', bitmap: new FakeBitmap(4000, 96) }] }),
+        'a bitmap of 4000 by 96 pixels for the slot badge');
+    assert.equal(replyProblem({ overlays: [{ slot: '__proto__', op: 'draw', bitmap: new FakeBitmap(96, 96) }] }),
+        'a bitmap of 96 by 96 pixels for the slot __proto__');
+    assert.equal(replyProblem({ overlays: [{ slot: 'badge', bitmap: { width: 96, height: 96 } }] }), 'something else for the slot badge');
+    assert.equal(replyProblem({ log: [], extra: { picture: new FakeBitmap(96, 96) } }), 'a bitmap outside its slot');
+    assert.equal(replyProblem({ overlays: Array.from({ length: MAXIMUM_OVERLAYS + 1 }, badge) }), 'overlays beyond a list of 8');
+    assert.equal(replyProblem({ log: new Map([[1, 'x'.repeat(10)]]) }), 'an object other than plain data');
+    assert.equal(replyProblem({ data: new ArrayBuffer(1 << 20) }), 'an object other than plain data');
+    let deep = {};
+    for (let i = 0; i < 100; i++) deep = { deep };
+    assert.equal(replyProblem(deep), 'more parts than a reply holds');
+    // The host ends a worker that answers so, and frees the bitmaps it sent.
+    globalThis.location = { href: 'http://127.0.0.1:1/' };
+    globalThis.addEventListener = () => {};
+    globalThis.removeEventListener = () => {};
+    const doc = new FakeDocument();
+    const statuses = [];
+    const host = new ModuleHost({
+        source: 'export function frame() { return {}; }', instanceId: 'a.1', hello: { instanceId: 'a.1' }, document: doc,
+        onResponse: () => assert.fail('no reply reaches the page'), onStatus: (st, d) => statuses.push([st, d]),
+    });
+    doc.frames.at(-1).fire('load');
+    host.receive({ type: 'ready', instanceId: 'a.1', network: 'blocked', storage: 'blocked' });
+    host.send({ frameId: 1, epoch: 1 });
+    const big = new FakeBitmap(96, 4000);
+    host.receive({ type: 'response', instanceId: 'a.1', epoch: 1, sourceFrameId: 1, overlays: [{ slot: 'badge', op: 'draw', bitmap: big }] });
+    assert.deepEqual(statuses.at(-1), ['restarting', 'the worker answered with a bitmap of 96 by 4000 pixels for the slot badge']);
+    assert.ok(big.closed);
+    host.dispose();
+    delete globalThis.ImageBitmap;
+});
+
+test('the worker log keeps the newest lines across replies', () => {
+    let log = appendLog(undefined, ['epoch 1, start']);
+    log = appendLog(log, []);
+    assert.deepEqual(log, ['epoch 1, start'], 'an empty reply keeps the log');
+    log = appendLog(log, ['goal at 12.0 seconds']);
+    assert.deepEqual(log, ['epoch 1, start', 'goal at 12.0 seconds']);
+    for (let i = 0; i < LOG_LINES + 5; i++) {
+        log = appendLog(log, [`line ${i}`]);
+    }
+    assert.equal(log.length, LOG_LINES);
+    assert.equal(log[log.length - 1], `line ${LOG_LINES + 4}`, 'the newest line comes last');
+    const checked = checkResponse({ type: 'response', instanceId: 'a', epoch: 1, log: ['one', 'two'] }, { instanceId: 'a', epoch: 1, own: new Set(), files: [] });
+    assert.deepEqual(appendLog(log, checked.response.log).slice(-2), ['one', 'two']);
 });

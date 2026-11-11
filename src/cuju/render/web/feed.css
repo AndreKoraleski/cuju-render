@@ -88,6 +88,29 @@ SPDX-License-Identifier: Apache-2.0
 
 /* A square or tall picture keeps the badge of a replay under the scoreboard, which takes most of
    the width, and gives the lower thirds the whole width of the safe area. */
+#app.framed.shape-tall[data-page] #scoreboard,
+#app.framed.shape-square[data-page] #scoreboard {
+    right: var(--safe-right);
+}
+
+/* There each team takes half of what the scores and the clock leave, its name beside its chip. */
+#app.framed.shape-tall[data-page] #scoreboard .team,
+#app.framed.shape-square[data-page] #scoreboard .team {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: none;
+}
+
+#app.framed.shape-tall[data-page] #scoreboard .name,
+#app.framed.shape-square[data-page] #scoreboard .name {
+    flex: 1 1 auto;
+}
+
+#app.framed.shape-tall[data-page] #scoreboard .team.right .name,
+#app.framed.shape-square[data-page] #scoreboard .team.right .name {
+    text-align: right;
+}
+
 #app.framed.shape-tall[data-page] #replay-badge,
 #app.framed.shape-square[data-page] #replay-badge {
     top: calc(var(--safe-top) + 44px);

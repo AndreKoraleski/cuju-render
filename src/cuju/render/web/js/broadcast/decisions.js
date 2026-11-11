@@ -10,10 +10,12 @@
 import * as THREE from 'three';
 import { NODES_FLOAT, PLAYER_FLOATS, isCut } from '../recording/format.js';
 import { teamNames } from './hud.js';
+import { teamName } from '../core/names.js';
 import { HALF_H, HALF_W } from '../world/pitch.js';
 import {
     WIPE, blendPose, clamp, headingOf, headingTo, namedPose, rgb, showPointer, smooth,
 } from './transition.js';
+import { t } from '../core/i18n.js';
 
 const STOP = 0.8;
 const FREEZE = 1.9;
@@ -24,7 +26,10 @@ const SLOW_FRAMES = 9;
 const SLOW = 0.35;
 
 const COLORS = { foul: '#ff8a1f', yellow: '#ffd400', red: '#e0242b', offside: '#35a7ff' };
-const TITLES = { foul: 'Foul', yellow: 'Yellow card', red: 'Red card', offside: 'Offside' };
+const TITLES = {
+    foul: t('decisions.title.foul'), yellow: t('decisions.title.yellow'), red: t('decisions.title.red'),
+    offside: t('decisions.title.offside'),
+};
 
 function el(tag, cls, parent, text) {
     const e = document.createElement(tag);
@@ -182,7 +187,7 @@ export class Decisions {
         this.thirdName = el('div', 'ct-name', ct);
         this.thirdTeam = el('div', 'ct-team', ct);
         this.thirdMinute = el('div', 'ct-minute', this.third);
-        this.hint = el('button', 'decision-skip', watch, 'Skip, Enter or click');
+        this.hint = el('button', 'decision-skip', watch, t('decisions.skip'));
         this.hint.type = 'button';
         this.hint.addEventListener('click', () => this.tr.skip());
         // A click on the view skips a decision's replay.
@@ -206,9 +211,9 @@ export class Decisions {
         return {
             team: p.team,
             number: roster && roster.number != null ? roster.number : (p.goalkeeper ? 1 : p.index + 1),
-            name: roster && roster.name ? roster.name : (p.goalkeeper ? 'Goalkeeper' : `Player ${p.index + 1}`),
+            name: roster && roster.name ? roster.name : (p.goalkeeper ? t('show.player.goalkeeper') : t('show.player.unnamed', { number: p.index + 1 })),
             teamName: teamNames(header)[p.team],
-            badge: (style && style.badge) || (team.name || '?').slice(0, 1).toUpperCase(),
+            badge: (style && style.badge) || (teamName(team) || '?').slice(0, 1).toUpperCase(),
             color: style ? rgb(style.kit.primary) : (p.team ? '#2a56b8' : '#b3262e'),
             trim: style ? rgb(style.kit.secondary) : '#ffffff',
         };
@@ -569,10 +574,10 @@ export class Decisions {
         const who = this.info(d.offender);
         this.banner.style.setProperty('--decision', COLORS[kind === 'second' ? 'red' : d.type] || COLORS.foul);
         this.banner.style.setProperty('--team', who.color);
-        this.bannerLabel.textContent = kind === 'second' ? 'Second yellow' : TITLES[d.type];
+        this.bannerLabel.textContent = kind === 'second' ? t('decisions.title.second') : TITLES[d.type];
         this.bannerNumber.textContent = who.number;
         this.bannerName.textContent = who.name;
-        this.bannerTeam.textContent = d.type === 'offside' ? `${who.teamName}, free kick to the defence` : who.teamName;
+        this.bannerTeam.textContent = d.type === 'offside' ? t('decisions.offside.team', { team: who.teamName }) : who.teamName;
         this.banner.classList.add('show');
     }
 
@@ -589,7 +594,7 @@ export class Decisions {
         this.thirdBadge.textContent = who.badge;
         this.thirdBadge.style.background = who.color;
         this.thirdBadge.style.color = who.trim;
-        this.thirdKind.textContent = kind === 'second' ? 'Second yellow, sent off' : (d.type === 'red' ? 'Red card, sent off' : 'Yellow card');
+        this.thirdKind.textContent = kind === 'second' ? t('decisions.third.second') : (d.type === 'red' ? t('decisions.third.red') : t('decisions.third.yellow'));
         this.thirdName.textContent = `${who.number}  ${who.name}`;
         this.thirdTeam.textContent = who.teamName;
         this.thirdMinute.textContent = minute ? `${minute}′` : '';

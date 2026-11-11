@@ -95,6 +95,25 @@ export const OWN_KEYS = [
     '[role="option"]', '[role="treeitem"]', '[role="spinbutton"]',
 ].join(', ');
 
+// Buttons and links act on Enter and Space alone, so a letter or a question mark pressed on one
+// still reaches the single key shortcuts of the page, such as H, M and F. A button inside a
+// dialog, a menu or a list keeps every key, as do the other controls of OWN_KEYS.
+const PLAIN = 'button, a[href], [role="button"], [role="link"]';
+const PLAIN_ROLES = [null, 'button', 'link'];
+const HOLDERS = 'dialog, [role="dialog"], [role="alertdialog"], [role="menu"], [role="menubar"], '
+    + '[role="listbox"], [role="tablist"], [role="tree"], [role="grid"], .dd-panel';
+
+// Whether a control keeps a key to itself, the control being the closest element of OWN_KEYS
+// around the key's target, or null. Esc always goes on to the page.
+export function keepsKey(control, key, modifiers = {}) {
+    if (!control || key === 'Escape') {
+        return false;
+    }
+    const plain = control.matches(PLAIN) && PLAIN_ROLES.includes(control.getAttribute('role'));
+    const letter = /^[a-z?]$/i.test(key) && !modifiers.ctrlKey && !modifiers.metaKey && !modifiers.altKey;
+    return !(plain && letter && !control.closest(HOLDERS));
+}
+
 // Whatever opens over the page and asks for a click or a key. A dialog, an open details element,
 // a menu, a popover or a list of a dropdown, the panel of a button that shows as expanded, the
 // team editor, the lineups, the cards after the match and any element marked with data-prompt.

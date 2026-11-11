@@ -8,6 +8,8 @@
 // the server holds a newer build, and the removal of the copy that the worker keeps. Scripts reach
 // it as window.cuju.install.
 
+import { t } from '../core/i18n.js';
+
 const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]'];
 const PREFIX = 'cuju-page-';
 
@@ -50,7 +52,7 @@ export function workerBuild(scriptURL) {
 async function serverBuild() {
     const res = await fetch('/api/help/app', { cache: 'no-store' });
     if (!res.ok) {
-        throw new Error(`The server answered ${res.status}.`);
+        throw new Error(t('pwa.error.status', { status: res.status }));
     }
     return (await res.json()).build;
 }
@@ -67,12 +69,12 @@ export class AppInstall {
         this.error = null;
         this.installed = false;
         this.status = h('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' });
-        this.installButton = h('button', { type: 'button', class: 'btn primary', hidden: true, onclick: () => this.install() }, 'Install the app');
-        this.updateButton = h('button', { type: 'button', class: 'btn', hidden: true, onclick: () => this.update(true) }, 'Update');
-        this.forgetButton = h('button', { type: 'button', class: 'btn', hidden: true, onclick: () => this.unregister() }, 'Remove the offline copy');
+        this.installButton = h('button', { type: 'button', class: 'btn primary', hidden: true, onclick: () => this.install() }, t('pwa.install'));
+        this.updateButton = h('button', { type: 'button', class: 'btn', hidden: true, onclick: () => this.update(true) }, t('pwa.update'));
+        this.forgetButton = h('button', { type: 'button', class: 'btn', hidden: true, onclick: () => this.unregister() }, t('pwa.remove'));
         host.replaceChildren(
-            h('h3', { id: 'help-install-title' }, 'Install the app'),
-            h('p', {}, 'Chrome and Edge install this page as an app with a window and an icon of its own. The app keeps a copy of the page, so it starts fast and opens even when the server is stopped, then says so. Recordings, teams and live matches always come from the server.'),
+            h('h2', { id: 'help-install-title' }, t('pwa.title')),
+            h('p', {}, t('pwa.text')),
             h('div', { class: 'help-row' }, this.installButton, this.updateButton, this.forgetButton),
             this.status);
         window.addEventListener('beforeinstallprompt', (e) => {
@@ -135,7 +137,7 @@ export class AppInstall {
 
     async install() {
         if (!this.deferred) {
-            this.status.textContent = 'The browser offers no install right now. Its menu installs the page, as the guide describes.';
+            this.status.textContent = t('pwa.unavailable');
             return { outcome: 'unavailable' };
         }
         const prompt = this.deferred;
@@ -179,7 +181,7 @@ export class AppInstall {
         }
         this.registration = null;
         this.render();
-        this.status.textContent = 'The offline copy is removed. The next start of the page keeps it again.';
+        this.status.textContent = t('pwa.removed');
         return removed;
     }
 
@@ -209,22 +211,25 @@ export class AppInstall {
         this.forgetButton.hidden = !state.registered;
         let text;
         if (!this.supported) {
-            text = 'This address keeps no offline copy. The app installs from the page at http://127.0.0.1 with the port of the server, opened in a window of its own.';
+            text = t('pwa.state.unsupported');
         } else if (state.error) {
-            text = `The offline copy is off, ${state.error}`;
+            text = t('pwa.state.error', { error: state.error });
         } else if (state.standalone) {
-            text = 'The page runs as an installed app.';
+            text = t('pwa.state.standalone');
         } else if (state.installable) {
-            text = 'The browser offers to install the page.';
+            text = t('pwa.state.installable');
         } else if (state.installed) {
-            text = 'The app is installed.';
-        } else {
-            text = 'The browser menu installs the page, as the guide describes, once the offline copy is kept.';
-        }
-        if (state.updateReady) {
-            text += ' A new version of the page is ready, Update shows it.';
+            text = t('pwa.state.installed');
         } else if (state.controlled) {
-            text += ' The offline copy of this version is kept.';
+            text = t('pwa.state.keptMenu');
+        } else {
+            text = t('pwa.state.menu');
+        }
+        // A second sentence follows the first, as its own message.
+        if (state.updateReady) {
+            text += ` ${t('pwa.state.updateReady')}`;
+        } else if (state.controlled && (state.standalone || state.installable || state.installed)) {
+            text += ` ${t('pwa.state.kept')}`;
         }
         this.status.textContent = text;
     }

@@ -205,7 +205,8 @@ def test_play_in_round_brings_a_bracket_to_a_power_of_two():
     assert play_in['name'] == 'Play-in round'
     assert [(f['home'], f['away']) for f in play_in['fixtures']] == [(2, 5), (3, 4)]
     semi = view['stages'][0]['rounds'][1]['fixtures']
-    assert semi[0]['home'] == 0 and semi[0]['away'] == {'from': 'Winner of Play-in 2'}
+    assert semi[0]['home'] == 0 and semi[0]['away']['from'] == 'Winner of Play-in 2'
+    assert semi[0]['away']['from_id'] == 'server.tournament.label.winner_of'
 
 
 def test_two_legged_ties_add_up_and_settle_by_away_goals():
@@ -569,21 +570,45 @@ def test_impossible_configurations_name_the_reason(change, message):
         rules.check(config, _TEAMS, _fits)
 
 
-def test_presets_make_tournaments_for_many_sizes():
-    for name in rules.PRESETS:
+@pytest.mark.parametrize('name', sorted(rules.PRESETS))
+def test_shipped_presets_fit_every_number_of_entrants(name):
+    for count in (2, 3, 4, 5, 6, 7, 8, 9, 12, 16, 17, 24, 33):
         preset = rules.preset_config(name)
-        made = 0
-        for count in (8, 16, 24, 32):
-            try:
-                config = rules.check(
-                    {**preset, 'name': name, 'seed': 1, 'entrants': _builtins(count)}, _TEAMS
-                )
-            except rules.TournamentError:
-                continue
-            made += 1
-            view, _ = _play_out(config, seed=count)
-            assert sorted(view['ranking']) == list(range(count))
-        assert made, name
+        config = rules.check(
+            {**preset, 'name': name, 'seed': 1, 'entrants': _builtins(count)}, _TEAMS
+        )
+        view, _ = _play_out(config, seed=count)
+        assert sorted(view['ranking']) == list(range(count))
+
+
+def test_a_shipped_preset_fits_its_rounds_and_an_edited_one_refuses():
+    preset = rules.preset_config('swiss_16')
+    config = {**preset, 'name': 'Tiny', 'seed': 1, 'entrants': _builtins(3)}
+    assert rules.check(config, _TEAMS)['stages'][0]['rounds'] == 2
+    assert rules.check({**config, 'entrants': _builtins(16)}, _TEAMS)['stages'][0]['rounds'] == 5
+    # Stages that differ from the preset are the user's own, and too many rounds name the reason.
+    edited = {**config, 'stages': [{'format': 'swiss', 'name': 'Swiss', 'rounds': 4}]}
+    with pytest.raises(rules.TournamentError, match='without rematches'):
+        rules.check(edited, _TEAMS)
+    phase = rules.check(
+        {**rules.preset_config('league_phase'), 'name': 'x', 'seed': 1, 'entrants': _builtins(5)},
+        _TEAMS,
+    )
+    assert phase['stages'][0]['advance'] == 4
+    euro = rules.check(
+        {**rules.preset_config('euro'), 'name': 'x', 'seed': 1, 'entrants': _builtins(2)}, _TEAMS
+    )
+    assert euro['stages'][0]['group_size'] == 2 and euro['stages'][0]['best_position'] is None
+
+
+def test_a_tie_without_a_played_match_has_no_score():
+    config = _config([{'format': 'knockout', 'legs': 2, 'settle': ['lots']}], 4)
+    tie = rules.evaluate(config, {})['stages'][0]['rounds'][0]['fixtures'][0]
+    assert tie['state'] == 'ready' and tie['score'] is None
+    first = tie['matches'][0]
+    results = {first: {'score': [2, 1]}}
+    tie = rules.evaluate(config, results)['stages'][0]['rounds'][0]['fixtures'][0]
+    assert tie['state'] == 'ready' and sorted(tie['score']) == [1, 2]
 
 
 def test_entrant_names_repeat_with_a_number():
@@ -699,19 +724,100 @@ def test_runner_runs_several_matches_at_once(render_home):
     cups.close()
 
 
-def test_runner_stops_on_a_failed_match_and_resumes(render_home):
+def test_runner_plays_on_past_a_failed_match_and_resumes(render_home):
     cups = runner.Tournaments(player=_fake_player(fail={'0/w4-1/1'}), start=False)
     entry = cups.create(_builtin_config(4))
-    cups.tick()
-    assert _wait(lambda: cups.get(entry['id'])['state'] == 'stopped')
+    # The other semi-final does not depend on the failed one, so it plays before the stop.
+    assert cups.run(entry['id'], report=lambda line: None) == 'stopped'
     view = cups.get(entry['id'])
-    assert 'policy of Reds failed' in view['error']
-    failed = next(m for m in view['matches'] if m['key'] == '0/w4-1/1')
-    assert failed['state'] == 'failed'
+    assert view['error'].startswith('Semi-final 1 failed, the policy of Reds failed')
+    assert view['failed'] == 1
+    states = {m['key']: m['state'] for m in view['matches']}
+    assert states == {'0/w4-1/1': 'failed', '0/w4-2/1': 'done'}
+    # A stopped tournament is free for another process, such as the command line.
+    assert not (runner.folder() / f'{entry["id"]}.lock').exists()
     cups._player = _fake_player()
     cups.resume(entry['id'])
+    assert cups.get(entry['id'])['failed'] == 0
     assert cups.run(entry['id'], report=lambda line: None) == 'done'
     cups.close()
+
+
+def test_an_award_after_a_failure_runs_the_tournament_on(render_home):
+    cups = runner.Tournaments(player=_fake_player(fail={'0/w4-1/1'}), start=False)
+    entry = cups.create(_builtin_config(4))
+    assert cups.run(entry['id'], report=lambda line: None) == 'stopped'
+    view = cups.forfeit(entry['id'], '0/w4-1/1', 'away')
+    assert view['state'] == 'running' and view['error'] is None and view['failed'] == 0
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    cups.close()
+
+
+def test_failed_matches_wait_while_people_play_theirs(render_home):
+    config = _builtin_config(4, seeding='manual')
+    config['entrants'] = [{'kind': 'person', 'name': 'Ana'}, *_builtins(3)]
+    cups = runner.Tournaments(player=_fake_player(fail={'0/w4-2/1'}), start=False)
+    entry = cups.create(config)
+    lines = []
+    assert cups.run(entry['id'], report=lines.append) == 'people'
+    assert 'Semi-final 2 failed' in lines[-1]
+    view = cups.get(entry['id'])
+    assert view['state'] == 'running' and view['people_waiting'] == 1 and view['failed'] == 1
+    # Resume retries a failed match of a running tournament too.
+    cups._player = _fake_player()
+    cups.resume(entry['id'])
+    assert cups.run(entry['id'], report=lambda line: None) == 'people'
+    assert cups.get(entry['id'])['failed'] == 0
+    cups.close()
+
+
+def test_tournament_identifiers_differ_from_team_identifiers(render_home):
+    cups = runner.Tournaments(player=_fake_player(), start=False)
+    entry = cups.create(_builtin_config(2))
+    assert entry['id'].startswith('cup-')
+    cups.close()
+    # A tournament saved before, with the prefix that teams also use, still loads and plays.
+    stored = json.loads((runner.folder() / f'{entry["id"]}.json').read_text())
+    stored['id'] = 't-20261101-120000-ab12'
+    (runner.folder() / f'{stored["id"]}.json').write_text(json.dumps(stored))
+    again = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    assert stored['id'] in [item['id'] for item in again.entries()]
+    assert again.run(stored['id'], report=lambda line: None) == 'done'
+    again.close()
+
+
+def test_agent_matches_carry_the_names_of_their_entrants(render_home):
+    seen = []
+
+    def player(match, teams, provenance, progress):
+        seen.append(provenance)
+        return {'score': [1, 0]}
+
+    cups = runner.Tournaments(player=player, start=False, interval=0.01)
+    config = _builtin_config(2)
+    config['entrants'] = [{'kind': 'builtin', 'ability': 0.8}, {'kind': 'builtin', 'name': 'Rex'}]
+    entry = cups.create(config)
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    cups.close()
+    assert sorted(seen[0]['names']) == ['Built-in AI 0.80', 'Rex']
+
+
+def test_cancel_refuses_a_tournament_that_has_ended(render_home):
+    cups = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    entry = cups.create(_builtin_config(2))
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    with pytest.raises(cuju_errors().ArgumentError, match='found it done'):
+        cups.cancel(entry['id'])
+    cups.close()
+
+
+def test_tables_name_no_tiebreak_before_any_match():
+    config = _config([{'format': 'league'}], 4)
+    table = rules.evaluate(config, {})['stages'][0]['tables'][0]['rows']
+    assert all(row['tiebreak'] is None for row in table)
+    view = rules.evaluate(config, {'0/1-1': {'score': [0, 0]}})
+    rows = view['stages'][0]['tables'][0]['rows']
+    assert any(row['tiebreak'] for row in rows)
 
 
 def test_runner_skips_invalid_files_and_keeps_others(render_home):
@@ -732,6 +838,9 @@ def test_cancel_forfeit_and_remove(render_home):
     view = cups.forfeit(entry['id'], '0/w4-1/1', 'away')
     match = next(m for m in view['matches'] if m['key'] == '0/w4-1/1')
     assert match['result']['score'] == [0, 3] and match['result']['forfeit']
+    # An awarded match was never played, so the ratings stay as they are.
+    assert runner.ratings() == {}
+    assert not (runner.folder() / 'ratings.json').exists()
     with pytest.raises(cuju_errors().ArgumentError):
         cups.remove(entry['id'])
     assert cups.cancel(entry['id'])
@@ -763,6 +872,48 @@ def test_a_second_process_cannot_run_a_claimed_tournament(render_home):
     cups.tick()
     assert cups.get(entry['id'])['state'] == 'cancelled'
     cups.close()
+
+
+def test_awards_and_resumes_reach_the_process_that_runs_the_tournament(render_home, monkeypatch):
+    cups = runner.Tournaments(player=_fake_player(fail={'0/w4-1/1'}), start=False)
+    identifier = cups.create(_builtin_config(4))['id']
+    assert cups.run(identifier, report=lambda line: None) == 'stopped'
+    cups.close()
+    # Another live process holds the tournament, which a second instance stands in for here.
+    (runner.folder() / f'{identifier}.lock').write_text(str(os.getppid()))
+    owner = runner.Tournaments(player=_fake_player(), start=False)
+    owner._owned.add(identifier)
+    asker = runner.Tournaments(start=False)
+    # A wrong key reads as such at once, before the other process is asked.
+    with pytest.raises(cuju_errors().ArgumentError, match='still to play'):
+        asker.forfeit(identifier, 'nothing', 'home')
+    stop = threading.Event()
+
+    def answer():
+        while not stop.is_set():
+            owner._scan()
+            time.sleep(0.02)
+
+    thread = threading.Thread(target=answer)
+    thread.start()
+    try:
+        assert asker.resume(identifier)['state'] == 'running'
+        view = asker.forfeit(identifier, '0/w4-1/1', 'away')
+        match = next(m for m in view['matches'] if m['key'] == '0/w4-1/1')
+        assert match['result']['forfeit'] and match['result']['score'] == [0, 3]
+        assert owner.get(identifier)['played'] == 2
+    finally:
+        stop.set()
+        thread.join()
+    # A process that never answers leaves the change undone and names the route to use.
+    monkeypatch.setattr(runner, '_ASK_SECONDS', 0.2)
+    final = next(m for m in asker.get(identifier)['matches'] if m['state'] == 'ready')
+    with pytest.raises(cuju_errors().ArgumentError, match='did not answer') as caught:
+        asker.forfeit(identifier, final['key'], 'home')
+    assert f'POST /api/tournaments/{identifier}/forfeit' in str(caught.value)
+    assert not list(runner.folder().glob('*.request'))
+    owner.close()
+    asker.close()
 
 
 class _FakeGames:
@@ -798,7 +949,7 @@ def test_people_play_their_matches_as_games(render_home, monkeypatch):
         ['builtin', 'builtin'],
         match['seed'],
     )
-    assert tournament['names'] == ['Ana', None] and tournament['key'] == match['key']
+    assert tournament['names'] == ['Ana', 'Built-in AI 0.30'] and tournament['key'] == match['key']
     assert cups.get(entry['id'])['matches'][0]['state'] == 'playing'
     # A game quit before its end leaves the match to be played again.
     games.entry.update(state='ended', ending='quit', match='m-x')
@@ -893,6 +1044,17 @@ def test_server_routes_create_list_show_and_check(render_home):
         assert status == 403
         status, _ = _request(address, 'GET', '/api/tournaments', headers={'Host': 'example.com'})
         assert status == 403
+        status, awarded = _request(
+            address,
+            'POST',
+            f'/api/tournaments/{entry["id"]}/forfeit',
+            {'key': '0/w4-1/1', 'winner': 'home'},
+        )
+        assert status == 200
+        match = next(m for m in awarded['matches'] if m['key'] == '0/w4-1/1')
+        assert match['result']['forfeit'] and match['result']['score'] == [3, 0]
+        status, error = _request(address, 'POST', f'/api/tournaments/{entry["id"]}/resume', {})
+        assert status == 400 and 'stopped tournament' in error['error']
         status, _ = _request(address, 'POST', f'/api/tournaments/{entry["id"]}/cancel', {})
         assert status == 200
         status, _ = _request(address, 'POST', '/api/tournaments/t-none/cancel', {})
@@ -963,11 +1125,152 @@ def test_command_line_makes_lists_shows_and_cancels(render_home, capsys, monkeyp
     assert main(['tournament', 'cancel', identifier]) == 0
     assert main(['tournament', 'presets']) == 0
     assert 'world_cup' in capsys.readouterr().out
+    # A shipped preset fits its rounds to two entrants.
     assert (
         main(['tournament', 'new', '--preset', 'swiss_16', '--builtin', '0.1', '--builtin', '0.2'])
-        == 1
+        == 0
     )
-    assert 'rounds' in capsys.readouterr().err
+    capsys.readouterr()
+
+
+def test_command_line_refuses_with_one_line(render_home, capsys):
+    from cuju.render.__main__ import main
+
+    three = ['--builtin', '0.1', '--builtin', '0.2', '--builtin', '0.3']
+    for arguments, message in (
+        (['--preset', 'nonexistent', *three], 'expected a preset from'),
+        (['--preset', 'swiss_16', '--rounds', '5', *three], 'expected --rounds from 1 to 2'),
+        (['--preset', 'quick_cup', '--rounds', '3', *three], 'expected a Swiss or ladder stage'),
+        (['--preset', 'quick_cup', '--builtin', 'strong', *three], 'expected --builtin'),
+    ):
+        assert main(['tournament', 'new', *arguments]) == 1
+        error = capsys.readouterr().err
+        assert error.startswith(f'cuju render: {message}') and error.count('\n') == 1, error
+    assert main(['tournament', 'new', '--preset', 'swiss_16', '--rounds', '2', *three]) == 0
+    assert 'created cup-' in capsys.readouterr().out
+
+
+def test_command_line_checks_deletes_rates_and_prints_json(render_home, capsys, monkeypatch):
+    from cuju.render.__main__ import main
+
+    monkeypatch.setattr(runner.Tournaments, '_play_process', lambda self, *a: {'score': [2, 1]})
+    four = ['--builtin', '0.1', '--builtin', '0.2', '--builtin', '0.3', '--builtin', '0.4']
+    scenario = ['--scenario', 'academy_empty_goal_close']
+    assert main(['tournament', 'check', '--preset', 'world_cup', *four, *scenario]) == 0
+    checked = capsys.readouterr().out
+    assert '4 entrants' in checked and '1. Group stage, groups' in checked
+    assert 'Group A, Built-in AI' in checked
+    assert main(['tournament', 'check', '--preset', 'quick_cup', '--json', *four]) == 0
+    assert json.loads(capsys.readouterr().out)['matches'] == 2
+    assert main(['tournament', 'list']) == 0
+    assert capsys.readouterr().out == ''
+    assert main(['tournament', 'ratings']) == 0
+    assert 'no ratings yet' in capsys.readouterr().out
+    arguments = ['tournament', 'new', '--preset', 'swiss_16', '--seed', '2', *four, *scenario]
+    assert main([*arguments, '--json', '--run']) == 0
+    ran = json.loads(capsys.readouterr().out)
+    assert ran['outcome'] == 'done' and ran['tournament']['state'] == 'done'
+    identifier = ran['tournament']['id']
+    assert main(['tournament', 'show', identifier]) == 0
+    shown = capsys.readouterr().out
+    assert 'Swiss, finished' in shown and 'Swiss, swiss' not in shown
+    assert 'Buchholz Byes' in shown and 'Final ranking' in shown and '  1. ' in shown
+    assert main(['tournament', 'ratings', '--json']) == 0
+    assert len(json.loads(capsys.readouterr().out)) == 4
+    assert main(['tournament', 'ratings']) == 0
+    assert 'Built-in AI 0.10' in capsys.readouterr().out
+    assert main(['tournament', 'cancel', identifier]) == 1
+    assert 'found it done' in capsys.readouterr().err
+    assert main(['tournament', 'presets', '--json']) == 0
+    assert 'world_cup' in json.loads(capsys.readouterr().out)
+    assert main(['tournament', 'delete', identifier]) == 0
+    assert f'deleted {identifier}' in capsys.readouterr().out
+    assert main(['tournament', 'list', '--json']) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_show_names_byes_replays_and_deciders():
+    from cuju.render._tournaments.tournament_cli import describe
+
+    config = _config(
+        [{'format': 'knockout', 'settle': ['replay', 'decider', 'lots']}], 2, seeding='manual'
+    )
+    results = {'0/w2-1/1': {'score': [1, 1]}, '0/w2-1/r1': {'score': [0, 0]}}
+    results['0/w2-1/d1'] = {'score': [2, 0]}
+    results['0/w2-1/d2'] = {'score': [1, 0]}
+    view = rules.evaluate(config, results)
+    entry = {
+        'name': 'Cup',
+        'id': 'cup-x',
+        'state': 'done',
+        'seed': 11,
+        'played': 4,
+        'scheduled': 4,
+        'error': None,
+        'config': config,
+        'stages_view': view['stages'],
+        'champion': 'x',
+        'matches': [{**m, 'state': 'done'} for m in view['matches']],
+        'ranking': view['ranking'],
+    }
+    text = '\n'.join(describe(entry))
+    assert '1 to 1, after deciding matches, replay 0 to 0, deciding matches 2 to 1' in text
+    swiss = _config([{'format': 'swiss', 'rounds': 1}], 3)
+    view = rules.evaluate(swiss, {})
+    entry.update(config=swiss, stages_view=view['stages'], matches=[], ranking=None)
+    text = '\n'.join(describe(entry))
+    bye = swiss['entrants'][view['stages'][0]['rounds'][0]['bye']]['name']
+    assert f'Round 1, bye for {bye}' in text
+
+
+def test_command_line_awards_resumes_and_prints_json(render_home, capsys, monkeypatch):
+    from cuju.render.__main__ import main
+
+    failing = [True]
+
+    def play(self, match, *rest):
+        if failing[0] and match['key'] == '0/w4-1/1':
+            raise RuntimeError('the policy of Reds failed')
+        return {'score': [2, 1]}
+
+    monkeypatch.setattr(runner.Tournaments, '_play_process', play)
+    arguments = ['tournament', 'new', '--preset', 'quick_cup', '--seed', '4']
+    arguments += ['--builtin', '0.1', '--builtin', '0.2', '--builtin', '0.3', '--builtin', '0.4']
+    assert main([*arguments, '--scenario', 'academy_empty_goal_close']) == 0
+    identifier = capsys.readouterr().out.split()[1]
+    assert main(['tournament', 'show', identifier]) == 0
+    shown = capsys.readouterr().out
+    assert 'not played' in shown and ' to ' not in shown.split('Matches to play')[0]
+    assert '0/w4-1/1  Semi-final 1' in shown and 'in the queue' in shown
+    # The second semi-final plays although the first fails.
+    assert main(['tournament', 'run', identifier]) == 1
+    assert 'award the failed matches' in capsys.readouterr().out
+    assert main(['tournament', 'show', identifier, '--json']) == 0
+    view = json.loads(capsys.readouterr().out)
+    assert view['state'] == 'stopped' and view['failed'] == 1 and view['played'] == 1
+    assert main(['tournament', 'show', identifier]) == 0
+    assert 'failed, the policy of Reds failed' in capsys.readouterr().out
+    # Resume retries the failed match, which fails again.
+    assert main(['tournament', 'resume', identifier]) == 0
+    assert f'resumed {identifier}' in capsys.readouterr().out
+    assert main(['tournament', 'run', identifier]) == 1
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        main(['tournament', 'forfeit', identifier, '--winner', 'away'])
+    capsys.readouterr()
+    assert main(['tournament', 'award', identifier, '--match', '0/w4-1/1', '--winner', 'away']) == 0
+    output = capsys.readouterr().out
+    assert 'awarded Semi-final 1 to' in output and 'the tournament runs' in output
+    failing[0] = False
+    assert main(['tournament', 'run', identifier]) == 0
+    capsys.readouterr()
+    assert main(['tournament', 'show', identifier]) == 0
+    assert '0 to 3, awarded' in capsys.readouterr().out
+    assert main(['tournament', 'list', '--json']) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed[0]['id'] == identifier and listed[0]['state'] == 'done'
+    assert main(['tournament', 'resume', identifier]) == 1
+    assert 'expected a stopped tournament' in capsys.readouterr().err
 
 
 # Real matches.
@@ -1011,3 +1314,382 @@ def test_a_tiny_knockout_of_real_academy_matches(render_home):
         assert header['title'].startswith('Spring cup, ')
         assert provenance['ability'] == match['ability']
         assert _library.details(match['result']['match'])['score'] == match['result']['score']
+        # The recording names its sides as the tournament's entrants, Built-in AI 0.60 and so on.
+        names = [done['config']['entrants'][match[side]]['name'] for side in ('home', 'away')]
+        assert provenance['tournament']['names'] == names
+        assert [team['name'] for team in header['teams']] == names
+        assert header['title'].endswith(f'{names[0]} against {names[1]}')
+
+
+def test_a_failing_team_is_named_in_the_tournament_error(render_home, tmp_path):
+    from cuju.render._registry import teams as _teams
+
+    folder = tmp_path / 'crash'
+    folder.mkdir()
+    (folder / 'main.py').write_text(
+        'def agent(obs):\n    raise RuntimeError("crash on purpose")\n', encoding='utf-8'
+    )
+    team = _teams.add_folder(folder, 'Crasher', '5v5')
+    cups = runner.Tournaments(start=False, interval=0.1)
+    config = _builtin_config(2, seeding='manual')
+    config['entrants'] = [{'kind': 'team', 'team': team['id'], 'name': 'Red crash'}, *_builtins(1)]
+    config['stages'] = [{'format': 'knockout', 'scenario': '5_vs_5', 'length': 50}]
+    entry = cups.create(config)
+    assert cups.run(entry['id'], report=lambda line: None) == 'stopped'
+    error = cups.get(entry['id'])['error']
+    cups.close()
+    # The failure names the team as its entrant, Red crash, and not by its name in the registry.
+    assert error.startswith('Final failed, the policy of Red crash failed, RuntimeError: crash')
+
+
+# The names and labels that the rules make, which the page shows in its own language.
+
+
+def _label_ids(value):
+    """Returns the ids of a label and of the labels among its values, outermost first."""
+    if not isinstance(value, dict) or 'id' not in value:
+        return []
+    found = [value['id']]
+    for inner in value['values'].values():
+        found += _label_ids(inner)
+    return found
+
+
+def test_generated_names_travel_as_labels_and_given_names_as_text():
+    from cuju.render._text import messages as _messages
+
+    config = rules.check(
+        {
+            'seed': 4,
+            'entrants': [
+                {'kind': 'builtin', 'ability': 0.5},
+                {'kind': 'builtin', 'ability': 0.5},
+                {'kind': 'builtin'},
+                {'kind': 'builtin', 'name': 'Rex'},
+                {'kind': 'team', 'team': 'reds'},
+            ],
+            'stages': [
+                {'format': 'groups', 'name': 'Group stage', 'group_size': 3, 'qualifiers': 1},
+                {'format': 'knockout', 'name': 'Our final'},
+            ],
+        },
+        _TEAMS,
+    )
+    # The English text stays as it was, for the command line and for older readers.
+    assert config['name'] == 'Tournament'
+    assert config['name_id'] == 'server.tournament.label.tournament'
+    entrants = config['entrants']
+    assert [e['name'] for e in entrants] == [
+        'Built-in AI 0.50',
+        'Built-in AI 0.50 2',
+        'Built-in AI',
+        'Rex',
+        'Reds',
+    ]
+    assert entrants[0]['name_id'] == 'server.tournament.label.builtin_ability'
+    assert entrants[0]['name_values'] == {'ability': '0.50'}
+    assert _label_ids(rules.label_of(entrants[1])) == [
+        'server.tournament.label.numbered',
+        'server.tournament.label.builtin_ability',
+    ]
+    # A name that a person gave, and the name of a registered team, stay plain text.
+    assert 'name_id' not in entrants[3] and 'name_id' not in entrants[4]
+    stages = config['stages']
+    assert stages[0]['name_id'] == 'server.tournament.label.stage.group_stage'
+    assert stages[1]['name'] == 'Our final' and 'name_id' not in stages[1]
+    view = rules.evaluate(config, {})
+    groups, knockout = view['stages']
+    assert groups['name_id'] == 'server.tournament.label.stage.group_stage'
+    table = groups['tables'][0]
+    assert (table['name'], table['name_id'], table['name_values']) == (
+        'Group A',
+        'server.tournament.label.group',
+        {'group': 'A'},
+    )
+    first = groups['rounds'][0]
+    assert (first['name'], first['name_id']) == ('Matchday 1', 'server.tournament.label.matchday')
+    match = view['matches'][0]
+    assert match['label'] == 'Group A, matchday 1'
+    assert match['label_id'] == 'server.tournament.label.group_matchday'
+    assert 'name_id' not in knockout
+    # Every label is a known message whose text its values give.
+    for holder, field in [(entrants[1], 'name'), (table, 'name'), (match, 'label')]:
+        found = rules.label_of(holder, field)
+        assert _messages.valid_label(found)
+        assert _messages.text(found['id'], **found['values']) == holder[field]
+
+
+def test_knockout_labels_name_rounds_ties_legs_and_sides_still_to_come():
+    config = _config(
+        [{'format': 'knockout', 'third_place': True, 'legs': 2, 'settle': ['lots']}], 8
+    )
+    view = rules.evaluate(config, {})
+    rounds = view['stages'][0]['rounds']
+    assert [r['name'] for r in rounds] == [
+        'Quarter-finals',
+        'Semi-finals',
+        'Final',
+        'Third place match',
+    ]
+    assert [r['name_id'].rsplit('.', 1)[1] for r in rounds] == [
+        'quarter_finals',
+        'semi_finals',
+        'final',
+        'third_place',
+    ]
+    semi = rounds[1]['fixtures'][0]
+    assert semi['label'] == 'Semi-final 1' and semi['label_values'] == {'number': '1'}
+    side = semi['home']
+    assert side['from'] == 'Winner of Quarter-final 1'
+    assert _label_ids(rules.label_of(side, 'from')) == [
+        'server.tournament.label.winner_of',
+        'server.tournament.label.quarter_final',
+    ]
+    third = rounds[3]['fixtures'][0]
+    assert third['home']['from_id'] == 'server.tournament.label.loser_of'
+    leg = view['matches'][0]
+    assert leg['label'] == 'Quarter-final 1, leg 1'
+    assert _label_ids(rules.label_of(leg, 'label')) == [
+        'server.tournament.label.leg',
+        'server.tournament.label.quarter_final',
+    ]
+
+
+@pytest.mark.parametrize('stage', _FORMATS, ids=lambda stage: '-'.join(map(str, stage.values())))
+def test_every_name_of_every_format_is_a_label_of_its_text(stage):
+    from cuju.render._text import messages as _messages
+
+    def same(holder, field):
+        found = rules.label_of(holder, field)
+        assert _messages.valid_label(found), holder[field]
+        assert _messages.text(found['id'], **found['values']) == holder[field]
+
+    config = _config([stage], 7)
+    view, _ = _play_out(config)
+    for part in view['stages']:
+        same(part, 'name')
+        for table in part['tables']:
+            same(table, 'name')
+        for round_ in part['rounds']:
+            same(round_, 'name')
+            for fixture in round_['fixtures']:
+                if 'label' in fixture:
+                    same(fixture, 'label')
+    for match in view['matches']:
+        same(match, 'label')
+
+
+def test_a_refused_entrant_names_the_scenario_and_reason_as_values():
+    def fits(entrant, scenario):
+        if entrant['format'] == '5v5':
+            return {
+                'id': 'server.teams.scenario_format',
+                'text': 'unused',
+                'values': {'format': '5v5'},
+            }
+        return None
+
+    with pytest.raises(rules.TournamentError) as caught:
+        rules.check(
+            {
+                'name': 'Mixed',
+                'seed': 1,
+                'entrants': [{'kind': 'team', 'team': 'minis'}, {'kind': 'builtin'}],
+                'stages': [{'format': 'knockout', 'scenario': '11_vs_11_kaggle'}],
+            },
+            _TEAMS,
+            fits,
+        )
+    values = caught.value.values
+    # The scenario travels as a scenario value, which the page names, and the text stays English.
+    assert values['scenario'] == {
+        'kind': 'scenario',
+        'name': '11_vs_11_kaggle',
+        'text': '11_vs_11_kaggle',
+    }
+    assert values['reason']['id'] == 'server.teams.scenario_format'
+    assert str(caught.value).startswith('Minis cannot play 11_vs_11_kaggle in stage 1, unused')
+
+
+def _labelled_failure(player='Built-in AI'):
+    """A player whose first semi-final fails with a message of the server, as a policy's does."""
+
+    def play(match, teams, provenance, progress):
+        if match['key'] == '0/w4-1/1':
+            error = RuntimeError(f'the policy of {player} failed, ValueError: no')
+            error.message_id = 'server.policy.failed'
+            error.values = {'player': player, 'reason': 'ValueError: no'}
+            raise error
+        return {'score': [1, 0], 'cards': [[0, 0], [0, 0]], 'match': None}
+
+    return play
+
+
+def test_the_error_of_a_stopped_tournament_carries_its_inner_message(render_home):
+    cups = runner.Tournaments(player=_labelled_failure(), start=False)
+    entry = cups.create(_builtin_config(4))
+    assert cups.run(entry['id'], report=lambda line: None) == 'stopped'
+    view = cups.get(entry['id'])
+    cups.close()
+    assert view['error'] == 'Semi-final 1 failed, the policy of Built-in AI failed, ValueError: no'
+    assert view['error_id'] == 'server.tournament.match_failed'
+    values = view['error_values']
+    assert values['label']['id'] == 'server.tournament.label.semi_final'
+    assert values['error']['id'] == 'server.policy.failed'
+    assert values['error']['values']['player'] == 'Built-in AI'
+    # The failed match keeps its own error with its id too.
+    failed = next(m for m in view['matches'] if m['state'] == 'failed')
+    assert failed['error_id'] == 'server.policy.failed'
+
+
+def test_a_failure_names_the_team_as_its_entrant(monkeypatch):
+    monkeypatch.setattr(runner._teams, 'entry', lambda identifier: {'name': identifier.title()})
+    record = {
+        'config': {
+            'entrants': [
+                {'kind': 'team', 'team': 'crashers', 'name': 'Crash FC'},
+                {'kind': 'team', 'team': 'reds', 'name': 'Reds'},
+            ]
+        }
+    }
+    match = {'home': 0, 'away': 1}
+    ids = {
+        'error_id': 'server.policy.failed',
+        'error_values': {'player': 'Crashers', 'reason': 'TypeError: no'},
+    }
+    error, found = runner.Tournaments._entrant_failure(
+        record, match, 'the policy of Crashers failed, TypeError: no', ids
+    )
+    assert error == 'the policy of Crash FC failed, TypeError: no'
+    assert found['error_values']['player'] == 'Crash FC'
+    # A team that plays under its own name, and an error without a player, stay as they are.
+    ids['error_values']['player'] = 'Reds'
+    assert runner.Tournaments._entrant_failure(record, match, 'x', ids) == ('x', ids)
+    assert runner.Tournaments._entrant_failure(record, match, 'y', {}) == ('y', {})
+
+
+def test_files_keep_labels_and_files_of_before_show_their_text(render_home):
+    cups = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    config = _builtin_config(2)
+    del config['name']
+    config['entrants'] = [{'kind': 'builtin', 'ability': 0.3}, {'kind': 'person', 'name': 'Ana'}]
+    entry = cups.create(config)
+    assert (entry['name'], entry['name_id']) == ('Tournament', 'server.tournament.label.tournament')
+    cups.close()
+    path = runner.folder() / f'{entry["id"]}.json'
+    stored = json.loads(path.read_text())
+    first, second = stored['config']['entrants']
+    assert first['name_id'] == 'server.tournament.label.builtin_ability'
+    assert first['name_values'] == {'ability': '0.30'}
+    assert second['name'] == 'Ana' and 'name_id' not in second
+    assert stored['config']['stages'][0]['name_id'] == 'server.tournament.label.stage.knockout'
+    # A file of before holds the English text alone, which shows as it is.
+    for holder in (stored['config'], first, stored['config']['stages'][0]):
+        holder.pop('name_id')
+        holder.pop('name_values')
+    path.write_text(json.dumps(stored))
+    again = runner.Tournaments(player=_fake_player(), start=False, interval=0.01)
+    summary = again.get(entry['id'])
+    again.close()
+    assert summary['name'] == 'Tournament' and 'name_id' not in summary
+    assert summary['stages'][0] == {
+        'name': 'Knockout',
+        'format': 'knockout',
+        'scenario': 'academy_empty_goal_close',
+    }
+    assert summary['config']['entrants'][0]['name'] == 'Built-in AI 0.30'
+
+
+def test_ratings_and_recordings_keep_the_labels_of_entrants(render_home):
+    seen = []
+
+    def player(match, teams, provenance, progress):
+        seen.append(provenance)
+        return {'score': [1, 0]}
+
+    cups = runner.Tournaments(player=player, start=False, interval=0.01)
+    config = _builtin_config(2)
+    config['entrants'] = [{'kind': 'builtin', 'ability': 0.8}, {'kind': 'builtin', 'name': 'Rex'}]
+    entry = cups.create(config)
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    done = cups.get(entry['id'])
+    cups.close()
+    provenance = seen[0]
+    assert provenance['name'] == 'Spring cup' and 'name_id' not in provenance
+    assert provenance['label'] == 'Final'
+    assert provenance['label_id'] == 'server.tournament.label.final'
+    assert provenance['stage_id'] == 'server.tournament.label.stage.knockout'
+    labels = provenance['labels']
+    assert sorted(provenance['names']) == ['Built-in AI 0.80', 'Rex']
+    assert sorted(rules.text_of(name) for name in labels) == ['Built-in AI 0.80', 'Rex']
+    assert any(isinstance(name, dict) for name in labels) and 'Rex' in labels
+    # The champion carries the label of its name, a name a person gave the text alone.
+    assert done['champion'] in ('Built-in AI 0.80', 'Rex')
+    assert ('champion_id' in done) == (done['champion'] != 'Rex')
+    table = runner.ratings()
+    assert table['builtin:0.80']['name_id'] == 'server.tournament.label.builtin_ability'
+    # The title of the recording is a label of the tournament, the match and its sides.
+    title = rules.match_title(provenance, labels[0], labels[1])
+    home, away = (rules.text_of(name) for name in labels)
+    assert title['text'] == f'Spring cup, Final, {home} against {away}'
+    assert title['values']['match']['id'] == 'server.tournament.label.final'
+
+
+def test_notes_of_person_games_are_labels_and_name_a_failure(render_home):
+    games = _FakeGames()
+    cups = runner.Tournaments(games, player=_fake_player(), start=False)
+    config = _builtin_config(2)
+    config['entrants'] = [{'kind': 'person', 'name': 'Ana'}, {'kind': 'builtin', 'ability': 0.3}]
+    entry = cups.create(config)
+    cups.tick()
+    key = cups.get(entry['id'])['matches'][0]['key']
+    cups.play(entry['id'], key)
+    games.entry.update(state='ended', ending='quit', match='m-x')
+    cups.tick()
+    after = cups.get(entry['id'])['matches'][0]
+    assert after['note'].startswith('The game ended before full time')
+    assert after['note_id'] == 'server.tournament.note.early'
+    # The opponent's policy ends the game, and the note names the failure and the award.
+    cups.play(entry['id'], key)
+    games.entry.update(
+        state='ended',
+        ending='policy',
+        match=None,
+        error='the policy of Rule bot failed, ValueError: no',
+        error_id='server.policy.failed',
+        error_values={'player': 'Rule bot', 'reason': 'ValueError: no'},
+    )
+    cups.tick()
+    after = cups.get(entry['id'])['matches'][0]
+    assert after['state'] == 'person' and after['note_id'] == 'server.tournament.note.failed'
+    assert after['note'] == (
+        'The game stopped, the policy of Rule bot failed, ValueError: no. Award the match to '
+        'either side, or play it again.'
+    )
+    assert after['note_values']['error']['id'] == 'server.policy.failed'
+    # A game that the process of before followed is gone, with a note of its own.
+    cups.play(entry['id'], key)
+    cups.close()
+    games.entry = None
+    again = runner.Tournaments(games, player=_fake_player(), start=False)
+    again.tick()
+    gone = again.get(entry['id'])['matches'][0]
+    again.close()
+    assert gone['note_id'] == 'server.tournament.note.gone'
+
+
+def test_stage_names_of_the_page_agree_with_the_rules():
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(rules.__file__).parents[1] / 'web' / 'js' / 'play/tournament-layout.js'
+    ).read_text(encoding='utf-8')
+    block = source.split('export const STAGE_NAME_IDS = {', 1)[1].split('};', 1)[0]
+    pairs = re.findall(r"^\s*'?([^':]+?)'?: '([a-z_]+)',$", block, re.MULTILINE)
+    assert dict(pairs) == rules.STAGE_NAMES
+    for name, key in rules.STAGE_NAMES.items():
+        assert rules._label(f'stage.{key}')['text'] == name
+    for preset in rules.PRESETS.values():
+        for stage in preset['stages']:
+            assert stage['name'] in rules.STAGE_NAMES

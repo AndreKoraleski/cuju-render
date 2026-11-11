@@ -8,6 +8,7 @@ import {
     Canvas, Circle, FabricImage, IText, Line, PencilBrush, Rect, Triangle,
 } from '../../vendor/fabric/fabric.min.mjs';
 import { h } from './library.js';
+import { t, tOr } from '../core/i18n.js';
 
 const HISTORY_LIMIT = 60;
 // Every step of the history is a whole document with its pictures, so the steps kept are also
@@ -52,7 +53,7 @@ function safeValue(v) {
 export function sanitizeDocument(text) {
     const raw = typeof text === 'string' ? JSON.parse(text) : text;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-        throw new Error('this is not a drawing of this editor');
+        throw new Error(t('painter.error.foreign'));
     }
     const objects = Array.isArray(raw.objects) ? raw.objects : [];
     const kept = [];
@@ -144,7 +145,7 @@ export class Painter {
         const surface = canvas.upperCanvasEl;
         surface.tabIndex = 0;
         surface.setAttribute('role', 'application');
-        surface.setAttribute('aria-label', 'Drawing canvas. Arrows move. Space paints. Page Up and Page Down select objects. Plus and minus resize. Brackets rotate. Enter edits text.');
+        surface.setAttribute('aria-label', t('painter.canvas.label'));
         this.cursor = { x: options.width / 2, y: options.height / 2, painting: false };
         surface.addEventListener('keydown', (e) => this.canvasKey(e));
         // Fabric types into a hidden textarea, which it puts in the body by default. The body is
@@ -176,11 +177,11 @@ export class Painter {
                 }
                 canvas.renderAll();
                 if (dropped) {
-                    this.status(`${dropped} parts of the saved drawing were left out, they were not made by this editor.`, 'error');
+                    this.status(t('painter.status.dropped', { count: dropped }), 'error');
                 }
             } catch (err) {
                 console.warn('saved drawing not loaded', err);
-                this.status(`The saved drawing could not be loaded, ${err.message || err}. You start from an empty one.`, 'error');
+                this.status(t('painter.status.loadFailed', { reason: err.message || err }), 'error');
             }
         }
         if (this.canvas !== canvas) {
@@ -199,7 +200,7 @@ export class Painter {
         if (this.saving) {
             return;
         }
-        if (this.dirty && !confirm('Close the drawing and lose the changes since it was last saved?')) {
+        if (this.dirty && !confirm(t('painter.confirm.close'))) {
             return;
         }
         this.dialog.close();
@@ -247,7 +248,7 @@ export class Painter {
             onclick: () => this.setMode(id),
         }, label);
         const action = (label, title, fn) => h('button', { type: 'button', class: 'tool', title, onclick: fn }, label);
-        const color = h('input', { type: 'color', value: this.color, title: 'Color' });
+        const color = h('input', { type: 'color', value: this.color, title: t('painter.color') });
         // Dragging in the color picker recolors live, the history takes one step when it closes.
         color.addEventListener('input', () => {
             this.color = color.value;
@@ -265,7 +266,7 @@ export class Painter {
             }
         });
         color.addEventListener('change', () => this.snapshot());
-        const size = h('input', { type: 'range', min: '1', max: '80', value: String(this.size), title: 'Brush size' });
+        const size = h('input', { type: 'range', min: '1', max: '80', value: String(this.size), title: t('painter.size.title') });
         size.addEventListener('input', () => {
             this.size = Number(size.value);
             this.applyBrush();
@@ -275,42 +276,41 @@ export class Painter {
             const f = file.files[0];
             file.value = '';
             if (f) {
-                this.addImage(f).catch((err) => this.status(`The picture could not be placed, ${err.message || err}.`, 'error'));
+                this.addImage(f).catch((err) => this.status(t('painter.status.pictureFailed', { reason: err.message || err }), 'error'));
             }
         });
         const guide = o.guide ? `background-image:url(${o.guide});` : '';
         this.dialog.replaceChildren(h('div', { class: 'painter-box' },
             h('header', { class: 'editor-head' }, h('h2', {}, o.title),
-                h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Close', onclick: () => this.requestClose() }, '✕')),
+                h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('painter.close'), onclick: () => this.requestClose() }, '✕')),
             h('div', { class: 'toolbar' },
                 h('div', { class: 'tool-group' },
-                    tool('select', 'Select', 'Move, scale and rotate'),
-                    tool('brush', 'Brush', 'Paint freehand'),
-                    tool('eraser', 'Eraser', 'Erase paint')),
+                    tool('select', t('painter.tool.select'), t('painter.tool.select.title')),
+                    tool('brush', t('painter.tool.brush'), t('painter.tool.brush.title')),
+                    tool('eraser', t('painter.tool.eraser'), t('painter.tool.eraser.title'))),
                 h('div', { class: 'tool-group' },
-                    action('Rectangle', 'Add a rectangle', () => this.addShape('rect')),
-                    action('Circle', 'Add a circle', () => this.addShape('circle')),
-                    action('Triangle', 'Add a triangle', () => this.addShape('triangle')),
-                    action('Line', 'Add a line', () => this.addShape('line')),
-                    action('Text', 'Add text', () => this.addText()),
-                    action('Picture', 'Place an image file', () => file.click()), file),
-                h('div', { class: 'tool-group' }, h('label', { class: 'tool-field' }, 'Color', color), h('label', { class: 'tool-field' }, 'Size', size)),
+                    action(t('painter.shape.rect'), t('painter.shape.rect.title'), () => this.addShape('rect')),
+                    action(t('painter.shape.circle'), t('painter.shape.circle.title'), () => this.addShape('circle')),
+                    action(t('painter.shape.triangle'), t('painter.shape.triangle.title'), () => this.addShape('triangle')),
+                    action(t('painter.shape.line'), t('painter.shape.line.title'), () => this.addShape('line')),
+                    action(t('painter.text'), t('painter.text.title'), () => this.addText()),
+                    action(t('painter.picture'), t('painter.picture.title'), () => file.click()), file),
+                h('div', { class: 'tool-group' }, h('label', { class: 'tool-field' }, t('painter.color'), color), h('label', { class: 'tool-field' }, t('painter.size'), size)),
                 h('div', { class: 'tool-group' },
-                    action('Forward', 'Bring the selection forward', () => this.layer(1)),
-                    action('Backward', 'Send the selection backward', () => this.layer(-1)),
-                    action('Delete', 'Delete the selection', () => this.removeSelection()),
-                    action('Undo', 'Undo, Ctrl Z', () => this.undo()),
-                    action('Redo', 'Redo, Ctrl Y', () => this.redo()),
-                    action('Clear', 'Remove everything', () => this.clear()))),
+                    action(t('painter.forward'), t('painter.forward.title'), () => this.layer(1)),
+                    action(t('painter.backward'), t('painter.backward.title'), () => this.layer(-1)),
+                    action(t('painter.delete'), t('painter.delete.title'), () => this.removeSelection()),
+                    action(t('painter.undo'), t('painter.undo.title'), () => this.undo()),
+                    action(t('painter.redo'), t('painter.redo.title'), () => this.redo()),
+                    action(t('painter.clear'), t('painter.clear.title'), () => this.clear()))),
             h('div', { class: 'painter-stage' }, h('div', { class: 'painter-canvas', style: guide }, h('canvas'))),
             o.note ? h('p', { class: 'muted small painter-note' }, o.note) : null,
-            h('p', { class: 'muted small painter-note' },
-                'Canvas keyboard. Arrows move, Space paints, Page Up and Page Down select objects. Plus and minus resize, brackets rotate, Enter edits text.'),
+            h('p', { class: 'muted small painter-note' }, t('painter.keys')),
             h('p', { class: 'painter-status muted small', role: 'status', hidden: true }),
             h('div', { class: 'editor-actions' },
                 h('span', { class: 'spacer' }),
-                h('button', { type: 'button', class: 'btn', onclick: () => this.requestClose() }, 'Cancel'),
-                h('button', { type: 'button', class: 'btn primary', onclick: () => this.save() }, 'Save'))));
+                h('button', { type: 'button', class: 'btn', onclick: () => this.requestClose() }, t('painter.cancel')),
+                h('button', { type: 'button', class: 'btn primary', onclick: () => this.save() }, t('painter.save')))));
         this.dialog.onkeydown = (e) => {
             const typing = e.target && (e.target.tagName === 'INPUT' || e.target.isContentEditable || e.target.tagName === 'TEXTAREA');
             if (e.key === 'Escape') {
@@ -361,7 +361,7 @@ export class Painter {
         } else if (e.key === ' ') {
             cursor.painting = !cursor.painting;
             canvas.discardActiveObject();
-            this.status(`Paint ${cursor.painting ? 'started' : 'stopped'}, cursor ${Math.round(cursor.x)}, ${Math.round(cursor.y)}.`);
+            this.status(t(cursor.painting ? 'painter.status.paintStarted' : 'painter.status.paintStopped', { x: Math.round(cursor.x), y: Math.round(cursor.y) }));
         } else if (dx || dy) {
             if (obj && this.mode === 'select') {
                 obj.set({ left: obj.left + dx, top: obj.top + dy });
@@ -381,7 +381,7 @@ export class Painter {
                 }
                 cursor.x = x;
                 cursor.y = y;
-                this.status(`Cursor ${Math.round(x)}, ${Math.round(y)}. Paint ${cursor.painting ? 'on' : 'off'}.`);
+                this.status(t(cursor.painting ? 'painter.status.cursorPainting' : 'painter.status.cursor', { x: Math.round(x), y: Math.round(y) }));
             }
         } else if (obj && ['+', '=', '-', '[', ']'].includes(e.key)) {
             if (e.key === '[' || e.key === ']') {
@@ -402,7 +402,7 @@ export class Painter {
         e.stopPropagation();
         canvas.requestRenderAll();
         if (obj) {
-            this.status(`Selected ${obj.type}.`);
+            this.status(t('painter.status.selected', { type: tOr(`painter.object.${String(obj.type).toLowerCase()}`, obj.type) }));
         }
     }
 
@@ -464,7 +464,7 @@ export class Painter {
             return;
         }
         const c = this.center();
-        const text = new IText('Text', {
+        const text = new IText(t('painter.text.default'), {
             left: c.left, top: c.top, originX: 'center', originY: 'center', fill: this.color,
             fontFamily: 'Georgia, serif', fontWeight: 'bold', fontSize: Math.round(this.options.height * 0.35),
             hiddenTextareaContainer: this.dialog.querySelector('.painter-canvas'),
@@ -479,7 +479,7 @@ export class Painter {
 
     async addImage(file) {
         if (file.size > PICTURE_FILE_BYTES) {
-            throw new Error(`the file is ${Math.ceil(file.size / 1024 / 1024)} MB, the limit is ${PICTURE_FILE_BYTES / 1024 / 1024} MB`);
+            throw new Error(t('painter.error.pictureSize', { size: Math.ceil(file.size / 1024 / 1024), limit: PICTURE_FILE_BYTES / 1024 / 1024 }));
         }
         const canvas = this.canvas;
         const url = await pictureUrl(file);
@@ -524,7 +524,7 @@ export class Painter {
     }
 
     clear() {
-        if (!this.canvas || !this.canvas.getObjects().length || !confirm('Remove everything from this drawing?')) {
+        if (!this.canvas || !this.canvas.getObjects().length || !confirm(t('painter.confirm.clear'))) {
             return;
         }
         this.canvas.remove(...this.canvas.getObjects());
@@ -572,7 +572,7 @@ export class Painter {
     enqueue(step) {
         this.queue = this.queue.then(step).catch((err) => {
             console.warn('undo step failed', err);
-            this.status(`That step could not be undone, ${err.message || err}.`, 'error');
+            this.status(t('painter.status.undoFailed', { reason: err.message || err }), 'error');
         });
         return this.queue;
     }
@@ -616,13 +616,13 @@ export class Painter {
             const png = await (await fetch(url)).blob();
             const json = JSON.stringify(canvas.toJSON());
             if (new TextEncoder().encode(json).length > DOCUMENT_BYTES) {
-                throw new Error('the drawing is over 8 MB, remove a picture or two and save again');
+                throw new Error(t('painter.error.documentSize'));
             }
             await this.options.onSave(png, json);
             this.clean = this.history[this.history.length - 1];
             this.dialog.close();
         } catch (err) {
-            this.status(`The drawing could not be saved, ${err.message || err}.`, 'error');
+            this.status(t('painter.status.saveFailed', { reason: err.message || err }), 'error');
         } finally {
             this.saving = false;
         }

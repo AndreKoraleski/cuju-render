@@ -663,12 +663,23 @@ def _source(target: str | Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return document, _events.moments(document, _recording.frames(path), timing=True)
 
 
-def captions(target: str | Path) -> list[dict[str, Any]]:
-    """Returns the caption cues of a recording of the library or of a recording file."""
+def _cues(target: str | Path) -> list[dict[str, Any]]:
+    """Returns the caption cues of a recording, with their times as the page computes them."""
     header, moments = _source(target)
     return _captions.cues(moments, _captions.context(header))
 
 
+def captions(target: str | Path) -> list[dict[str, Any]]:
+    """Returns the caption cues of a recording of the library or of a recording file.
+
+    The times of the cues are in seconds to the millisecond, as a WebVTT file writes them.
+    """
+    found = _cues(target)
+    for cue in found:
+        cue['start'], cue['end'] = round(cue['start'], 3), round(cue['end'], 3)
+    return found
+
+
 def captions_vtt(target: str | Path) -> str:
     """Returns the captions of a recording of the library or of a recording file as WebVTT."""
-    return _captions.to_vtt(captions(target))
+    return _captions.to_vtt(_cues(target))
