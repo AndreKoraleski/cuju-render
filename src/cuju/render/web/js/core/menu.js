@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Dropdown menus in the manner of a game menu. A button opens a panel, the arrow keys move between
-// its items, Enter or Space picks one, Escape closes the panel from anywhere inside it and gives
-// the focus back to the button. A panel is open while it carries the class open, so code that
+// its items, typing finds an item by the start of its name, as core/typeahead.js describes, Enter
+// or Space picks one, Escape closes the panel from anywhere inside it and gives the focus back to
+// the button. A panel is open while it carries the class open, so code that
 // toggles the class directly stays in step with the menu.
 
 import { formatDay } from './api.js';
@@ -12,6 +13,7 @@ import { chord } from './keys.js';
 import { recordingTitle, summaryTeams, teamName } from './names.js';
 import { scenarioName } from './scenarios.js';
 import { icon } from './icons.js';
+import { PAUSE, typedMatch } from './typeahead.js';
 
 export { icon };
 
@@ -45,6 +47,16 @@ window.addEventListener('resize', () => {
     }
 });
 
+// A page that scrolls under an open menu carries the button along, and the panel follows it. A
+// panel that scrolls its own items stays where it is.
+document.addEventListener('scroll', (e) => {
+    for (const d of open) {
+        if (!(e.target instanceof Node && d.panel.contains(e.target))) {
+            d.place();
+        }
+    }
+}, { capture: true, passive: true });
+
 export class Dropdown {
     // The options are align, left or right, the edge of the button the panel lines up with,
     // onOpen, called before the panel shows so it can fill its items, and focusFirst, whether
@@ -66,6 +78,11 @@ export class Dropdown {
             this.toggle(undefined, e.detail === 0);
         });
         button.addEventListener('keydown', (e) => {
+            if (this.isOpen && this.panel.getAttribute('role') !== 'dialog' && this.seek(e, this.items(), -1)) {
+                // A menu that the mouse opened finds an item as its letters are typed, and the
+                // focus moves to the item.
+                return;
+            }
             if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || (this.isOpen && (e.key === 'Home' || e.key === 'End'))) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -133,11 +150,13 @@ export class Dropdown {
             document.exitPointerLock();
         }
         closeOthers(this);
+        this.typed = '';
         if (this.options.onOpen) {
             this.options.onOpen(this);
         }
         this.panel.classList.add('open');
         this.sync();
+        this.nameCut();
         // Opening from the keyboard moves the focus in, to the chosen item or the first one.
         if (focus) {
             const items = this.items();
@@ -150,6 +169,16 @@ export class Dropdown {
                 if (first) {
                     first.focus();
                 }
+            }
+        }
+    }
+
+    // An item whose name the panel cuts short shows the whole name as its tooltip.
+    nameCut() {
+        for (const label of this.panel.querySelectorAll('.dd-item .dd-label')) {
+            const item = label.closest('.dd-item');
+            if (label.scrollWidth > label.clientWidth + 1 && !item.title) {
+                item.title = label.textContent;
             }
         }
     }
@@ -196,6 +225,9 @@ export class Dropdown {
         const items = this.items();
         const i = items.indexOf(target);
         let next = null;
+        if (this.seek(e, items, i)) {
+            return;
+        }
         if (e.key === 'ArrowDown') {
             next = items[(i + 1) % items.length];
         } else if (e.key === 'ArrowUp') {
@@ -211,17 +243,35 @@ export class Dropdown {
                 target.click();
             }
             return;
-        } else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            // Typing a letter jumps to the next item that starts with it.
-            const k = e.key.toLowerCase();
-            const order = [...items.slice(i + 1), ...items.slice(0, i + 1)];
-            next = order.find((el) => (el.dataset.label || el.textContent).trim().toLowerCase().startsWith(k)) || null;
         }
         e.stopPropagation();
         if (next) {
             e.preventDefault();
             next.focus();
         }
+    }
+
+    // Letters typed within a short pause build a word that finds an item, a space among them too,
+    // so the word may hold two words of a name. Returns whether the key was such a letter.
+    seek(e, items, current) {
+        const now = performance.now();
+        if (now - (this.typedAt || 0) > PAUSE) {
+            this.typed = '';
+        }
+        const letter = [...e.key].length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+        if (!letter || !(/\S/.test(e.key) || this.typed)) {
+            this.typed = '';
+            return false;
+        }
+        this.typed += e.key;
+        this.typedAt = now;
+        e.preventDefault();
+        e.stopPropagation();
+        const found = typedMatch(items.map((el) => el.dataset.label || el.textContent), current, this.typed);
+        if (found >= 0) {
+            items[found].focus();
+        }
+        return true;
     }
 
     // Places the panel under the button, or over it when there is more room above, kept inside
@@ -350,17 +400,42 @@ export function enhanceSelect(select, options = {}) {
             return [optionItem(child)];
         }));
     };
-    const optionItem = (o) => menuItem(o.textContent, {
-        checked: o.value === select.value,
-        disabled: o.disabled,
-        kbd: o.dataset.kbd || null,
-        onSelect: () => {
-            if (select.value !== o.value) {
-                select.value = o.value;
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        },
-    });
+    // An option may carry a second line in its data-hint, as the teams of a filter do.
+    const optionItem = (o) => {
+        const item = menuItem(o.textContent, {
+            checked: o.value === select.value,
+            hint: o.dataset.hint || null,
+            disabled: o.disabled,
+            kbd: o.dataset.kbd || null,
+            onSelect: () => {
+                if (select.value !== o.value) {
+                    select.value = o.value;
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            },
+        });
+        item.dataset.value = o.value;
+        return item;
+    };
+    // A list that changes while its menu is open, as a filter does when new requests come in,
+    // fills the menu again in place. The menu stays open, keeps its scroll and keeps the focus on
+    // the item of the same value, or on the chosen or first item when that one went away.
+    const refill = () => {
+        const active = document.activeElement;
+        const held = active && panel.contains(active) ? active.dataset.value ?? null : undefined;
+        const scroll = panel.scrollTop;
+        fill();
+        panel.scrollTop = scroll;
+        dropdown.nameCut();
+        dropdown.place();
+        if (held === undefined) {
+            return;
+        }
+        const items = dropdown.items();
+        const target = items.find((item) => item.dataset.value === held)
+            || items.find((item) => item.getAttribute('aria-checked') === 'true') || items[0];
+        target?.focus({ preventScroll: true });
+    };
     const sync = () => {
         const o = select.options[select.selectedIndex];
         button.querySelector('.dd-value').textContent = o ? o.textContent : '';
@@ -383,7 +458,12 @@ export function enhanceSelect(select, options = {}) {
         },
     });
     select.addEventListener('change', sync);
-    new MutationObserver(sync).observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    new MutationObserver((records) => {
+        sync();
+        if (dropdown.isOpen && records.some((record) => record.type !== 'attributes')) {
+            refill();
+        }
+    }).observe(select, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['disabled'] });
     const dropdown = new Dropdown(button, panel, { onOpen: fill, align: options.align || 'left' });
     sync();
     select.enhanced = { button, panel, dropdown, sync, wrap };

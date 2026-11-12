@@ -34,6 +34,12 @@ export function teamName(team) {
     return typeof team.name === 'string' ? serverText(team, 'name', isNameMessage) : '';
 }
 
+// A team's name as a requested match keeps it, the label of a name that cuju made in the page's
+// language, or the text that a person gave, and the empty text for anything else.
+export function keptName(value) {
+    return value && typeof value === 'object' ? labelText(value, isNameMessage) : plainText(value ?? '');
+}
+
 // The names of the two teams of a summary of the library or of a game's entry, which hold the
 // English names in `teams` and the label of each made name in `team_labels`.
 export function summaryTeams(summary) {

@@ -7,9 +7,11 @@ import io
 import json
 import logging
 import os
+import shutil
 import struct
 import threading
 import urllib.request
+from pathlib import Path
 
 import pytest
 import torch
@@ -1665,3 +1667,59 @@ def test_names_of_games_and_challenges(render_home):
     )
     assert attempt['text'] == f'{spec["title"]}, attempt 5, Rule bot'
     assert _messages.valid_label(attempt)
+
+
+def test_a_team_folder_named_as_a_random_side_is_left_out(render_home, tmp_path, caplog):
+    from cuju.render._playing import draw as _draw
+
+    assert _draw.RANDOM in _teams.RESERVED
+    kept = _toy_team(tmp_path, 'kept', 'def agent(obs):\n    return [0]\n', '5v5')
+    folders = render_home / 'teams'
+    shutil.copytree(folders / kept['id'], folders / _draw.RANDOM)
+    with caplog.at_level(logging.WARNING):
+        identifiers = [team['id'] for team in _teams.teams()]
+    # The team by its own folder stays, and the folder that a request would read as a random side
+    # is left out with a word on how to keep it.
+    assert identifiers == ['builtin', kept['id']]
+    assert 'rename the folder' in caplog.text
+
+
+_FITS = json.loads(
+    (Path(__file__).with_name('support') / 'control_fits.json').read_text(encoding='utf-8')
+)
+
+
+@pytest.mark.parametrize('case', _FITS['controls'], ids=lambda case: str(case['fault']))
+def test_the_control_of_a_team_fits_a_side_as_the_page_checks_it(case):
+    # tests/web/draw.mjs checks the page's rule with the same cases.
+    from types import SimpleNamespace
+
+    control = _teams.check_control(case['control'], case['format'])
+    formation = [SimpleNamespace(role=role, controllable=free) for role, free in case['formation']]
+    try:
+        _teams.selected_players(control, formation)
+    except cuju.ArgumentError as error:
+        values = {key: str(value) for key, value in error.values.items()}
+        fault = {'id': error.message_id, 'values': values}
+    else:
+        fault = None
+    expected = case['fault'] and {
+        'id': case['fault']['id'],
+        'values': {key: str(value) for key, value in case['fault']['values'].items()},
+    }
+    assert fault == expected
+
+
+@pytest.mark.parametrize('case', _FITS['formats'], ids=lambda case: case['scenario'])
+def test_the_format_of_a_team_fits_a_scenario_as_the_page_checks_it(case):
+    size = _teams.scenario_size(case['scenario'].removeprefix('benchmark_full_game_'))
+    assert (size is None or size == _teams.FORMATS[case['format']]) == case['fits']
+
+
+def test_the_mock_knows_the_players_of_each_scenario_as_the_server():
+    table = json.loads(
+        (Path(__file__).parents[1] / 'ci' / 'mock_scenario_sides.json').read_text(encoding='utf-8')
+    )
+    for name, sides in table.items():
+        found = [[[role, free] for role, free in side] for side in _teams.scenario_sides(name)]
+        assert found == sides, name

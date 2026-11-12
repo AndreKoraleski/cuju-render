@@ -1,0 +1,81 @@
+{
+    "@about": "Whether a team can play a side, by its format and control against the scenario, as _registry/teams.py checks it and web/js/pages/draw.js mirrors it. A formation lists each player as its GRF role, 0 for the goalkeeper, and whether a team can control it. A fault names the message and its values, or null when the team can play.",
+    "formats": [
+        {"format": "5v5", "scenario": "5_vs_5", "fits": true},
+        {"format": "5v5", "scenario": "11_vs_11_kaggle", "fits": false},
+        {"format": "11v11", "scenario": "11_vs_11_stochastic", "fits": true},
+        {"format": "11v11", "scenario": "5_vs_5", "fits": false},
+        {"format": "11v11", "scenario": "benchmark_full_game_5_vs_5", "fits": false},
+        {"format": "5v5", "scenario": "academy_corner", "fits": true},
+        {"format": "11v11", "scenario": "academy_3_vs_1_with_keeper", "fits": true},
+        {"format": "5v5", "scenario": "1_vs_1_easy", "fits": true}
+    ],
+    "controls": [
+        {
+            "format": "5v5",
+            "control": {"players": 1, "assignment": "dynamic", "selection": [], "goalkeeper": "scenario", "action_set": "default"},
+            "formation": [[0, true], [5, true], [5, true], [5, true]],
+            "fault": null
+        },
+        {
+            "format": "5v5",
+            "control": {"players": 3, "assignment": "dynamic", "selection": [], "goalkeeper": "scenario", "action_set": "default"},
+            "formation": [[0, true], [1, true]],
+            "fault": {"id": "server.teams.control.too_few", "values": {"count": 2}}
+        },
+        {
+            "format": "5v5",
+            "control": {"players": 2, "assignment": "dynamic", "selection": [], "goalkeeper": "agent", "action_set": "default"},
+            "formation": [[0, false], [5, true], [5, true]],
+            "fault": {"id": "server.teams.control.goalkeeper_uncontrollable", "values": {}}
+        },
+        {
+            "format": "5v5",
+            "control": {"players": 2, "assignment": "fixed", "selection": ["CM", "CM"], "goalkeeper": "scenario", "action_set": "default"},
+            "formation": [[0, false], [5, true], [5, true], [5, true]],
+            "fault": null
+        },
+        {
+            "format": "5v5",
+            "control": {"players": 2, "assignment": "fixed", "selection": [0, 1], "goalkeeper": "agent", "action_set": "default"},
+            "formation": [[0, true], [5, true], [5, true]],
+            "fault": null
+        },
+        {
+            "format": "11v11",
+            "control": {"players": 1, "assignment": "fixed", "selection": ["CF"], "goalkeeper": "scenario", "action_set": "default"},
+            "formation": [[0, false], [5, true], [5, true]],
+            "fault": {"id": "server.teams.control.select_player", "values": {"player": "CF"}}
+        },
+        {
+            "format": "11v11",
+            "control": {"players": 1, "assignment": "fixed", "selection": [1], "goalkeeper": "builtin", "action_set": "default"},
+            "formation": [[0, false], [5, true], [5, true]],
+            "fault": {"id": "server.teams.control.goalkeeper_builtin", "values": {}}
+        },
+        {
+            "format": "11v11",
+            "control": {"players": 1, "assignment": "fixed", "selection": [1], "goalkeeper": "agent", "action_set": "default"},
+            "formation": [[0, true], [5, true], [5, true]],
+            "fault": {"id": "server.teams.control.goalkeeper_selected", "values": {}}
+        },
+        {
+            "format": "11v11",
+            "control": {"players": 1, "assignment": "fixed", "selection": [0], "goalkeeper": "scenario", "action_set": "default"},
+            "formation": [[0, true], [5, true]],
+            "fault": {"id": "server.teams.control.goalkeeper_outside", "values": {}}
+        },
+        {
+            "format": "11v11",
+            "control": {"players": 1, "assignment": "fixed", "selection": [1], "goalkeeper": "scenario", "action_set": "default"},
+            "formation": [[0, true], [5, true]],
+            "fault": {"id": "server.teams.control.goalkeeper_scenario", "values": {}}
+        },
+        {
+            "format": "11v11",
+            "control": {"players": 2, "assignment": "fixed", "selection": [1, 2], "goalkeeper": "builtin", "action_set": "default"},
+            "formation": [[0, true], [5, true], [5, false]],
+            "fault": {"id": "server.teams.control.select_player", "values": {"player": "2"}}
+        }
+    ]
+}

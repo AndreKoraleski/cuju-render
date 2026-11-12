@@ -3575,10 +3575,23 @@
     "matches.side.right.team": "Time da direita",
     "matches.team.none": "Nenhum time ainda",
     "matches.team.builtin.meta": "IA embutida, qualquer cenário",
-    "matches.team.submission.meta": "{format}, submissão, controla {control}",
+    "matches.team.submission.meta": {
+        "=0": "{format}, nenhum jogador",
+        "one": "{format}, {count} jogador",
+        "many": "{format}, {count} de jogadores",
+        "other": "{format}, {count} jogadores"
+    },
+    "matches.team.submission.title": "Submissão, controla {control}",
     "matches.team.builtin.hint": "IA embutida, joga qualquer cenário",
-    "matches.team.submission.hint": "{format}, submissão",
+    "matches.team.submission.hint": {
+        "=0": "{format}, submissão, nenhum jogador",
+        "one": "{format}, submissão, {count} jogador",
+        "many": "{format}, submissão, {count} de jogadores",
+        "other": "{format}, submissão, {count} jogadores"
+    },
     "matches.team.submission": "submissão",
+    "matches.team.removed.named": "{name} (removido)",
+    "matches.team.removed": "Time removido",
     "matches.team.random": "Time aleatório",
     "matches.team.random.hint": "Sorteado do grupo com a semente",
     "matches.team.random.meta": {
@@ -3589,6 +3602,9 @@
     },
     "matches.draw.title": "Grupo do sorteio",
     "matches.draw.text": "Um lado aleatório sorteia um dos **times marcados** que podem jogar nele. A semente decide o sorteio, então Tentar de novo sorteia os mesmos times e Repetir sorteia outra vez.",
+    "matches.draw.unfit.format": "Joga só {format}, que este cenário não tem",
+    "matches.draw.unfit.control": "Não pode ser sorteado aqui, {reason}",
+    "matches.draw.unfit.none": "Não cabe em nenhum cenário que os dois lados possam jogar",
     "matches.draw.sameTeam": "Permitir que um time enfrente a si mesmo",
     "matches.setup.scenario.random": "Cenário aleatório",
     "matches.setup.scenario.random.text": "A semente sorteia um dos cenários que os dois lados podem jogar.",

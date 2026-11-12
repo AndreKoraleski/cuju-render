@@ -3354,10 +3354,19 @@
     "matches.side.right.team": "Right team",
     "matches.team.none": "No teams yet",
     "matches.team.builtin.meta": "Built-in AI, any scenario",
-    "matches.team.submission.meta": "{format}, submission, controls {control}",
+    "matches.team.submission.meta": {
+        "one": "{format}, {count} player",
+        "other": "{format}, {count} players"
+    },
+    "matches.team.submission.title": "Submission, controls {control}",
     "matches.team.builtin.hint": "Built-in AI, plays any scenario",
-    "matches.team.submission.hint": "{format}, submission",
+    "matches.team.submission.hint": {
+        "one": "{format}, submission, {count} player",
+        "other": "{format}, submission, {count} players"
+    },
     "matches.team.submission": "submission",
+    "matches.team.removed.named": "{name} (removed)",
+    "matches.team.removed": "Removed team",
     "matches.team.random": "Random team",
     "matches.team.random.hint": "Drawn from the pool with the seed",
     "matches.team.random.meta": {
@@ -3367,6 +3376,9 @@
     },
     "matches.draw.title": "Pool of the draw",
     "matches.draw.text": "A random side draws one of the **ticked teams** that can play it. The seed decides the draw, so Retry draws the same teams and Repeat draws again.",
+    "matches.draw.unfit.format": "Plays {format} only, which this scenario does not hold",
+    "matches.draw.unfit.control": "Cannot be drawn here, {reason}",
+    "matches.draw.unfit.none": "Fits no scenario that both sides can play",
     "matches.draw.sameTeam": "Let a team meet itself",
     "matches.setup.scenario.random": "Random scenario",
     "matches.setup.scenario.random.text": "The seed draws one of the scenarios that both sides can play.",

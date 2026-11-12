@@ -9,14 +9,68 @@
 // The word that stands for a team or a scenario drawn at random, as the server reads it.
 export const RANDOM = 'random';
 
-// Scenarios a team may play, by its format. The built-in AI plays any.
-export function fits(team, scenario) {
-    if (!team || team.kind === 'builtin' || !team.format) {
-        return true;
-    }
-    if (scenario.startsWith('academy_')) return true;
+// The players a side of each format holds, and the roles of GRF by number, as
+// src/cuju/render/_registry/teams.py names them.
+const FORMAT_SIZES = { '5v5': 5, '11v11': 11 };
+const ROLES = ['GK', 'CB', 'LB', 'RB', 'DM', 'CM', 'LM', 'RM', 'AM', 'CF'];
+
+// The players a side of a full match holds, 5 or 11, or null for any other scenario.
+function scenarioSize(scenario) {
     const name = scenario.replace(/^benchmark_full_game_/, '');
-    return team.format === '5v5' ? name.startsWith('5_vs_5') : name.startsWith('11_vs_11');
+    return name.startsWith('5_vs_5') ? 5 : name.startsWith('11_vs_11') ? 11 : null;
+}
+
+// Why a control setting cannot play a side, as a message and its values, or null when it can,
+// the rule of selected_players in src/cuju/render/_registry/teams.py. The formation lists each
+// player of the side by its role, 0 for the goalkeeper, and whether a team can control it.
+export function controlFault(control, formation) {
+    const c = { players: 1, assignment: 'dynamic', selection: [], goalkeeper: 'scenario', ...(control || {}) };
+    const available = formation.flatMap((p, i) => (p.controllable ? [i] : []));
+    if (c.players > available.length) {
+        return { id: 'server.teams.control.too_few', values: { count: available.length } };
+    }
+    const keeper = formation.flatMap((p, i) => (p.role === 0 ? [i] : []));
+    const freeKeeper = keeper.some((i) => available.includes(i));
+    if (c.assignment === 'dynamic') {
+        return c.goalkeeper === 'agent' && !freeKeeper ? { id: 'server.teams.control.goalkeeper_uncontrollable', values: {} } : null;
+    }
+    const selected = [];
+    for (const item of c.selection) {
+        const candidates = Number.isInteger(item) ? [item] : available.filter((i) => formation[i].role === ROLES.indexOf(item));
+        const found = candidates.find((i) => available.includes(i) && !selected.includes(i));
+        if (found === undefined) {
+            return { id: 'server.teams.control.select_player', values: { player: String(item) } };
+        }
+        selected.push(found);
+    }
+    const ownsKeeper = selected.some((i) => keeper.includes(i));
+    const fault = c.goalkeeper === 'builtin' && !freeKeeper ? 'goalkeeper_builtin'
+        : c.goalkeeper === 'agent' && !ownsKeeper ? 'goalkeeper_selected'
+            : c.goalkeeper !== 'agent' && ownsKeeper ? 'goalkeeper_outside'
+                : c.goalkeeper === 'scenario' && freeKeeper ? 'goalkeeper_scenario' : null;
+    return fault ? { id: `server.teams.control.${fault}`, values: {} } : null;
+}
+
+// Why a team cannot play a side of a scenario, or null when it can, as the server checks it
+// before it queues a match. A team of the other format cannot play a full match of the wrong
+// size, the message matches.draw.unfit.format, and with the players of the scenario's sides,
+// which the server lists at /api/scenarios/sides, the team's control must fit the side. The
+// built-in AI plays any side, and a scenario whose players the page lacks checks the format alone.
+export function unfit(team, scenario, side = 0, sides = null) {
+    if (!team || team.kind === 'builtin' || !team.format || !scenario) {
+        return null;
+    }
+    const size = scenarioSize(scenario);
+    if (size !== null && FORMAT_SIZES[team.format] && size !== FORMAT_SIZES[team.format]) {
+        return { id: 'matches.draw.unfit.format', values: { format: team.format } };
+    }
+    const formation = sides && Array.isArray(sides[scenario]) ? sides[scenario][side] : null;
+    return Array.isArray(formation) ? controlFault(team.control, formation) : null;
+}
+
+// Whether a team can play a side of a scenario.
+export function fits(team, scenario, side = 0, sides = null) {
+    return unfit(team, scenario, side, sides) === null;
 }
 
 // The teams of the pool, every team of the registry but those the person unticked.
@@ -30,30 +84,50 @@ export function poolOf(teams, unticked) {
     return kept.length === teams.length ? null : kept;
 }
 
-// The teams that a side can draw for a scenario, or the side's own team in a list of one.
-export function sideTeams(teams, unticked, id, scenario) {
+// The teams that a side, 0 on the left, can draw for a scenario, or the side's own team in a list
+// of one. `sides` holds the players of the scenarios' sides, as `unfit` reads them.
+export function sideTeams(teams, unticked, id, scenario, side = 0, sides = null) {
     if (id === RANDOM) {
-        return poolTeams(teams, unticked).filter((x) => fits(x, scenario));
+        return poolTeams(teams, unticked).filter((x) => fits(x, scenario, side, sides));
     }
     const own = teams.find((x) => x.id === id);
-    return own && fits(own, scenario) ? [own] : [];
+    return own && fits(own, scenario, side, sides) ? [own] : [];
 }
 
 // The scenarios that the two sides can play, those where each side has a team that fits.
-export function fittingScenarios(scenarios, teams, unticked, left, right) {
-    return scenarios.filter((sc) => sideTeams(teams, unticked, left, sc).length
-        && sideTeams(teams, unticked, right, sc).length);
+export function fittingScenarios(scenarios, teams, unticked, left, right, sides = null) {
+    return scenarios.filter((sc) => sideTeams(teams, unticked, left, sc, 0, sides).length
+        && sideTeams(teams, unticked, right, sc, 1, sides).length);
 }
 
 // The scenario list of the setup, Random scenario first when two or more fit, and the choice it
 // keeps, the current one while it still fits, else the default, else 5 against 5, else the first.
-export function scenarioChoices(scenarios, teams, unticked, left, right, current, preferred) {
-    const ok = fittingScenarios(scenarios, teams, unticked, left, right);
+export function scenarioChoices(scenarios, teams, unticked, left, right, current, preferred, sides = null) {
+    const ok = fittingScenarios(scenarios, teams, unticked, left, right, sides);
     const listed = ok.length > 1 ? [RANDOM, ...ok] : ok;
     const keep = listed.includes(current) ? current
         : ok.includes(preferred) ? preferred
             : ok.includes('5_vs_5') ? '5_vs_5' : ok[0] || null;
     return { listed, keep };
+}
+
+// The teams that a random side can draw, in the order of the registry, those of the pool that can
+// play the side in the chosen scenario, or in a scenario that both sides can play when the
+// scenario is random. The two sides take different teams whenever another team fits, unless a
+// team may meet itself, as the server draws, src/cuju/render/_playing/draw.py.
+export function drawableTeams(teams, unticked, state, side, scenarios, sides = null) {
+    const names = state.scenario === RANDOM
+        ? fittingScenarios(scenarios.filter((sc) => sc !== RANDOM), teams, unticked, state.left, state.right, sides)
+        : [state.scenario];
+    const found = new Set();
+    for (const sc of names.filter(Boolean)) {
+        const lefts = sideTeams(teams, unticked, state.left, sc, 0, sides);
+        const rights = sideTeams(teams, unticked, state.right, sc, 1, sides);
+        const every = lefts.flatMap((l) => rights.map((r) => [l.id, r.id]));
+        const pairs = state.sameTeam ? every : every.filter(([l, r]) => l !== r);
+        (pairs.length ? pairs : every).forEach((pair) => found.add(pair[side]));
+    }
+    return teams.filter((x) => found.has(x.id));
 }
 
 // Whether the setup draws anything, a side or the scenario.
@@ -105,8 +179,10 @@ export function againOf(r, repeat) {
     return spec;
 }
 
-// Whether a part of a request shows as Random, a part drawn at random while the match waits. The
-// teams and the scenario drawn show once the match starts.
+// Whether a part of a request shows as Random, a part drawn at random of a match that has not
+// started, one that waits or one that was cancelled or interrupted before it started. The teams
+// and the scenario drawn show once the match starts.
 export function hiddenPart(r, part) {
-    return r.state === 'queued' && drawnParts(r)[part];
+    const unstarted = r.state === 'queued' || (r.state === 'failed' && typeof r.started !== 'number');
+    return unstarted && drawnParts(r)[part];
 }

@@ -102,6 +102,14 @@ SCENARIOS = [
     'academy_single_goal_versus_lazy',
     'test_example_multiagent',
 ]
+# The players of both sides of each scenario, a role and whether a team can control it, as the
+# server answers them at /api/scenarios/sides, which tests/test_teams.py holds equal.
+SCENARIO_SIDES = {
+    name: [[{'role': role, 'controllable': free} for role, free in side] for side in sides]
+    for name, sides in json.loads(
+        (Path(__file__).with_name('mock_scenario_sides.json')).read_text(encoding='utf-8')
+    ).items()
+}
 TYPES = {
     '.js': 'text/javascript',
     '.mjs': 'text/javascript',
@@ -1580,7 +1588,8 @@ class Requests:
                 lambda message_id, **values: ArgumentError(f'{message_id} {values}'),
             )
             left, right, scenario = drawn['left'], drawn['right'], drawn['scenario']
-        check_scenario([entry(left), entry(right)], scenario)
+        sides = [entry(left), entry(right)]
+        check_scenario(sides, scenario)
         item = {
             'id': new_identifier('r'),
             'left': left,
@@ -1591,7 +1600,16 @@ class Requests:
             'progress': 0.0,
             'match': None,
             'error': None,
+            'started': None,
             'draw': None if drawn is None else drawn['draw'],
+            # The names of the teams when the request was made, a label for a name that cuju made,
+            # as the server keeps them.
+            'team_names': [
+                {'id': team['name_id'], 'text': team['name'], 'values': team.get('name_values', {})}
+                if team.get('name_id')
+                else team['name']
+                for team in sides
+            ],
         }
         with self.lock:
             self.entries_.append(item)
@@ -1626,6 +1644,7 @@ class Requests:
             if item['state'] != 'queued':
                 return
             item['state'] = 'running'
+            item['started'] = time.time()
         try:
             teams_ = [entry(item['left']), entry(item['right'])]
             check_scenario(teams_, item['scenario'])
@@ -2467,6 +2486,8 @@ def make_handler(requests):
                     self._relay(parts[2], query.get('sequence') == '1')
                 elif parts == ['api', 'scenarios']:
                     self._json(SCENARIOS)
+                elif parts == ['api', 'scenarios', 'sides']:
+                    self._json(SCENARIO_SIDES)
                 elif parts[:2] == ['api', 'challenges']:
                     self._json(*challenges_get(parts[2:], query))
                 elif parts == ['api', 'achievements']:

@@ -853,6 +853,7 @@ which pass the same checks of host and origin as every other route.
 | Route | Body | Answer |
 | ----- | ---- | ------ |
 | `GET /api/teams` | none | every team of the registry, the built in AI first |
+| `GET /api/scenarios/sides` | none | the players of both sides of every scenario, each with its `role` and whether it is `controllable` |
 | `POST /api/teams?name=NAME&filename=FILE&format=5v5&control=CONTROL` | the bytes of a `main.py`, a `.zip` or a `.tar.gz` | the new team, with 201 |
 | `PATCH /api/teams/ID` | `{"name": "Visitors", "format": "5v5", "control": {...}, "style": {...}}`, each field optional | the changed team |
 | `POST /api/teams/ID/duplicate` | none | the copy, with 201 |
@@ -863,7 +864,7 @@ which pass the same checks of host and origin as every other route.
 | `PUT /api/teams/ID/clips/NAME?joints=JOINTS` | the bytes of a celebration clip, a `.glb` of at most 10 MB | the changed team |
 | `GET /api/teams/ID/model`, `images/SLOT`, `sounds/KIND`, `clips/NAME` | none | the file |
 | `DELETE /api/teams/ID/model`, `images/SLOT`, `sounds/KIND`, `clips/NAME` | none | 204 once the file is gone |
-| `GET /api/requests` | none | every requested match with its `state`, `progress`, `match` and `error` |
+| `GET /api/requests` | none | every requested match with its `state`, `progress`, `match`, `error` and `team_names` |
 | `POST /api/requests` | `{"left": "ID", "right": "builtin", "scenario": "5_vs_5", "seed": 7, "ability": [null, 0.4], "pool": null, "same_team": false}` | the new request, with 201 |
 | `DELETE /api/requests/ID` | none | 204 once a waiting or running request is cancelled |
 
@@ -892,6 +893,19 @@ identifiers is refused with `server.draw.pool`, a team of the pool outside the r
 `server.teams.unknown`, and a `same_team` other than true or false with `server.draw.same_team`.
 To retry a drawn request, a script sends `random` again for each random part, with the same pool,
 `same_team` and seed, and to draw again it leaves the seed out.
+
+Each request keeps in `team_names` the names of its two teams as the registry held them when the
+request was made, the name of a submission as its text and a name that cuju made, such as the
+built in AI's, as a label with its message, so the page still names a team removed since. A
+request saved by an earlier version holds `null` there. `GET /api/scenarios/sides` lists for every
+scenario its left side and its right side, each player with its GRF role as a number, 0 for the
+goalkeeper, and `controllable`, whether a team can control it. The page reads it to tell which
+teams can play a side, with the same check of the count, the fixed selection and the goalkeeper
+that the server makes before it queues a request.
+
+A team folder whose name is `random`, which only a hand can make since the registry names its teams
+`t-` and a time, is left out of the registry with a warning, as a request reads that word as a
+random side. Renaming the folder brings the team back.
 
 ### Multi agent teams
 
@@ -1441,7 +1455,8 @@ the whole match, and a tap on it seeks to the place tapped.
 under All recordings and the folders in a tree with their counts, where folders are made, renamed
 and deleted, and recordings are dragged onto them. A folder is a label in the summary of each
 recording, so deleting a folder moves its recordings to the folder above. A search field finds
-recordings by title, teams, scenario and folder across every folder, filters narrow the list by
+recordings by title, teams, scenario and folder across every folder, whatever the case and accents
+of the words, filters narrow the list by
 folder, scenario, team and date, and the list sorts by date, title, goals, teams, length or size.
 The columns show the title, the teams, the score, the scenario, the steps, the date and the size,
 and a click on a header sorts by it. Recordings are selected one at a time, several at once with
@@ -1486,13 +1501,24 @@ many of its attempts it has played, a run that a person left says after how many
 run that ended on a failure says that it stopped.
 
 **Matches** requests a match between two teams of the registry. Two cards pick the left team,
-which plays at home, and the right team, which plays away. Each card shows the count, assignment,
-fixed selection, goalkeeper and action set, and has an Ability control. The scenario list offers
+which plays at home, and the right team, which plays away. Each card shows the team's format and
+the players it controls, such as 5 against 5, 3 players, its whole control setting with the
+assignment, fixed selection, goalkeeper and action set as its tooltip, and an Ability control. The
+lists of the cards and the Team filter name each submission the same way, with its format and its
+players under its name. The scenario list offers
 full matches of the team format and academy scenarios, and a short text under it gives the chosen
 scenario's players a side, length, difficulties, the events that end an episode and, for an
 academy, its drill. Random team, the first entry of each side's list, leaves the side to the draw
 of the seed, and the box Pool of the draw then lists every team of the registry with a box to tick,
-so the draw takes only the teams ticked there, and Let a team meet itself below them. The
+so the draw takes only the teams ticked there, and Let a team meet itself below them. The card of
+a random side counts the teams it can draw, those of the pool that can play the chosen scenario,
+or some scenario that both sides can play when the scenario is random, without the team of the
+other side while another team fits. A team can play a side when its format suits the scenario and
+its control fits the players of that side, as the server checks it, so a team that controls three
+players plays the left side of `academy_3_vs_1_with_keeper` and never its right side of two. A box
+of the pool whose team cannot be drawn in the chosen scenario shows faded, and its tooltip, which a
+screen reader reads with the box, says why, such as the other format or too few controllable
+players. The
 scenario list starts with Random scenario whenever two or more scenarios fit, and holds the
 scenarios that some team of the pool can play on each side. A seed field takes a whole number or
 stays empty for a random one. Each
@@ -1501,6 +1527,17 @@ queue. Teams of different formats can meet in academy scenarios when both settin
 Below, the list of requested matches shows each match with its teams, state, scenario, seed and
 progress, filtered by state, team, scenario and date, with controls to cancel a waiting or playing
 match and watch a finished one. A message announces each match that is ready.
+
+The Team filter lists the teams that the list shows by name, in the order of the team lists of a
+new match, the built-in AI first and then the teams from the newest, each with its kind and format
+under its name as in those lists. A team that the registry no longer holds comes last, by the name
+that its requests kept, followed by removed, with its identifier under it, and the list names it
+the same way, or as Removed team for a request of an earlier version that kept no names. A team drawn for a match
+that still waits stays out of the Team filter, and its scenario out of the Scenario filter, so
+neither tells what the draw picked before the match starts, and the waiting match shows under the
+filter of the team it names. The list and the filters follow the registry, so a team renamed or
+restyled on the Teams page shows its new name and shirt in both, and a request that names a team
+added from another tab or the command line loads the registry again and shows the team by name.
 
 The list is the history of requested matches, kept across restarts of the server. It holds the
 newest 200 requests that have ended and every waiting or playing one, and the server deletes the
@@ -1513,7 +1550,8 @@ at that moment, so a team whose files changed since the first match plays its ne
 above `2**53 - 1` keeps its exact value on the page and in a retry.
 
 A request with a part drawn at random shows Random team or Random scenario in its place while
-the match waits, and the team or scenario drawn once the match starts, each followed by two dice
+the match waits, and also after it was canceled or interrupted before it started, and the team or
+scenario drawn once the match starts, each followed by two dice
 that a screen reader reads as drawn at random. Retry on such a request sends the same random
 parts, pool and seed again, so it draws the same match, and Repeat sends them without the seed,
 so the server draws a new seed and with it a new draw. The tooltips of the two buttons say which
@@ -1572,8 +1610,15 @@ them all. The keys of the players follow the physical keys, so they work on ever
 | F, M and H | fullscreen, mute and the help |
 
 Menus accept the arrow keys to move between entries, Home and End to reach either end, and
-Enter or Space to choose. Typing a letter finds the next entry that starts with it. Esc closes
-the menu and returns focus to its button, and a click outside closes it too.
+Enter or Space to choose. Typing finds an entry by the start of its name, letters typed within a
+short pause building one word, a space among them, so sev finds Several Five and single f finds
+Single Five before Single Eleven. Case and accents never matter, so e finds Équipe, and the same
+letter typed again moves on to the next entry that starts with it. Typing works the same in a menu
+that the mouse opened, and the focus then moves to the entry found. Esc closes the menu and returns
+focus to its button, and a click outside closes it too. A menu that is open while the page scrolls
+moves with its button. An entry whose name the menu cuts short shows the whole name as its
+tooltip, and a list that changes while it is open, as the Team filter does when new requests come
+in, fills again in place, open, with the focus on the same entry.
 
 A drag of the mouse turns the free camera and orbits the cameras that follow the ball or its owner,
 and the wheel sets the flying speed or the distance of those cameras. A click on the view skips the

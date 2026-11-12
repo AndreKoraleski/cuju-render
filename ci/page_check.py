@@ -36,6 +36,7 @@ import page_grid
 import page_groups
 import page_help
 import page_language
+import page_matches
 import page_search
 import page_tournaments
 
@@ -4209,6 +4210,7 @@ def main():
             checks += page_feed.check_feed(client, f'http://127.0.0.1:{port}/', debug, CDP)
             checks += page_language.check_languages(client)
             checks += draw_checks(client)
+            checks += page_matches.check_matches(client)
             checks += hash_checks(client)
             checks += address_checks(client)
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'

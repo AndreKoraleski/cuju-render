@@ -14,6 +14,7 @@ import { icon, labelText, relabel, symbolOnly } from '../core/icons.js';
 import { recordingTitle, summaryTeams } from '../core/names.js';
 import { groupRows, groupTotals, navigationRows } from './recording-groups.js';
 import { scenarioName } from '../core/scenarios.js';
+import { fold } from '../core/typeahead.js';
 
 const FOLDERS_KEY = 'cuju.folders';
 const COLUMNS = [
@@ -232,12 +233,13 @@ export class RecordingsPage {
     }
 
     visible() {
-        const q = this.query.trim().toLowerCase();
+        // Case and accents never matter, as in the menus and the search of moments.
+        const q = fold(this.query.trim());
         const f = this.filters;
         let rows = this.list.filter((m) => {
             if (q) {
                 const group = m.group ? [m.group.title, serverText(m.group, 'title')] : [];
-                const text = [m.title, recordingTitle(m), ...(m.teams || []), ...summaryTeams(m), ...(m.tags || []), m.notes, m.scenario, scenarioName(m.scenario), m.folder, ...group].map(plainText).join(' ').toLowerCase();
+                const text = fold([m.title, recordingTitle(m), ...(m.teams || []), ...summaryTeams(m), ...(m.tags || []), m.notes, m.scenario, scenarioName(m.scenario), m.folder, ...group].map(plainText).join(' '));
                 if (!text.includes(q)) {
                     return false;
                 }

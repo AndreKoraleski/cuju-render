@@ -55,6 +55,10 @@ except ImportError:
 _LZMA_ERRORS = () if lzma is None else (lzma.LZMAError,)
 
 BUILTIN = 'builtin'
+# The words that stand for something other than a team where a team's identifier goes, the random
+# side of a requested match, as _playing/draw.py names it. A folder of teams by such a name, which
+# only a hand could make, is left out of the registry, so no request mistakes one for the other.
+RESERVED = frozenset({'random'})
 # The start of a submission folder as the page uploads it, an index and the files' bytes.
 FOLDER_MAGIC = b'CUJDIR1\n'
 # The built-in AI's name until a person renames it, a label that the page shows in its language.
@@ -572,11 +576,19 @@ def teams() -> list[dict[str, Any]]:
     """Returns every team, the built-in AI first, then the submissions from newest to oldest.
 
     A team's identifier is the name of its folder, whatever its file says, and a folder whose
-    name is no identifier, or whose file fails to read as an entry, is left out alone.
+    name is no identifier, or a word of `RESERVED`, or whose file fails to read as an entry, is
+    left out alone.
     """
     entries = []
     for folder in _home.folder('teams').iterdir():
         if folder.name == BUILTIN or not _home.valid_identifier(folder.name):
+            continue
+        if folder.name in RESERVED:
+            _LOGGER.warning(
+                'cuju render leaves out the team folder %s, whose name stands for a random side, '
+                'rename the folder to keep the team',
+                folder.name,
+            )
             continue
         meta = folder / TEAM_FOLDER / 'team.json'
         try:
@@ -672,6 +684,24 @@ def scenario_players(scenario: str, side: int) -> list[Any]:
     load_scenario(scenario_path(scenario))(builder)
     config = builder.config()
     return config.left_team if side == 0 else config.right_team
+
+
+@functools.cache
+def scenario_sides(scenario: str) -> tuple[tuple[tuple[int, bool], ...], ...]:
+    """Returns the role of each player of both sides of a scenario and whether it is controllable.
+
+    The page checks with them which teams can play a side, as `check_scenario` checks it, and a
+    scenario loads once for each process, as loading one takes the better part of a second.
+    """
+    from cuju.scenarios import Builder, load_scenario
+
+    builder = Builder(0)
+    load_scenario(scenario_path(scenario))(builder)
+    config = builder.config()
+    return tuple(
+        tuple((int(player.role), bool(player.controllable)) for player in team)
+        for team in (config.left_team, config.right_team)
+    )
 
 
 def agent_count(team: dict[str, Any], scenario: str | None = None, side: int = 0) -> int:

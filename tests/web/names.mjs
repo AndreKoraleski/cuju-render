@@ -181,3 +181,11 @@ test('the summaries of the library list with their fields of the wrong kinds mad
     assert.deepEqual(b.score, [2, 1]);
     assert.deepEqual(names.summaryList({ length: 1, 0: { id: 'x' } }), []);
 });
+
+test('a requested match keeps the names of its teams, a made one in the language', () => {
+    assert.equal(names.keptName({ id: 'server.names.builtin', text: "GRF's built-in AI", values: {} }), pt('server.names.builtin'));
+    assert.equal(names.keptName('Équipe São Ñandú'), 'Équipe São Ñandú');
+    // A request of before keeps no names, and a field of the wrong kind reads as no name.
+    assert.equal(names.keptName(null), '');
+    assert.equal(names.keptName(undefined), '');
+});

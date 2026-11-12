@@ -451,6 +451,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Team and Scenario filters of the Matches page leave out the team and scenario drawn for a
+    match that still waits, which the filters listed and matched, so they told what the draw
+    picked before the match started. The Team filter lists its teams in the order of the team
+    lists of a new match, the built-in AI first, each with its kind and format under its name,
+    and a team that the registry no longer holds comes last as Removed team with its identifier,
+    named the same way in the list of requests. The list redraws when a team is renamed or
+    restyled, where it kept the old name beside the filter's new one, and a request that names a
+    team added from another tab or the command line loads the registry again, where it showed the
+    team's identifier.
+- The card of a random side on the Matches page counts the teams it can draw for the scenario,
+    leaving out the teams of the other format and the team of the other side while another fits,
+    where it counted every ticked team, and it counts again when the scenario or Let a team meet
+    itself changes.
+- Typing in a menu finds an entry by more than its first letter, whatever its case and accents,
+    so sev finds Several Five and e finds Équipe, also in a menu that the mouse opened, and an open
+    menu moves with its button while the page scrolls, where it stayed behind.
+- On a phone the team cards of a new match keep within the screen, with the ability of each side
+    in view, where a long line under a team's name pushed them past its edge, and the two teams of
+    a requested match share their row alike, so a short name beside a long one still reads. The
+    buttons of a requested match go under its text on a phone, so the names keep the whole row.
+- The cards of a new match say a submission's format and players plainly, such as 5 against 5,
+    3 players, with the whole control setting as the tooltip, and the team lists and the Team
+    filter say the players too.
+- Each requested match keeps the names of its teams in `team_names`, so a removed team shows by
+    its old name, marked as removed, in the list and the Team filter. Requests saved before load as
+    they were and show Removed team.
+- A drawn match canceled or interrupted before it started keeps its drawn teams and scenario
+    unseen, as while it waited.
+- The page checks a team's control against the players of each side of a scenario, which the
+    server lists at `GET /api/scenarios/sides`, so the scenario list, the count of a random side
+    and the draw agree with the server in the academy drills, and the pool of the draw marks the
+    teams that cannot play the chosen scenario with the reason as the tooltip. A scenario that is
+    no full match takes a team of either format, as on the server.
+- The search of Recordings ignores accents, as the menus and the search of moments do.
+- The Team and Scenario filters keep their teams and scenarios apart from Every team and Every
+    scenario, so a name such as all reads as itself, and a team folder named `random`, which a
+    request reads as a random side, is left out of the registry with a warning.
+- A name that a menu cuts short shows whole as the tooltip of its entry, an open Team filter
+    fills again in place when new requests come in, and the Matches page built again after an
+    error keeps one list for each side.
 - Try it on the guided tour opens what its control opens, the command palette, the Match and
     View menus, New tournament and Settings, and on the timeline moves the focus there and says
     the keys that seek. The steps with nothing to try in place leave it out. The tour's card keeps

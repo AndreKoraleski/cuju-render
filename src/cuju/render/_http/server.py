@@ -113,10 +113,20 @@ _REQUEST_FIELDS: dict[str, Any] = {
     'finished': lambda value: value is None or _number(value),
 }
 # The fields that a request of an earlier version lacks, the id and values of the message of its
-# error, which the page shows in its own language, `None` for an error without an id, and the draw
-# of a request with a side or a scenario drawn at random, `None` for one without.
+# error, which the page shows in its own language, `None` for an error without an id, the draw
+# of a request with a side or a scenario drawn at random, `None` for one without, and the names of
+# its two teams when it was made, each a label for a name that cuju made or a text, which the page
+# shows for a team removed since, `None` for a request of before.
 _OPTIONAL_REQUEST_FIELDS: dict[str, Any] = {
     'draw': _draw.valid,
+    'team_names': lambda value: (
+        value is None
+        or (
+            isinstance(value, list)
+            and len(value) == 2
+            and all(isinstance(item, str) or _messages.valid_label(item) for item in value)
+        )
+    ),
     'error_id': lambda value: value is None or value in _messages.MESSAGES,
     'error_values': lambda value: (
         value is None
@@ -265,7 +275,8 @@ class _Requests:
         drawn = _draw.draw_request(left, right, scenario, seed, pool, same_team)
         if drawn is not None:
             left, right, scenario = drawn['left'], drawn['right'], drawn['scenario']
-        _teams.check_scenario([_teams.entry(left), _teams.entry(right)], scenario)
+        sides = [_teams.entry(left), _teams.entry(right)]
+        _teams.check_scenario(sides, scenario)
         entry = {
             'id': '',
             'left': left,
@@ -283,6 +294,7 @@ class _Requests:
             'error_id': None,
             'error_values': None,
             'draw': None if drawn is None else drawn['draw'],
+            'team_names': [_teams.shown_name(team) for team in sides],
         }
         with self._lock:
             entry['id'] = self._new_identifier()
@@ -886,6 +898,27 @@ def _scenarios() -> list[str]:
     return sorted([*bundled_scenarios(), *_teams.renderer_scenarios()])
 
 
+def _scenario_sides() -> dict[str, list[list[dict[str, Any]]]]:
+    """Returns the players of both sides of every shipped scenario, by scenario.
+
+    Each player names its GRF role as a number and whether a team can control it, which the page
+    reads to tell which teams can play a side, as `_teams.check_scenario` tells it. A scenario
+    that fails to load is left out, and the page then checks only its format.
+    """
+    sides = {}
+    for name in _scenarios():
+        try:
+            found = _teams.scenario_sides(name)
+        except Exception as error:
+            _LOGGER.warning('cuju render leaves out the players of %s, %s', name, error)
+            continue
+        sides[name] = [
+            [{'role': role, 'controllable': controllable} for role, controllable in team]
+            for team in found
+        ]
+    return sides
+
+
 def _whole(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -1242,6 +1275,8 @@ def make_handler(
                     self._video(videos.file(parts[2]))
                 elif parts == ['api', 'scenarios']:
                     self._json(_scenarios())
+                elif parts == ['api', 'scenarios', 'sides']:
+                    self._json(_scenario_sides())
                 elif parts == ['api', 'teams']:
                     self._json(_teams.teams())
                 elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'model':
@@ -1938,6 +1973,8 @@ def serve(
     """
     # The diagnostic report of Help shows the server's recent warnings and errors.
     _doctor.install_capture()
+    # The players of each scenario load in the background, so the page finds them at once.
+    threading.Thread(target=_scenario_sides, daemon=True).start()
     games = _Games(warm=True)
     # The tournaments resume as the server starts, each match where it stopped.
     tournaments = _tournament_runner.Tournaments(games)

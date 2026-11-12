@@ -1,0 +1,21 @@
+{
+    "11_vs_11_competition": [[[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]], [[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]]],
+    "11_vs_11_easy_stochastic": [[[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]], [[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]]],
+    "11_vs_11_hard_stochastic": [[[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]], [[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]]],
+    "11_vs_11_kaggle": [[[0, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true], [9, true], [7, true]], [[0, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true], [9, true], [7, true]]],
+    "11_vs_11_stochastic": [[[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]], [[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]]],
+    "1_vs_1_easy": [[[0, true]], [[0, true]]],
+    "5_vs_5": [[[0, false], [7, true], [9, true], [2, true], [1, true]], [[0, false], [7, true], [9, true], [2, true], [1, true]]],
+    "academy_3_vs_1_with_keeper": [[[0, true], [5, true], [5, true], [5, true]], [[0, true], [1, true]]],
+    "academy_corner": [[[0, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true], [7, true], [9, true]], [[0, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true], [7, true], [9, true]]],
+    "academy_counterattack_easy": [[[0, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true], [7, true], [9, true]], [[0, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true], [7, true], [9, true]]],
+    "academy_counterattack_hard": [[[0, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true], [7, true], [9, true]], [[0, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true], [7, true], [9, true]]],
+    "academy_empty_goal": [[[0, true], [1, true]], [[0, true]]],
+    "academy_empty_goal_close": [[[0, true], [1, true]], [[0, true]]],
+    "academy_pass_and_shoot_with_keeper": [[[0, true], [1, true], [1, true]], [[0, true], [1, true]]],
+    "academy_run_pass_and_shoot_with_keeper": [[[0, true], [1, true], [1, true]], [[0, true], [1, true]]],
+    "academy_run_to_score": [[[0, true], [1, true]], [[0, true], [2, true], [1, true], [5, true], [1, true], [3, true]]],
+    "academy_run_to_score_with_keeper": [[[0, true], [1, true]], [[0, true], [2, true], [1, true], [5, true], [1, true], [3, true]]],
+    "academy_single_goal_versus_lazy": [[[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]], [[0, true], [7, true], [9, true], [2, true], [1, true], [1, true], [3, true], [5, true], [5, true], [5, true], [6, true]]],
+    "test_example_multiagent": [[[0, true], [5, true], [5, true], [5, true]], [[0, true], [1, true]]]
+}

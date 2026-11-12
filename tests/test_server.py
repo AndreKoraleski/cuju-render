@@ -2209,3 +2209,35 @@ def test_loopback_server_takes_a_burst_of_connections():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_requests_keep_the_names_of_their_teams(monkeypatch, render_home, tmp_path):
+    monkeypatch.setattr(_server._Requests, '_run', lambda self: None)
+    team = _toy_team(tmp_path, 'gone', 'def agent(obs):\n    return [0]\n', '5v5')
+    _teams.update(team['id'], name='Équipe São Ñandú')
+    requests = _server._Requests()
+    made = requests.add(team['id'], 'builtin', '5_vs_5', 3)
+    builtin = made['team_names'][1]
+    assert made['team_names'][0] == 'Équipe São Ñandú'
+    # The built-in AI keeps the label of its name, which the page shows in its own language.
+    assert builtin['id'] == 'server.names.builtin' and isinstance(builtin['text'], str)
+    _teams.remove(team['id'])
+    assert _server._Requests().entries()[0]['team_names'] == made['team_names']
+    # A request of an earlier version, without the names, still loads, and a malformed list of
+    # names leaves its file out.
+    path = requests._folder / f'{made["id"]}.json'
+    stored = json.loads(path.read_text(encoding='utf-8'))
+    del stored['team_names']
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    assert _server._Requests().entries()[0]['team_names'] is None
+    path.write_text(json.dumps({**stored, 'team_names': ['one']}), encoding='utf-8')
+    assert _server._Requests().entries() == []
+
+
+def test_scenario_sides_name_the_players_that_a_team_can_control():
+    sides = _server._scenario_sides()
+    assert set(sides) == set(_server._scenarios())
+    # The drill of three against one with a keeper gives the left side four players to control.
+    left, right = sides['academy_3_vs_1_with_keeper']
+    assert len(left) == 4 and all(player['controllable'] for player in left)
+    assert left[0]['role'] == 0 and len(right) == 2

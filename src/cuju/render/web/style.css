@@ -3932,6 +3932,11 @@ select:not([multiple]) {
     min-width: 0;
 }
 
+/* A team of the pool of the draw that cannot be drawn in the chosen scenario. */
+.draw-pool-team.unfit {
+    opacity: 0.5;
+}
+
 .req-teams {
     display: flex;
     align-items: center;
@@ -3939,11 +3944,15 @@ select:not([multiple]) {
     min-width: 0;
 }
 
+/* The two teams share the row alike, so a short name keeps its width and a long one takes the
+   rest, however long it is. */
 .req-team {
     display: inline-flex;
+    flex: 1 1 0;
     align-items: center;
     gap: 6px;
     min-width: 0;
+    max-width: max-content;
 }
 
 .req-team-name {
@@ -4743,8 +4752,9 @@ dialog.painter .toolbar {
         gap: 12px;
     }
 
+    /* The column takes the width of the screen, however long the line under a team's name. */
     .versus {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .vs {
@@ -4788,8 +4798,17 @@ dialog.painter .toolbar {
         min-width: 0;
     }
 
+    /* The buttons of a request go under its text, so the team names keep the whole row. */
     .req-card {
         flex-wrap: wrap;
+    }
+
+    .req-main {
+        flex-basis: 100%;
+    }
+
+    .req-actions {
+        margin-left: auto;
     }
 
     .teams-layout {

@@ -9,9 +9,10 @@ import { formatNumber, serverText, t, tn } from '../core/i18n.js';
 import { css, normalizeStyle } from '../players/kits.js';
 import { Dropdown, el as h, enhanceSelect, menuItem } from '../core/menu.js';
 import { icon, stateBadge, symbolOnly } from '../core/icons.js';
-import { teamName } from '../core/names.js';
+import { keptName, teamName } from '../core/names.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
-import { RANDOM, againOf, drawnParts, hiddenPart, poolTeams, requestOf, scenarioChoices, wasDrawn } from './draw.js';
+import { RANDOM, againOf, drawableTeams, drawnParts, fits, fittingScenarios, hiddenPart, requestOf, scenarioChoices, unfit, wasDrawn } from './draw.js';
+import { filterScenarios, filterTeams, passesScenario, passesTeam, scenarioValue, shownTeams, teamValue, unknownTeams } from './queue-filters.js';
 
 export { fits } from './draw.js';
 
@@ -54,6 +55,12 @@ const STATE_LABELS = {
     failed: t('matches.state.failed'), cancelled: t('matches.state.cancelled'), interrupted: t('matches.state.interrupted'),
 };
 
+// The players that a submission controls, one when its setting names none.
+function controlledPlayers(team) {
+    const players = team && team.control ? team.control.players : null;
+    return Number.isInteger(players) && players > 0 ? players : 1;
+}
+
 // An ability in the numbers of the language, with two decimals.
 function abilityText(value) {
     return formatNumber(Number(value), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -82,10 +89,15 @@ export class MatchesPage {
     constructor(app) {
         this.app = app;
         this.root = document.getElementById('page-matches');
-        this.teams = [];
+        this.setTeams([]);
         this.scenarios = [];
+        // The players of the scenarios' sides, which the server sends once and the page reads to
+        // tell the teams that can play a side, null until they come.
+        this.formations = null;
         this.requests = [];
         this.seen = new Set();
+        // The teams that requests named and the registry did not hold when the page looked.
+        this.looked = new Set();
         this.primed = false;
         // A side or the scenario may be Random, which the server draws from the seed, a side from
         // the teams of the pool, every team but those unticked.
@@ -107,6 +119,15 @@ export class MatchesPage {
 
     async refresh() {
         const token = ++this.token;
+        if (!this.formations && !this.loadingFormations) {
+            // The players come apart from the rest, so a slow first answer holds up nothing.
+            this.loadingFormations = api.scenarioSides().then((sides) => {
+                this.formations = sides && typeof sides === 'object' ? sides : null;
+                this.updateSetup();
+            }).catch(() => null).finally(() => {
+                this.loadingFormations = null;
+            });
+        }
         try {
             const [teams, scenarios, requests] = await Promise.all([
                 api.teams(), api.scenarios().catch(() => []), api.requests().catch(() => []),
@@ -114,7 +135,7 @@ export class MatchesPage {
             if (token !== this.token) {
                 return;
             }
-            this.teams = teams;
+            this.setTeams(teams);
             const listed = listedScenarios(scenarios);
             this.scenarios = listed.length ? listed : [DEFAULT_SCENARIO];
             this.requests = requests;
@@ -128,16 +149,58 @@ export class MatchesPage {
         this.render();
     }
 
+    // The registry, and a count of its changes, so the cards of the list redraw when a team is
+    // renamed, restyled or removed.
+    setTeams(teams) {
+        const text = JSON.stringify(teams);
+        if (text !== this.teamsText) {
+            this.teamsText = text;
+            this.teamsVersion = (this.teamsVersion || 0) + 1;
+        }
+        this.teams = teams;
+    }
+
     team(id) {
         return this.teams.find((x) => x.id === id) || null;
     }
 
-    teamName(id) {
+    // The name of a team of the registry, or for a team that the registry no longer holds the name
+    // that a request kept, marked as removed, that of `kept` or else of the newest request that
+    // shows the team, or Removed team alone for a request of before that kept none.
+    teamName(id, kept = null) {
         if (id === RANDOM) {
             return t('matches.team.random');
         }
         const x = this.team(id);
-        return x ? teamName(x) : id;
+        if (x) {
+            return teamName(x);
+        }
+        const name = keptName(kept) || this.keptName(id);
+        return name ? t('matches.team.removed.named', { name }) : t('matches.team.removed');
+    }
+
+    // The name that the newest request showing a team kept for it, or the empty text.
+    keptName(id) {
+        for (const r of this.requests) {
+            const names = Array.isArray(r.team_names) ? r.team_names : [];
+            const at = shownTeams(r).indexOf(id);
+            const name = at >= 0 ? keptName(names[at]) : '';
+            if (name) {
+                return name;
+            }
+        }
+        return '';
+    }
+
+    // The second line of a team in the team lists and the Team filter, its kind and format, or
+    // the identifier of a team that the registry no longer holds.
+    teamHint(id) {
+        const x = this.team(id);
+        if (!x) {
+            return id;
+        }
+        return x.kind === 'builtin' ? t('matches.team.builtin.hint')
+            : FORMAT_NAMES[x.format] ? t('matches.team.submission.hint', { format: FORMAT_NAMES[x.format], count: controlledPlayers(x) }) : t('matches.team.submission');
     }
 
     render() {
@@ -166,11 +229,17 @@ export class MatchesPage {
     // The page is built once, later refreshes update its parts in place.
     build() {
         this.built = true;
+        // A page built again, as after an error, takes away the lists of the sides it built before.
+        for (const side of this.sides || []) {
+            side.dropdown.close(false);
+            side.dropdown.panel.remove();
+        }
         this.sides = [0, 1].map((side) => this.sidePicker(side));
         this.scenarioSelect = h('select', { 'aria-label': t('matches.setup.scenario') });
         this.scenarioSelect.addEventListener('change', () => {
             this.state.scenario = this.scenarioSelect.value;
-            this.describeScenario();
+            // The cards of random sides count the teams that the scenario lets them draw.
+            this.updateSetup();
         });
         this.scenarioText = h('p', { class: 'scenario-text muted small', 'aria-live': 'polite' });
         this.seedInput = h('input', { type: 'number', min: '0', step: '1', placeholder: t('matches.setup.seed.placeholder'), value: this.state.seed, 'aria-label': t('matches.setup.seed.label') });
@@ -217,6 +286,7 @@ export class MatchesPage {
         const same = h('input', { type: 'checkbox' });
         same.addEventListener('change', () => {
             this.state.sameTeam = same.checked;
+            this.updateSetup();
         });
         const root = h('fieldset', { class: 'draw-pool', hidden: true },
             h('legend', {}, t('matches.draw.title')),
@@ -226,9 +296,29 @@ export class MatchesPage {
         return { root, list, same, key: '' };
     }
 
+    // Why a team of the pool cannot be drawn in the chosen scenario, by any random side, or the
+    // empty text when it can. A random scenario asks for a scenario that both sides can play.
+    poolFault(x, scenario) {
+        const s = this.state;
+        const random = [0, 1].filter((side) => [s.left, s.right][side] === RANDOM);
+        if (!scenario || scenario === RANDOM) {
+            const fitting = fittingScenarios(this.scenarios, this.teams, new Set(), s.left, s.right, this.formations);
+            return fitting.some((sc) => random.some((side) => fits(x, sc, side, this.formations))) ? '' : t('matches.draw.unfit.none');
+        }
+        const faults = random.map((side) => unfit(x, scenario, side, this.formations));
+        const fault = faults.every(Boolean) ? faults[0] : null;
+        if (!fault) {
+            return '';
+        }
+        return fault.id === 'matches.draw.unfit.format'
+            ? t('matches.draw.unfit.format', { format: FORMAT_NAMES[fault.values.format] || fault.values.format })
+            : t('matches.draw.unfit.control', { reason: t(fault.id, fault.values) });
+    }
+
     // Fills the boxes of the pool when the registry changes, and ticks them as the state says, so
-    // a box keeps its focus while the person ticks it.
-    fillPool() {
+    // a box keeps its focus while the person ticks it. A team that cannot be drawn in the chosen
+    // scenario shows faded, with the reason as its tooltip and for a screen reader.
+    fillPool(scenario = this.state.scenario) {
         const pool = this.pool;
         const key = this.teams.map((x) => `${x.id}|${teamName(x)}`).join('\n');
         if (key !== pool.key) {
@@ -243,8 +333,16 @@ export class MatchesPage {
                     }
                     this.updateSetup();
                 });
-                return h('label', { class: 'check draw-pool-team' }, box, kitShirt(x, i % 2), h('span', {}, teamName(x)));
+                return h('label', { class: 'check draw-pool-team', 'data-id': x.id }, box, kitShirt(x, i % 2), h('span', {}, teamName(x)),
+                    h('span', { class: 'sr-only draw-pool-fault' }));
             }));
+        }
+        for (const row of pool.list.querySelectorAll('.draw-pool-team')) {
+            const x = this.team(row.dataset.id);
+            const fault = x ? this.poolFault(x, scenario) : '';
+            row.classList.toggle('unfit', !!fault);
+            row.title = fault;
+            row.querySelector('.draw-pool-fault').textContent = fault ? `, ${fault}` : '';
         }
         for (const box of pool.list.querySelectorAll('input')) {
             box.checked = !this.state.unticked.has(box.value);
@@ -271,8 +369,7 @@ export class MatchesPage {
             });
             panel.replaceChildren(random, ...this.teams.map((x, i) => menuItem(teamName(x), {
                 checked: x.id === current,
-                hint: x.kind === 'builtin' ? t('matches.team.builtin.hint')
-                    : FORMAT_NAMES[x.format] ? t('matches.team.submission.hint', { format: FORMAT_NAMES[x.format] }) : t('matches.team.submission'),
+                hint: this.teamHint(x.id),
                 icon: kitShirt(x, i % 2),
                 onSelect: () => {
                     this.state[side ? 'right' : 'left'] = x.id;
@@ -310,16 +407,17 @@ export class MatchesPage {
             return;
         }
         const s = this.state;
-        const pooled = poolTeams(this.teams, s.unticked);
+        const { listed, keep } = scenarioChoices(this.scenarios, this.teams, s.unticked, s.left, s.right, s.scenario, DEFAULT_SCENARIO, this.formations);
         [s.left, s.right].forEach((id, side) => {
             const x = this.team(id);
             const card = this.sides[side].button;
+            card.title = '';
             if (id === RANDOM) {
                 card.replaceChildren(
                     h('span', { class: 'kit-shirt large team-card-random', 'aria-hidden': 'true' }, icon('dice')),
                     h('span', { class: 'team-card-text' },
                         h('span', { class: 'team-card-name' }, t('matches.team.random')),
-                        h('span', { class: 'team-card-meta' }, t('matches.team.random.meta', { count: pooled.length }))),
+                        h('span', { class: 'team-card-meta' }, t('matches.team.random.meta', { count: drawableTeams(this.teams, s.unticked, { ...s, scenario: keep }, side, this.scenarios, this.formations).length }))),
                     h('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
                 return;
             }
@@ -327,11 +425,15 @@ export class MatchesPage {
                 card.replaceChildren(h('span', { class: 'team-card-empty' }, t('matches.team.none')));
                 return;
             }
+            // A submission shows its format and the players it controls, and its whole control
+            // setting as the tooltip of the card.
+            const builtin = x.kind === 'builtin';
+            card.title = builtin ? '' : t('matches.team.submission.title', { control: controlLabel(x.control, x.format) });
             card.replaceChildren(
                 kitShirt(x, side, 'large'),
                 h('span', { class: 'team-card-text' },
                     h('span', { class: 'team-card-name' }, teamName(x)),
-                    h('span', { class: 'team-card-meta' }, x.kind === 'builtin' ? t('matches.team.builtin.meta') : t('matches.team.submission.meta', { format: FORMAT_NAMES[x.format] || x.format, control: controlLabel(x.control, x.format) }))),
+                    h('span', { class: 'team-card-meta' }, builtin ? t('matches.team.builtin.meta') : t('matches.team.submission.meta', { format: FORMAT_NAMES[x.format] || x.format, count: controlledPlayers(x) }))),
                 h('span', { class: 'dd-caret', 'aria-hidden': 'true' }));
         });
         const random = [s.left, s.right].includes(RANDOM);
@@ -339,7 +441,6 @@ export class MatchesPage {
         const r = s.right === RANDOM ? null : this.team(s.right);
         const chosen = (l || s.left === RANDOM) && (r || s.right === RANDOM);
         const clash = l && r && l.kind !== 'builtin' && r.kind !== 'builtin' && l.format && r.format && l.format !== r.format;
-        const { listed, keep } = scenarioChoices(this.scenarios, this.teams, s.unticked, s.left, s.right, s.scenario, DEFAULT_SCENARIO);
         if (clash) {
             this.clash.replaceChildren(...tn('matches.setup.clash'));
         } else if (!chosen) {
@@ -348,7 +449,7 @@ export class MatchesPage {
         this.clash.hidden = !clash && !!chosen;
         this.pool.root.hidden = !random;
         if (random) {
-            this.fillPool();
+            this.fillPool(keep);
         }
         const name = (sc) => (sc === RANDOM ? t('matches.setup.scenario.random') : scenarioName(sc));
         this.scenarioSelect.replaceChildren(...(listed.length ? listed : [t('matches.setup.noScenario')]).map((sc) =>
@@ -415,22 +516,20 @@ export class MatchesPage {
         return bar;
     }
 
-    // The team and scenario filters list what the requests hold.
+    // The team and scenario filters list what the requests show, as queue-filters.js describes.
     refillFilters() {
-        const ids = [...new Set(this.requests.flatMap((r) => [r.left, r.right]))];
-        const scenarios = [...new Set(this.requests.map((r) => r.scenario))].sort();
         const fill = (select, key, all, entries) => {
             const keep = this.filters[key];
             const want = [['all', all], ...entries];
-            const now = [...select.options].map((o) => `${o.value}|${o.textContent}`).join('\n');
-            if (now !== want.map(([v, text]) => `${v}|${text}`).join('\n')) {
-                select.replaceChildren(...want.map(([v, text]) => h('option', { value: v }, text)));
+            const now = [...select.options].map((o) => `${o.value}|${o.textContent}|${o.dataset.hint || ''}`).join('\n');
+            if (now !== want.map(([v, text, hint]) => `${v}|${text}|${hint || ''}`).join('\n')) {
+                select.replaceChildren(...want.map(([v, text, hint]) => h('option', { value: v, 'data-hint': hint || null }, text)));
             }
             this.filters[key] = want.some(([v]) => v === keep) ? keep : 'all';
             select.value = this.filters[key];
         };
-        fill(this.teamFilter, 'team', t('matches.filter.team.all'), ids.map((id) => [id, this.teamName(id)]));
-        fill(this.scenarioFilter, 'scenario', t('matches.filter.scenario.all'), scenarios.map((s) => [s, scenarioName(s)]));
+        fill(this.teamFilter, 'team', t('matches.filter.team.all'), filterTeams(this.requests, this.teams).map((id) => [teamValue(id), this.teamName(id), this.teamHint(id)]));
+        fill(this.scenarioFilter, 'scenario', t('matches.filter.scenario.all'), filterScenarios(this.requests).map((s) => [scenarioValue(s), scenarioName(s)]));
     }
 
     renderQueue() {
@@ -447,7 +546,7 @@ export class MatchesPage {
             if (f.status !== 'all' && f.status !== 'active' && st !== f.status) {
                 return false;
             }
-            if (f.team !== 'all' && r.left !== f.team && r.right !== f.team) {
+            if (!passesTeam(r, f.team)) {
                 return false;
             }
             if (f.date !== 'any') {
@@ -460,7 +559,7 @@ export class MatchesPage {
                     return false;
                 }
             }
-            return f.scenario === 'all' || r.scenario === f.scenario;
+            return passesScenario(r, f.scenario);
         });
         // The server lists the requests newest first.
         if (f.sort === 'oldest') {
@@ -482,7 +581,7 @@ export class MatchesPage {
         const old = new Map([...this.queueHost.querySelectorAll('.req-card')].map((el) => [el.dataset.id, el]));
         const list = this.queueHost.querySelector('.req-cards') || h('ul', { class: 'req-cards' });
         const items = rows.map((r) => {
-            const key = `${r.id}|${stateOf(r)}|${r.match || ''}|${r.error || ''}|${r.persistence_error || ''}`;
+            const key = `${r.id}|${stateOf(r)}|${r.match || ''}|${r.error || ''}|${r.persistence_error || ''}|${this.teamsVersion}`;
             let li = old.get(r.id);
             if (!li || li.dataset.key !== key) {
                 li = this.requestCard(r);
@@ -546,7 +645,8 @@ export class MatchesPage {
                 return h('span', { class: 'req-team req-random' }, icon('dice'), h('span', { class: 'req-team-name' }, t('matches.team.random')));
             }
             const x = this.team(id);
-            return h('span', { class: 'req-team' }, x ? kitShirt(x, i) : null, h('span', { class: 'req-team-name' }, this.teamName(id)),
+            const kept = Array.isArray(r.team_names) ? r.team_names[i] : null;
+            return h('span', { class: 'req-team' }, x ? kitShirt(x, i) : null, h('span', { class: 'req-team-name', title: x ? null : id }, this.teamName(id, kept)),
                 parts[part] ? drawnMark() : null);
         };
         const scenario = hiddenPart(r, 'scenario') ? h('span', {}, t('matches.setup.scenario.random'))
@@ -643,6 +743,19 @@ export class MatchesPage {
         } catch {
             return;
         }
+        // A request may name a team added since the page loaded the registry, from the command
+        // line or another tab, and the page then loads the registry again, once for each such
+        // team, so a team that was removed is not looked up on every check.
+        const before = this.teamsVersion;
+        const unknown = unknownTeams(list, this.teams).filter((id) => !this.looked.has(id));
+        if (unknown.length) {
+            try {
+                this.setTeams(await api.teams());
+                unknown.forEach((id) => this.looked.add(id));
+            } catch {
+                // The next check tries again.
+            }
+        }
         for (const r of list) {
             const st = stateOf(r);
             if ((st === 'done' || st === 'failed' || st === 'cancelled') && !this.seen.has(r.id)) {
@@ -657,7 +770,9 @@ export class MatchesPage {
         this.primed = true;
         const changed = JSON.stringify(list) !== JSON.stringify(this.requests);
         this.requests = list;
-        if (changed && this.visible) {
+        if (this.teamsVersion !== before && this.visible) {
+            this.render();
+        } else if (changed && this.visible) {
             this.renderQueue();
         }
     }

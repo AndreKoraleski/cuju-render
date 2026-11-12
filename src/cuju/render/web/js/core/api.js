@@ -113,6 +113,8 @@ export const api = {
     liveGrid: (id, first, count) => getJson(`/api/live/${enc(id)}/grid?first=${first}&count=${count}`),
     info: () => getJson('/api/info'),
     scenarios: () => getJson('/api/scenarios'),
+    // The players of both sides of every scenario, which tell the teams that can play a side.
+    scenarioSides: () => getJson('/api/scenarios/sides'),
     teams: () => getJson('/api/teams'),
     uploadTeam: async (name, filename, body, format, control = null) => {
         let path = `/api/teams?name=${enc(name)}&filename=${enc(filename)}`;
