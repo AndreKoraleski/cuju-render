@@ -95,15 +95,21 @@ def test_an_archive_with_a_device_member_is_refused_whole(render_home):
 
 def test_files_of_a_team_named_as_devices_are_removed(render_home, tmp_path, caplog):
     """A file of a team's folder named as a device, or ending in a dot or space, is removed."""
+    names = ('nul', 'con .txt', 'conin$', 'shirt-front.png.', 'notes.md')
     kept = []
     with caplog.at_level(logging.WARNING, logger='cuju'):
-        for name in ('nul', 'con .txt', 'conin$', 'shirt-front.png.', 'notes.md'):
+        for name in names:
             path = tmp_path / name
+            if os.name == 'nt' and name != 'notes.md':
+                # Windows opens a device or drops the dot or space, so no folder holds such a file
+                # there and the name alone is checked.
+                kept.append(not _teams._device(name))
+                continue
             path.write_bytes(b'x')
             kept.append(_teams._kept(path))
     assert kept == [False, False, False, False, True]
     assert sorted(path.name for path in tmp_path.iterdir()) == ['notes.md']
-    assert 'opens a device on Windows' in caplog.text
+    assert os.name == 'nt' or 'opens a device on Windows' in caplog.text
 
 
 def test_team_control_is_checked_and_travels(render_home, tmp_path):
