@@ -27,6 +27,8 @@ from cuju.render._tournaments import tournament_runner as runner
 _SUPPORT = Path(__file__).parent / 'support' / 'strict'
 # Limits of a call short enough for a quick test, the rest the defaults.
 _QUICK = {**rules.STRICT_DEFAULTS, 'call_seconds': 0.5, 'first_call_seconds': 5.0}
+# The limits and switches of strict rules as a tournament resolves them by default.
+_STRICT = {**rules.STRICT_DEFAULTS, **rules.STRICT_FLAGS}
 _BUILTIN = {'id': 'builtin', 'kind': 'builtin', 'name': 'Built-in AI'}
 
 
@@ -50,11 +52,19 @@ def _forfeit(left, right='builtin', limits=None, steps=20):
         ('sleeps', 'timeout', 'server.strict.call_time', None),
         ('invalid', 'invalid', 'server.strict.invalid_range', 'range'),
         ('unloadable', 'load', 'server.strict.load', None),
+        ('hungry', 'memory', 'server.strict.memory_out', None),
+        ('spawner', 'process', 'server.strict.process', None),
+        ('threaded', 'threads', 'server.strict.threads', None),
+        ('slow', 'total_time', 'server.strict.total_time', None),
     ],
 )
 def test_each_broken_rule_ends_the_match_with_its_reason(render_home, name, kind, message, detail):
     team = _team(name)
-    forfeit = _forfeit(team)
+    # A test's own limits of memory and of the time of a match, low enough to break quickly.
+    limits = {**_QUICK, 'memory_mb': 300}
+    if kind == 'total_time':
+        limits['match_seconds'] = 0.02
+    forfeit = _forfeit(team, limits=limits)
     rule = forfeit.rule
     assert (rule['side'], rule['kind'], rule['reason_id'], rule['detail']) == (
         'home',
@@ -63,8 +73,14 @@ def test_each_broken_rule_ends_the_match_with_its_reason(render_home, name, kind
         detail,
     )
     assert rule['reason_values']['player'] == name
-    # The load fails before the first step, and each of the others in the third call.
-    assert rule['step'] == (0 if kind == 'load' else 2)
+    # The load fails before the first step, and each of the others in the third call, or for a
+    # limit that the guard watches, soon after it.
+    if kind == 'load':
+        assert rule['step'] == 0
+    elif kind in ('threads', 'total_time'):
+        assert 0 <= rule['step'] <= 8
+    else:
+        assert rule['step'] == 2
     assert rule['at'] == [0, 0]
     assert forfeit.stats['cut_short'] is True
 
@@ -87,38 +103,58 @@ def test_a_side_on_the_right_breaks_its_rule_as_the_away_side(render_home):
 
 def test_the_mean_of_a_call_after_the_first_is_limited_in_a_match(render_home):
     team = _team('slow')
-    forfeit = _forfeit(team, limits={**_QUICK, 'mean_call_ms': 1.0}, steps=8)
+    forfeit = _forfeit(team, limits={**_QUICK, 'mean_call_ms': 1.0, 'match_seconds': 60}, steps=8)
     assert forfeit.rule['kind'] == 'mean' and forfeit.rule['reason_id'] == 'server.strict.mean'
     side = forfeit.stats['sides'][0]
     assert side['calls'] == 8 and side['mean_after_first_ms'] >= 4
     # A mean below the limit plays on, and the stats say how the match ended.
     stats = {}
-    _play.play(team, 'builtin', '5_vs_5', seed=3, strict=_QUICK, stats=stats, steps=8, save=False)
+    _play.play(
+        team,
+        'builtin',
+        '5_vs_5',
+        seed=3,
+        strict={**_QUICK, 'match_seconds': 60},
+        stats=stats,
+        steps=8,
+        save=False,
+    )
     assert stats['cut_short'] is True and stats['steps'] == 8
     assert stats['sides'][0]['actions'] == {'5': 8}
 
 
-def test_two_teams_keep_their_modules_threads_folders_and_inputs_apart(render_home):
+def test_two_teams_keep_their_modules_threads_folders_and_inputs_apart(
+    render_home, tmp_path, monkeypatch
+):
+    monkeypatch.setenv('CUJU_TEST_SEEN', str(tmp_path))
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '0')
     left, right = _team('twin_left'), _team('twin_right')
     stats = {}
     path = _play.play(left, right, '5_vs_5', seed=3, strict=_QUICK, stats=stats, length=50)
     assert path is not None and stats['cut_short'] is False
     # Each helper module of the same name answered its own team's action.
     assert stats['sides'][0]['actions'] == {'7': 51} and stats['sides'][1]['actions'] == {'3': 51}
-    folders = _teams._home.folder('teams')
+    assert stats['sides'][0]['memory_mb'] > 0
     seen = [
-        json.loads((folders / team / 'seen.json').read_text(encoding='utf-8'))
-        for team in (left, right)
+        json.loads((tmp_path / f'{action}.json').read_text(encoding='utf-8')) for action in (7, 3)
     ]
-    for team, found in zip((left, right), seen, strict=True):
-        assert Path(found['helper']).parent == (folders / team).resolve()
-        assert Path(found['path']) == (folders / team).resolve()
+    for found in seen:
+        # Each team played from a copy of its folder inside its own private working folder,
+        # both removed once the match ended.
+        copy = Path(found['helper']).parent
+        assert Path(found['path']) == copy and copy.name == 'team'
+        assert copy.parent == Path(found['folder']) and copy.parent.name.startswith('cuju-policy-')
+        assert not copy.parent.exists()
         assert found['threads'] == {'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1'}
         assert not found['renderer'] and found['stdin'] == '' and found['pythonpath'] == []
-        # The working folder was a private one, removed once the match ended.
-        assert Path(found['folder']).name.startswith('cuju-policy-')
-        assert not Path(found['folder']).exists()
+        # No GPU shows unless the rules allow one.
+        assert found['gpu'] == ''
+    assert seen[0]['folder'] != seen[1]['folder']
     assert seen[0]['torch'] == 1
+    _play.play(
+        left, 'builtin', '5_vs_5', seed=3, strict={**_QUICK, 'gpu': True}, steps=2, save=False
+    )
+    assert json.loads((tmp_path / '7.json').read_text(encoding='utf-8'))['gpu'] == '0'
     # What the team printed went to its log.
     assert 'a print of the team' in _strict.log_path(left).read_text(encoding='utf-8')
 
@@ -188,7 +224,7 @@ def test_a_strict_match_replays_from_its_seed_and_actions(render_home):
 
 def test_the_check_of_a_team_plays_both_sides_and_warns(render_home):
     team = _team('plays')
-    report = _strict.preflight(team, '5_vs_5', rules.STRICT_DEFAULTS)
+    report = _strict.preflight(team, '5_vs_5', _STRICT)
     assert report['ok'] and set(report['sides']) == {'left', 'right'}
     for side in report['sides'].values():
         assert side['ok'] and side['timings']['calls'] == _strict.PREFLIGHT_STEPS
@@ -199,17 +235,17 @@ def test_the_check_of_a_team_plays_both_sides_and_warns(render_home):
     path = _teams._home.folder('teams') / team / _teams.TEAM_FOLDER / 'team.json'
     saved = json.loads(path.read_text(encoding='utf-8'))
     path.write_text(json.dumps({**saved, 'colour': 'red'}), encoding='utf-8')
-    report = _strict.preflight(team, '5_vs_5', rules.STRICT_DEFAULTS)
+    report = _strict.preflight(team, '5_vs_5', _STRICT)
     assert report['warnings'][0]['values'] == {'setting': 'colour', 'file': 'team.json'}
 
 
 def test_the_check_of_a_team_fails_on_load_and_on_the_size_of_its_folder(render_home):
-    report = _strict.preflight(_team('unloadable'), '5_vs_5', rules.STRICT_DEFAULTS)
+    report = _strict.preflight(_team('unloadable'), '5_vs_5', _STRICT)
     assert not report['ok'] and report['rule']['kind'] == 'load'
     assert list(report['sides']) == ['left']
     team = _team('plays')
     (_teams._home.folder('teams') / team / 'weights.bin').write_bytes(bytes(1_200_000))
-    report = _strict.preflight(team, '5_vs_5', {**rules.STRICT_DEFAULTS, 'folder_mb': 1.0})
+    report = _strict.preflight(team, '5_vs_5', {**_STRICT, 'folder_mb': 1.0})
     assert not report['ok'] and report['rule']['detail'] == 'size'
     assert report['rule']['reason_id'] == 'server.strict.folder_size'
 
@@ -306,7 +342,6 @@ def _strict_config(teams, **options):
     return {
         'name': 'Strict cup',
         'seed': 5,
-        'preset': 'strict_round_robin',
         'entrants': [{'kind': 'team', 'team': team} for team in teams],
         'strict': True,
         'preflight': True,
@@ -354,7 +389,7 @@ def test_the_preflight_leaves_out_teams_that_fail_and_draws_again(render_home, m
     cups.close()
     # Each team is checked once, under the tournament's limits, on the first stage's scenario.
     assert sorted(team for team, _, _ in checker.calls) == ['blues', 'broken', 'reds']
-    assert all(s == '5_vs_5' and lim == rules.STRICT_DEFAULTS for _, s, lim in checker.calls)
+    assert all(s == '5_vs_5' and lim == _STRICT for _, s, lim in checker.calls)
     assert [e['name'] for e in done['config']['entrants']] == [
         'Reds',
         'Blues',
@@ -707,57 +742,180 @@ def test_old_files_without_the_new_fields_load_and_resume(render_home):
     again.close()
 
 
-def test_the_strict_round_robin_preset_and_the_strict_settings():
-    preset = rules.preset_config('strict_round_robin')
+def test_strict_settings_combine_in_any_tournament():
+    # A league of ten legs with strict rules, a pre-flight and the floor of the random entrant
+    # and the built-in AI, as any tournament may set them.
     config = rules.check(
-        {**preset, 'name': 'S', 'seed': 1, 'entrants': [{'kind': 'builtin', 'ability': 0.5}]},
-        [_BUILTIN],
-    )
-    stage = config['stages'][0]
-    assert (stage['format'], stage['legs'], stage['scenario'], stage['length']) == (
-        'league',
-        10,
-        '5_vs_5',
-        3000,
-    )
-    assert stage['points'] == {'win': 3, 'draw': 1, 'loss': 0}
-    assert config['strict'] == rules.STRICT_DEFAULTS and config['preflight'] is True
-    assert config['forfeit_score'] == 3
-    assert [e['kind'] for e in config['entrants']] == ['builtin', 'random', 'builtin']
-    view = rules.evaluate(config, {})
-    assert len(view['matches']) == 3 * 10
-    # An entrant that the preset adds and that a person entered already enters once.
-    again = rules.check(
         {
-            **preset,
             'name': 'S',
             'seed': 1,
-            'entrants': [
-                {'kind': 'random'},
-                {'kind': 'builtin'},
-                {'kind': 'builtin', 'ability': 0.5},
-            ],
+            'strict': True,
+            'preflight': True,
+            'include': [{'kind': 'random'}, {'kind': 'builtin'}],
+            'entrants': [{'kind': 'builtin', 'ability': 0.5}],
+            'defaults': {'scenario': '5_vs_5', 'length': 3000},
+            'stages': [{'format': 'league', 'legs': 10}],
         },
         [_BUILTIN],
     )
-    assert len(again['entrants']) == 3
+    assert config['strict'] == _STRICT and config['preflight'] is True
+    assert [e['kind'] for e in config['entrants']] == ['builtin', 'random', 'builtin']
+    assert len(rules.evaluate(config, {})['matches']) == 3 * 10
+    assert 'strict_round_robin' not in rules.PRESETS
+    defaults = rules.check_strict(True)
+    assert (defaults['memory_mb'], defaults['match_seconds']) == (2048.0, 120.0)
+    assert (defaults['frozen'], defaults['gpu'], defaults['deterministic']) == (True, False, False)
     assert rules.check_strict(None) is None and rules.check_strict(False) is None
     assert rules.check_strict({'call_seconds': 2})['call_seconds'] == 2.0
-    for wrong in ({'call_seconds': 0}, {'threads': 0}, {'speed': 1}, 'fast'):
+    assert rules.check_strict({'gpu': True})['gpu'] is True
+    for wrong in (
+        {'call_seconds': 0},
+        {'threads': 0},
+        {'speed': 1},
+        'fast',
+        {'memory_mb': 10},
+        {'match_seconds': 0},
+        {'frozen': 'yes'},
+    ):
         with pytest.raises(rules.TournamentError):
             rules.check_strict(wrong)
-    assert (
-        rules.check_preset({**{k: v for k, v in preset.items() if k != 'preset'}, 'title': 'Mine'})[
-            'strict'
-        ]
-        is True
+    saved = rules.check_preset({'title': 'Mine', 'strict': True, 'stages': [{'format': 'league'}]})
+    assert saved['strict'] is True
+
+
+def test_a_file_of_the_removed_strict_round_robin_preset_loads_and_resumes(render_home):
+    cups = runner.Tournaments(player=_strict_player(), start=False, interval=0.01)
+    entry = cups.create(
+        {
+            'name': 'Old strict',
+            'seed': 2,
+            'strict': True,
+            'entrants': [{'kind': 'builtin', 'ability': a} for a in (0.1, 0.2)],
+            'include': [{'kind': 'random'}],
+            'stages': [{'format': 'league', 'name': 'Round robin', 'legs': 2}],
+        }
     )
+    cups.close()
+    path = runner.folder() / f'{entry["id"]}.json'
+    stored = json.loads(path.read_text(encoding='utf-8'))
+    stored.pop('seal')
+    # A file of before names the preset that made it, and its settings stand in the file.
+    stored['config']['preset'] = 'strict_round_robin'
+    runner._write_record(path, stored)
+    again = runner.Tournaments(player=_strict_player(), start=False, interval=0.01)
+    assert again.get(entry['id'])['state'] == 'running'
+    assert again.run(entry['id'], report=lambda line: None) == 'done'
+    done = again.get(entry['id'])
+    again.close()
+    assert done['config']['preset'] == 'strict_round_robin' and done['played'] == 6
+
+
+# Frozen folders, the determinism of a team and its changed files.
+
+
+def test_a_team_plays_from_a_read_only_copy_and_learns_nothing_between_matches(
+    render_home, tmp_path, monkeypatch
+):
+    monkeypatch.setenv('CUJU_TEST_SEEN', str(tmp_path))
+    team = _team('writer')
+    for _ in range(2):
+        stats = {}
+        _play.play(
+            team, 'builtin', '5_vs_5', seed=3, strict=_QUICK, stats=stats, steps=3, save=False
+        )
+        # The count of loads that it wrote stayed in its copy, so each match finds none.
+        assert stats['sides'][0]['actions'] == {'5': 3}
+        seen = json.loads((tmp_path / 'writer.json').read_text(encoding='utf-8'))
+        assert seen == {'changed': False, 'loads': 0}
+    folder = _teams._home.folder('teams') / team
+    assert not (folder / 'count.txt').exists()
+    # Without a frozen folder the team writes in its own folder and learns.
+    _play.play(
+        team, 'builtin', '5_vs_5', seed=3, strict={**_QUICK, 'frozen': False}, steps=1, save=False
+    )
+    assert (folder / 'count.txt').exists()
+
+
+def test_the_digest_of_a_folder_follows_its_files(render_home):
+    team = _team('plays')
+    folder = _teams._home.folder('teams') / team
+    first = _strict.folder_digest(team)
+    assert len(first) == 64 and _strict.folder_digest(team) == first
+    # The renderer's own folder of the team and the caches of Python leave it as it is.
+    (folder / '__pycache__').mkdir()
+    (folder / '__pycache__' / 'main.cpython-312.pyc').write_bytes(b'x')
+    (folder / _teams.TEAM_FOLDER / 'note.txt').write_text('kit', encoding='utf-8')
+    assert _strict.folder_digest(team) == first
+    (folder / 'weights.txt').write_text('1', encoding='utf-8')
+    second = _strict.folder_digest(team)
+    assert second != first
+    (folder / 'weights.txt').write_text('2', encoding='utf-8')
+    assert _strict.folder_digest(team) not in (first, second)
+    assert _strict.folder_digest('t-none') is None
+
+
+def test_a_team_whose_files_change_is_refused_at_its_next_match(render_home):
+    team = _team('plays')
+    folder = _teams._home.folder('teams') / team
+    played, changed = [], []
+
+    def player(match, teams, provenance, progress):
+        played.append(match['key'])
+        if team in teams and not changed:
+            changed.append(match['key'])
+            # The team's author changes its policy while the tournament plays.
+            with (folder / 'main.py').open('a', encoding='utf-8') as stream:
+                stream.write('# a change\n')
+        return {'score': [1, 0], 'cards': [[0, 0], [0, 0]], 'match': None}
+
+    cups = runner.Tournaments(player=player, start=False, interval=0.01)
+    entry = cups.create(
+        {
+            'name': 'Frozen',
+            'seed': 3,
+            'strict': True,
+            'entrants': [
+                {'kind': 'team', 'team': team},
+                {'kind': 'builtin', 'ability': 0.2},
+                {'kind': 'builtin', 'ability': 0.6},
+            ],
+            'stages': [{'format': 'league', 'scenario': '5_vs_5'}],
+        }
+    )
+    assert cups.run(entry['id'], report=lambda line: None) == 'done'
+    done = cups.get(entry['id'])
+    cups.close()
+    ours = [
+        m
+        for m in done['matches']
+        if done['config']['entrants'][m['home']]['team'] == team
+        or done['config']['entrants'][m['away']]['team'] == team
+    ]
+    rules_broken = [m['result'].get('rule') for m in ours]
+    kinds = [rule and rule['kind'] for rule in rules_broken]
+    # The first match read the digest, and the change refused the team at the next one.
+    assert sorted(kinds, key=str) == sorted([None, 'changed'], key=str)
+    changed = next(rule for rule in rules_broken if rule)
+    assert changed['reason_id'] == 'server.strict.changed' and changed['step'] == 0
+    # The other two matches played, and the refused one never reached the player.
+    assert len(played) == 2
+
+
+def test_the_preflight_checks_determinism(render_home):
+    team = _team('wanders')
+    report = _strict.preflight(team, '5_vs_5', _STRICT)
+    assert report['ok']
+    assert 'server.strict.warning_deterministic' in [w['id'] for w in report['warnings']]
+    refused = _strict.preflight(team, '5_vs_5', {**_STRICT, 'deterministic': True})
+    assert not refused['ok'] and refused['rule']['kind'] == 'deterministic'
+    steady = _strict.preflight(_team('plays'), '5_vs_5', {**_STRICT, 'deterministic': True})
+    assert steady['ok'] and len(steady['digest']) == 64
 
 
 def test_the_team_check_route_and_the_review_preflight(render_home):
     team = _team('plays')
     report = runner.check_team(team, {'scenario': '5_vs_5'})
-    assert report['ok'] and report['strict'] and report['limits'] == rules.STRICT_DEFAULTS
+    assert report['ok'] and report['strict'] and report['limits'] == _STRICT
     with pytest.raises(cuju.errors.ArgumentError):
         runner.check_team(team, {'strict': {'threads': 0}})
     found = runner.preflight_config(
@@ -779,5 +937,19 @@ def test_the_team_check_route_and_the_review_preflight(render_home):
 def test_the_support_submissions_stay_where_the_tests_find_them():
     names = sorted(path.name for path in _SUPPORT.iterdir() if path.is_dir())
     assert names == sorted(
-        ['crashes', 'invalid', 'plays', 'sleeps', 'slow', 'twin_left', 'twin_right', 'unloadable']
+        [
+            'crashes',
+            'hungry',
+            'invalid',
+            'plays',
+            'sleeps',
+            'slow',
+            'spawner',
+            'threaded',
+            'twin_left',
+            'twin_right',
+            'unloadable',
+            'wanders',
+            'writer',
+        ]
     )

@@ -134,6 +134,8 @@ STRICT_DEFAULTS: dict[str, Any] = {
     'reset_seconds': 5.0,
     'mean_call_ms': 20.0,
     'folder_mb': 100.0,
+    'memory_mb': 2048.0,
+    'match_seconds': 120.0,
 }
 STRICT_RANGES: dict[str, tuple[float, float]] = {
     'threads': (1, 64),
@@ -143,7 +145,14 @@ STRICT_RANGES: dict[str, tuple[float, float]] = {
     'reset_seconds': (0.1, 600),
     'mean_call_ms': (0.1, 10000),
     'folder_mb': (1, 10000),
+    'memory_mb': (64, 65536),
+    'match_seconds': (1, 36000),
 }
+# The switches of strict rules with their defaults. `frozen` plays each team from a read only copy
+# of its folder and refuses a team whose files changed since the pre-flight, `gpu` lets a team's
+# process see the GPUs, and `deterministic` refuses at the pre-flight a team whose answers differ
+# when the same steps play again from the same seed, which is otherwise a warning.
+STRICT_FLAGS: dict[str, bool] = {'frozen': True, 'gpu': False, 'deterministic': False}
 _ROUND_NAMES = {2: 'final', 4: 'semi_finals', 8: 'quarter_finals'}
 _TIE_NAMES = {4: 'semi_final', 8: 'quarter_final'}
 # The stage names that the rules and the shipped presets give, by their English text, each with
@@ -354,23 +363,6 @@ PRESETS: dict[str, dict[str, Any]] = {
         'take the crown, which stays with the king on a draw.',
         'seeding': 'random',
         'stages': [{'format': 'king_of_the_hill', 'name': 'King of the hill'}],
-    },
-    'strict_round_robin': {
-        'title': 'Strict round robin',
-        'description': 'Everyone plays everyone ten times with sides in turn, five against five '
-        'for 3000 steps, under strict rules with the default limits, after a pre-flight check '
-        'of every team, with the random entrant and the built-in AI added as a floor.',
-        'seeding': 'random',
-        'forfeit_score': 3,
-        'strict': True,
-        'preflight': True,
-        'include': [{'kind': 'random'}, {'kind': 'builtin'}],
-        'defaults': {
-            'scenario': '5_vs_5',
-            'length': 3000,
-            'points': {'win': 3, 'draw': 1, 'loss': 0},
-        },
-        'stages': [{'format': 'league', 'name': 'Round robin', 'legs': 10}],
     },
     'gauntlet': {
         'title': 'Gauntlet',
@@ -1192,10 +1184,15 @@ def check_strict(value: Any) -> dict[str, Any] | None:
         value = {}
     if not isinstance(value, dict):
         raise TournamentMessageError('server.tournament.strict', value=repr(value))
-    unknown = set(value) - set(STRICT_DEFAULTS)
+    unknown = set(value) - set(STRICT_DEFAULTS) - set(STRICT_FLAGS)
     if unknown:
         raise TournamentMessageError('server.tournament.strict_settings', settings=sorted(unknown))
-    limits = {**STRICT_DEFAULTS, **value}
+    limits = {**STRICT_DEFAULTS, **STRICT_FLAGS, **value}
+    for name in STRICT_FLAGS:
+        if not isinstance(limits[name], bool):
+            raise TournamentMessageError(
+                'server.tournament.flag', setting=_field(f'strict_{name}'), where=_field('strict')
+            )
     for name, (lowest, highest) in STRICT_RANGES.items():
         found = limits[name]
         name_label = _field(f'strict_{name}')
@@ -1217,7 +1214,7 @@ def check_strict(value: Any) -> dict[str, Any] | None:
 def check_include(value: Any) -> list[dict[str, Any]]:
     """Returns the entrants that a tournament adds to those a person enters, as a copy.
 
-    A preset such as Strict round robin adds the random entrant and the built-in AI, as a floor
+    A tournament may add the random entrant and the built-in AI so, as a floor
     that every team should beat. Each is an entrant as `check_entrants` takes it, and one whose
     key an entrant already holds is left out, so the same entrant never enters twice.
     """
@@ -2536,7 +2533,20 @@ def check_result(result: Any) -> dict[str, Any]:
 
 
 # The rules that a side may break under strict rules, each ending the match as its forfeit.
-RULES = ('load', 'reset', 'crash', 'timeout', 'invalid', 'mean')
+RULES = (
+    'load',
+    'reset',
+    'crash',
+    'timeout',
+    'invalid',
+    'mean',
+    'changed',
+    'memory',
+    'threads',
+    'process',
+    'total_time',
+    'deterministic',
+)
 
 
 def _checked_rule(rule: Any) -> dict[str, Any] | None:
@@ -2567,7 +2577,7 @@ def _checked_side_stats(side: Any) -> dict[str, Any] | None:
     if not isinstance(side, dict):
         return None
     found: dict[str, Any] = {'calls': side.get('calls') if _integer(side.get('calls')) else 0}
-    for key in ('first_ms', 'mean_ms', 'max_ms', 'mean_after_first_ms'):
+    for key in ('first_ms', 'mean_ms', 'max_ms', 'mean_after_first_ms', 'memory_mb'):
         value = side.get(key)
         found[key] = round(float(value), 3) if _number(value) and value >= 0 else None
     actions = side.get('actions')

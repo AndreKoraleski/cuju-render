@@ -16,7 +16,7 @@ import { spoilerFree } from '../core/spoilers.js';
 import { jsonCall } from '../teams/team-check.js';
 import { entrantName } from './tournament-layout.js';
 import {
-    RESULT_FILES, STRICT_DEFAULTS, STRICT_KEYS, STRICT_RANGES, STRICT_STEPS, STRICT_UNITS, analysisStamp, cellName,
+    RESULT_FILES, STRICT_DEFAULTS, STRICT_FLAGS, STRICT_FLAG_KEYS, STRICT_KEYS, STRICT_RANGES, STRICT_STEPS, STRICT_UNITS, analysisStamp, cellName,
     checkSides, entrantKey, fileAddress, folderText, intervalBar, intervalWords, legsRoom, limitNumber, limitsText,
     matrixCells, matrixOrder, methodText, playedText, preflightText, ratingScale, ratingText, ruleReason, sideText,
     signedMean, strictLimits, strictProblems, timingsText, warningTexts, withIncluded, withoutIncluded,
@@ -136,7 +136,7 @@ export function strictFields(draft) {
         boxes[key] = input;
         input.addEventListener('input', () => {
             const value = input.value.trim() === '' ? NaN : Number(input.value);
-            const given = draft.strict && typeof draft.strict === 'object' ? { ...draft.strict } : { ...STRICT_DEFAULTS };
+            const given = draft.strict && typeof draft.strict === 'object' ? { ...draft.strict } : strictLimits(true);
             given[key] = value;
             draft.strict = given;
             const bad = strictProblems(strictLimits(given)).includes(key);
@@ -150,12 +150,28 @@ export function strictFields(draft) {
             h('span', { class: 'cup-unit' }, input, unit === 'threads' ? null : h('span', { class: 'muted', 'aria-hidden': 'true' }, t(`tournament.strict.unitShort.${unit}`))),
             note);
     });
+    // Each switch of the rules, such as frozen team folders, with what it does beside it.
+    const flags = STRICT_FLAG_KEYS.map((key) => {
+        const input = h('input', { type: 'checkbox', checked: !!limits[key], disabled: !on, 'data-flag': key, 'aria-describedby': `cup-strict-${key}-note` });
+        boxes[key] = input;
+        input.addEventListener('change', () => {
+            const given = draft.strict && typeof draft.strict === 'object' ? { ...draft.strict } : strictLimits(true);
+            given[key] = input.checked;
+            draft.strict = given;
+        });
+        return h('div', { class: 'cup-strict-flag' }, h('label', { class: 'check' }, input, t(`tournament.strict.field.${key}`)),
+            h('span', { class: 'muted small', id: `cup-strict-${key}-note` }, t(`tournament.strict.flagNote.${key}`)));
+    });
     box.addEventListener('change', () => {
         draft.strict = box.checked ? strictLimits(true) : null;
         for (const key of STRICT_KEYS) {
             boxes[key].disabled = !box.checked;
             boxes[key].value = String(STRICT_DEFAULTS[key]);
             boxes[key].removeAttribute('aria-invalid');
+        }
+        for (const key of STRICT_FLAG_KEYS) {
+            boxes[key].disabled = !box.checked;
+            boxes[key].checked = STRICT_FLAGS[key];
         }
     });
     const pre = h('input', { type: 'checkbox', role: 'switch', class: 'cup-preflight-switch', checked: !!draft.preflight, 'aria-describedby': 'cup-preflight-note' });
@@ -167,6 +183,7 @@ export function strictFields(draft) {
         h('label', { class: 'check' }, box, t('tournament.strict.switch')),
         h('p', { class: 'muted small', id: 'cup-strict-note' }, t('tournament.strict.note')),
         h('div', { class: 'cup-strict-limits' }, fields),
+        h('div', { class: 'cup-strict-flags' }, flags),
         h('label', { class: 'check' }, pre, t('tournament.preflight.switch')),
         h('p', { class: 'muted small', id: 'cup-preflight-note' }, t('tournament.preflight.note')));
 }

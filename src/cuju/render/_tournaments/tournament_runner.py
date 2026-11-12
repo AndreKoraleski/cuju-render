@@ -637,6 +637,7 @@ def _stored(path: Path) -> dict[str, Any] | None:
         ('notes', dict, {}),
         ('preflight', dict, None),
         ('excluded', list, []),
+        ('digests', dict, {}),
         ('created', (int, float), time.time()),
         ('finished', (int, float), None),
     ):
@@ -1096,6 +1097,7 @@ class Tournaments:
                 'notes': {},
                 'preflight': None,
                 'excluded': [],
+                'digests': {},
             }
             _write_record(self._path(identifier), record)
             self._stamps[identifier] = self._path(identifier).stat().st_mtime_ns
@@ -1602,6 +1604,12 @@ class Tournaments:
             ],
         }
         record['excluded'] = excluded
+        # The digest of each team's folder that passed, which its matches hold it to.
+        record['digests'] = {
+            team: report['digest']
+            for team, report in checks.items()
+            if report.get('ok') and isinstance(report.get('digest'), str)
+        }
         if excluded:
             source: dict[str, Any] = {
                 key: config[key]
@@ -1680,6 +1688,60 @@ class Tournaments:
             record['games'].pop(key, None)
             self._persist(record)
 
+    def _changed(
+        self, identifier: str, match: dict[str, Any], teams: list[str], kinds: list[str]
+    ) -> dict[str, Any] | None:
+        """Returns the forfeit of a match whose team's files changed since its pre-flight, or None.
+
+        Under strict rules with frozen folders, each team's folder keeps the digest that its
+        pre-flight read, or that its first match read in a tournament without a pre-flight, and
+        a team whose files differ at a later match breaks the rule `changed` before it plays.
+        """
+        from .._playing import strict as _strict
+
+        strict = match.get('strict')
+        if not strict or not strict.get('frozen', True):
+            return None
+        breaks = []
+        for side, (team, kind) in enumerate(zip(teams, kinds, strict=True)):
+            if kind != 'team':
+                continue
+            try:
+                found = _strict.folder_digest(team)
+            except OSError:
+                found = None
+            with self._lock:
+                record = self._records.get(identifier)
+                if record is None or found is None:
+                    continue
+                kept = record.setdefault('digests', {}).get(team)
+                if kept is None:
+                    record['digests'][team] = found
+                    self._persist(record)
+                elif kept != found:
+                    name = record['config']['entrants'][match['home' if side == 0 else 'away']]
+                    breaks.append(
+                        (
+                            side,
+                            _messages.label('server.strict.changed', player=rules.label_of(name)),
+                        )
+                    )
+        if not breaks:
+            return None
+        sides = {side for side, _ in breaks}
+        reason = breaks[0][1]
+        rule = {
+            'side': 'both' if len(sides) > 1 else ('home', 'away')[breaks[0][0]],
+            'kind': 'changed',
+            'reason': reason['text'],
+            'reason_id': reason['id'],
+            'reason_values': reason['values'],
+            'step': 0,
+            'at': [0, 0],
+        }
+        stats = {'steps': 0, 'cut_short': True, 'sides': [None, None]}
+        return {'score': [0, 0], 'rule': rule, 'forfeit': True, 'match': None, 'stats': stats}
+
     def _run_match(self, identifier: str, match: dict[str, Any]) -> None:
         key = (identifier, match['key'])
         result, error, ids = None, None, {}
@@ -1690,7 +1752,8 @@ class Tournaments:
                 entrants = record['config']['entrants']
                 teams = [entrants[match['home']]['team'], entrants[match['away']]['team']]
                 match = {**match, 'strict': record['config'].get('strict')}
-            result = self._player(
+                kinds = [entrants[match['home']]['kind'], entrants[match['away']]['kind']]
+            result = self._changed(identifier, match, teams, kinds) or self._player(
                 match, teams, provenance, lambda share: self._progress(key, share)
             )
         except Exception as failure:

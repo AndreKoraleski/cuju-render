@@ -41,6 +41,11 @@ test('The limits of strict rules and the legs mirror the server\'s rules', () =>
     const ranges = Object.fromEntries([...pythonBlock(rules, 'STRICT_RANGES: dict').matchAll(/'(\w+)': \(([\d.]+), ([\d.]+)\)/g)]
         .map(([, key, low, high]) => [key, [Number(low), Number(high)]]));
     assert.deepEqual(ranges, results.STRICT_RANGES);
+    const flags = /^STRICT_FLAGS: [^=]+= (\{[^}]*\})/m.exec(rules);
+    assert.ok(flags, 'STRICT_FLAGS');
+    assert.deepEqual(Object.fromEntries([...flags[1].matchAll(/'(\w+)': (True|False)/g)]
+        .map(([, key, value]) => [key, value === 'True'])), results.STRICT_FLAGS);
+    assert.deepEqual(results.STRICT_FLAG_KEYS, Object.keys(results.STRICT_FLAGS));
     assert.equal(/^RANDOM_KEY = '([^']+)'$/m.exec(rules)[1], results.RANDOM_KEY);
     assert.equal(Number(/^MAX_LEGS = (\d+)$/m.exec(rules)[1]), results.MAX_LEGS);
     assert.equal(Number(/^MAX_ADDED_LEGS = (\d+)$/m.exec(rules)[1]), results.MAX_ADDED_LEGS);
@@ -54,13 +59,19 @@ test('The limits of strict rules and the legs mirror the server\'s rules', () =>
 test('Strict rules resolve as the server resolves them, and a limit off its range is found', () => {
     assert.equal(results.strictLimits(null), null);
     assert.equal(results.strictLimits(false), null);
-    assert.deepEqual(results.strictLimits(true), results.STRICT_DEFAULTS);
-    assert.deepEqual(results.strictLimits({ call_seconds: 0.5, threads: '2' }), { ...results.STRICT_DEFAULTS, call_seconds: 0.5, threads: 2 });
+    const full = { ...results.STRICT_DEFAULTS, ...results.STRICT_FLAGS };
+    assert.deepEqual(results.strictLimits(true), full);
+    assert.deepEqual(results.strictLimits({ call_seconds: 0.5, threads: '2', gpu: true, frozen: 'no' }),
+        { ...full, call_seconds: 0.5, threads: 2, gpu: true });
     assert.deepEqual(results.strictProblems(results.strictLimits(true)), []);
     assert.deepEqual(results.strictProblems({ ...results.STRICT_DEFAULTS, threads: 1.5, mean_call_ms: 0, load_seconds: NaN }),
         ['threads', 'load_seconds', 'mean_call_ms']);
     assert.equal(results.limitsText(results.strictLimits(true)),
-        '1 thread for each team, loading within 30 s, the first action call within 10 s, each later call within 1 s, a reset within 5 s, a mean call of at most 20 ms, a team folder of at most 100 MB');
+        '1 thread for each team, loading within 30 s, the first action call within 10 s, each later call within 1 s, a reset within 5 s, a mean call of at most 20 ms, a team folder of at most 100 MB, '
+        + 'memory of at most 2,048 MB, 120 s of computing in all for a match, frozen team folders, no GPU, '
+        + 'answers that differ on a replay only warned');
+    assert.match(results.limitsText({ ...full, frozen: false, gpu: true, deterministic: true }),
+        /, team folders that may change, the GPU, answers that must replay the same$/);
     assert.equal(results.limitText('threads', 4), '4 threads for each team');
     assert.equal(results.limitText('call_seconds', 0.25), 'each later call within 0.25 s');
     assert.equal(results.limitText('mean_call_ms', 10000), 'a mean call of at most 10,000 ms');
@@ -162,6 +173,8 @@ test('Timings read in milliseconds and seconds, those missing left out', () => {
         load_seconds: 0.5, reset_seconds: null, calls: 50, first_ms: 120, mean_ms: 4.5, max_ms: 9, mean_after_first_ms: 2.25,
     }), 'loaded in 0.5 s, 50 calls, first call 120 ms, mean call after the first 2.3 ms, longest call 9 ms');
     assert.equal(results.timingsText({ calls: 1, mean_ms: 3 }), '1 call, mean call 3 ms');
+    assert.equal(results.timingsText({ calls: 2, mean_ms: 3, memory_mb: 311.6 }), '2 calls, mean call 3 ms, peak memory 312 MB');
+    assert.equal(results.timingsText({ memory_mb: null }), '');
     assert.equal(results.timingsText({ calls: 0, load_seconds: null }), '');
     assert.equal(results.timingsText(null), '');
 });
@@ -284,7 +297,7 @@ test('Every message that the strict and results parts name is in English', () =>
         // A message named from a key, such as the field of each limit, takes every key.
         for (const [, prefix, name] of text.matchAll(/`((?:tournament)\.[A-Za-z0-9_.]+)\.\$\{(\w+)\}`/g)) {
             const keys = {
-                key: results.STRICT_KEYS, tone: ['up', 'down', 'even'], unit: ['s', 'ms'],
+                key: prefix.endsWith('.flagNote') ? results.STRICT_FLAG_KEYS : results.STRICT_KEYS, tone: ['up', 'down', 'even'], unit: ['s', 'ms', 'MB'],
                 name: ['rank', 'entrant', 'rating', 'interval', 'low', 'high', 'matches'],
             }[name];
             assert.ok(keys, `${file} ${prefix}`);
@@ -294,6 +307,13 @@ test('Every message that the strict and results parts name is in English', () =>
         }
     }
     ids.add('tournament.strict.field.threads');
+    // The switches name their label, their note and their state on and off.
+    for (const key of results.STRICT_FLAG_KEYS) {
+        for (const id of [`tournament.strict.field.${key}`, `tournament.strict.flagNote.${key}`,
+            `tournament.strict.flag.${key}.on`, `tournament.strict.flag.${key}.off`]) {
+            ids.add(id);
+        }
+    }
     const missing = [...ids].filter((id) => !(id in english) && !/\.$/.test(id));
-    assert.deepEqual(missing, []);
+    assert.deepEqual(missing, [], missing.join(', '));
 });

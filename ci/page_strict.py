@@ -6,15 +6,17 @@ ci/page_check.py runs strict_checks with the other checks of the page. Run alone
 starts the mock server and Chrome itself and runs these checks with the tournament checks of
 ci/page_check.py and ci/page_tournaments.py.
 
-The checks register three teams of five a side on the mock, Broken, which fails to load, Slow,
-which runs past the time of a call in every match, and Steady. They set up the Strict round robin
-preset in the wizard, see the random entrant and the built-in AI join the list, remove the
-built-in AI, read the strict rules and the pre-flight in Settings, run the pre-flight from the
+The checks register four teams of five a side on the mock, Broken, which fails to load, Slow,
+which runs past the time of a call in every match, Steady, and Wobbly, whose answers differ when
+the same steps play again. They set up a round robin by hand in the wizard, add the random entrant
+and the built-in AI in the Entrants step and remove the built-in AI again, turn on strict rules
+and the pre-flight in Settings and read their limits and switches, run the pre-flight from the
 review and start the tournament. The tournament leaves Broken out with its reason, Slow forfeits
 by rule with the score at that moment, and the Results show the ratings with their intervals, the
-matrix of mean goal difference as a heat table with named cells and the six files to save. Add
-legs plays one more leg and the results follow it. At the width of a phone the matrix scrolls in
-its own box, and on the Teams page the cards of Broken and Steady fail and pass their checks.
+matrix of mean goal difference as a heat table with named cells and the files to save. Add legs
+plays one more leg and the results follow it. At the width of a phone the matrix scrolls in its
+own box, and on the Teams page the cards of Broken, Steady and Wobbly fail, pass, and pass with a
+warning.
 
 Usage:
     python ci/page_strict.py [--port 8790] [--debug-port 8791] [--chrome google-chrome]
@@ -37,7 +39,7 @@ TEAMS = """
     const { api } = await import('./js/core/api.js');
     const strict = await import('./js/play/tournament-strict.js');
     const teams = {};
-    for (const name of ['Broken strict', 'Slow strict', 'Steady strict']) {
+    for (const name of ['Broken strict', 'Slow strict', 'Steady strict', 'Wobbly strict']) {
         teams[name] = await api.uploadTeam(name, 'main.py',
             new Blob(['def agent(obs):\\n    return [0]\\n']), '5v5');
     }
@@ -59,13 +61,16 @@ TOURNAMENT = """
     try {
         page.root.querySelector('.cup-side-head button').click();
         await until(() => Object.values(teams).every((x) => page.teams.some((y) => y.id === x.id)));
-        // The preset brings strict rules, the pre-flight and its two added entrants.
-        press(await until(() => main().querySelector('[data-preset="strict_round_robin"]')));
+        // A round robin by hand, which starts without strict rules or added entrants.
+        press(await until(() => main().querySelector('[data-preset="round_robin"]')));
         const d = page.draft;
-        all.preset = d.preset === 'strict_round_robin' && d.strict === true && d.preflight === true;
-        all.included = d.entrants.map((e) => e.kind).join() === 'random,builtin'
-            && d.include.length === 2;
+        all.preset = d.preset === 'round_robin' && d.strict === null && d.preflight === false
+            && d.include.length === 0;
         press(named('Next'));
+        // The random entrant and the built-in AI enter through the Entrants step.
+        press(main().querySelector('[data-focus="add-random"]'));
+        press(named('Add built-in AI'));
+        all.included = d.entrants.map((e) => e.kind).join() === 'random,builtin';
         all.kinds = [...main().querySelectorAll('.cup-entrant-kind')].map(text).join('|')
             === 'Random entrant|Built-in AI';
         all.glyph = !!main().querySelector('.cup-kind.random svg');
@@ -77,20 +82,34 @@ TOURNAMENT = """
             main().querySelector('.cup-adder select').value = teams[name].id;
             press(named('Add team'));
         }
-        // Removing the built-in AI drops it from the entrants the server adds.
+        // Removing the built-in AI leaves no entrant for the server to add back.
         const rows = [...main().querySelectorAll('.cup-entrants > li')];
         const builtin = rows.find((row) => text(row.querySelector('.cup-entrant-kind'))
             === 'Built-in AI');
         press(builtin.querySelector('.cup-remove'));
-        all.dropped = d.entrants.length === 4 && d.include.length === 1
-            && d.include[0].kind === 'random' && !d.entrants.some((e) => e.kind === 'builtin');
-        // Settings hold the switch of strict rules with its six limits and the pre-flight.
+        all.dropped = d.entrants.length === 4 && d.include.length === 0
+            && !d.entrants.some((e) => e.kind === 'builtin');
+        // Settings turn on strict rules, with their limits and switches at their defaults, and
+        // the pre-flight.
         press(named('Next'));
         const limits = [...main().querySelectorAll('.cup-strict [data-limit]')];
-        all.settings = main().querySelector('.cup-strict-switch').checked
-            && main().querySelector('.cup-preflight-switch').checked && limits.length === 7
+        const flags = [...main().querySelectorAll('.cup-strict [data-flag]')];
+        const off = limits.every((input) => input.disabled) && flags.every((box) => box.disabled);
+        press(main().querySelector('.cup-strict-switch'));
+        press(main().querySelector('.cup-preflight-switch'));
+        all.settings = off && main().querySelector('.cup-strict-switch').checked
+            && main().querySelector('.cup-preflight-switch').checked && limits.length === 9
             && limits.every((input) => !input.disabled && input.getAttribute('aria-label'))
-            && limits.map((input) => input.value).join() === '1,30,10,1,5,20,100';
+            && limits.map((input) => input.value).join() === '1,30,10,1,5,20,100,2048,120'
+            && flags.map((box) => `${box.dataset.flag}:${box.checked}`).join()
+                === 'frozen:true,gpu:false,deterministic:false'
+            && flags.every((box) => !box.disabled) && d.strict && d.strict.frozen === true
+            && d.preflight === true;
+        // A switch changes the rules the draft sends, and goes back to its default.
+        press(flags[1]);
+        const gpu = d.strict.gpu === true;
+        press(flags[1]);
+        all.flag = gpu && d.strict.gpu === false;
         const call = limits.find((input) => input.dataset.limit === 'call_seconds');
         call.focus();
         call.value = '0';
@@ -105,8 +124,12 @@ TOURNAMENT = """
         d.stages[0].legs = 2;
         page.goStep(4);
         const review = await until(() => main().querySelector('.cup-review-strict'));
-        all.review = /^Strict rules: 1 thread for each team, loading within 30 s/.test(
-            text(review.querySelector('.cup-review-limits')));
+        const reviewed = text(review.querySelector('.cup-review-limits'));
+        all.review = /^Strict rules: 1 thread for each team, loading within 30 s/.test(reviewed)
+            && reviewed.includes('memory of at most 2,048 MB, 120 s of computing in all for '
+                + 'a match, frozen team folders, no GPU, answers that differ on a replay only '
+                + 'warned.')
+            && text(review).includes('A pre-flight check runs before the first match');
         // The pre-flight runs from the review, busy at once, and names who it would leave out.
         press(main().querySelector('[data-focus="preflight-run"]'));
         const host = () => main().querySelector('.cup-preflight-result');
@@ -312,6 +335,11 @@ CARDS = """
         shown.passed = passed;
         all.unplayed = text(status('Broken strict')).includes(
             'Right side left unplayed after the left side failed');
+        // A team whose answers differ on a replay passes with the warning of it.
+        press(button('Wobbly strict'));
+        await until(() => status('Wobbly strict').classList.contains('passed'));
+        all.wobbly = text(status('Wobbly strict')).endsWith('Wobbly strict answered differently '
+            + 'when the same steps played again from the same seed.');
         // The check leaves the team's editor closed.
         all.closed = cuju.page === 'teams' && !card('Steady strict').classList.contains(
             'selected');

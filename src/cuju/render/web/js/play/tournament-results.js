@@ -13,21 +13,32 @@ import { formatNumber, labelText, serverText, t } from '../core/i18n.js';
 
 // The limits of strict rules with their defaults, the threads of a team's process, the seconds
 // to load, of the first call, of each later call and of a reset, the milliseconds of the mean
-// call and the megabytes of a team's folder, as the server's rules give them.
+// call, the megabytes of a team's folder and of its process's memory, and the seconds that all
+// of a team's calls of a match may take together, as the server's rules give them.
 export const STRICT_DEFAULTS = {
     threads: 1, load_seconds: 30, first_call_seconds: 10, call_seconds: 1, reset_seconds: 5, mean_call_ms: 20, folder_mb: 100,
+    memory_mb: 2048, match_seconds: 120,
 };
 export const STRICT_RANGES = {
     threads: [1, 64], load_seconds: [1, 600], first_call_seconds: [0.1, 600], call_seconds: [0.01, 60],
-    reset_seconds: [0.1, 600], mean_call_ms: [0.1, 10000], folder_mb: [1, 10000],
+    reset_seconds: [0.1, 600], mean_call_ms: [0.1, 10000], folder_mb: [1, 10000], memory_mb: [64, 65536],
+    match_seconds: [1, 36000],
 };
+// The switches of strict rules with their defaults, as STRICT_FLAGS of the server's rules gives
+// them. A frozen team plays from a read only copy of its folder and forfeits once its files
+// change, a team sees the GPU only with `gpu`, and with `deterministic` the pre-flight refuses a
+// team whose answers differ when the same steps play again, which is otherwise a warning.
+export const STRICT_FLAGS = { frozen: true, gpu: false, deterministic: false };
+export const STRICT_FLAG_KEYS = Object.keys(STRICT_FLAGS);
 export const STRICT_KEYS = Object.keys(STRICT_DEFAULTS);
 // The step of each limit's box, and the unit it reads in.
 export const STRICT_STEPS = {
     threads: 1, load_seconds: 1, first_call_seconds: 0.1, call_seconds: 0.01, reset_seconds: 0.1, mean_call_ms: 0.1, folder_mb: 1,
+    memory_mb: 1, match_seconds: 1,
 };
 export const STRICT_UNITS = {
     threads: 'threads', load_seconds: 's', first_call_seconds: 's', call_seconds: 's', reset_seconds: 's', mean_call_ms: 'ms', folder_mb: 'MB',
+    memory_mb: 'MB', match_seconds: 's',
 };
 
 // The key of the random entrant, as RANDOM_KEY of the server's rules gives it.
@@ -56,10 +67,15 @@ export function strictLimits(value) {
         return null;
     }
     const given = value === true || typeof value !== 'object' ? {} : value;
-    const limits = { ...STRICT_DEFAULTS };
+    const limits = { ...STRICT_DEFAULTS, ...STRICT_FLAGS };
     for (const key of STRICT_KEYS) {
         if (given[key] !== undefined && given[key] !== null && given[key] !== '') {
             limits[key] = Number(given[key]);
+        }
+    }
+    for (const key of STRICT_FLAG_KEYS) {
+        if (typeof given[key] === 'boolean') {
+            limits[key] = given[key];
         }
     }
     return limits;
@@ -90,7 +106,11 @@ export function limitText(key, value) {
 
 // Every limit of strict rules in words, in the order of the rules.
 export function limitsText(limits) {
-    return limits ? STRICT_KEYS.map((key) => limitText(key, limits[key])).join(', ') : '';
+    if (!limits) {
+        return '';
+    }
+    const flags = STRICT_FLAG_KEYS.map((key) => t(`tournament.strict.flag.${key}.${(limits[key] ?? STRICT_FLAGS[key]) ? 'on' : 'off'}`));
+    return [...STRICT_KEYS.map((key) => limitText(key, limits[key])), ...flags].join(', ');
 }
 
 // The key of an entrant as given, as `entrant_key` of the server's rules gives it, the team of a
@@ -310,6 +330,9 @@ export function timingParts(timings) {
         add('tournament.timing.mean', msText(timings.mean_ms));
     }
     add('tournament.timing.max', msText(timings.max_ms));
+    if (typeof timings.memory_mb === 'number' && Number.isFinite(timings.memory_mb)) {
+        parts.push(t('tournament.timing.memory', { value: formatNumber(timings.memory_mb, { maximumFractionDigits: timings.memory_mb < 10 ? 1 : 0 }) }));
+    }
     return parts;
 }
 

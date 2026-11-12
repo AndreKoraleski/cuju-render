@@ -273,8 +273,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     pair, with eight files to export from the page and as `cuju render tournament export`,
     `standings.csv`, `ratings.csv`, `ratings_method.json`, `pairwise_gd.csv`,
     `pairwise_counts.csv`, `matches.jsonl`, `entrants.json` and `excluded.json`.
-- The preset Strict round robin, ten legs of five against five under strict rules after a
-    pre-flight, with the random entrant and the built in AI added.
+- More settings of strict rules, frozen team folders that play each match from a read only copy
+    and refuse a team whose files changed since its pre-flight, a limit of memory of each team's
+    process, real limits of its threads and processes, no GPU unless allowed, a check of
+    determinism in the pre-flight that warns or refuses, and a limit of the compute time of all
+    a team's calls of a match. Windows holds memory and processes through a job object, Linux
+    holds memory through `RLIMIT_DATA`, and the renderer watches the rest.
 - `cuju.render.show`, which opens the viewer on a batch, a recording file, an identifier or a URL
     from a script, a terminal or a notebook. It reuses the server of the renderer's folder, which
     `server.json` names, or starts one in the background that ends with the process unless asked

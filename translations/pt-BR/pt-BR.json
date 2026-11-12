@@ -3578,8 +3578,6 @@
         "many": "Cada participante também joga {count} empates virtuais contra um participante de força fixa, o que mantém todo rating finito, e os intervalos vêm de {resamples} reamostragens das partidas jogadas, sorteadas a partir da semente {seed} do torneio.",
         "other": "Cada participante também joga {count} empates virtuais contra um participante de força fixa, o que mantém todo rating finito, e os intervalos vêm de {resamples} reamostragens das partidas jogadas, sorteadas a partir da semente {seed} do torneio."
     },
-    "tournament.preset.strict_round_robin.title": "Pontos corridos com regras estritas",
-    "tournament.preset.strict_round_robin.description": "Todos jogam contra todos dez vezes com os lados alternados, cinco contra cinco por 3000 passos, sob regras estritas com os limites padrão, depois de uma verificação prévia de cada equipe, com o participante aleatório e a IA embutida incluídos como piso.",
     "tournament.strict.limit.threads": {
         "=0": "{count} threads por equipe",
         "one": "{count} thread por equipe",

@@ -20,12 +20,14 @@ working folder is a private temporary folder that the match removes afterwards, 
 its own files by their path, beside its `main.py`. The protocol is JSON alone in both directions,
 and each side reads its pipe on a thread of its own, which works alike on every system.
 
-- At its start it answers `{"ready": true}` once the agent loads, or the error.
+- At its start it waits for `{"start": true}`, which the match sends once the process stands
+  under its limits, and then answers `{"ready": true}` once the agent loads, or the error.
 - `{"reset": true}` calls the team's reset and answers `{"reset": true}`.
 - `{"obs": ...}` calls the agent with the observation and answers `{"answer": ..., "compute": s}`,
   the answer as JSON and the seconds that the call took.
 - An error answers `{"error": text, "stage": stage}`, the stage being `load`, `reset`, `call` or
-  `answer`, the last for an answer that is no JSON.
+  `answer`, the last for an answer that is no JSON, or `memory` for memory that ran out and
+  `process` for a process that the team tried to start, which the rules refuse.
 """
 
 import contextlib
@@ -104,6 +106,40 @@ def _reason(error):
     return f'{type(error).__name__}: {error}'
 
 
+# The audit events of Python that start another process, which strict rules refuse a team.
+_PROCESS_EVENTS = frozenset(
+    {
+        'subprocess.Popen',
+        'os.system',
+        'os.posix_spawn',
+        'os.fork',
+        'os.forkpty',
+        'os.exec',
+        'os.spawn',
+        'os.startfile',
+        'pty.spawn',
+        '_winapi.CreateProcess',
+    }
+)
+
+
+def _refuse_processes(answer):
+    """Ends the process with its reason when the team starts another, by an audit hook."""
+
+    def hook(event, arguments):
+        if event in _PROCESS_EVENTS:
+            with contextlib.suppress(Exception):
+                answer(error=f'the team started another process, {event}', stage='process')
+            os._exit(1)
+
+    sys.addaudithook(hook)
+
+
+def _stage(error, stage):
+    """Returns the stage of an error, `memory` for memory that ran out whatever the stage."""
+    return 'memory' if isinstance(error, MemoryError) else stage
+
+
 def _watch(parent):
     """Ends this process once the match that started it ends, even while the team computes."""
     if os.name == 'nt':
@@ -141,6 +177,13 @@ def main():
         channel.write(json.dumps(entries) + '\n')
         channel.flush()
 
+    # The match holds the process to its limits before any of the team's code runs.
+    for line in requests:
+        with contextlib.suppress(ValueError):
+            if json.loads(line).get('start'):
+                break
+    else:
+        return
     sys.path.insert(0, folder)
     module = types.ModuleType('main')
     module.__file__ = os.path.join(folder, _MAIN)
@@ -159,9 +202,12 @@ def main():
         two = _takes_configuration(agent)
     except BaseException as error:
         traceback.print_exc()
-        answer(error=_reason(error), stage='load')
+        answer(error=_reason(error), stage=_stage(error, 'load'))
         return
     _limit_torch(threads)
+    # Libraries may run a short helper process while they load, as Python's ctypes does to find a
+    # library on Linux, so the refusal starts once the team has loaded.
+    _refuse_processes(answer)
     configuration = _Struct()
     answer(ready=True)
     for line in requests:
@@ -177,7 +223,7 @@ def main():
                     reset()
             except BaseException as error:
                 traceback.print_exc()
-                answer(error=_reason(error), stage='reset')
+                answer(error=_reason(error), stage=_stage(error, 'reset'))
                 return
             _limit_torch(threads)
             answer(reset=True)
@@ -188,7 +234,7 @@ def main():
             value = agent(obs, configuration) if two else agent(obs)
         except BaseException as error:
             traceback.print_exc()
-            answer(error=_reason(error), stage='call')
+            answer(error=_reason(error), stage=_stage(error, 'call'))
             return
         compute = time.perf_counter() - started
         try:

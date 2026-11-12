@@ -421,7 +421,11 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'one': '{player} did not answer action call {call} within {count} second',
         'other': '{player} did not answer action call {call} within {count} seconds',
     },
+    'server.strict.changed': 'the files of {player} changed since its pre-flight',
     'server.strict.crash': '{player} failed in an action call, {reason}',
+    'server.strict.deterministic': (
+        '{player} answered differently when the same steps played again from the same seed'
+    ),
     'server.strict.first_time': {
         'one': '{player} did not answer its first action call within {count} second',
         'other': '{player} did not answer its first action call within {count} seconds',
@@ -440,13 +444,26 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.strict.mean': (
         '{player} took {mean} ms for an action call on average, above the limit of {limit} ms'
     ),
+    'server.strict.memory': '{player} used {used} MB of memory, above the limit of {limit} MB',
+    'server.strict.memory_out': '{player} ran out of its memory of {limit} MB',
+    'server.strict.process': '{player} started another process, which strict rules refuse',
     'server.strict.reset': '{player} failed in its reset, {reason}',
     'server.strict.reset_time': {
         'one': '{player} did not reset within {count} second',
         'other': '{player} did not reset within {count} seconds',
     },
+    'server.strict.threads': (
+        '{player} ran {found} threads, above the {limit} that its process may run'
+    ),
+    'server.strict.total_time': (
+        '{player} computed for {total} seconds in all, above the limit of {limit} seconds for a '
+        'match'
+    ),
     'server.strict.warning_action': (
         '{player} answered the action {action} in {share}% of its actions.'
+    ),
+    'server.strict.warning_deterministic': (
+        '{player} answered differently when the same steps played again from the same seed.'
     ),
     'server.strict.warning_setting': 'The setting {setting} of {file} is unknown to cuju render.',
     'server.teams.ability': 'expected an ability from 0 to 1, found {value}',
@@ -692,18 +709,28 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.field.seed': 'the seed',
     'server.tournament.field.seeding': 'the seeding of {where}',
     'server.tournament.field.settle': 'the settlements of {where}',
+    'server.tournament.field.strict': 'strict rules',
     'server.tournament.field.strict_call_seconds': (
         'the seconds of each later action call under strict rules'
     ),
+    'server.tournament.field.strict_deterministic': 'deterministic teams',
     'server.tournament.field.strict_first_call_seconds': (
         'the seconds of the first action call under strict rules'
     ),
     'server.tournament.field.strict_folder_mb': (
         "the megabytes of a team's folder under strict rules"
     ),
+    'server.tournament.field.strict_frozen': 'frozen team folders',
+    'server.tournament.field.strict_gpu': 'the GPU of a team',
     'server.tournament.field.strict_load_seconds': 'the seconds to load under strict rules',
+    'server.tournament.field.strict_match_seconds': (
+        "the seconds of all a team's action calls of a match under strict rules"
+    ),
     'server.tournament.field.strict_mean_call_ms': (
         'the mean milliseconds of an action call under strict rules'
+    ),
+    'server.tournament.field.strict_memory_mb': (
+        "the megabytes of memory of a team's process under strict rules"
     ),
     'server.tournament.field.strict_reset_seconds': 'the seconds of a reset under strict rules',
     'server.tournament.field.strict_threads': 'the threads of each team under strict rules',
@@ -897,7 +924,8 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     ),
     'server.tournament.strict_settings': (
         'expected limits of strict rules among threads, load_seconds, first_call_seconds, '
-        'call_seconds, reset_seconds, mean_call_ms and folder_mb, found {settings}'
+        'call_seconds, reset_seconds, mean_call_ms, folder_mb, memory_mb, match_seconds, '
+        'frozen, gpu and deterministic, found {settings}'
     ),
     'server.tournament.swiss': 'no Swiss pairing without a rematch exists for this round',
     'server.tournament.team_format': 'it is a team of {format}',

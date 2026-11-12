@@ -14,9 +14,12 @@ does on the real server, so the page shows a failed match, its Award buttons and
 stops once only failed matches hold it up.
 
 A tournament under strict rules plays the same way, and an entrant whose name starts with Slow
-forfeits each match by the rule of a call's time, with the score at that moment. Its pre-flight,
-and the check of one team, are made up too, a registered team whose name starts with Broken
-failing to load, so the tournament leaves it out with its reason before the first match.
+forfeits each match by the rule of a call's time, and one whose name starts with Hungry by the
+rule of memory, each with the score at that moment. Its pre-flight, and the check of one team,
+are made up too, a registered team whose name starts with Broken failing to load, so the
+tournament leaves it out with its reason before the first match, and one whose name starts with
+Wobbly answering differently when the same steps play again, a warning unless the rules ask for
+deterministic teams.
 """
 
 import hashlib
@@ -109,6 +112,7 @@ def _side_stats(seed, side, calls):
         if calls > 1
         else None,
         'max_ms': round(max(first, mean * 3 + digest[2] / 20), 1),
+        'memory_mb': round(150 + digest[5] / 2, 1),
         'actions': {str(digest[3] % 19): calls // 2, str(digest[4] % 19): calls - calls // 2},
     }
 
@@ -170,8 +174,12 @@ class MockTournaments:
 
         A team whose name starts with Broken fails to load on the left, so its right side stays
         unplayed, and a team whose name starts with Steady passes with a warning that one action
-        makes up most of its actions.
+        makes up most of its actions. A team whose name starts with Wobbly answers differently
+        when the same steps play again, a warning, or a refusal when the rules ask for
+        deterministic teams.
         """
+        strict = limits is not None
+        limits = dict(limits or {**rules.STRICT_DEFAULTS, **rules.STRICT_FLAGS})
         name = self._team_name(identifier)
         rule = None
         sides = {}
@@ -194,11 +202,16 @@ class MockTournaments:
                 broken = _rule('home', 'load', reason, 0, [0, 0])
                 timings = {key: None for key in timings}
                 timings['calls'] = 0
+            if broken is None and name.startswith('Wobbly') and limits.get('deterministic'):
+                reason = messages.label('server.strict.deterministic', player=name)
+                broken = _rule('home', 'deterministic', reason, 0, [0, 0])
             sides[side] = {'ok': broken is None, 'rule': broken, 'timings': timings}
             if broken is not None:
                 rule = broken
                 break
         warnings = []
+        if name.startswith('Wobbly') and not limits.get('deterministic'):
+            warnings.append(messages.label('server.strict.warning_deterministic', player=name))
         if name.startswith('Steady'):
             warnings.append(
                 messages.label('server.strict.warning_action', player=name, action='5', share='95')
@@ -214,8 +227,9 @@ class MockTournaments:
             'actions': {} if rule else {'5': 95, '0': 5},
             'folder_mb': round(0.01 + _digest(identifier, 'folder')[0] / 100, 3),
             'warnings': warnings,
-            'limits': dict(limits or rules.STRICT_DEFAULTS),
-            'strict': limits is not None,
+            'digest': hashlib.sha256(f'{identifier}/files'.encode()).hexdigest(),
+            'limits': limits,
+            'strict': strict,
         }
 
     def check_team(self, identifier, document):
@@ -319,7 +333,10 @@ class MockTournaments:
         return False
 
     def _strict_result(self, record, match, score, cards):
-        """Returns the result of a match under strict rules, a forfeit by a side named Slow."""
+        """Returns the result of a match under strict rules, a forfeit by a side that breaks one.
+
+        A side named Slow runs past the time of a call, and a side named Hungry past its memory.
+        """
         config = record['config']
         entrants = config['entrants']
         names = [entrants[match['home']]['name'], entrants[match['away']]['name']]
@@ -331,7 +348,7 @@ class MockTournaments:
         for side, entrant in enumerate((entrants[match['home']], entrants[match['away']])):
             if entrant['kind'] in ('team', 'random'):
                 stats['sides'][side] = _side_stats(match['seed'], side, 300)
-        slow = [side for side, name in enumerate(names) if name.startswith('Slow')]
+        slow = [side for side, name in enumerate(names) if name.startswith(('Slow', 'Hungry'))]
         if not slow:
             return {
                 'score': score,
@@ -343,10 +360,19 @@ class MockTournaments:
         digest = _digest(match['seed'], 'slow')
         call = 40 + digest[0]
         at = [digest[1] % 2, digest[2] % 2]
+        limit = (config.get('strict') or rules.STRICT_DEFAULTS)['memory_mb']
         reasons = [
-            messages.label('server.strict.call_time', player=names[side], call=call, count='1')
+            messages.label(
+                'server.strict.memory',
+                player=names[side],
+                used=f'{limit + 12:.0f}',
+                limit=f'{limit:g}',
+            )
+            if names[side].startswith('Hungry')
+            else messages.label('server.strict.call_time', player=names[side], call=call, count='1')
             for side in slow
         ]
+        kind = 'memory' if all(names[side].startswith('Hungry') for side in slow) else 'timeout'
         reason = (
             reasons[0]
             if len(reasons) == 1
@@ -361,7 +387,7 @@ class MockTournaments:
             'cards': [[0, 0], [0, 0]],
             'match': None,
             'forfeit': True,
-            'rule': _rule(side, 'timeout', reason, call, at),
+            'rule': _rule(side, kind, reason, call, at),
             'stats': stats,
         }
 

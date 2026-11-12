@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import queue
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -43,6 +45,7 @@ from .._registry import teams as _teams
 from .._store import home as _home
 from .._text import messages as _messages
 from . import play as _play
+from .limits import Guard
 from .policy_worker import THREAD_VARIABLES
 
 # The script of a team's process, which runs from its file with nothing of the renderer.
@@ -51,6 +54,9 @@ WORKER = Path(__file__).with_name('policy_worker.py')
 PREFLIGHT_STEPS = 10
 # The seconds that a process has to end once the match asks it to.
 _END_SECONDS = 2.0
+# The variables that hide the GPUs of CUDA and ROCm from a team's process, unless the rules
+# allow a GPU.
+GPU_VARIABLES = ('CUDA_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES')
 # A team's log starts again once it grows past this many bytes.
 _LOG_BYTES = 1024 * 1024
 # The share of all its actions above which one action draws a warning in the check of a team.
@@ -90,6 +96,70 @@ def _seconds(value: float) -> str:
     return f'{value:g}'
 
 
+def _kept(relative: Path) -> bool:
+    """Returns whether a file of a team's folder counts in its digest and its copy."""
+    return not (
+        relative.parts[0] == _teams.TEAM_FOLDER
+        or '__pycache__' in relative.parts
+        or relative.suffix == '.pyc'
+    )
+
+
+def folder_digest(team: str) -> str | None:
+    """Returns the SHA-256 of a team's folder, of every file's path and bytes, or `None`.
+
+    The files count in the order of their paths, each its path, its size and its bytes, so the
+    digest changes with any file that is added, removed, renamed or changed. The renderer's
+    folder of the team's kit and presentation and the caches of Python stay out of it, since the
+    Teams page and Python change those while the policy stays the same.
+    """
+    folder = _home.folder('teams') / team
+    if not (folder / 'main.py').is_file():
+        return None
+    digest = hashlib.sha256()
+    for path in sorted(folder.rglob('*'), key=lambda item: item.relative_to(folder).as_posix()):
+        relative = path.relative_to(folder)
+        if path.is_symlink() or not path.is_file() or not _kept(relative):
+            continue
+        data = path.read_bytes()
+        digest.update(relative.as_posix().encode() + b'\0' + str(len(data)).encode() + b'\0')
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def frozen_copy(team: str, target: Path) -> Path:
+    """Copies a team's folder into `target` with every file read only, and returns the copy.
+
+    A match plays the team from the copy, inside its private working folder, so whatever the team
+    writes stays in that folder and goes with it at the end of the match.
+    """
+    source = _home.folder('teams') / team
+    shutil.copytree(
+        source,
+        target,
+        symlinks=False,
+        ignore=lambda folder, names: [
+            name
+            for name in names
+            if name == '__pycache__'
+            or name.endswith('.pyc')
+            or (name == _teams.TEAM_FOLDER and Path(folder) == source)
+        ],
+    )
+    for path in target.rglob('*'):
+        if path.is_file():
+            path.chmod(stat.S_IREAD)
+    return target
+
+
+def _writable(function: Any, path: str, info: Any) -> None:
+    """Makes a read only file writable and removes it, as removing a frozen copy needs."""
+    del info
+    with contextlib.suppress(OSError):
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        function(path)
+
+
 def log_path(team: str) -> Path:
     """Returns the log of a team's processes under strict rules, what its policy printed."""
     folder = _home.folder('logs') / 'policies'
@@ -119,8 +189,8 @@ class Worker:
         translate: Whether the policy answers the default set in a batch of the v2 set.
     """
 
-    def __init__(self, team: dict[str, Any], threads: int, translate: bool) -> None:
-        folder = _home.folder('teams') / team['id']
+    def __init__(self, team: dict[str, Any], limits: dict[str, Any], translate: bool) -> None:
+        threads = int(limits['threads'])
         # The variables of Python that a renderer's process may carry, such as PYTHONPATH, stay
         # out, as `-I` leaves them out too, and the threads of each library follow the rules.
         environment = {
@@ -129,13 +199,21 @@ class Worker:
             if not key.upper().startswith('PYTHON')
         }
         environment.update({name: str(threads) for name in THREAD_VARIABLES})
+        if not limits.get('gpu', False):
+            environment.update({name: '' for name in GPU_VARIABLES})
         self.started = time.perf_counter()
         self.calls = 0
+        self.total = 0.0
         self.translate = translate
         self._lines: queue.Queue[str | None] = queue.Queue()
-        # A private working folder, which the match removes once the process ends.
+        # A private working folder, which the match removes once the process ends, with a copy
+        # of the team's folder whose files read only, so nothing the team writes outlasts it.
         self.folder = tempfile.mkdtemp(prefix='cuju-policy-')
+        folder = _home.folder('teams') / team['id']
+        if limits.get('frozen', True):
+            folder = frozen_copy(team['id'], Path(self.folder) / 'team')
         self._log = _log(team['id'])
+        self.guard = Guard(float(limits.get('memory_mb', 2048)), threads)
         # The team's prints go to its log, and its answers come on a pipe of their own, which no
         # other team reaches.
         self.process = subprocess.Popen(
@@ -148,8 +226,12 @@ class Worker:
             errors='replace',
             cwd=self.folder,
             env=environment,
+            preexec_fn=self.guard.preexec(),
         )
+        self.guard.attach(self.process)
         threading.Thread(target=self._read, daemon=True, name='cuju-strict-worker').start()
+        # The team's code runs only once the process stands under its limits.
+        self.send({'start': True})
 
     def _read(self) -> None:
         try:
@@ -204,9 +286,37 @@ class Worker:
                 self.process.kill()
             with contextlib.suppress(subprocess.TimeoutExpired):
                 self.process.wait(_END_SECONDS)
+        self.guard.close()
         with contextlib.suppress(OSError):
             self._log.close()
+        shutil.rmtree(self.folder, onerror=_writable)
         shutil.rmtree(self.folder, ignore_errors=True)
+
+    def failure(self, found: dict[str, Any], kind: str, name: Any, label: dict[str, Any]) -> Any:
+        """Returns the rule that a failed request broke, the guard's limit where it saw one.
+
+        Args:
+            found: What the process answered, its error or that it ended.
+            kind: The kind of rule that a plain failure breaks, such as `crash` or `load`.
+            name: The name of the side.
+            label: The reason of a plain failure.
+
+        Returns:
+            The kind, the reason and the detail of the break.
+        """
+        broken = self.guard.broken
+        if broken is not None:
+            limit, values = broken
+            return limit, _label(limit, player=name, **values), None
+        stage = found.get('stage')
+        memory = self.guard.memory_mb
+        if stage == 'memory' or (
+            stage is None and self.guard.peak() >= 0.9 * memory and found.get('closed')
+        ):
+            return 'memory', _label('memory_out', player=name, limit=_seconds(memory)), None
+        if stage == 'process':
+            return 'process', _label('process', player=name), None
+        return kind, label, None
 
 
 class StrictPolicies(_play.Policies):
@@ -262,9 +372,7 @@ class StrictPolicies(_play.Policies):
     ) -> Any:
         if team['kind'] == 'random':
             return super()._runner(team, side, extended, control, seed, name)
-        worker = Worker(
-            team, self.limits['threads'], extended and control['action_set'] == 'default'
-        )
+        worker = Worker(team, self.limits, extended and control['action_set'] == 'default')
         self.workers.append(worker)
         return worker
 
@@ -292,9 +400,11 @@ class StrictPolicies(_play.Policies):
                 )
             elif found.get('closed') or 'error' in found:
                 reason = str(found.get('error') or worker.exit_text())
-                breaks.append((player['side'], 'load', _label('load', player=name, reason=reason)))
+                label = _label('load', player=name, reason=reason)
+                breaks.append((player['side'], *worker.failure(found, 'load', name, label)))
             else:
                 player['stats'].load = time.perf_counter() - worker.started
+                worker.guard.loading = False
         if breaks:
             raise _play.RuleError(breaks)
         reset = self.limits['reset_seconds']
@@ -315,9 +425,8 @@ class StrictPolicies(_play.Policies):
                 )
             elif found.get('closed') or 'error' in found:
                 reason = str(found.get('error') or worker.exit_text())
-                breaks.append(
-                    (player['side'], 'reset', _label('reset', player=name, reason=reason))
-                )
+                label = _label('reset', player=name, reason=reason)
+                breaks.append((player['side'], *worker.failure(found, 'reset', name, label)))
             else:
                 player['stats'].reset = time.perf_counter() - asked[id(worker)]
         if breaks:
@@ -384,7 +493,8 @@ class StrictPolicies(_play.Policies):
                         )
                     )
                 else:
-                    breaks.append((side, 'crash', _label('crash', player=name, reason=reason)))
+                    label = _label('crash', player=name, reason=reason)
+                    breaks.append((side, *runner.failure(found, 'crash', name, label)))
                 continue
             try:
                 actions = self._actions(runner, found.get('answer'), len(part[2]['players_raw']))
@@ -399,8 +509,16 @@ class StrictPolicies(_play.Policies):
             # The time that the process reports for its call counts, within the time it took.
             compute = min(float(compute), wall) if valid and compute >= 0 else wall
             runner.calls += 1
+            runner.total += compute
             player['stats'].add(compute, actions)
             answers[-1] = actions
+            most = self.limits.get('match_seconds')
+            if most is not None and runner.total > most:
+                # The time of all the team's calls of the match together has its own limit.
+                reason = _label(
+                    'total_time', player=name, total=f'{runner.total:.2f}', limit=_seconds(most)
+                )
+                breaks.append((side, 'total_time', reason))
         if breaks:
             raise _play.RuleError(breaks)
         return answers
@@ -424,20 +542,27 @@ class StrictPolicies(_play.Policies):
             raise _play.RuleError(breaks)
 
     def close(self) -> None:
-        """Ends every team's process."""
+        """Ends every team's process, and keeps the most memory that each used."""
         for worker in self.workers:
             worker.close()
+        for player, worker in self._players():
+            player['stats'].memory = worker.guard.peak()
 
 
 # A check of a team without strict rules only asks that it loads and plays.
 LENIENT = {
-    'threads': 1,
+    'threads': 64,
     'load_seconds': 600.0,
     'first_call_seconds': 600.0,
     'call_seconds': 600.0,
     'reset_seconds': 600.0,
     'mean_call_ms': 10000.0,
     'folder_mb': 10000.0,
+    'memory_mb': 65536.0,
+    'match_seconds': None,
+    'frozen': True,
+    'gpu': True,
+    'deterministic': False,
 }
 
 
@@ -478,9 +603,17 @@ def _setting_warnings(team: str) -> list[dict[str, Any]]:
 
 
 def _side_check(
-    team: str, scenario: str, limits: dict[str, Any], left: bool
+    team: str,
+    scenario: str,
+    limits: dict[str, Any],
+    left: bool,
+    replay: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Plays a few steps with the team on one side and returns the rule it broke and its stats."""
+    """Plays a few steps with the team on one side and returns the rule it broke and its stats.
+
+    `replay`, when given, takes the actions of every step, which the check of determinism
+    compares.
+    """
     stats: dict[str, Any] = {}
     sides = (team, _teams.BUILTIN) if left else (_teams.BUILTIN, team)
     try:
@@ -492,6 +625,7 @@ def _side_check(
             stats=stats,
             steps=PREFLIGHT_STEPS,
             save=False,
+            replay=replay,
         )
     except _play.ForfeitError as forfeit:
         rule = dict(forfeit.rule)
@@ -548,6 +682,7 @@ def preflight(
     rule = None
     sides: dict[str, Any] = {}
     actions: dict[str, int] = {}
+    notes: list[dict[str, Any]] = []
     folder = _home.folder('teams') / team
     size = _folder_bytes(folder) / 1e6 if entry.get('kind') != 'builtin' else 0.0
     most = limits.get('folder_mb', LENIENT['folder_mb'])
@@ -555,8 +690,9 @@ def preflight(
         reason = _label('folder_size', player=name, size=f'{size:.1f}', limit=_seconds(most))
         rule = _rule('load', reason, 'size')
     else:
+        first: dict[str, Any] = {}
         for left in (True, False):
-            broken, stats = _side_check(team, scenario, limits, left)
+            broken, stats = _side_check(team, scenario, limits, left, first if left else None)
             side = (stats.get('sides') or [None, None])[0 if left else 1] or {}
             sides['left' if left else 'right'] = {
                 'ok': broken is None,
@@ -568,7 +704,19 @@ def preflight(
             if broken is not None:
                 rule = broken
                 break
-    warnings = _setting_warnings(team)
+        if rule is None:
+            # The same steps from the same seed again, whose answers a deterministic team repeats.
+            again: dict[str, Any] = {}
+            broken, _ = _side_check(team, scenario, limits, True, again)
+            if broken is not None:
+                rule = broken
+            elif again.get('actions') != first.get('actions'):
+                reason = _label('deterministic', player=name)
+                if limits.get('deterministic'):
+                    rule = _rule('deterministic', reason)
+                else:
+                    notes.append(_label('warning_deterministic', player=name))
+    warnings = [*notes, *_setting_warnings(team)]
     total = sum(actions.values())
     if total:
         action, count = max(actions.items(), key=lambda item: item[1])
@@ -585,6 +733,7 @@ def preflight(
         'sides': sides,
         'actions': dict(sorted(actions.items(), key=lambda item: int(item[0]))),
         'folder_mb': round(size, 3),
+        'digest': folder_digest(team) if entry.get('kind') != 'builtin' else None,
         'warnings': warnings,
         'limits': dict(limits),
         'strict': limits is not LENIENT,

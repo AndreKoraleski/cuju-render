@@ -8098,6 +8098,16 @@ table.grid td.wrap {
     gap: 10px 16px;
 }
 
+.cup-strict-flags {
+    display: grid;
+    gap: 6px;
+}
+
+.cup-strict-flag {
+    display: grid;
+    gap: 2px;
+}
+
 .cup-unit {
     display: inline-flex;
     gap: 6px;

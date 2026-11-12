@@ -428,6 +428,7 @@ class CallStats:
         self.actions: collections.Counter[int] = collections.Counter()
         self.load: float | None = None
         self.reset: float | None = None
+        self.memory: float | None = None
 
     def add(self, seconds: float, actions: list[int]) -> None:
         """Counts one call that took `seconds` and answered `actions`."""
@@ -462,6 +463,8 @@ class CallStats:
             found['load_seconds'] = round(self.load, 3)
         if self.reset is not None:
             found['reset_seconds'] = round(self.reset, 3)
+        if self.memory:
+            found['memory_mb'] = round(self.memory, 1)
         return found
 
 

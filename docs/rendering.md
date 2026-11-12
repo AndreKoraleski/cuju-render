@@ -2767,7 +2767,6 @@ setting that the entrants cannot play is refused with the reason.
 | Ladder | Neighbours meet each round, and winners climb. |
 | King of the hill | Challengers try the king one after another. |
 | Gauntlet | The lowest seeds climb toward the top seed. |
-| Strict round robin | Ten legs of everyone against everyone, five against five for 3000 steps, under strict rules after a pre-flight, with the random entrant and the built in AI added, described under Strict round robin. |
 
 The page saves any format as a preset of the user, which the setup lists beside those that ship.
 Saving under the name of a preset of the user, and deleting one, ask first in place of the button,
@@ -2965,9 +2964,15 @@ and every other variable of Python left out, so two teams never share a module, 
 the same name, such as two files called `helper.py`. The variables `OMP_NUM_THREADS`,
 `MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS` and
 `BLIS_NUM_THREADS` hold the threads of the process to the limit of the rules, one by default, and
-torch takes the same limit once the team imports it. The process works in a private temporary
-folder, which the match removes afterwards, so a team reads its own files by their path beside its
-`main.py`, such as `os.path.join(os.path.dirname(__file__), 'model.pt')`. Its standard input reads
+torch takes the same limit once the team imports it. The process sees no GPU, since the
+variables `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` and `ROCR_VISIBLE_DEVICES` are empty,
+unless the setting `gpu` allows one. On macOS the GPU of Metal stays visible, since no such
+variable hides it. The process works in a private temporary folder, which the match removes
+afterwards, and with frozen folders, the default, it plays the team from a copy of the team's
+folder inside that private folder, whose files read only. So whatever a team writes goes with the
+private folder at the end of the match, and no team learns from one match to the next. A team
+reads its own files by their path beside its `main.py`, such as
+`os.path.join(os.path.dirname(__file__), 'model.pt')`. Its standard input reads
 as empty, and what it prints goes to its log, `logs/policies/ID.log` in the home folder, which
 starts again once it grows past a megabyte. The match and each process talk in lines of JSON on
 pipes of their own, each read on a thread of its own, the same on Windows, Linux and macOS, and
@@ -2991,6 +2996,26 @@ Each limit is a setting of the tournament, with these defaults.
 | The reset | `reset_seconds` | 5 seconds |
 | The mean compute time of a call over the match, for all the team's controlled players together, leaving out the first call | `mean_call_ms` | 20 milliseconds |
 | The size of the team's folder, which the check of a team holds it to | `folder_mb` | 100 megabytes |
+| The memory of each team's process | `memory_mb` | 2048 megabytes |
+| The compute time of all the team's action calls of a match together | `match_seconds` | 120 seconds |
+
+The default of `match_seconds` follows from the limits of a call. The longest match lasts 5000
+steps, which at the mean of 20 milliseconds a call comes to 100 seconds, and the first call may
+take 10 seconds more, so 120 seconds leave a team that keeps to the other limits room to spare,
+while a team that is slow throughout forfeits before the match drags on.
+
+Three switches go with the limits.
+
+| Switch | Setting | Default |
+| ------ | ------- | ------- |
+| Frozen team folders. Each match plays the team from a read only copy of its folder, and a team whose files changed since its pre-flight is refused at its next match. | `frozen` | on |
+| A GPU for each team's process | `gpu` | off |
+| Deterministic teams. The pre-flight refuses a team whose answers differ when the same steps play again from the same seed, which is otherwise a warning. | `deterministic` | off |
+
+The pre-flight keeps a digest of each team's folder, the SHA-256 of every file's path, size and
+bytes in the order of their paths, with the renderer's folder `cuju-team` of the team's kit and
+presentation and the caches of Python left out. A tournament without a pre-flight keeps the digest
+of the team's first match instead.
 
 A side that crashes, runs out of time, answers an invalid action, fails to load or to reset, or
 computes for longer on average than the limit allows, **breaks a rule**. The match ends at once,
@@ -3008,6 +3033,37 @@ page, the step and the score at that moment. The kinds are these.
     action set. Strict rules check every answer exactly as Kaggle's protocol does.
 - `mean`, the mean compute time of a call, measured by the team's process around its agent alone,
     passed its limit at the end of the match.
+- `total_time`, the compute time of all the team's calls of the match together passed
+    `match_seconds`.
+- `memory`, the team's process used more memory than `memory_mb` allows.
+- `threads`, the process ran more threads than the rules give it, `threads` and an allowance of 10
+    for the interpreter's main thread, the thread that watches the match and those that the system
+    and libraries such as PyTorch keep whatever the limit.
+- `process`, the team started another process, which strict rules refuse once the team has
+    loaded.
+- `changed`, the team's files changed since its pre-flight, under frozen folders.
+- `deterministic`, at the pre-flight alone, the team's answers differed when the same steps played
+    again, when the tournament asks for deterministic teams.
+
+Each system holds a team's process to its limits as far as it can, and the renderer watches the
+rest four times a second, ending the process as soon as it sees a limit broken.
+
+| System | The system enforces | The renderer watches |
+| ------ | ------------------- | -------------------- |
+| Windows | The memory of the process, which a job object limits, and its processes, which the job allows no other, from the first instruction of the team | The threads of the process, and the job's peak of memory to name a forfeit |
+| Linux | The memory, by a limit of the data segment, `RLIMIT_DATA`, which counts what the process allocates and leaves alone the address space that PyTorch reserves without using it, which a limit of the whole address space would refuse | The resident memory, the threads and the children of the process, from `/proc` |
+| macOS | Nothing of these, since macOS does not hold allocations to a limit of data | The resident memory, the threads and the children of the process, with `ps` |
+
+On every system the team's own process refuses to start another once the team has loaded, by an
+audit hook of Python, which names the reason. While a team loads, a library may run a short helper
+process, as Python's ctypes does on Linux to find a library, which Linux and macOS allow and the job
+object of Windows refuses. A team that starts a process through native code, past Python's audit
+hook, meets the job object on Windows and the watch of its children elsewhere.
+
+The limits of memory, threads, processes and time hold the team's own computer, and so assume that
+the team has no network. A team with network access could compute elsewhere, and isolation from the
+network is not yet enforced, so a tournament that needs it runs its teams on a machine or in a
+container without one.
 
 Two sides that break a rule at the same step both lose, 0 to 0. A forfeit by a rule leaves the
 ratings of earlier tournaments as they are, as an award does. An error of the engine or of a
@@ -3045,8 +3101,11 @@ kind and ability is already there.
 A tournament may hold a **pre-flight**, its setting `preflight`, before its first match. Each
 registered team loads and plays a few steps against the built in AI under the tournament's rules,
 once on the left and once on the right, where it sees the match turned, so a team that reads the
-turned view wrong fails before the tournament. A tournament without strict rules checks only that
-each team loads and plays. A team that fails is left out with its reason and its timings, which
+turned view wrong fails before the tournament. It then plays the same steps on the left again from
+the same seed and compares the team's answers, and answers that differ give a warning, or refuse
+the team when the tournament asks for deterministic teams, since a team that cannot repeat itself
+cannot be replayed. It also keeps the digest of each team's folder, which frozen folders hold the
+team's matches to. A tournament without strict rules checks only that each team loads and plays. A team that fails is left out with its reason and its timings, which
 the tournament shows, and the tournament is drawn again from its stages as given with the
 entrants that remain, and goes on without the team. A pre-flight that leaves fewer entrants than
 the stages need stops the tournament with the reason. Two entrants that would show the same name
@@ -3121,13 +3180,6 @@ read them. An entrant reads by its index in the tournament and by its `id`, its 
 A match that ended early, by a rule a side broke, counts in the files as any other, and says so in
 `cut_short` of its line and of the standings of both its sides, and `ratings_method.json` counts
 them, so no report mixes them with full matches unseen.
-
-### Strict round robin
-
-The preset **Strict round robin** puts these together. Every entrant plays every other ten times
-with sides in turn, five against five for 3000 steps, for three points a win and one a draw,
-under strict rules with the default limits and the forfeit at 0 to 3, after a pre-flight, with the
-random entrant and the built in AI added as a floor.
 
 ### The command line and the server
 
