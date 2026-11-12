@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import shutil
 import struct
 import time
@@ -571,9 +572,25 @@ def purge(identifier: str) -> bool:
     path = path_of(identifier, include_trash=True)
     if path is None or 'deleted_at' not in _summary(path):
         return False
-    path.unlink()
+    _unlink(path)
     path.with_suffix('.json').unlink(missing_ok=True)
     return True
+
+
+def _unlink(path: Path) -> None:
+    """Deletes a file, trying again for a moment while Windows says another program holds it.
+
+    A virus scanner or a search indexer may hold a file it has only just been written, for a
+    fraction of a second, and a deletion then fails with a sharing violation that passes.
+    """
+    for attempt in range(20):
+        try:
+            path.unlink()
+            return
+        except PermissionError:
+            if os.name != 'nt' or attempt == 19:
+                raise
+            time.sleep(0.1)
 
 
 @_locked
@@ -582,6 +599,6 @@ def remove(identifier: str) -> bool:
     path = path_of(identifier, include_trash=True)
     if path is None:
         return False
-    path.unlink()
+    _unlink(path)
     path.with_suffix('.json').unlink(missing_ok=True)
     return True
