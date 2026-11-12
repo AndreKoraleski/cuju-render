@@ -364,7 +364,7 @@ test('the worker keeps only the static files of the page on a loopback origin', 
     for (const path of ['/', '/index.html', '/js/main.js', '/style.css', '/assets/player.glb', '/assets/sounds/goal.ogg', '/lessons.json', '/manifest.webmanifest']) {
         assert.ok(ok(path), path);
     }
-    for (const path of ['/api/matches', '/api/matches/m-1', '/api', '/api/help/app', '/sandbox/presentation', '/?embed=key', '/js/main.js?v=2', '/assets/promo.mp4', '/sw.js', 'http://example.com/js/main.js']) {
+    for (const path of ['/api/matches', '/api/matches/m-1', '/api', '/api/help/app', '/sandbox/presentation', '/?embed=key', '/js/main.js?v=2', '/assets/challenges/corner.mp4', '/sw.js', 'http://example.com/js/main.js']) {
         assert.ok(!ok(path), path);
     }
     assert.ok(!ok('/js/main.js', 'POST'));

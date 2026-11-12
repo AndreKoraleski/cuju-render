@@ -497,18 +497,6 @@ SPDX-License-Identifier: Apache-2.0
     flex: none;
 }
 
-/* The montage, as wide as the band, in the frame of a picture. */
-
-.home-reel-video {
-    display: block;
-    width: 100%;
-    height: auto;
-    aspect-ratio: 16 / 9;
-    margin-top: 12px;
-    border: 1px solid var(--border);
-    background: #000000;
-}
-
 /* What the viewer does, a strip of short notes under line icons. */
 
 .home-features {

@@ -1,14 +1,12 @@
 cuju-render
 Copyright 2026 The cuju Authors (the contributors in the git history).
-Files without a license header are licensed under the Apache License 2.0, except cuju's logo and
-montage, src/cuju/render/web/assets/cuju-logo.svg, the bare marks cuju-mark.svg and
-cuju-mark-light.svg drawn from it, cuju-logo.png and cuju-logo-384.png, promo.mp4 and
-promo-poster.jpg, and the icons of the installable page that ci/make_logo.py draws from the logo,
-web/assets/icons/cuju-192.png, cuju-512.png and cuju-maskable-512.png, which are licensed under
-Creative Commons Attribution 4.0 International (CC BY 4.0). That license grants no right to use the
-name or the logo of cuju to suggest endorsement. The music of the montage is "Upbeat loop" by
-mistermender, https://freesound.org/s/512340/, CC0 1.0, looped to the length of the montage with a
-fade at the end.
+Files without a license header are licensed under the Apache License 2.0, except cuju's logo,
+src/cuju/render/web/assets/cuju-logo.svg, the bare marks cuju-mark.svg and cuju-mark-light.svg
+drawn from it, cuju-logo.png and cuju-logo-384.png, and the icons of the installable page that
+ci/make_logo.py draws from the logo, web/assets/icons/cuju-192.png, cuju-512.png and
+cuju-maskable-512.png, which are licensed under Creative Commons Attribution 4.0 International
+(CC BY 4.0). That license grants no right to use the name or the logo of cuju to suggest
+endorsement.
 
 cuju-render is the renderer of cuju, which reimplements Google Research Football
 (https://github.com/google-research/football), Copyright 2019 Google LLC, Apache License 2.0.

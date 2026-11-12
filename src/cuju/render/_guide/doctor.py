@@ -3,13 +3,13 @@
 
 """The diagnostic report of the renderer, which the Help page and `cuju render doctor` make.
 
-The report gathers the versions of cuju, Python, PyTorch and NumPy, the system, the checks of the
-renderer's home folder, the files and bytes of each of its folders, the counts of the library and
-the registry, the server of the folder and the recent warnings and errors of the server. The page
-adds what the browser can do. A report names no path beyond the home folder, and writes the
-user's home directory in it and in every message as `~`, the renderer's home folder outside it as
-`$CUJU_RENDER_HOME` and the user's name as `<user>`. It holds no key and no variable of the
-environment, and only the messages of errors may name a recording or a team.
+The report gathers the versions of cuju-render, cuju, Python, PyTorch and NumPy, the system, the
+checks of the renderer's home folder, the files and bytes of each of its folders, the counts of the
+library and the registry, the server of the folder and the recent warnings and errors of the
+server. The page adds what the browser can do. A report names no path beyond the home folder, and
+writes the user's home directory in it and in every message as `~`, the renderer's home folder
+outside it as `$CUJU_RENDER_HOME` and the user's name as `<user>`. It holds no key and no variable
+of the environment, and only the messages of errors may name a recording or a team.
 
 The server keeps its recent warnings and errors in memory, the records of the logger `cuju` from
 `install_capture` on and every request that failed inside the server, which `note_error` adds.
@@ -37,6 +37,7 @@ from typing import Any
 
 from cuju import __version__
 
+from .. import _version
 from .._http import launch as _launch
 from .._store import home as _home
 from .._text import messages as _messages
@@ -167,6 +168,7 @@ def _version_of(package: str) -> str | None:
 
 def _versions() -> dict[str, Any]:
     return {
+        'cuju-render': _version.__version__,
         'cuju': __version__,
         'python': platform.python_version(),
         'implementation': platform.python_implementation(),
@@ -458,6 +460,7 @@ def text(document: dict[str, Any]) -> str:
     versions = document.get('versions', {})
     lines.append('Versions')
     for key in (
+        'cuju-render',
         'cuju',
         'python',
         'implementation',

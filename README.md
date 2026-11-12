@@ -63,10 +63,10 @@ with the system's web view, and without it the window comes from Edge, Chrome, C
 ## License
 
 The code is licensed under the Apache License 2.0. The page ships three.js and Fabric.js under the
-MIT license, art converted from Gameplay Football under the Unlicense, characters, clips and sounds
-under CC0 1.0, and copies of cuju's logo and montage under CC BY 4.0. [NOTICE][notice] names every
-part, and the license texts are in [LICENSES][licenses]. cuju-render is an independent project,
-neither affiliated with nor endorsed by Google.
+MIT license, icons of Lucide under the ISC license, art converted from Gameplay Football under the
+Unlicense, characters, clips and sounds under CC0 1.0, and copies of cuju's logo under CC BY 4.0.
+[NOTICE][notice] names every part, and the license texts are in [LICENSES][licenses]. cuju-render
+is an independent project, neither affiliated with nor endorsed by Google.
 
 [rendering]: https://github.com/AndreKoraleski/cuju-render/blob/main/docs/rendering.md
 [presentation]: https://github.com/AndreKoraleski/cuju-render/blob/main/docs/presentation.md

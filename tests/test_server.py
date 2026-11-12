@@ -22,6 +22,7 @@ import cuju
 import cuju.errors
 import cuju.state
 from conftest import actions_at, tensor_bytes
+from cuju.render import _version
 from cuju.render._format import recording as _recording
 from cuju.render._http import launch as _launch
 from cuju.render._http import server as _server
@@ -48,6 +49,9 @@ from support.common import (
     _translation,
     _until,
 )
+
+# What `GET /api/info` answers, the version of the renderer, which Home shows, and that of cuju.
+INFO = {'version': _version.__version__, 'cuju': cuju.__version__}
 
 
 def test_server_api(render_home):
@@ -82,7 +86,7 @@ def test_server_api(render_home):
         status, body = _get(address, f'/api/matches/{path.stem}')
         assert gzip.decompress(body).startswith(_recording.MAGIC)
         assert 'academy_empty_goal_close' in json.loads(_get(address, '/api/scenarios')[1])
-        assert json.loads(_get(address, '/api/info')[1]) == {'version': cuju.__version__}
+        assert json.loads(_get(address, '/api/info')[1]) == INFO
         folder = _teams.folder_bundle(
             [
                 ('submission/main.py', b'def agent(obs):\n    return [0]\n'),
@@ -855,7 +859,7 @@ def test_api_methods_and_request_boundaries(render_home):
             connection.request('GET', '/api/info', headers=headers)
             response = connection.getresponse()
             assert response.status == 200
-            assert json.loads(response.read()) == {'version': cuju.__version__}
+            assert json.loads(response.read()) == INFO
             connection.close()
     finally:
         server.shutdown()
@@ -1762,7 +1766,8 @@ def test_installable_page_files_build_and_routes(render_home, tmp_path, monkeypa
     server, address = _help_server()
     try:
         status, info = _help_json(address, '/api/help/app')
-        assert status == 200 and info['version'] == cuju.__version__ and len(info['build']) == 16
+        assert status == 200 and info['version'] == _version.__version__
+        assert len(info['build']) == 16
         with urllib.request.urlopen(address + '/manifest.webmanifest', timeout=10) as response:
             assert response.headers['Content-Type'] == 'application/manifest+json'
         with urllib.request.urlopen(address + '/sw.js', timeout=10) as response:

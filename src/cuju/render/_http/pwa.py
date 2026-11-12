@@ -29,6 +29,8 @@ from typing import Any
 
 from cuju import __version__
 
+from .. import _version
+
 _WEB = Path(__file__).parents[1] / 'web'
 # A build stands this many seconds before the files are looked at again.
 _FRESH_SECONDS = 1.0
@@ -39,7 +41,7 @@ _DIGESTS_SLOT = b'const DIGESTS = null;'
 
 
 def _digest() -> str:
-    digest = hashlib.sha256(f'cuju {__version__}\n'.encode())
+    digest = hashlib.sha256(f'cuju-render {_version.__version__} cuju {__version__}\n'.encode())
     for path in sorted(_WEB.rglob('*')):
         if path.is_file():
             stat = path.stat()
@@ -122,5 +124,5 @@ def manifest(data: bytes, code: str | None) -> bytes:
 
 
 def app_info() -> dict[str, str]:
-    """Returns the version of cuju and the build of the page."""
-    return {'version': __version__, 'build': build()}
+    """Returns the version of cuju-render and the build of the page."""
+    return {'version': _version.__version__, 'build': build()}

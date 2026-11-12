@@ -2,8 +2,7 @@ The player models in src/cuju/render/web/assets/models and the clips in
 src/cuju/render/web/assets/animations, from the KayKit Character Packs Skeletons and Adventurers and
 KayKit Character Animations by Kay Lousberg, and the sounds in src/cuju/render/web/assets/sounds
 that sounds.json lists under CC0 1.0, from Kenney's packs and from recordings on Freesound,
-Wikimedia Commons, OpenGameArt and BigSoundBank, carry this dedication. The music of the montage in
-src/cuju/render/web/assets/promo.mp4, "Upbeat loop" by mistermender, carries it too.
+Wikimedia Commons, OpenGameArt and BigSoundBank, carry this dedication.
 
 Creative Commons Legal Code
 

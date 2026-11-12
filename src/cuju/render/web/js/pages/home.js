@@ -5,8 +5,8 @@
 // carries the logo as the name, a line on what the viewer does and the ways into its pages. Below
 // it the page runs down in bands, the live sources and the newest recordings with a way into each,
 // or a first run guide while the library is empty, then what the viewer does, the keys of the
-// Watch page, a note on what cuju is with links to the project, and the version. Every text from
-// the server goes into the page as text, never as markup.
+// Watch page, a note on what cuju is with links to the renderer and the engine, and the versions
+// of both. Every text from the server goes into the page as text, never as markup.
 
 import { api, formatDate } from '../core/api.js';
 import { el as h } from '../core/menu.js';
@@ -20,16 +20,19 @@ const REFRESH_MS = 8000;
 const LATEST = 5;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-// Each link names its messages, home.links.<key>.label and .hint.
+// Each link names its messages, home.links.<key>.label and .hint. The first five lead to the
+// renderer, cuju-render, and the last three to the engine, cuju.
 const LINKS = [
-    ['repository', 'https://github.com/AndreKoraleski/cuju'],
+    ['repository', 'https://github.com/AndreKoraleski/cuju-render'],
+    ['rendering', 'https://github.com/AndreKoraleski/cuju-render/blob/main/docs/rendering.md'],
+    ['issues', 'https://github.com/AndreKoraleski/cuju-render/issues'],
+    ['changelog', 'https://github.com/AndreKoraleski/cuju-render/blob/main/CHANGELOG.md'],
+    ['pypi', 'https://pypi.org/project/cuju-render/'],
+    ['engine', 'https://github.com/AndreKoraleski/cuju'],
     ['documentation', 'https://github.com/AndreKoraleski/cuju/tree/main/docs'],
-    ['rendering', 'https://github.com/AndreKoraleski/cuju/blob/main/docs/rendering.md'],
-    ['issues', 'https://github.com/AndreKoraleski/cuju/issues'],
-    ['changelog', 'https://github.com/AndreKoraleski/cuju/blob/main/CHANGELOG.md'],
-    ['pypi', 'https://pypi.org/project/cuju/'],
+    ['enginePypi', 'https://pypi.org/project/cuju/'],
 ];
-const NOTICE_URL = 'https://github.com/AndreKoraleski/cuju/blob/main/NOTICE';
+const NOTICE_URL = 'https://github.com/AndreKoraleski/cuju-render/blob/main/NOTICE';
 
 // What the viewer does, each with the symbol of the page that shows it and its messages
 // home.feature.<name>.title and .text, whose placeholder {code} is the code of the part.
@@ -205,10 +208,6 @@ export class HomePage {
 
     show() {
         this.shown = true;
-        // The montage's poster loads once Home shows, so a page opened on a match skips it.
-        for (const video of this.root.querySelectorAll('video[data-poster]:not([poster])')) {
-            video.poster = video.dataset.poster;
-        }
         clearInterval(this.timer);
         this.timer = setInterval(() => {
             if (!document.hidden) {
@@ -233,7 +232,6 @@ export class HomePage {
         this.root.replaceChildren(h('div', { class: 'home' },
             this.hero(),
             h('div', { class: 'home-band home-now' }, h('div', { class: 'home-wrap' }, this.status)),
-            this.reelBand(),
             this.featuresBand(),
             this.keysBand(),
             this.footBand()));
@@ -262,20 +260,6 @@ export class HomePage {
                     h('button', { type: 'button', class: 'btn', onclick: go('teams') }, icon('shirt'), t('home.hero.teams')),
                     h('button', { type: 'button', class: 'btn', onclick: go('field') }, icon('field'), t('home.hero.field'))),
                 this.glance));
-    }
-
-    // A montage of the viewer, muted until the viewer turns the sound on, and played from its controls.
-    reelBand() {
-        const video = h('video', {
-            class: 'home-reel-video', src: 'assets/promo.mp4', 'data-poster': 'assets/promo-poster.jpg',
-            controls: true, muted: true, playsinline: true, preload: 'none', width: '1280', height: '720',
-            'aria-label': t('home.reel.label'),
-        });
-        video.muted = true;
-        return h('section', { class: 'home-band home-reel', 'aria-labelledby': 'home-reel-title' },
-            h('div', { class: 'home-wrap' },
-                bandHead('home-reel-title', t('home.reel.title'), { eyebrow: t('home.reel.eyebrow') }),
-                video));
     }
 
     featuresBand() {
@@ -332,7 +316,8 @@ export class HomePage {
                     this.version)));
     }
 
-    // The installed version, shown only when the client of the server offers it.
+    // The installed version of the renderer with that of cuju, shown only when the server offers
+    // them.
     async loadVersion() {
         if (typeof api.info !== 'function') {
             return;
@@ -340,7 +325,10 @@ export class HomePage {
         try {
             const info = await api.info();
             if (info && typeof info.version === 'string' && info.version) {
-                this.version.textContent = t('home.version', { version: info.version });
+                const engine = typeof info.cuju === 'string' && info.cuju;
+                this.version.textContent = engine
+                    ? t('home.versions', { version: info.version, engine })
+                    : t('home.version', { version: info.version });
                 this.version.hidden = false;
             }
         } catch {

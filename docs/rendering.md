@@ -303,8 +303,7 @@ drawing and loading meanwhile, and where a worker cannot start the page reads th
 into the same frames. A worker that starts and then fails on a recording leaves it unopened and
 shows why. The art of the players, the ball, the goals and the stands loads all at once
 beside the recording, and the players of a recording are built once, with their models. The rest
-loads when the page first needs it, the montage of Home when Home shows, the sounds when the sound
-is turned on, and the models and animations of other characters when a team wears them.
+loads when the page first needs it, the sounds when the sound is turned on, and the models and animations of other characters when a team wears them.
 
 The page opens a recording that decompresses to at most 128 MB, holds at most 50,000 frames and
 at most 1,000,000 frames times players, and lists at most 64 players, which leaves room for fifteen
@@ -1410,11 +1409,12 @@ recordings. The page continues in sections. The first holds Live now and Latest 
 side by side, the sources that stream at the moment, each opening with one click, and the five
 newest recordings, each with a control that plays it. While there are no sources and no
 recordings, a guide of three steps takes their place, with the commands that run the page, stream a
-running batch and make a recording. A montage of the viewer follows, muted at first and
-started from its controls. Next come six short notes on what the viewer does and the main
+running batch and make a recording. Next come six short notes on what the viewer does and the main
 keys of the Watch page in four groups, with a control for every shortcut. The page closes with an
-about section and its credits beside the links to the repository, the documentation, this guide,
-the issues, the changelog and PyPI, and a line with the license and the installed version. A server
+about section and its credits beside two groups of links. The first leads to cuju-render, its
+repository, this guide, its issues, its changelog and its page on PyPI, and the second to cuju,
+the engine, its repository, its documentation and its page on PyPI. A line beneath holds the
+license and the installed versions of cuju-render and cuju. A server
 that does not answer is shown as such, and a recording file still opens from the computer. On a
 narrow screen the sections use one column.
 
@@ -3970,8 +3970,8 @@ decode in the worker without reading one, and names the reader of the last recor
 gives the sound's state, muted, the volume and the state of the audio context, without starting or
 playing any sound.
 
-The server's side, which `GET /api/help/doctor` returns, holds the versions of cuju, Python,
-PyTorch and NumPy and the system, the home folder with whether it exists and can be written and its
+The server's side, which `GET /api/help/doctor` returns, holds the versions of cuju-render, cuju,
+Python, PyTorch and NumPy and the system, the home folder with whether it exists and can be written and its
 free space, the files and bytes of each of its folders, the counts of recordings, the Trash, teams,
 tournaments, leaderboards with runs and live sources, the server of the folder, and the recent
 warnings and errors of the server, the 50 newest, which include every request that failed inside
@@ -4081,9 +4081,9 @@ that menu there. Firefox and the other browsers that install no pages reach the 
 command.
 
 A service worker, `sw.js`, keeps the page's own static files, the HTML, styles, scripts, models,
-pictures and sounds, in a cache named after the build of the page. The build is a digest of cuju's
-version and of the name, size and time of every file of the page, which `GET /api/help/app`
-returns with the version. Each time the page opens, the worker asks the server for its build. While
+pictures and sounds, in a cache named after the build of the page. The build is a digest of the
+versions of cuju-render and cuju and of the name, size and time of every file of the page, which
+`GET /api/help/app` returns with the version of cuju-render. Each time the page opens, the worker asks the server for its build. While
 the build is the worker's own, files come from the cache first. Once the server holds a new
 version, or a file of the page changes, files come from the server at once and the page registers
 the worker of the new build, which replaces the old one and its cache. With no server answering,
@@ -4094,7 +4094,7 @@ any other entry of its cache and asks the server again.
 The worker keeps only files of the page itself. Every answer of the API stays out of it, so
 recordings, teams, live streams, games and reports always come fresh from the server, and so do the
 sandbox of team workers, a request with a query such as the page of a notebook, a request for a
-range, and the montage video. The page registers the worker only at its top on http at a loopback
+range, and every video, such as the teasers of the challenge cards. The page registers the worker only at its top on http at a loopback
 host, `127.0.0.1`, `localhost` or `[::1]`, so a notebook's frame, Google Colab's proxy and any
 other address keep no copy, and a worker that finds itself elsewhere removes itself.
 

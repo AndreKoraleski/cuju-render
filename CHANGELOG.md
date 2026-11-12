@@ -383,6 +383,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     manifest, the app window, the launchers, the install card and Help, while commands, packages,
     modules and files keep the lowercase cuju. Launchers that an earlier install made under the
     name cuju still uninstall, and a new install replaces them.
+- The links at the foot of Home, the links of Help and the guide of the command palette lead to
+    cuju-render's own repository, guide, issues, changelog, NOTICE and page on PyPI, and Home adds
+    cuju's repository, documentation and page on PyPI. The last line of Home shows the version of
+    cuju-render with that of cuju, and the diagnostic report lists both.
 - The logo is a vector drawing, `web/assets/cuju-logo.svg`, the same four letters with their
     stacked gray copies on a dark square with rounded corners and a gray gradient border. The
     favicon, the manifest, the home screen icon, the launchers and the app window show it as a
@@ -452,7 +456,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The page decodes recordings in a Web Worker, reading them itself where a worker cannot start,
     loads the art of the players, the ball, the goals and the stands all at once, builds the
     players of a recording once with their models, and shows the progress of each stage. Sounds
-    load when the sound is turned on and the montage of Home when Home shows. The sample of eleven
+    load when the sound is turned on. The sample of eleven
     a side reaches its first frame in about half the time in headless Chrome.
 - `cuju.render.Recorder` codes and writes its recordings on a thread of the renderer, so the step
     that ends an episode only hands its frames over. `saved` gains a path once its file is

@@ -466,7 +466,7 @@ export class CommandPalette {
         for (const [id, title, keywords] of HELP_TOPICS) {
             add('Help', t('palette.help', { topic: title }), () => this.helpTopic(id), `${searchWords('palette.words.help', 'help guide')} ${keywords}`);
         }
-        add('Help', t('palette.guide'), () => window.open('https://github.com/AndreKoraleski/cuju/blob/main/docs/rendering.md', '_blank', 'noopener'), searchWords('palette.words.guide', 'documentation docs manual'));
+        add('Help', t('palette.guide'), () => window.open('https://github.com/AndreKoraleski/cuju-render/blob/main/docs/rendering.md', '_blank', 'noopener'), searchWords('palette.words.guide', 'documentation docs manual'));
         return list;
     }
 

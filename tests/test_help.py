@@ -49,7 +49,7 @@ def test_doctor_report_keeps_private_paths_out(tmp_path, monkeypatch):
     names = {'home folder', 'writing', 'disk space', 'samples', 'page files', 'server file'}
     assert names <= set(checks)
     assert checks['home folder']['ok'] and not checks['server file']['ok']
-    assert set(report['versions']) >= {'cuju', 'python', 'system', 'torch', 'numpy'}
+    assert set(report['versions']) >= {'cuju-render', 'cuju', 'python', 'system', 'torch', 'numpy'}
     text = _doctor.text(report)
     assert 'FAIL  server file' in text and str(user) not in text
     # A home folder that is a file fails its check and is named as such.

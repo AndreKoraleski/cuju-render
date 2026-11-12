@@ -1814,7 +1814,7 @@ def loading_checks(client, port):
             cuju.assetsReady = saved;
             cuju.assetProgress = savedShare;
             cuju.hideLoading();
-            // A muted page fetches no sound file, and Home asks for the montage's poster.
+            // A muted page fetches no sound file, also once Home shows.
             cuju.showPage('home');
             for (let i = 0; i < 100 && !cuju.home; i++) {
                 await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1822,10 +1822,7 @@ def loading_checks(client, port):
             cuju.home?.show();
             const sounds = performance.getEntriesByType('resource')
                 .some((item) => item.name.includes('/assets/sounds/'));
-            const poster = document.querySelector('.home-reel-video')?.getAttribute('poster');
-            const all = {
-                shown, goes, silent: !sounds, poster: poster === 'assets/promo-poster.jpg',
-            };
+            const all = { shown, goes, silent: !sounds };
             return Object.values(all).every(Boolean) || JSON.stringify(all);
         })()
     """)

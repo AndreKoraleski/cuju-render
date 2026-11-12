@@ -31,6 +31,7 @@ from typing import Any
 from cuju import __version__, bundled_scenarios
 from cuju.errors import ArgumentError, Error
 
+from .. import _version
 from .._export import feed as _feed
 from .._export import video_jobs as _video_jobs
 from .._format import recording as _recording
@@ -1260,7 +1261,7 @@ def make_handler(
                 elif parts == ['api', 'feed', 'resolve']:
                     self._json(self._resolve_feed(self._route()[1].get('source', 'auto')))
                 elif parts == ['api', 'info']:
-                    self._json({'version': __version__})
+                    self._json({'version': _version.__version__, 'cuju': __version__})
                 elif parts == ['api', 'video']:
                     self._json(_video_jobs.availability())
                 elif parts == ['api', 'videos']:
