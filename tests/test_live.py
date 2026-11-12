@@ -419,8 +419,10 @@ def test_grid_keeps_its_tiles_for_requests_that_arrive_late(render_home):
 def test_grid_changes_no_output(device, render_home, monkeypatch):
     """A batch whose grid a viewer watches returns the same bits as one that nobody watches."""
     monkeypatch.setattr(_grid, '_PERIOD', 0.0)
-    monkeypatch.setattr(_grid, '_SHARE', 1e9)
-    monkeypatch.setattr(_grid, '_RATE', 1e9)
+    # Infinite limits make the pause after a read zero. A finite one, however small, can still
+    # hold a step back when the clock ticks coarsely, as on Windows, or the machine is slow.
+    monkeypatch.setattr(_grid, '_SHARE', float('inf'))
+    monkeypatch.setattr(_grid, '_RATE', float('inf'))
     outputs = []
     for watched in (False, True):
         batch = cuju.BatchEnvironment('5_vs_5_l4_r0', environment_count=3, device=device, seed=7)
