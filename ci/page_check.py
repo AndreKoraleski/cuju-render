@@ -4025,6 +4025,11 @@ def main():
                     const $ = (id) => document.getElementById(id);
                     for (const menu of Object.values(cuju.menus)) menu.close();
                     document.activeElement.blur();
+                    // A machine without a GPU draws 3D slowly and gets the offer of the 2D view,
+                    // which the person declines here, as the offer itself is checked elsewhere.
+                    localStorage.setItem('cuju.view2dDeclined', 'true');
+                    const offer = $('flat-suggest');
+                    if (offer) offer.hidden = true;
                     const resting = {};
                     for (const page of ['watch', 'field', 'play', 'recordings']) {
                         cuju.showPage(page);
