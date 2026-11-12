@@ -460,9 +460,11 @@ def add(document: Any) -> dict[str, Any]:
     temporary = target.with_name(f'.{code}.json.tmp')
     temporary.write_text(body, encoding='utf-8', newline='\n')
     # A file of the same language whose name differs in case gives way to the new one.
-    earlier = _file(folder(), code)
-    if earlier is not None and earlier.name != target.name:
-        earlier.unlink()
+    # The names are read from the folder, since a file system that ignores case, as those of
+    # Windows and macOS usually do, would answer for the new name with the old file's spelling.
+    for earlier in folder().glob('*.json'):
+        if earlier.stem.lower() == code.lower() and earlier.name != target.name:
+            earlier.unlink()
     os.replace(temporary, target)
     entry = _entry(document, code, 'home', english())
     entry['report'] = {key: report[key] for key in ('missing', 'unused', 'untranslated')}
