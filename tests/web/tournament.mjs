@@ -162,7 +162,7 @@ test('Names and labels of the server show in the language of the page', async ()
     assert.equal(layout.formatsText([{ format: 'groups' }, { format: 'knockout' }]), 'Groups then knockout');
     assert.equal(i18n.labelText(title), title.text);
     try {
-        await i18n.setLanguage('pt');
+        await i18n.setLanguage('pt-BR');
         assert.equal(layout.entrantName(builtin), 'IA embutida 0,50');
         assert.equal(layout.entrantName(twice), 'IA embutida 0,50 2');
         assert.equal(layout.entrantName(person), 'Ana');
@@ -187,8 +187,8 @@ test('Names and labels of the server show in the language of the page', async ()
 
 test('Every stage name of the page has a message in English and in the Portuguese draft', async () => {
     const { readFileSync } = await import('node:fs');
-    for (const code of ['en', 'pt']) {
-        const place = code === 'en' ? `../../src/cuju/render/web/languages/${code}.json` : `../../translations/${code}.json`;
+    for (const code of ['en', 'pt-BR']) {
+        const place = code === 'en' ? `../../src/cuju/render/web/languages/${code}.json` : `../../translations/${code}/${code}.json`;
         const file = JSON.parse(readFileSync(new URL(place, import.meta.url), 'utf8'));
         for (const key of Object.values(layout.STAGE_NAME_IDS)) {
             assert.equal(typeof file[`server.tournament.label.stage.${key}`], 'string', `${code} ${key}`);

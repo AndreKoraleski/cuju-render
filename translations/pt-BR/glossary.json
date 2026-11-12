@@ -54,11 +54,11 @@
   },
   "socks": {
     "pt": "meiões",
-    "note": "Football socks are 'meião' in Brazil. pt.json says 'Meias' today."
+    "note": "Football socks are 'meião' in Brazil. pt-BR.json says 'Meias' today."
   },
   "trim": {
     "pt": "detalhes",
-    "note": "'Trim color' = 'Cor dos detalhes'. pt.json uses singular 'detalhe', which reads oddly."
+    "note": "'Trim color' = 'Cor dos detalhes'. pt-BR.json uses singular 'detalhe', which reads oddly."
   },
   "badge": {
     "pt": "escudo"
@@ -72,7 +72,7 @@
   },
   "halves": {
     "pt": "meio a meio",
-    "note": "pt.json says 'Metades'. 'Camisa meio a meio' is what fans say."
+    "note": "pt-BR.json says 'Metades'. 'Camisa meio a meio' is what fans say."
   },
   "sash": {
     "pt": "faixa diagonal"
@@ -149,7 +149,7 @@
   },
   "tackle (statistic, event)": {
     "pt": "desarme",
-    "note": "pt.json uses 'carrinho' for every tackle. Stats, moments filter, sound 'when a player wins the ball' and awards count desarmes."
+    "note": "pt-BR.json uses 'carrinho' for every tackle. Stats, moments filter, sound 'when a player wins the ball' and awards count desarmes."
   },
   "sliding tackle": {
     "pt": "carrinho"
@@ -277,7 +277,7 @@
   },
   "brace": {
     "pt": "bis",
-    "note": "pt.json says 'Doblete', which is Spanish. Narrators say 'fez o bis'."
+    "note": "pt-BR.json says 'Doblete', which is Spanish. Narrators say 'fez o bis'."
   },
   "screamer": {
     "pt": "golaço"
@@ -386,7 +386,7 @@
   },
   "seeding": {
     "pt": "chaveamento",
-    "note": "pt.json says 'distribuição', which hides the meaning."
+    "note": "pt-BR.json says 'distribuição', which hides the meaning."
   },
   "seed (random number)": {
     "pt": "semente",
@@ -424,7 +424,7 @@
   },
   "replay (extra tournament match)": {
     "pt": "jogo extra",
-    "note": "pt.json says 'nova partida'. Not to be confused with the broadcast replay."
+    "note": "pt-BR.json says 'nova partida'. Not to be confused with the broadcast replay."
   },
   "decider / deciding match": {
     "pt": "jogo de desempate"
@@ -462,7 +462,7 @@
   },
   "vs / against (two teams)": {
     "pt": "x",
-    "note": "'{left} against {right}' = '{left} x {right}' everywhere. pt.json mixes 'contra' and 'x'. Use 'contra' only in prose such as 'jogar contra a IA'."
+    "note": "'{left} against {right}' = '{left} x {right}' everywhere. pt-BR.json mixes 'contra' and 'x'. Use 'contra' only in prose such as 'jogar contra a IA'."
   },
   "score (result)": {
     "pt": "placar",
@@ -496,11 +496,11 @@
   },
   "tags": {
     "pt": "tags",
-    "note": "What Brazilian apps say. pt.json says 'etiquetas'."
+    "note": "What Brazilian apps say. pt-BR.json says 'etiquetas'."
   },
   "provenance": {
     "pt": "origem",
-    "note": "pt.json says 'procedência', which sounds like a legal document."
+    "note": "pt-BR.json says 'procedência', which sounds like a legal document."
   },
   "source (of a recording)": {
     "pt": "origem",
@@ -515,7 +515,7 @@
   },
   "go live": {
     "pt": "voltar ao vivo",
-    "note": "pt.json says 'Ir para o ao vivo'."
+    "note": "pt-BR.json says 'Ir para o ao vivo'."
   },
   "behind live": {
     "pt": "de atraso",
@@ -554,7 +554,7 @@
   },
   "registered team": {
     "pt": "time cadastrado",
-    "note": "pt.json says 'registrado'. 'Cadastrar' is what Brazilian apps say."
+    "note": "pt-BR.json says 'registrado'. 'Cadastrar' is what Brazilian apps say."
   },
   "registry (of teams)": {
     "pt": "cadastro de times",
@@ -577,7 +577,7 @@
   },
   "episode": {
     "pt": "episódio",
-    "note": "'End of episode' = 'Fim do episódio'. pt.json says 'Partida encerrada', which is wrong for academy episodes that end early."
+    "note": "'End of episode' = 'Fim do episódio'. pt-BR.json says 'Partida encerrada', which is wrong for academy episodes that end early."
   },
   "step (engine)": {
     "pt": "passo",
@@ -614,11 +614,11 @@
   },
   "run (of a challenge)": {
     "pt": "sessão",
-    "note": "pt.json says 'rodada', which collides with tournament rounds, and 'execução' in server messages. 'Full run' = 'Sessão completa'."
+    "note": "pt-BR.json says 'rodada', which collides with tournament rounds, and 'execução' in server messages. 'Full run' = 'Sessão completa'."
   },
   "run headless": {
     "pt": "simular",
-    "note": "Plays on the server without the page, faster than real time. pt.json says 'Rodar em segundo plano'. 'headless run' = 'simulação'."
+    "note": "Plays on the server without the page, faster than real time. pt-BR.json says 'Rodar em segundo plano'. 'headless run' = 'simulação'."
   },
   "practice": {
     "pt": "prática",
@@ -645,11 +645,11 @@
   },
   "off the mark (achievement)": {
     "pt": "desencantou",
-    "note": "First goal. pt.json says 'Saiu do zero'."
+    "note": "First goal. pt-BR.json says 'Saiu do zero'."
   },
   "giant slayer (achievement)": {
     "pt": "deu zebra",
-    "note": "Beating the strongest AI. pt.json says 'Matador de gigantes'."
+    "note": "Beating the strongest AI. pt-BR.json says 'Matador de gigantes'."
   },
   "lesson": {
     "pt": "lição"
@@ -749,7 +749,7 @@
   },
   "home folder (renderer's folder)": {
     "pt": "pasta do cuju",
-    "note": "The folder chosen by --home. pt.json says 'pasta base'."
+    "note": "The folder chosen by --home. pt-BR.json says 'pasta base'."
   },
   "custom": {
     "pt": "personalizado",
@@ -771,11 +771,11 @@
   },
   "View menu": {
     "pt": "menu Exibir",
-    "note": "pt-BR software names this menu 'Exibir'. pt.json says 'Visualização'."
+    "note": "pt-BR software names this menu 'Exibir'. pt-BR.json says 'Visualização'."
   },
   "tile": {
     "pt": "miniatura",
-    "note": "pt.json says 'bloco'."
+    "note": "pt-BR.json says 'bloco'."
   },
   "id": {
     "pt": "ID"
@@ -868,7 +868,7 @@
   },
   "seek": {
     "pt": "ir para outro ponto",
-    "note": "'A click on the timeline seeks' = 'Clique na linha do tempo para ir a outro ponto'. pt.json says 'muda o ponto da partida'."
+    "note": "'A click on the timeline seeks' = 'Clique na linha do tempo para ir a outro ponto'. pt-BR.json says 'muda o ponto da partida'."
   },
   "preview": {
     "pt": "prévia",

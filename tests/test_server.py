@@ -1561,7 +1561,7 @@ def test_page_preview_panel_speaks_the_page_language():
     wanted += [f'level.{k}' for k in ('worker', 'manifest', 'stock')]
     wanted += [f'status.{k}' for k in ('none', 'starting', 'ready', 'restarting', 'stopped')]
     wanted += [f'status.{k}' for k in ('failed', 'disposed')]
-    for code in ('en', 'pt'):
+    for code in ('en', 'pt-BR'):
         messages = _shipped_language(code) if code == 'en' else _translation(code)
         missing = [k for k in wanted if f'presentation.preview.{k}' not in messages]
         assert missing == [], (code, missing)
@@ -2034,13 +2034,16 @@ def test_language_routes(render_home):
             ('en', 'shipped', True),
         ]
         # The Portuguese draft joins through the import, as any language of a person's own.
-        status, body = call('/api/languages', json.dumps(_translation('pt')).encode(), 'POST')
+        status, body = call('/api/languages', json.dumps(_translation('pt-BR')).encode(), 'POST')
         assert status == 201 and (body['code'], body['source'], body['usable']) == (
-            'pt',
+            'pt-BR',
             'home',
             True,
         )
-        assert call('/api/languages/pt')[1]['@language']['locale'] == 'pt-BR'
+        assert call('/api/languages/pt-BR')[1]['@language']['locale'] == 'pt-BR'
+        # Codes differ in case alone as BCP 47 has them, so pt-br names the same language.
+        assert call('/api/languages/pt-br')[1]['@language']['code'] == 'pt-BR'
+        assert call('/api/languages/pt')[0] == 404
         status, body = call('/api/languages/xx')
         assert (status, body['error_id'], body['error']) == (
             404,
@@ -2065,7 +2068,7 @@ def test_language_routes(render_home):
         assert call('/api/languages/pt-x-test')[1]['html.nav.watch'] == 'Assistir aqui'
         assert [e['code'] for e in call('/api/languages')[1]['languages']] == [
             'en',
-            'pt',
+            'pt-BR',
             'pt-x-test',
         ]
         bad = dict(own, **{'api.status': 'Resposta {code}'})

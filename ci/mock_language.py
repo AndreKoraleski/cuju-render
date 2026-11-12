@@ -14,9 +14,23 @@ from pathlib import Path
 
 WEB = Path(__file__).resolve().parents[1] / 'src' / 'cuju' / 'render' / 'web'
 SHIPPED = WEB / 'languages'
-CODE = re.compile(r'[a-z]{2,3}(-[a-z0-9]{1,8})*')
+CODE = re.compile(r'[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*')
 PLACEHOLDER = re.compile(r'\{([A-Za-z0-9_]+)\}')
 OWN = {}
+
+
+def _own(code):
+    """Returns the code of an imported language that `code` names, whatever its case."""
+    return next((key for key in OWN if key.lower() == str(code).lower()), None)
+
+
+def _shipped(code):
+    """Returns the file of a shipped language that `code` names, whatever its case."""
+    if not isinstance(code, str) or not CODE.fullmatch(code):
+        return None
+    return next(
+        (path for path in SHIPPED.glob('*.json') if path.stem.lower() == code.lower()), None
+    )
 
 
 def _english():
@@ -84,10 +98,10 @@ def get(parts):
         entries += [_entry(code, document, 'home') for code, document in sorted(OWN.items())]
         return {'languages': entries}, 200
     code = parts[0]
-    if len(parts) == 1 and CODE.fullmatch(code) and (SHIPPED / f'{code}.json').is_file():
-        return json.loads((SHIPPED / f'{code}.json').read_text(encoding='utf-8')), 200
-    if len(parts) == 1 and code in OWN:
-        return OWN[code], 200
+    if len(parts) == 1 and _shipped(code) is not None:
+        return json.loads(_shipped(code).read_text(encoding='utf-8')), 200
+    if len(parts) == 1 and _own(code) is not None:
+        return OWN[_own(code)], 200
     return _refuse(404, 'server.language.none', 'no language {code}', code=code)
 
 
@@ -110,11 +124,11 @@ def post(parts, body):
         return _refuse(
             400,
             'server.language.code',
-            'expected a language code of lowercase letters and digits, such as pt or pt-br, '
-            'found {code}',
+            'expected a language code of letters and digits in parts joined by hyphens, such as pt '
+            'or pt-BR, found {code}',
             code=code,
         )
-    if (SHIPPED / f'{code}.json').is_file():
+    if _shipped(code) is not None:
         return _refuse(
             400,
             'server.language.shipped',
@@ -130,15 +144,18 @@ def post(parts, body):
             'expected well formed messages, found {first}',
             first=problem,
         )
+    # A language whose code differs in case alone gives way to the new file.
+    OWN.pop(_own(code), None)
     OWN[code] = document
     return _entry(code, document, 'home'), 201
 
 
 def delete(parts):
     """Answers DELETE /api/languages/CODE for a language the page imported."""
-    if len(parts) == 1 and parts[0] in OWN:
-        del OWN[parts[0]]
-        return {'code': parts[0], 'removed': True}, 200
+    if len(parts) == 1 and _own(parts[0]) is not None:
+        code = _own(parts[0])
+        del OWN[code]
+        return {'code': code, 'removed': True}, 200
     code = parts[0] if parts else ''
     return _refuse(404, 'server.language.none', 'no language {code}', code=code)
 

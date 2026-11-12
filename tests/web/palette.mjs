@@ -111,12 +111,12 @@ test('the palette goes to the Challenges page, and finds the challenges in a gro
 test('the palette offers each other language and following the browser', () => {
     const languages = [
         { code: 'en', name: 'English', usable: true },
-        { code: 'pt', name: 'Português (Brasil)', usable: true },
+        { code: 'pt-BR', name: 'Português (Brasil)', usable: true },
         { code: 'xx', name: 'Broken', usable: false },
     ];
     // Following the browser in English offers Portuguese alone, a stored choice adds following.
-    assert.deepEqual(languageChoices(languages, 'en'), [{ code: 'pt', name: 'Português (Brasil)' }]);
-    assert.deepEqual(languageChoices(languages, 'pt', 'pt'), [{ code: 'en', name: 'English' }, { code: null, name: null }]);
+    assert.deepEqual(languageChoices(languages, 'en'), [{ code: 'pt-BR', name: 'Português (Brasil)' }]);
+    assert.deepEqual(languageChoices(languages, 'pt-BR', 'pt-BR'), [{ code: 'en', name: 'English' }, { code: null, name: null }]);
     assert.deepEqual(languageChoices(null, 'en'), []);
     const actions = languageChoices(languages, 'en', 'en').map((choice) => ({
         group: 'Settings', title: `Language, ${choice.name || 'follow the browser'}`, keywords: `language translation locale ${choice.code || ''} ${choice.name || ''}`,

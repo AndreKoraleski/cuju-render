@@ -1,6 +1,6 @@
 # Guia de estilo pt-BR do cuju-render
 
-Para quem reescreve `languages/pt.json`. Use junto com `glossary.json`, que fixa um termo para cada conceito recorrente. O inglês diz **o que** a mensagem comunica. O português decide **como** dizer, com a estrutura de frase que um app brasileiro bem feito usaria. Traduzir palavra por palavra é o erro que esta reescrita corrige.
+Para quem reescreve `pt-BR.json`. Use junto com `glossary.json`, que fixa um termo para cada conceito recorrente. O inglês diz **o que** a mensagem comunica. O português decide **como** dizer, com a estrutura de frase que um app brasileiro bem feito usaria. Traduzir palavra por palavra é o erro que esta reescrita corrige.
 
 ## 1. Voz
 
@@ -101,7 +101,7 @@ Confirmações destrutivas: pergunta curta, consequência numa segunda frase, bo
 - Escreva números em algarismos em interface, mesmo quando o inglês os soletra: "até 20 tags", "no máximo 10.000 caracteres", "por 2 minutos". Exceções: "um" e "dois" dentro de frase natural ("uma ou duas imagens"), e as chaves `main.teamSize.*`, que existem justamente para ser palavras.
 - Unidades com espaço e abreviadas onde há pouco espaço: "12 s", "3 min", "2 MB", "45′". Em prosa, "segundos" e "minutos" por extenso estão bem.
 - Porcentagem: "{percent}%", nunca "por cento" (6 ocorrências hoje).
-- Placar: "2 a 1" em frase ("venceu por 2 a 1"). Confronto entre times: "{left} x {right}". Hoje `pt.json` mistura "contra" e "x" para a mesma coisa. Padronize "x" para confrontos e "a" para placares.
+- Placar: "2 a 1" em frase ("venceu por 2 a 1"). Confronto entre times: "{left} x {right}". Hoje `pt-BR.json` mistura "contra" e "x" para a mesma coisa. Padronize "x" para confrontos e "a" para placares.
 - Dimensões: "1920 × 1080" ou "1920 por 1080". Escolha "por" em prosa e mantenha os nomes de formato (480p, 4K) como estão.
 - Datas e números que entram por placeholder já chegam formatados pela página no locale pt-BR. Não tente reformatar o placeholder.
 

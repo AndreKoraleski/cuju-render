@@ -455,6 +455,17 @@ test('the manifest names Cuju and the icons that ship, and the start address ope
     assert.ok(manifest.icons.some((icon) => icon.src === 'assets/cuju-logo.svg'));
     // The icons keep the tiled logo, and the bare marks stay inside the page.
     assert.ok(manifest.icons.every((icon) => !icon.src.includes('cuju-mark')));
+    // The shortcuts open Watch, Play, Challenges and Help, named in English as their messages
+    // name them, each with the icon of the app.
+    const english = JSON.parse(readFileSync(new URL('languages/en.json', web), 'utf8'));
+    const pages = manifest.shortcuts.map((shortcut) => shortcut.url.split('page=')[1]);
+    assert.deepEqual(pages, ['watch', 'play', 'challenges', 'help']);
+    assert.deepEqual(manifest.shortcuts.map((shortcut) => shortcut.name), ['Watch', 'Play', 'Challenges', 'Help']);
+    for (const [i, shortcut] of manifest.shortcuts.entries()) {
+        assert.equal(shortcut.name, english[`pwa.manifest.shortcut.${pages[i]}`], pages[i]);
+        assert.deepEqual(shortcut.icons, [{ src: 'assets/icons/cuju-192.png', sizes: '192x192', type: 'image/png' }]);
+        assert.ok(readFileSync(new URL(shortcut.icons[0].src, web)).length > 0);
+    }
 });
 
 test('the shell of the worker holds files that ship, the logo and both bare marks among them', () => {

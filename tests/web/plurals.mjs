@@ -15,8 +15,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = new URL('../../src/cuju/render/', import.meta.url);
 // English ships with the page, and the Portuguese draft waits in translations/.
-const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`web/languages/${code}.json`, root) : new URL(`../../translations/${code}.json`, import.meta.url), 'utf8'));
-const files = { en: read('en'), pt: read('pt') };
+const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`web/languages/${code}.json`, root) : new URL(`../../translations/${code}/${code}.json`, import.meta.url), 'utf8'));
+const files = { en: read('en'), pt: read('pt-BR') };
 const PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
 // A draft may lack a message, which then holds no placeholder of its own.
 const places = (value) => new Set((value === undefined ? [] : typeof value === 'string' ? [value] : Object.values(value)).flatMap((form) => [...form.matchAll(PLACEHOLDER)].map((m) => m[1])));

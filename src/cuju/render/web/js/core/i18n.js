@@ -29,7 +29,7 @@ const STORE_KEY = 'cuju.language';
 // How long a language file may take to arrive, in milliseconds.
 const FETCH_MS = 10000;
 const ID = /^[A-Za-z0-9_.-]+$/;
-const CODE = /^[a-z]{2,3}(-[a-z0-9]{1,8})*$/;
+const CODE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$/;
 const PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
 const BASE = new URL('../../languages/', import.meta.url);
 const IN_BROWSER = typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -71,7 +71,8 @@ function countOf(value) {
     return { count: Number(value), digits: 0 };
 }
 
-// Whether a code names a language file safely, lowercase letters and digits in parts.
+// Whether a code names a language file safely, a language tag of BCP 47 such as pt or pt-BR, of
+// letters and digits in parts. Two codes that differ in case alone name the same language.
 export function validCode(code) {
     return typeof code === 'string' && CODE.test(code);
 }
@@ -93,6 +94,15 @@ function inlinedFiles() {
     return inlined;
 }
 
+// The shipped file of a code that the server put into the page, whatever the case of the code, or
+// null.
+function inlinedLanguage(code) {
+    const shipped = inlinedFiles();
+    const lower = String(code).toLowerCase();
+    const key = shipped ? Object.keys(shipped).find((name) => name.toLowerCase() === lower) : undefined;
+    return key !== undefined && shipped[key] && typeof shipped[key] === 'object' ? shipped[key] : null;
+}
+
 // Reads a shipped file from the page itself or from beside this module, or a language of the home
 // folder from the server.
 async function readFile(code) {
@@ -107,8 +117,9 @@ async function readFile(code) {
         const places = [new URL(`${code}.json`, BASE)];
         if (typeof process !== 'undefined') {
             places.push(pathToFileURL(`${process.cwd()}/src/cuju/render/web/languages/${code}.json`));
-            // The drafts of other languages, which a page imports, wait in translations/.
-            places.push(pathToFileURL(`${process.cwd()}/translations/${code}.json`));
+            // The drafts of other languages, which a page imports, wait in translations/, each in
+            // a folder named after its code.
+            places.push(pathToFileURL(`${process.cwd()}/translations/${code}/${code}.json`));
         }
         let failure;
         for (const place of places) {
@@ -120,9 +131,9 @@ async function readFile(code) {
         }
         throw failure;
     }
-    const shipped = inlinedFiles();
-    if (shipped && shipped[code] && typeof shipped[code] === 'object') {
-        return shipped[code];
+    const inlinedFile = inlinedLanguage(code);
+    if (inlinedFile) {
+        return inlinedFile;
     }
     // Every module of the page waits on this load, so a request that never answers gives up after
     // a while and the page starts in English.
@@ -154,9 +165,11 @@ function parse(data, code) {
         }
     }
     const locale = typeof head.locale === 'string' && head.locale ? head.locale : (head.code || code);
+    // The file spells its code as the list of languages does, such as pt-BR for pt-br.
+    const spelled = typeof head.code === 'string' && head.code.toLowerCase() === String(code).toLowerCase() ? head.code : code;
     return {
         info: {
-            code,
+            code: spelled,
             name: typeof head.name === 'string' && head.name ? head.name : code,
             english: typeof head.english === 'string' ? head.english : '',
             locale,
@@ -173,15 +186,16 @@ function wanted() {
     const out = [];
     let done = false;
     const add = (code, chosen) => {
-        const c = String(code || '').toLowerCase();
+        const c = String(code || '');
+        const lower = c.toLowerCase();
         if (done || !validCode(c)) {
             return;
         }
         // English ends the list, and so does a variant of English the browser prefers, which the
         // page shows as English. A chosen variant, such as en-x-mine of the home folder, loads.
-        if (c === 'en' || (!chosen && c.startsWith('en-'))) {
+        if (lower === 'en' || (!chosen && lower.startsWith('en-'))) {
             done = true;
-        } else if (!out.some((item) => item.code === c)) {
+        } else if (!out.some((item) => item.code.toLowerCase() === lower)) {
             out.push({ code: c, chosen });
         }
     };
@@ -201,9 +215,9 @@ function wanted() {
         }
         // The first languages of the browser, each also by its base language, up to English.
         for (const tag of (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]).slice(0, 3)) {
-            const lower = String(tag || '').toLowerCase();
-            add(lower, false);
-            add(lower.split('-')[0], false);
+            const whole = String(tag || '');
+            add(whole, false);
+            add(whole.split('-')[0], false);
         }
     }
     return out;
@@ -225,8 +239,8 @@ async function start() {
     const shipped = inlinedFiles();
     for (const [i, { code, chosen }] of list.entries()) {
         // A language the browser prefers that the page does not hold gives way to a later one it
-        // holds, such as pt for pt-br, so the start asks the server for nothing it may not have.
-        if (!chosen && shipped && !shipped[code] && list.slice(i + 1).some((item) => shipped[item.code])) {
+        // holds, such as pt for pt-BR, so the start asks the server for nothing it may not have.
+        if (!chosen && shipped && !inlinedLanguage(code) && list.slice(i + 1).some((item) => inlinedLanguage(item.code))) {
             continue;
         }
         try {

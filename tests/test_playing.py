@@ -1130,7 +1130,7 @@ def test_server_catalogs_match_the_language_files():
     from cuju.render._tournaments import tournament as _tournament
 
     english = _shipped_language('en')
-    portuguese = _translation('pt')
+    portuguese = _translation('pt-BR')
     expected = {}
     for entry in _challenges.CATALOG:
         expected[f'challenge.{entry["id"]}.title'] = entry['title']

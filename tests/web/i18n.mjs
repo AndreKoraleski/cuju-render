@@ -20,7 +20,7 @@ process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const i18n = await import(pathToFileURL(join(folder, 'core/i18n.js')).href);
 const languages = new URL('../../src/cuju/render/web/languages/', import.meta.url);
 // English ships with the page, and the Portuguese draft waits in translations/.
-const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`${code}.json`, languages) : new URL(`../../translations/${code}.json`, import.meta.url), 'utf8'));
+const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`${code}.json`, languages) : new URL(`../../translations/${code}/${code}.json`, import.meta.url), 'utf8'));
 const english = read('en');
 const PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
 const places = (value) => new Set((typeof value === 'string' ? [value] : Object.values(value)).flatMap((form) => [...form.matchAll(PLACEHOLDER)].map((m) => m[1])));
@@ -81,16 +81,19 @@ test('numbers, dates and lists use the locale of the language', () => {
     assert.equal(i18n.formatList(['a', 'b', 'c']), 'a, b, and c');
     assert.equal(i18n.formatDateTime(Date.UTC(2026, 10, 10, 12), { dateStyle: 'medium', timeZone: 'UTC' }), 'Nov 10, 2026');
     assert.equal(i18n.formatDateTime('not a date'), '');
+    // A code is a language tag of BCP 47, whose case BCP 47 leaves free.
+    assert.equal(i18n.validCode('pt-BR'), true);
     assert.equal(i18n.validCode('pt-br'), true);
     assert.equal(i18n.validCode('../en'), false);
-    assert.equal(i18n.validCode('PT'), false);
+    assert.equal(i18n.validCode('pt_BR'), false);
+    assert.equal(i18n.validCode('p'), false);
 });
 
 test('English and the Portuguese draft hold the ids of English with its placeholders and plural forms', () => {
     // English ships alone, and the Portuguese draft, which the page imports, follows the same rules.
     const files = readdirSync(languages).filter((name) => name.endsWith('.json'));
     assert.deepEqual(files, ['en.json']);
-    for (const name of [...files, 'pt.json']) {
+    for (const name of [...files, 'pt-BR.json']) {
         const file = read(name.replace(/\.json$/, ''));
         const head = file['@language'];
         assert.equal(head.code, name.replace(/\.json$/, ''), name);

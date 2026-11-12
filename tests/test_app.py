@@ -207,7 +207,7 @@ def test_linux_gets_an_entry_of_the_applications_menu(render_home, tmp_path):
     folders = _folders(tmp_path)
     command = ['/usr/bin/python3', '-m', 'cuju.render', 'app']
     # A language of the folder, such as the Portuguese draft, names the launcher in its words.
-    _install_translation('pt')
+    _install_translation('pt-BR')
     made = _launchers.install(render_home, 'linux', folders, command)
     entry = folders['applications'] / 'cuju.desktop'
     icon = render_home / 'app' / 'cuju.png'

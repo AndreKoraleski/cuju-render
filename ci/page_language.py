@@ -3,18 +3,18 @@
 """Checks of the languages of the page, for ci/page_check.py.
 
 The checks read the text of every page in English, with no message missing after the other
-checks visited the page, then import the Portuguese draft of translations/pt.json, which the page
-then chooses and reloads in, and read every page again, changed and with no message missing.
-They import a malformed file, which the server refuses with a message in Portuguese, and a well
-formed one, which joins the list and shows its own texts, and then follow the browser back to
-English, where every page reads as before. The imported languages are removed at the end.
+checks visited the page, then import the Portuguese draft of translations/pt-BR/pt-BR.json, which
+the page then chooses and reloads in, and read every page again, changed and with no message
+missing. They import a malformed file, which the server refuses with a message in Portuguese, and
+a well formed one, which joins the list and shows its own texts, and then follow the browser back
+to English, where every page reads as before. The imported languages are removed at the end.
 """
 
 import json
 import time
 from pathlib import Path
 
-DRAFT = Path(__file__).resolve().parents[1] / 'translations' / 'pt.json'
+DRAFT = Path(__file__).resolve().parents[1] / 'translations' / 'pt-BR' / 'pt-BR.json'
 
 PAGES = [
     'home',
@@ -124,7 +124,7 @@ def check_languages(client):
     _reloaded(client, 'pt-BR')
     # The list shows once the page has listed the languages again, with the draft among them.
     assert _wait(client, "!document.getElementById('language-row').hidden"), 'the list stays hidden'
-    assert client.evaluate("localStorage.getItem('cuju.language')") == '"pt"'
+    assert client.evaluate("localStorage.getItem('cuju.language')") == '"pt-BR"'
     assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
     portuguese = _texts(client)
     for name, text in english.items():
@@ -178,10 +178,10 @@ def check_languages(client):
     )
     assert (tab, play) == ('Watch it', 'Play'), (tab, play)
     codes = client.evaluate('cuju.language.refresh().then((list) => list.map((l) => l.code))')
-    assert codes == ['en', 'en-x-check', 'pt'], codes
+    assert codes == ['en', 'en-x-check', 'pt-BR'], codes
     checks += 2
 
-    for code in ('en-x-check', 'pt'):
+    for code in ('en-x-check', 'pt-BR'):
         removed = client.evaluate(
             f"fetch('/api/languages/{code}', {{ method: 'DELETE' }}).then((r) => r.json())"
         )

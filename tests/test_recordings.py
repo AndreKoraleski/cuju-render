@@ -34,6 +34,7 @@ from support.common import (
     _play_to_end,
     _sample_head,
     _serve_once,
+    _shipped_language,
     _short_matches,
     _toy_team,
     _until,
@@ -788,12 +789,29 @@ def test_names_of_the_recorder_and_the_manifest(render_home):
     with open(os.path.join(web, 'manifest.webmanifest'), 'rb') as file:
         shipped = file.read()
     assert _pwa.manifest(shipped, None) == shipped
+    # The page ships in English, so the manifest names its shortcuts in English, each in the
+    # words of its message, with the icon of the app.
+    english = _shipped_language('en')
+    shortcuts = json.loads(shipped)['shortcuts']
+    pages = [item['url'].rpartition('page=')[2] for item in shortcuts]
+    assert pages == ['watch', 'play', 'challenges', 'help']
+    assert [item['name'] for item in shortcuts] == ['Watch', 'Play', 'Challenges', 'Help']
+    assert all(
+        item['name'] == english[f'pwa.manifest.shortcut.{page}']
+        for item, page in zip(shortcuts, pages, strict=True)
+    )
+    assert all(item['icons'] == shortcuts[0]['icons'] for item in shortcuts)
     # A language of the folder names the manifest in its words, as the Portuguese draft does.
-    _install_translation('pt')
-    portuguese = json.loads(_pwa.manifest(shipped, 'pt'))
-    assert portuguese['lang'] == 'pt'
+    _install_translation('pt-BR')
+    portuguese = json.loads(_pwa.manifest(shipped, 'pt-BR'))
+    assert portuguese['lang'] == 'pt-BR'
     assert portuguese['description'] != json.loads(shipped)['description']
-    assert [item['name'] for item in portuguese['shortcuts']] == ['Assistir', 'Jogar', 'Ajuda']
+    assert [item['name'] for item in portuguese['shortcuts']] == [
+        'Assistir',
+        'Jogar',
+        'Desafios',
+        'Ajuda',
+    ]
     assert _pwa.manifest(shipped, 'xx') == shipped
 
 

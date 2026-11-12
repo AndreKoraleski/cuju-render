@@ -53,7 +53,8 @@ page's Node tests, each copying its modules into a folder that mirrors `web/js/`
 mock servers `mock_*.py`, the page checks `page_*.py` in headless Chrome, the wheel check and the
 asset scripts `make_*` that are run by hand, and `docs/` holds the user guides. The page ships
 in English, `web/languages/en.json`, and `translations/` holds the drafts of other languages
-outside the package, today Brazilian Portuguese with its style guide and glossary, which the
+outside the package, one folder per language named after its code of BCP 47, today `pt-BR` for
+Brazilian Portuguese with its messages `pt-BR.json`, its style guide and its glossary, which the
 tests that need a second language import.
 
 A new module goes into the subpackage or folder of its concern. A module too long to read in one

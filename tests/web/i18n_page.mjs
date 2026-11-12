@@ -20,8 +20,8 @@ process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const languages = new URL('../../src/cuju/render/web/languages/', import.meta.url);
 // English ships with the page, and the Portuguese draft waits in translations/. The page of
 // these tests carries both, as a page carries the languages it has.
-const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`${code}.json`, languages) : new URL(`../../translations/${code}.json`, import.meta.url), 'utf8'));
-const shipped = { en: read('en'), pt: read('pt') };
+const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`${code}.json`, languages) : new URL(`../../translations/${code}/${code}.json`, import.meta.url), 'utf8'));
+const shipped = { en: read('en'), 'pt-BR': read('pt-BR') };
 // A language of the home folder, a variant of English, as a person imports it.
 const own = {
     '@language': { code: 'en-x-check', name: 'Checked English', locale: 'en-GB', plurals: ['one', 'other'] },
@@ -60,7 +60,7 @@ async function page({ stored = null, search = '', browser = ['en-US'], inline = 
         if (address.endsWith('/api/languages/en-x-check')) {
             return answer(200, own);
         }
-        const file = /\/languages\/([a-z-]+)\.json$/.exec(address);
+        const file = /\/languages\/([A-Za-z-]+)\.json$/.exec(address);
         return file && shipped[file[1]] ? answer(200, shipped[file[1]]) : answer(404, {});
     };
     copies += 1;
@@ -93,19 +93,23 @@ test('a stored English choice stays English on a browser of another language', a
 
 test('the browser picks a shipped language from the page without asking the server', async () => {
     const { module, fetched, html } = await page({ browser: ['pt-BR', 'en-US'] });
-    assert.equal(module.language().code, 'pt');
+    assert.equal(module.language().code, 'pt-BR');
     assert.equal(html.lang, 'pt-BR');
     assert.deepEqual(fetched, []);
     // A variant of English that the browser prefers shows English.
     const english = await page({ browser: ['en-GB', 'pt-BR'] });
     assert.equal(english.module.language().code, 'en');
+    // A browser that writes its language in lowercase finds the file, spelled as the file has it.
+    const lowercase = await page({ browser: ['pt-br'] });
+    assert.equal(lowercase.module.language().code, 'pt-BR');
+    assert.deepEqual(lowercase.fetched, []);
 });
 
 test('a page without the shipped languages in it fetches them', async () => {
     const { module, fetched } = await page({ browser: ['pt-BR'], inline: false });
-    assert.equal(module.language().code, 'pt');
+    assert.equal(module.language().code, 'pt-BR');
     assert.ok(fetched.some((address) => address.endsWith('/languages/en.json')), fetched);
-    assert.ok(fetched.some((address) => address.endsWith('/languages/pt.json')), fetched);
+    assert.ok(fetched.some((address) => address.endsWith('/languages/pt-BR.json')), fetched);
 });
 
 test('choosing a language of the home folder loads it before the reload', async () => {

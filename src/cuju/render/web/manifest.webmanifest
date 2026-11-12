@@ -17,6 +17,7 @@
     "shortcuts": [
         {"name": "Watch", "url": "./#page=watch", "icons": [{"src": "assets/icons/cuju-192.png", "sizes": "192x192", "type": "image/png"}]},
         {"name": "Play", "url": "./#page=play", "icons": [{"src": "assets/icons/cuju-192.png", "sizes": "192x192", "type": "image/png"}]},
+        {"name": "Challenges", "url": "./#page=challenges", "icons": [{"src": "assets/icons/cuju-192.png", "sizes": "192x192", "type": "image/png"}]},
         {"name": "Help", "url": "./#page=help", "icons": [{"src": "assets/icons/cuju-192.png", "sizes": "192x192", "type": "image/png"}]}
     ]
 }

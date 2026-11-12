@@ -20,10 +20,10 @@ writeFileSync(join(folder, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(folder, { recursive: true, force: true }));
 const languages = new URL('../../src/cuju/render/web/languages/', import.meta.url);
 // English ships with the page, and the Portuguese draft waits in translations/.
-const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`${code}.json`, languages) : new URL(`../../translations/${code}.json`, import.meta.url), 'utf8'));
-const shipped = { en: read('en'), pt: read('pt') };
+const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`${code}.json`, languages) : new URL(`../../translations/${code}/${code}.json`, import.meta.url), 'utf8'));
+const shipped = { en: read('en'), 'pt-BR': read('pt-BR') };
 
-// A Portuguese page, its stored choice pt, whose manifest link the runtime points at the language.
+// A Portuguese page, its stored choice pt-BR, whose manifest link the runtime points at the language.
 const manifest = { href: 'manifest.webmanifest', setAttribute(key, value) { this[key] = value; } };
 globalThis.window = {};
 globalThis.document = {
@@ -32,19 +32,19 @@ globalThis.document = {
     querySelector: (selector) => (selector === 'link[rel="manifest"]' ? manifest : null),
     querySelectorAll: () => [],
 };
-globalThis.localStorage = { getItem: (key) => (key === 'cuju.language' ? '"pt"' : null), setItem() {}, removeItem() {} };
+globalThis.localStorage = { getItem: (key) => (key === 'cuju.language' ? '"pt-BR"' : null), setItem() {}, removeItem() {} };
 globalThis.location = { search: '' };
 Object.defineProperty(globalThis, 'navigator', { value: { languages: ['pt-BR'], language: 'pt-BR' }, configurable: true, writable: true });
 globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
 const i18n = await import(pathToFileURL(join(folder, 'core/i18n.js')).href);
 const names = await import(pathToFileURL(join(folder, 'core/names.js')).href);
 const scenarios = await import(pathToFileURL(join(folder, 'core/scenarios.js')).href);
-const pt = (id) => shipped.pt[id];
+const pt = (id) => shipped['pt-BR'][id];
 const label = (id, values = {}) => ({ id, text: shipped.en[id], values });
 
 test('the page is Portuguese and its manifest asks for the language', () => {
-    assert.equal(i18n.language().code, 'pt');
-    assert.equal(manifest.href, 'manifest.webmanifest?lang=pt');
+    assert.equal(i18n.language().code, 'pt-BR');
+    assert.equal(manifest.href, 'manifest.webmanifest?lang=pt-BR');
 });
 
 test('a team of the server shows its made name in the language, a given name as given', () => {

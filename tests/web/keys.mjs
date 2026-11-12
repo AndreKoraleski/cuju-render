@@ -55,8 +55,8 @@ process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 const i18n = await import(pathToFileURL(join(root, 'js', 'core', 'i18n.js')).href);
 const keys = await import(pathToFileURL(join(root, 'js', 'core', 'keys.js')).href);
 // English ships with the page, and the Portuguese draft waits in translations/.
-const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`languages/${code}.json`, web) : new URL(`../../translations/${code}.json`, import.meta.url), 'utf8'));
-const files = { en: read('en'), pt: read('pt') };
+const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`languages/${code}.json`, web) : new URL(`../../translations/${code}/${code}.json`, import.meta.url), 'utf8'));
+const files = { en: read('en'), pt: read('pt-BR') };
 
 test('marks part a text into strong, code and plain words', () => {
     assert.deepEqual(i18n.markParts('Run `cuju render serve`, **then** reload.'), [

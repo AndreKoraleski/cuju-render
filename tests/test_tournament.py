@@ -719,7 +719,7 @@ def test_given_names_that_read_as_one_are_refused_in_both_languages():
         'name': 'rex fc',
         'other': '1',
     }
-    for code in ('en', 'pt'):
+    for code in ('en', 'pt-BR'):
         messages = _shipped_language(code) if code == 'en' else _translation(code)
         text = messages['server.tournament.name_taken']
         assert _messages.placeholders(text) == {'entrant', 'name', 'other'}

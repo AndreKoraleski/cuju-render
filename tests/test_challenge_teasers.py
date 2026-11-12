@@ -58,7 +58,7 @@ def test_the_manifest_records_how_each_teaser_was_chosen():
 
 
 def test_every_kind_and_difficulty_has_words_in_english_and_the_portuguese_draft():
-    for code, words in (('en', _shipped_language('en')), ('pt', _translation('pt'))):
+    for code, words in (('en', _shipped_language('en')), ('pt-BR', _translation('pt-BR'))):
         for entry in _challenges.CATALOG:
             assert entry['category'] in _challenges.CATEGORIES
             assert entry['difficulty'] in _challenges.DIFFICULTIES

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from cuju.render._http import server as _server
-from support.common import _shipped_language, _translation
+from support.common import TRANSLATIONS, _shipped_language, _translation
 
 
 def test_server_messages_match_the_english_file():
@@ -21,7 +21,7 @@ def test_server_messages_match_the_english_file():
 def test_server_messages_have_portuguese_with_the_same_placeholders():
     from cuju.render._text import messages as _messages
 
-    portuguese = _translation('pt')
+    portuguese = _translation('pt-BR')
     assert _messages.compare(portuguese) == []
     for key, template in _messages.MESSAGES.items():
         if key in portuguese:
@@ -62,14 +62,45 @@ def test_english_ships_alone_and_the_portuguese_draft_is_well_formed():
     report = _languages.check(_shipped_language('en'), 'en')
     assert report['ok'] and report['code'] == 'en', report['malformed'][:5]
     # The draft may lack messages, and each one it has matches English, its placeholders, its
-    # plural forms and its marks.
-    report = _languages.check(_translation('pt'), 'pt')
+    # plural forms and its marks. Its file is named after its code, as the check of a file asks.
+    path = Path(TRANSLATIONS) / 'pt-BR' / 'pt-BR.json'
+    assert sorted(item.name for item in path.parent.iterdir()) == [
+        'glossary.json',
+        'pt-BR.json',
+        'style.md',
+    ]
+    assert _languages.valid_code(path.stem)
+    report = _languages.check(_translation('pt-BR'), path.stem)
     assert not report['unused'] and not report['malformed'], report['malformed'][:5]
-    assert report['code'] == 'pt'
-    header = _translation('pt')['@language']
+    assert report['code'] == 'pt-BR'
+    header = _translation('pt-BR')['@language']
     assert (header['locale'], header['plurals']) == ('pt-BR', ['one', 'many', 'other'])
+    # The plural categories come from the base language, pt.
+    lacking = dict(_translation('pt-BR'), **{'@language': dict(header, plurals=['one', 'other'])})
+    problems = [item['problem'] for item in _languages.check(lacking, 'pt-BR')['malformed']]
+    assert 'expected the plural categories of pt, the file lacks many' in problems
     # Portuguese translates nearly every message, the rest are names and symbols.
     assert len(report['untranslated']) < 100
+
+
+def test_codes_differ_in_case_alone_as_bcp_47_has_them(render_home):
+    from cuju.render._text import languages as _languages
+
+    assert _languages.valid_code('pt-BR') and _languages.valid_code('zh-Hant-TW')
+    assert not _languages.valid_code('pt_BR') and not _languages.valid_code('../en')
+    entry = _languages.add(_translation('pt-BR'))
+    assert entry['code'] == 'pt-BR'
+    assert [path.name for path in _languages.folder().glob('*.json')] == ['pt-BR.json']
+    assert _languages.read('pt-br')['@language']['code'] == 'pt-BR'
+    # A file of the same language whose code differs in case alone takes the place of the first.
+    lower = dict(_translation('pt-BR'))
+    lower['@language'] = dict(lower['@language'], code='pt-br')
+    assert _languages.add(lower)['code'] == 'pt-br'
+    assert [path.name for path in _languages.folder().glob('*.json')] == ['pt-br.json']
+    with pytest.raises(ValueError):
+        _languages.add(dict(lower, **{'@language': dict(lower['@language'], code='EN')}))
+    assert _languages.remove('PT-BR') == {'code': 'PT-BR', 'removed': True}
+    assert list(_languages.folder().glob('*.json')) == []
 
 
 def test_language_check_holds_a_translation_to_the_marks_of_english():
@@ -127,9 +158,9 @@ def test_language_check_names_missing_unused_and_malformed_messages():
     assert 'expected the plural categories of pl, the file lacks few, many' in problems
     header = [
         item['problem']
-        for item in _languages.check({'@language': {'code': 'PT'}}, None, english)['malformed']
+        for item in _languages.check({'@language': {'code': 'pt_BR'}}, None, english)['malformed']
     ]
-    assert any(problem.startswith('expected a code of lowercase') for problem in header)
+    assert any(problem.startswith('expected a code of letters and digits') for problem in header)
     assert _languages.check([], None, english)['malformed'][0]['id'] == '@language'
 
 

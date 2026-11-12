@@ -4098,10 +4098,12 @@ range, and the montage video. The page registers the worker only at its top on h
 host, `127.0.0.1`, `localhost` or `[::1]`, so a notebook's frame, Google Colab's proxy and any
 other address keep no copy, and a worker that finds itself elsewhere removes itself.
 
-The page points its manifest at `manifest.webmanifest?lang=CODE` for any language but English, and
-the server then fills the manifest's description and the names of its shortcuts, Watch, Play and
-Help, from that language file, so an install made from a Portuguese page names them in
-Portuguese.
+The installed app offers four shortcuts in the menu that a right click on its icon opens, which
+open Watch, Play, Challenges and Help. The page ships in English, so
+the manifest names them in English. The page points its manifest at
+`manifest.webmanifest?lang=CODE` for any language but English, and the server then fills the
+manifest's description and the names of its shortcuts from that language file, so an install
+made from a page in the Brazilian Portuguese draft names them in Portuguese.
 
 Update on Help shows a newer build at once, and Remove the offline copy unregisters the worker and
 deletes its cache until the page keeps them again on its next start. The browser's own list of
@@ -4518,9 +4520,9 @@ the floodlights, and the page picks one from the device.
 ## Languages
 
 The page ships in English, and any other language joins it as one file that the language import
-loads. The folder `translations` of the repository holds a draft in Brazilian Portuguese, which
-loads the same way. Every text the page shows comes from a language file, the pages, menus, buttons, titles,
-labels for screen readers, tips, the tour and the lessons, toasts and messages, the captions, the
+loads. The folder `translations` of the repository holds a draft in Brazilian Portuguese,
+`translations/pt-BR/pt-BR.json`, which loads the same way. Every text the page shows comes from a
+language file, the pages, menus, buttons, titles, labels for screen readers, tips, the tour and the lessons, toasts and messages, the captions, the
 names and texts of the scenarios, and the messages of the server that the page shows, such as the
 reasons an upload or a request was refused. The command line and the answers of the API stay in
 English, and an answer that the page shows also names its message, so the page shows it in its
@@ -4532,7 +4534,7 @@ were given.
 The Language list of the settings panel offers Follow the browser, then English, which ships
 with cuju, then the languages of the person's own. The list shows once a second language exists,
 and Import a language file stays beside it either way. Follow the browser, the default, picks the
-first language of the browser that a file exists for, by its whole code such as `pt-br` and then
+first language of the browser that a file exists for, by its whole code such as `pt-BR` and then
 by its language alone such as `pt`, and English otherwise. A choice in the list stays in the
 browser, and the page reloads at the same address in the new language, so the open page, the
 open recording and its moment come back as they were. A file opened from the computer opens again
@@ -4541,7 +4543,7 @@ and its own dates. The command palette lists each other language too, as Languag
 and Language follows the browser while a language is chosen, so the word language, or the name of
 a language, finds them.
 
-The parameter `lang` of the address, such as `?lang=pt`, picks a language for one visit without
+The parameter `lang` of the address, such as `?lang=pt-BR`, picks a language for one visit without
 storing it, which suits a clean feed for OBS and scripts. A choice stored in the browser comes
 first, and the feed keeps its own storage, so `lang` decides there. A message that a language
 lacks shows in English, so a language that covers only part of the page still works. The server
@@ -4549,10 +4551,13 @@ puts English into the page itself, so the page starts without asking for it.
 
 ### Adding a language
 
-A language is one JSON file named after its code, such as `de.json` for German or `pt-br.json`
-for a variant, with lowercase letters and digits in parts. The file is one object keyed by message
-identifier, and the key `@language` holds the code, the name of the language in itself, its
-English name, the locale of numbers and dates, the direction of the text and its plural
+A language is one JSON file named after its code, such as `de.json` for German or `pt-BR.json`
+for Brazilian Portuguese. The code is a language tag of BCP 47, letters and digits in parts joined
+by hyphens, the language first, then the region or the script. BCP 47 leaves the case of a tag
+free, so `pt-BR` and `pt-br` name the same language, and the plural categories that the check
+asks for are those of the language before the first hyphen. The file is one object keyed by
+message identifier, and the key `@language` holds the code, the name of the language in itself,
+its English name, the locale of numbers and dates, the direction of the text and its plural
 categories.
 
 ```json
@@ -4621,10 +4626,15 @@ command line.
 English is the reference, and a new message of the page joins `en.json` first, in
 `src/cuju/render/web/languages` of the repository. Other languages live in the folder
 `translations` at the root of the repository, outside the package, and load through the language
-import. The folder holds the Brazilian Portuguese draft, `pt.json`, with its style guide and its
-glossary. A draft may lack messages, which then show in English, and the test suite checks that
-each message it has keeps the placeholders, the plural forms and the marks of the English, and
-the tests that need a second language import the Portuguese draft. A translation writes in the
+import. Each language has a folder of its own named after its code, which holds the messages in a
+file of the same name, its style guide `style.md` and its glossary `glossary.json`, so the
+Brazilian Portuguese draft is `translations/pt-BR/pt-BR.json`, beside
+`translations/pt-BR/style.md` and `translations/pt-BR/glossary.json`. The command
+`cuju render language check translations/pt-BR/pt-BR.json` checks it, and
+`cuju render language add translations/pt-BR/pt-BR.json` imports it as it is. A draft may lack
+messages, which then show in English, and the test suite checks that each message it has keeps
+the placeholders, the plural forms and the marks of the English, and the tests that need a second
+language import the Portuguese draft. A translation writes in the
 voice of its own language and uses that language's own punctuation for an interface, rather than
 the plain commas and periods of the English, keeps the same term for the same thing everywhere,
 and a native speaker reads it through.

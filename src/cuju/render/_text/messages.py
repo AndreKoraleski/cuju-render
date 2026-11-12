@@ -212,8 +212,8 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     ),
     'server.json_text': 'expected a request body of JSON in UTF-8',
     'server.language.code': (
-        'expected a language code of lowercase letters and digits, such as pt or pt-br, '
-        'found {code}'
+        'expected a language code of letters and digits in parts joined by hyphens, such as pt or '
+        'pt-BR, found {code}'
     ),
     'server.language.json': 'expected a language file, a JSON object with its header @language',
     'server.language.keep': 'the language {code} ships with cuju and stays',
@@ -226,7 +226,8 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'expected the plural categories of {language}, the file lacks {lacking}'
     ),
     'server.language.problem.code': (
-        'expected a code of lowercase letters and digits, such as `pt` or `pt-br`, found {code}'
+        'expected a code of letters and digits in parts joined by hyphens, such as `pt` or '
+        '`pt-BR`, found {code}'
     ),
     'server.language.problem.dir': 'expected `dir` as `ltr` or `rtl`, found {value}',
     'server.language.problem.document': 'expected a JSON object keyed by message id',

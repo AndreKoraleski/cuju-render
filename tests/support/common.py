@@ -435,18 +435,19 @@ def _shipped_language(code):
     return json.loads((_server._WEB / 'languages' / f'{code}.json').read_text(encoding='utf-8'))
 
 
-# The drafts of languages other than English, which load through the language import.
+# The drafts of languages other than English, which load through the language import, each in a
+# folder named after its code beside its style guide and glossary.
 TRANSLATIONS = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'translations'
 )
 
 
-def _translation(code):
-    with open(os.path.join(TRANSLATIONS, f'{code}.json'), encoding='utf-8') as file:
+def _translation(code='pt-BR'):
+    with open(os.path.join(TRANSLATIONS, code, f'{code}.json'), encoding='utf-8') as file:
         return json.load(file)
 
 
-def _install_translation(code='pt'):
+def _install_translation(code='pt-BR'):
     """Imports the draft of a language into the languages folder of the current home."""
     from cuju.render._text import languages as _languages
 

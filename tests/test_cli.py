@@ -262,7 +262,9 @@ def test_language_commands(tmp_path, render_home, capsys):
     assert main(['language', 'add', str(tmp_path / 'ru.json')]) == 0
     assert main(['language', 'remove', 'ru']) == 0
     assert main(['language', 'remove', 'en']) == 1
-    assert main(['language', 'new', 'Bad']) == 1
+    # A code is a language tag of BCP 47, so an underscore makes no code.
+    assert main(['language', 'new', 'pt_BR', '-o', str(tmp_path / 'bad.json')]) == 1
+    assert not (tmp_path / 'bad.json').exists()
 
 
 def test_search_command_prints_the_moment_title_and_a_whole_address(render_home, capsys):

@@ -74,8 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     messages with placeholders and plural forms by language, and the page ships English. A file
     dropped into the folder `languages` or imported on the settings panel adds a language, the
     Language list then shows and follows the browser by default, the address takes `lang`, and a
-    message a language lacks shows in English. A draft in Brazilian Portuguese, with its style
-    guide and glossary, waits in `translations` of the repository and loads the same way.
+    message a language lacks shows in English. A language code is a tag of BCP 47 such as
+    `pt-BR`, whatever its case. A draft in Brazilian Portuguese, with its style guide and
+    glossary, waits in `translations/pt-BR` of the repository and loads the same way.
 - `cuju render language new`, `check`, `list`, `add` and `remove`, with JSON for agents, and
     `/api/languages`, which lists, serves, imports and removes languages.
 - The error answers of the server and the failed requests, games, videos, challenge runs and
@@ -360,6 +361,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The page installs as an app in Chrome and Edge, with a manifest, icons rendered from the logo
     and a service worker that keeps the page's own files for a fast start and an offline start,
     never an answer of the API, follows each new build and works on the loopback addresses alone.
+    The installed app offers the shortcuts Watch, Play, Challenges and Help in the menu of its
+    icon.
 - A clean feed at `/feed` for OBS and other streaming programs, the match at a fixed size with
     its broadcast graphics alone, no pointer, controls, messages or dialogs, silent unless asked,
     over a solid or transparent background, with the graphics alone as an option, an even frame

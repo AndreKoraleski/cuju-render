@@ -9,12 +9,14 @@ by the categories of Unicode CLDR, `zero`, `one`, `two`, `few`, `many` and `othe
 counts such as `=0`. The key `@language` holds the code, the name, the English name, the locale of
 numbers and dates, the direction of the text and the plural categories of the language.
 
-The page ships English and Brazilian Portuguese in `web/languages`, and a person adds a language
-by dropping its file, named after its code, into the folder `languages` of the home folder, or by
-importing it on the Settings panel. English is the reference of every other file. `check` reports
-the messages a file lacks, those English lacks, and malformed ones, whose placeholders differ from
-English or whose plural forms miss a category of the language. `template` writes a new file from
-English, and `get`, `post` and `delete` answer `/api/languages`.
+The page ships English in `web/languages`, and a person adds a language by dropping its file,
+named after its code, into the folder `languages` of the home folder, or by importing it on the
+Settings panel. A code is a language tag of BCP 47, such as `de` or `pt-BR`, and two codes that
+differ in case alone name the same language, as BCP 47 has it. English is the reference of every
+other file. `check` reports the messages a file lacks, those English lacks, and malformed ones,
+whose placeholders differ from English or whose plural forms miss a category of the language,
+the categories of the base language before the first hyphen of the code. `template` writes a new
+file from English, and `get`, `post` and `delete` answer `/api/languages`.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ HEADER = '@language'
 # A language file of the home folder holds at most this many bytes.
 MAXIMUM_BYTES = 2 * 1024 * 1024
 
-_CODE = re.compile(r'[a-z]{2,3}(-[a-z0-9]{1,8})*')
+_CODE = re.compile(r'[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*')
 _ID = re.compile(r'[A-Za-z0-9_.-]+')
 _PLACEHOLDER = re.compile(r'\{([A-Za-z0-9_]+)\}')
 _EXACT = re.compile(r'=\d+')
@@ -65,8 +67,19 @@ _RTL = {'ar', 'fa', 'he', 'ps', 'ur', 'yi', 'dv', 'ug'}
 
 
 def valid_code(code: Any) -> bool:
-    """Returns whether `code` names a language file safely, such as `pt` or `pt-br`."""
+    """Returns whether `code` names a language file safely, such as `pt` or `pt-BR`."""
     return isinstance(code, str) and bool(_CODE.fullmatch(code))
+
+
+def _file(place: Path, code: str) -> Path | None:
+    """Returns the file of the language `code` in `place`, whatever the case of its name."""
+    exact = place / f'{code}.json'
+    if exact.is_file():
+        return exact
+    for path in place.glob('*.json'):
+        if path.stem.lower() == code.lower() and path.is_file():
+            return path
+    return None
 
 
 def folder() -> Path:
@@ -172,7 +185,7 @@ def _header_problems(header: Any, code: str | None) -> list[dict[str, Any]]:
     elif 'other' not in plurals:
         problems.append(_problem('other'))
     else:
-        base = str(header.get('code', '')).split('-')[0]
+        base = str(header.get('code', '')).split('-')[0].lower()
         lacking = [p for p in PLURALS.get(base, []) if p not in plurals]
         if lacking:
             problems.append(_problem('categories', language=base, lacking=', '.join(lacking)))
@@ -298,7 +311,7 @@ def template(code: str, name: str | None = None) -> dict[str, Any]:
     """
     if not valid_code(code):
         raise MessageError('server.language.code', code=code)
-    base = code.split('-')[0]
+    base = code.split('-')[0].lower()
     plurals = PLURALS.get(base, ['one', 'other'])
     document: dict[str, Any] = {
         HEADER: {
@@ -356,9 +369,9 @@ def listing() -> list[dict[str, Any]]:
     shipped = sorted(SHIPPED.glob('*.json'), key=lambda path: (path.stem != 'en', path.stem))
     for path in shipped:
         entries.append(_entry(_read(path), path.stem, 'shipped', reference))
-    names = {entry['code'] for entry in entries}
+    names = {entry['code'].lower() for entry in entries}
     for path in sorted(folder().glob('*.json'), key=lambda path: path.stem):
-        if path.stem in names or not valid_code(path.stem):
+        if path.stem.lower() in names or not valid_code(path.stem):
             continue
         try:
             document = _read(path)
@@ -407,8 +420,9 @@ def read(code: str) -> dict[str, Any]:
     """Returns the file of a language, shipped or of the home folder."""
     if not valid_code(code):
         raise MessageError('server.language.code', code=code)
-    for path in (SHIPPED / f'{code}.json', folder() / f'{code}.json'):
-        if path.is_file():
+    for place in (SHIPPED, folder()):
+        path = _file(place, code)
+        if path is not None:
             return _read(path)
     raise MessageError('server.language.none', code=code)
 
@@ -427,7 +441,7 @@ def add(document: Any) -> dict[str, Any]:
     code = document[HEADER].get('code')
     if not valid_code(code):
         raise MessageError('server.language.code', code=code)
-    if (SHIPPED / f'{code}.json').is_file():
+    if _file(SHIPPED, code) is not None:
         raise MessageError('server.language.shipped', code=code)
     report = check(document, code)
     if report['malformed']:
@@ -445,6 +459,10 @@ def add(document: Any) -> dict[str, Any]:
     target = folder() / f'{code}.json'
     temporary = target.with_name(f'.{code}.json.tmp')
     temporary.write_text(body, encoding='utf-8', newline='\n')
+    # A file of the same language whose name differs in case gives way to the new one.
+    earlier = _file(folder(), code)
+    if earlier is not None and earlier.name != target.name:
+        earlier.unlink()
     os.replace(temporary, target)
     entry = _entry(document, code, 'home', english())
     entry['report'] = {key: report[key] for key in ('missing', 'unused', 'untranslated')}
@@ -455,10 +473,10 @@ def remove(code: str) -> dict[str, Any]:
     """Removes a language of the home folder and returns its code."""
     if not valid_code(code):
         raise MessageError('server.language.code', code=code)
-    if (SHIPPED / f'{code}.json').is_file():
+    if _file(SHIPPED, code) is not None:
         raise MessageError('server.language.keep', code=code)
-    path = folder() / f'{code}.json'
-    if not path.is_file():
+    path = _file(folder(), code)
+    if path is None:
         raise MessageError('server.language.none', code=code)
     path.unlink()
     return {'code': code, 'removed': True}

@@ -53,7 +53,7 @@ test('every message of the table is plain text with known values', () => {
 });
 
 test('a caption puts no article before a team and names every player of the team the same way', () => {
-    const portuguese = JSON.parse(readFileSync(new URL('../../translations/pt.json', import.meta.url), 'utf8'));
+    const portuguese = JSON.parse(readFileSync(new URL('../../translations/pt-BR/pt-BR.json', import.meta.url), 'utf8'));
     const own = (id) => id.startsWith('caption.') || id.startsWith('describe.');
     for (const [id, text] of Object.entries(language).filter(([key]) => own(key))) {
         assert.doesNotMatch(text, /\bthe \{(team|otherTeam)\}/i, id);
