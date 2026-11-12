@@ -335,6 +335,20 @@ def tour_try_checks(client):
             """,
             f'Esc closes {menu} and keeps the tour',
         )
+        # A slow machine may still show a broadcast overlay of the sample, such as the lineups,
+        # which takes its own Esc, so the check ends the shows and waits for the tour's card alone.
+        count += _run(
+            client,
+            """
+            const { POINTER_PANELS } = await import('./js/core/comfort.js');
+            cuju.director?.stop?.(true);
+            const others = () => [...document.querySelectorAll(POINTER_PANELS)]
+                .filter((node) => node.getClientRects().length > 0 && !node.closest('#tour'));
+            const clear = await wait(() => others().length === 0);
+            return !!clear || JSON.stringify(others().map((node) => node.id || node.className));
+            """,
+            'Nothing but the tour is open before its Esc',
+        )
         _press(client, 'Escape', 'Escape')
         count += _run(
             client,
