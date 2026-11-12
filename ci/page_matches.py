@@ -396,8 +396,10 @@ def phone_checks(client):
             const card = page.queueHost.querySelector('.req-card');
             const names = card ? [...card.querySelectorAll('.req-team-name')] : [];
             return { picked: page.filters.team === value(teams.accent),
-                // The short name beside the long one keeps at least as much room as the long one.
-                shared: names.length === 2 && names[0].clientWidth + 2 >= names[1].clientWidth,
+                // The short name beside the long one shows whole, or keeps at least as much room
+                // as the long one where it would be cut, whatever the widths of the fonts.
+                shared: names.length === 2 && (names[0].scrollWidth <= names[0].clientWidth + 1
+                    || names[0].clientWidth + 2 >= names[1].clientWidth),
                 // The buttons go under the text, so the names keep the whole row.
                 below: !!card && card.querySelector('.req-actions').getBoundingClientRect().top
                     >= card.querySelector('.req-main').getBoundingClientRect().bottom - 1,
