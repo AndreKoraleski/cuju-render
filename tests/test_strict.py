@@ -66,6 +66,8 @@ def test_each_broken_rule_ends_the_match_with_its_reason(render_home, name, kind
     # on Linux each new thread reserves stack memory and would fail to start under it.
     if kind == 'memory':
         limits['memory_mb'] = 300
+        # Where the system does not stop the allocation, the watch ends the team within a second.
+        limits['call_seconds'] = 5.0
     if kind == 'total_time':
         limits['match_seconds'] = 0.02
     forfeit = _forfeit(team, limits=limits)
