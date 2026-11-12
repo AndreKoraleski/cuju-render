@@ -299,7 +299,10 @@ class _Requests:
         }
         with self._lock:
             entry['id'] = self._new_identifier()
-            entry['created'] = time.time()
+            # Each request is later than the one before, so the order of the requests survives a
+            # restart even where the clock ticks coarsely or two requests come at once.
+            latest = max((other['created'] for other in self._entries), default=0.0)
+            entry['created'] = max(time.time(), latest + 1e-6)
             self._persist(entry)
             self._entries.append(entry)
             self._trim()
