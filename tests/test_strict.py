@@ -72,6 +72,10 @@ def test_each_broken_rule_ends_the_match_with_its_reason(render_home, name, kind
         limits['match_seconds'] = 0.02
     forfeit = _forfeit(team, limits=limits)
     rule = forfeit.rule
+    # Where the system stops the allocation, the team runs out of memory, and where only the watch
+    # sees it, as on macOS, the watch names the memory it found.
+    if kind == 'memory' and rule['reason_id'] == 'server.strict.memory':
+        message = 'server.strict.memory'
     assert (rule['side'], rule['kind'], rule['reason_id'], rule['detail']) == (
         'home',
         kind,
