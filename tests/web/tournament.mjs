@@ -297,3 +297,52 @@ test('Run again takes the stages as given, else drops the settings that the coun
     assert.deepEqual(again, given);
     assert.notEqual(again[0], given[0], 'the draft holds a copy');
 });
+
+test('A refusal that stands alone starts with a capital, and other text stays as it is', () => {
+    assert.equal(layout.sentence('expected a tournament that has ended, cancel it first'), 'Expected a tournament that has ended, cancel it first');
+    assert.equal(layout.sentence('Semi-final 1 failed'), 'Semi-final 1 failed');
+    assert.equal(layout.sentence('élan'), 'Élan');
+    assert.equal(layout.sentence('5v5 only'), '5v5 only');
+    assert.equal(layout.sentence(''), '');
+});
+
+test('A mistake in JSON has its line and column, from the message of JSON.parse', () => {
+    const text = '{\n  "stages": [\n    { format: "league" }\n  ]\n}';
+    let error;
+    try {
+        JSON.parse(text);
+    } catch (err) {
+        error = err;
+    }
+    // Node reads JSON as Chrome does, so its message names the place of the mistake.
+    assert.deepEqual(layout.jsonErrorPlace(text, error), { line: 3, column: 7 });
+    assert.deepEqual(layout.jsonErrorPlace('{\n "a": }', { message: 'Unexpected token } in JSON at position 8' }), { line: 2, column: 7 });
+    assert.deepEqual(layout.jsonErrorPlace('x', { message: 'JSON.parse: expected property name or \'}\' at line 1 column 3 of the JSON data' }), { line: 1, column: 3 });
+    assert.equal(layout.jsonErrorPlace('x', { message: 'JSON Parse error: Unexpected identifier' }), null);
+});
+
+test('Another preset keeps the settings of the person where it leaves them free and names the rest', () => {
+    const draft = { seeding: 'manual', concurrency: 1, forfeit_score: 3, ability: 0.7, defaults: { scenario: 'academy_corner', length: 900 }, stages: [] };
+    const own = new Set(['seeding', 'ability', 'defaults.scenario', 'defaults.length']);
+    // A shipped preset draws at random and sets the length of its matches.
+    const quick = { seeding: 'random', defaults: { length: 600, settle: ['lots'] }, stages: [{ format: 'knockout', name: 'Cup' }] };
+    const { values, replaced } = layout.presetDraft(draft, quick, own);
+    assert.equal(values.seeding, 'manual');
+    assert.equal(values.ability, 0.7);
+    assert.deepEqual(values.defaults, { length: 600, settle: ['lots'], scenario: 'academy_corner' });
+    assert.deepEqual(values.stages, quick.stages);
+    assert.notEqual(values.stages, quick.stages, 'the draft holds a copy');
+    assert.deepEqual(replaced, [{ key: 'defaults.length', mine: 900, theirs: 600 }]);
+    // Keep mine gives the person's value back.
+    layout.setSetting(values, replaced[0].key, replaced[0].mine);
+    assert.equal(values.defaults.length, 900);
+    // A setting the person never touched follows the preset, else the value of a new draft.
+    const saved = { seeding: 'rating', concurrency: 4, forfeit_score: 5, ability: null, defaults: {}, stages: [{ format: 'league' }] };
+    const fresh = layout.presetDraft({ ...draft, concurrency: 4 }, saved, new Set());
+    assert.deepEqual([fresh.values.seeding, fresh.values.concurrency, fresh.values.forfeit_score, fresh.values.ability], ['rating', 4, 5, null]);
+    assert.deepEqual(fresh.replaced, []);
+    const plain = layout.presetDraft({ ...draft, concurrency: 4 }, quick, new Set());
+    assert.deepEqual([plain.values.seeding, plain.values.concurrency, plain.values.ability], ['random', 1, null]);
+    // A seeding of the preset other than at random sets the seeding, in place of the person's.
+    assert.deepEqual(layout.presetDraft(draft, saved, own).replaced.map((item) => item.key), ['seeding']);
+});

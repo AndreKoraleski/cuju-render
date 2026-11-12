@@ -202,15 +202,27 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def fits(entrant: dict[str, Any], scenario: str) -> str | dict[str, Any] | None:
+def fits(
+    entrant: dict[str, Any], scenario: str, entries: dict[str, dict[str, Any]] | None = None
+) -> str | dict[str, Any] | None:
     """Returns why an entrant cannot play a scenario on either side, or `None` when it can.
 
     The reason is a label of its server message when it has one, so the page shows the whole of
-    the refusal in its own language, else its text.
+    the refusal in its own language, else its text. `entries` holds the teams of the registry by
+    identifier, read once for a whole check, since reading the registry for each entrant and
+    stage made the review of a few teams take seconds.
     """
-    builtin = _teams.entry(_teams.BUILTIN)
+
+    def entry(identifier: str) -> dict[str, Any]:
+        if entries is None:
+            return _teams.entry(identifier)
+        if identifier not in entries:
+            raise MessageError('server.teams.unknown', identifier=repr(identifier))
+        return entries[identifier]
+
+    builtin = entry(_teams.BUILTIN)
     try:
-        team = _teams.entry(entrant['team'])
+        team = entry(entrant['team'])
         if entrant['kind'] == 'person':
             for humans in ((True, False), (False, True)):
                 sides = [team, builtin] if humans[0] else [builtin, team]
@@ -250,6 +262,20 @@ def _error_label(error: str, ids: dict[str, Any] | None) -> str | dict[str, Any]
     ids = ids if isinstance(ids, dict) else {}
     found = {'id': ids.get('error_id'), 'text': error, 'values': ids.get('error_values')}
     return found if _messages.valid_label(found) else error
+
+
+def warm() -> None:
+    """Loads cuju's scenario builder and the list of scenarios, which every check of a tournament
+    reads, so the first review of the page answers at once.
+
+    The builder brings torch along, which takes seconds to import, so the server calls this in a
+    thread of its own as it starts. A failure here only leaves the first check to load them.
+    """
+    try:
+        scenarios()
+        _teams.scenario_players('5_vs_5', 0)
+    except Exception as error:
+        _LOGGER.warning('cuju render could not load the scenarios ahead of time: %s', error)
 
 
 def scenarios() -> list[str]:
@@ -370,8 +396,16 @@ def check_config(config: Any) -> dict[str, Any]:
         except rules.TournamentError as error:
             raise _messages.argument_error(error) from error
         config = {**base, **config}
+    registry = _teams.teams()
+    entries = {team['id']: team for team in registry}
     try:
-        return rules.check(config, _teams.teams(), fits, _rating_values(), scenarios())
+        return rules.check(
+            config,
+            registry,
+            lambda entrant, scenario: fits(entrant, scenario, entries),
+            _rating_values(),
+            scenarios(),
+        )
     except rules.TournamentError as error:
         raise _messages.argument_error(error) from error
 

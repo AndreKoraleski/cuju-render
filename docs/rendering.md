@@ -1411,7 +1411,9 @@ The Match menu opens a recording file from the computer, takes an address, leads
 and Matches pages, lists the goals of the open match, each of which jumps to six seconds before it,
 and lists the live sources and the six newest recordings, with a count of the live sources on the
 menu's button. The address field takes the identifier of a live source or of a recording, such as
-`m-20261106-105640-3a3f`. On a phone the address field takes a row of its own below the menus, so
+`m-20261106-105640-3a3f`. While a recording plays, the field shows its title, else its teams, with
+its identifier as the tooltip, and the identifier comes back to edit or copy once the field takes
+the focus. On a phone the address field takes a row of its own below the menus, so
 it keeps its room in every language. The View menu chooses the camera, turns broadcast mode,
 fullscreen and the 2D view on and off, sets the hour, the weather and the arena, and sets the
 quality and the theme. Copy feed address in the View menu writes the address of a clean feed for
@@ -2693,8 +2695,10 @@ its entrants. Every preset that ships draws its first stage at random from the s
 that ship fit any number of entrants from 2 to 256. While its stages stay as the preset ships them,
 a group size, a best place, a number of Swiss rounds or of entrants that advance comes down to the
 most that the entrants allow, so the Swiss of 16 plays two rounds with three entrants and the
-league phase sends four of five entrants on. Stages changed on the page or in a configuration are
-the user's own, and a setting that the entrants cannot play is refused with the reason.
+league phase sends four of five entrants on. A preset of the user that saved the stages of a
+shipped preset unchanged fits the entrants in the same way, whatever else it changed, such as its
+seeding or defaults. Stages changed on the page or in a configuration are the user's own, and a
+setting that the entrants cannot play is refused with the reason.
 
 | Preset | Format |
 | ------ | ------ |
@@ -2714,6 +2718,8 @@ the user's own, and a setting that the entrants cannot play is refused with the 
 | Gauntlet | The lowest seeds climb toward the top seed. |
 
 The page saves any format as a preset of the user, which the setup lists beside those that ship.
+Saving under the name of a preset of the user, and deleting one, ask first in place of the button,
+and Escape or Keep it leaves the preset as it was.
 
 ### The Tournaments page
 
@@ -2727,7 +2733,11 @@ tab of the step they open, and every control that redraws a step keeps the focus
 its nearest neighbour.
 
 1. **Format** offers the presets, those that ship and those of the user, as a group of choices
-    that the arrow keys move through.
+    that the arrow keys move through. New tournament gives the focus to the first step, and Run
+    again to the step it opens. The seeding, scenario, match length, standard ability, matches at
+    once and forfeit score that the person set by hand stay when another preset is chosen, where
+    the preset leaves them free. Where the preset sets its own, a notice names those settings,
+    and Keep mine gives the person's back.
 2. **Entrants** has Set the bracket by hand above its list, which turns the random draw into a
     draw in the order of the list and says which of the two applies, and it adds registered teams
     one at a time or every one at once, the built in AI at an ability, and people by name, with
@@ -2736,8 +2746,12 @@ its nearest neighbour.
     list stops at 256 entrants. Each row shows the entrant's number, the seed of a draw by hand
     and the number that the notes of this step name. Each entrant may be renamed, given an ability
     of its own, given a rating and moved up or down, which is the seeding when it is manual, or
-    removed. A team added again, or any team whose name an entrant already shows, enters under the
-    first free name, such as Rex 2, with its name field focused so the proposal can be changed at
+    removed, and a screen reader hears the place an entrant moved to. The select of teams, the
+    select of a person's teammates and the row of a team name the team's size and the players it
+    controls, such as 5v5, 2 controlled players, and a team registered elsewhere joins the select
+    once the person focuses it or comes back to the page. A team added again, or any team whose
+    name an entrant already shows, enters under the first free name, such as Rex 2, with its name
+    field focused so the proposal can be changed at
     once. The built in AI added at an ability that an entrant already shows takes the next number
     in the same way, such as Built-in AI 0.50 2, which its name field shows until a name is typed,
     and an empty ability box adds nobody. A name that repeats
@@ -2751,20 +2765,29 @@ its nearest neighbour.
     and with the box clear the value reads as the scenario's own.
 4. **Stages** is the advanced editor. It holds the standard ability too, and each stage is a card
     with every setting that its format reads, the ordered lists of tiebreakers and ways to settle
-    a tie, and buttons to add, move and remove stages. A stage without an ability of its own reads
-    as following the standard. Edit as JSON shows the standard ability, the stages and defaults as
-    JSON to change as text.
-5. **Review** checks the tournament on the server and shows the standard ability, the entrants
+    a tie, each name starting with a capital, and buttons to add, move and remove stages. A
+    tiebreaker left out of use moves below those in use and has no button to move it. A stage
+    without an ability of its own reads as following the standard. Edit as JSON shows the standard
+    ability, the stages and defaults as JSON to change as text, and a mistake in the text is named
+    by its line and column, with the caret placed on it.
+5. **Review** checks the tournament on the server, which shows in place while it runs, and the
+    name of a preset can be typed meanwhile. It then shows the standard ability, the entrants
     with an ability of their own, each stage with its entrants, those who advance, its scenario,
     its ability and the draw of its first round or its groups, or the reason it cannot be made. A
     team that cannot play the scenario of a stage, or of its deciding matches, comes with a button
-    that opens that field of the stage. Review also saves the format as a preset under a name of
-    small letters, digits, dashes and underscores, which the page asks for before it saves, and a
-    preset keeps the forfeit score with the rest. Start tournament begins it.
+    that opens that field of the stage. Teams of both sizes in a scenario of one size are told a
+    scenario that fits both sizes and the players each team controls, or that none does. Review
+    also saves the format as a preset under a name of small letters, digits, dashes and
+    underscores, which the page asks for before it saves, and a preset keeps the forfeit score
+    with the rest. Start tournament begins it, and while Review shows a refusal it waits, saying
+    the refusal as its description, and a press leads to the refusal.
 
 An open tournament shows its state, seed and progress, the matches playing now, and buttons to
 cancel it, resume it after a failed match, hold its trophy ceremony, run it again with the same
-settings and a new seed, or delete it, which leaves its recordings in Recordings. Cancel and
+settings and a new seed, or delete it, which leaves its recordings in Recordings, each button
+with its words beside its symbol. A finished tournament reads as finished with the count of its
+matches, also without spoilers, and a server's refusal that the page shows as a sentence of its
+own starts with a capital. Cancel and
 Delete ask first in place of the button, as Award does, and Escape or the second button leaves
 the tournament as it was. A canceled tournament says so beneath its name, lists nothing in Up
 next and reads each match still to play as not played. Run again starts from the stages as they
@@ -2785,6 +2808,8 @@ it beside its name in the bracket, the tables and the fixtures, such as Ability 
 symbol of the built in AI, and the head of the tournament names its standard ability. A built in AI
 whose name the rules made already holds its ability in its name. The page follows a running
 tournament as it plays and announces a match that waits for a person and the end of a tournament.
+A screen reader hears the result of each match as it ends and a tournament that stops, while the
+view redraws in silence.
 
 A match with a person shows **Play now**, which starts it as a game of the Play page with the
 tournament's scenario, length, abilities and match seed. The person's name stands on the
@@ -2821,13 +2846,14 @@ of two entrants of one team in its away kit, as in the match. The matches that w
 come first, in the order to watch them, and then those still to play while the tournament runs.
 A final, a grand final and its deciding match have a card of their own, marked with the trophy. Each
 card takes a prediction of its result, a win for either side or a draw, which the browser keeps
-and which counts once the match's result shows, so the tournament shows how many predictions came
-right, such as Predictions, 2 of 3 right.
+and which counts once the match's result shows, so the bar of the tournament without spoilers
+shows how many predictions came right, as in 2 of 3 right.
 
 The **trophy ceremony** of a finished tournament opens the last match that the champion played on
 the Watch page at its end, and holds the podium and confetti of the show after a match, with the
 champion's players on the steps in the champion's colors, the champion's name, and the tournament
-won with the runner up beneath it. Close ends it, and so does opening another match.
+won with the runner up beneath it. On a phone its card sits low and compact, so the podium stays
+in view above it. Close ends it, and so does opening another match.
 
 ### The Brackets view
 
@@ -2835,8 +2861,9 @@ won with the runner up beneath it. Close ends it, and so does opening another ma
 brackets, groups and tables in a view of their own, which takes the whole width of the page with
 the list of tournaments set aside and larger type. The stages are tabs as in the tournament, and
 the view follows a running tournament as it plays. Zoom in and Zoom out scale the view from half
-to twice its size, and Actual size returns it, so a bracket reads across a room or fits a small
-window. A bracket or a table wider than the screen scrolls sideways, so the view works on a phone
+to twice its size, the columns of a bracket with its type, and Actual size returns it, so a bracket
+reads across a room or more of it fits a small window. A bracket or a table wider than the screen
+scrolls sideways, so the view works on a phone
 too. Back to the tournament returns to the tournament where it was. A tournament without spoilers
 shows in the Brackets view as it does elsewhere, with Watch next beside the zoom.
 
@@ -2862,7 +2889,8 @@ where it was, and a screen reader reads the count as a timer when asked, not eve
 **Reveal** shows the result of one match without watching it, and **Reveal all** shows every
 result, after a question in place of the button that Escape or the close button answers with no. A
 match awarded without a recording reveals at once. Once every played match is watched, a summary lists the results of the matches
-watched or revealed in that visit, what the person missed, with the predictions they got right.
+watched or revealed in that visit, what the person missed, while the count of right predictions
+stays in the bar above.
 
 The lists of the page keep the secret too. Home, Recordings, the Trash, the details of a recording,
 the command palette and the search of moments show a recording of an unwatched match without its

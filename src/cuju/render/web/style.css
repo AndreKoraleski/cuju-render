@@ -5464,6 +5464,12 @@ dialog.painter .toolbar {
     max-width: 100%;
 }
 
+/* In a field, whose label and control stack, the row keeps its own height, since the basis of
+   300px above is a width in a row and would become a height in a column. */
+.play-setup .field > .ability {
+    flex: 0 0 auto;
+}
+
 .play-setup .ability > .check {
     flex: 1 0 100%;
 }
@@ -6965,6 +6971,17 @@ dialog.painter .toolbar {
     white-space: normal;
 }
 
+/* A field of an adder takes the room its button leaves, so the button stays beside it. */
+.cup-adder > .field {
+    flex: 1 1 10em;
+    min-width: 0;
+}
+
+.cup-adder > .field select,
+.cup-adder > .field input {
+    width: 100%;
+}
+
 /* The choice between a random draw and a bracket set by hand, above the list of entrants. */
 .cup-draw {
     display: flex;
@@ -6987,7 +7004,7 @@ dialog.painter .toolbar {
     position: relative;
     counter-increment: entrant;
     display: grid;
-    grid-template-columns: 28px minmax(100px, 160px) minmax(140px, 1fr) minmax(110px, 160px) minmax(80px, 120px) minmax(90px, 130px) auto;
+    grid-template-columns: 28px fit-content(17rem) minmax(140px, 1fr) minmax(110px, 150px) minmax(80px, 110px) minmax(80px, 110px) auto;
     gap: 8px 12px;
     align-items: end;
     padding: 6px 0;
@@ -7030,24 +7047,33 @@ dialog.painter .toolbar {
     align-items: center;
 }
 
+/* The kind of an entrant and its team's name read on one line where the row has room, and the
+   size of the team on the line under them. */
 .cup-entrant-kind {
     min-width: 110px;
+    overflow-wrap: anywhere;
+}
+
+/* The size of a team and the players it controls, on a line of its own under its name. */
+.cup-entrant-size {
+    display: block;
 }
 
 /* The name of an entrant, with the reason beside it when it repeats another. */
 .cup-entrant-name {
     display: flex;
     flex-direction: column;
-    gap: 4px;
     min-width: 0;
 }
 
+/* The note stays in place while empty, a live region that a screen reader keeps hearing, and
+   takes room only once it holds a reason. */
 .cup-name-note {
     color: var(--danger);
 }
 
-.cup-name-note:empty {
-    display: none;
+.cup-name-note:not(:empty) {
+    margin-top: 4px;
 }
 
 .cup-entrant-name input[aria-invalid="true"] {
@@ -7172,6 +7198,17 @@ dialog.painter .toolbar {
     border-top: 1px solid var(--border);
 }
 
+.cup-save .row {
+    align-items: flex-end;
+}
+
+/* Start tournament waits while the review shows a refusal, still reachable, so its description
+   tells why. */
+.cup-start[aria-disabled="true"] {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .cup-people {
     margin-bottom: 14px;
     padding: 10px 14px;
@@ -7202,6 +7239,7 @@ dialog.painter .toolbar {
 }
 
 .cup-bracket {
+    --cup-column: minmax(190px, 1fr);
     display: grid;
     gap: 6px 22px;
     align-items: center;
@@ -7335,6 +7373,61 @@ th .cup-ability {
 
 #victory.ceremony .victory-title {
     font-variant: small-caps;
+}
+
+/* The review shows that its check runs, and the notice of settings a preset set in place of the
+   person's sits above the formats. */
+.cup-checking {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.cup-replaced {
+    margin: 0 0 12px;
+}
+
+.cup-replaced p {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin: 0 0 8px;
+}
+
+.cup-json-note {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    color: var(--danger);
+}
+
+/* On a phone the card of the trophy ceremony sits low and compact above the controls, the
+   champion's name, the tournament and the buttons alone, so the podium above it stays in view.
+   The most valuable player stays one press away in the match statistics. */
+@media (max-width: 760px) {
+    #victory.ceremony {
+        top: auto;
+        right: 8px;
+        bottom: 116px;
+        left: 8px;
+        width: auto;
+        max-height: 30%;
+        overflow-y: auto;
+        padding: 10px 14px;
+        transform: none;
+    }
+
+    #victory.ceremony .victory-title {
+        font-size: 22px;
+    }
+
+    #victory.ceremony .victory-cards {
+        display: none;
+    }
+
+    #victory.ceremony .victory-actions {
+        margin-top: 8px;
+    }
 }
 
 @media (max-width: 900px) {
@@ -7900,6 +7993,13 @@ table.grid td.wrap {
 .cup-big .cup-table-scroll {
     overflow: auto;
     max-width: 100%;
+}
+
+/* A round of the Brackets view keeps a column of its own width, which the zoom scales with the
+   type, so a smaller zoom shows more of the bracket and a phone scrolls it sideways. */
+.cup-big .cup-bracket {
+    --cup-column: 220px;
+    width: max-content;
 }
 
 @media (max-width: 760px) {

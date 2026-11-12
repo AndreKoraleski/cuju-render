@@ -1957,6 +1957,8 @@ def serve(
         print(f'cuju render could not add the sample matches: {error}', flush=True)
     # The index of the moments of the library catches up while the page loads.
     threading.Thread(target=_warm_index, daemon=True).start()
+    # The scenario builder loads meanwhile too, so the first review of a tournament is quick.
+    threading.Thread(target=_tournament_runner.warm, daemon=True).start()
     port = server.server_address[1]
     address = f'http://127.0.0.1:{port}/'
     print(f'cuju render serves {address} from {_home.home()}', flush=True)

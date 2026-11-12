@@ -185,6 +185,103 @@ export function againStages(config, keys, fallback = []) {
     });
 }
 
+// A message as a sentence of its own, its first letter a capital. The server's refusals start
+// small, since most of them continue a sentence of the page, so one that stands alone takes the
+// capital here.
+export function sentence(text) {
+    const value = String(text ?? '');
+    return value.replace(/^\p{Ll}/u, (letter) => letter.toLocaleUpperCase());
+}
+
+// The line and column of a mistake in a text of JSON, both counted from 1, from the message of
+// the browser's JSON.parse, which names them, as Chrome and Firefox do, or names the position of
+// the character, else null.
+export function jsonErrorPlace(text, error) {
+    const message = String((error && error.message) || '');
+    const named = /line (\d+) column (\d+)/i.exec(message);
+    if (named) {
+        return { line: Number(named[1]), column: Number(named[2]) };
+    }
+    const at = /position (\d+)/i.exec(message);
+    if (!at) {
+        return null;
+    }
+    const before = String(text).slice(0, Number(at[1])).split('\n');
+    return { line: before.length, column: before.at(-1).length + 1 };
+}
+
+// The settings that a person sets by hand in the wizard, at the top of the draft or among its
+// defaults, which a preset chosen afterwards keeps where the preset leaves them free.
+export const OWN_SETTINGS = ['seeding', 'concurrency', 'forfeit_score', 'ability', 'defaults.scenario', 'defaults.length'];
+
+// The value of each setting of OWN_SETTINGS in a draft that sets none of them.
+const DRAFT_SETTINGS = { seeding: 'random', concurrency: 1, forfeit_score: 3, ability: null };
+
+// Whether a preset sets a setting of OWN_SETTINGS itself. A seeding at random and an ability left
+// to the scenario are the defaults, so a preset that names them leaves the person's choice free.
+function presetSets(preset, key) {
+    if (key.startsWith('defaults.')) {
+        const name = key.slice('defaults.'.length);
+        return !!preset.defaults && preset.defaults[name] !== undefined && preset.defaults[name] !== null;
+    }
+    if (key === 'seeding') {
+        return typeof preset.seeding === 'string' && preset.seeding !== 'random';
+    }
+    if (key === 'ability') {
+        return preset.ability !== undefined && preset.ability !== null;
+    }
+    return preset[key] !== undefined && preset[key] !== null;
+}
+
+function settingOf(source, key) {
+    if (key.startsWith('defaults.')) {
+        return source.defaults ? source.defaults[key.slice('defaults.'.length)] : undefined;
+    }
+    return source[key];
+}
+
+// The format part of a draft once a person chooses `preset`, its seeding, matches at once, score
+// of an award, standard ability and defaults, with the stages of the preset. A setting that the
+// person set, by the keys of `own`, stays where the preset leaves it free, and gives way where
+// the preset sets another value, which `replaced` lists with the person's value, so the page
+// offers to keep it. Any other setting comes from the preset, else from a new draft.
+export function presetDraft(draft, preset, own) {
+    const values = { defaults: JSON.parse(JSON.stringify(preset.defaults || {})), stages: JSON.parse(JSON.stringify(preset.stages || [])) };
+    for (const key of Object.keys(DRAFT_SETTINGS)) {
+        values[key] = presetSets(preset, key) ? preset[key] : DRAFT_SETTINGS[key];
+    }
+    const replaced = [];
+    for (const key of OWN_SETTINGS) {
+        const mine = settingOf(draft, key);
+        if (!own.has(key) || mine === undefined) {
+            continue;
+        }
+        const theirs = settingOf(values, key);
+        if (presetSets(preset, key) && JSON.stringify(theirs) !== JSON.stringify(mine)) {
+            replaced.push({ key, mine, theirs });
+        } else {
+            setSetting(values, key, mine);
+        }
+    }
+    return { values, replaced };
+}
+
+// Sets a setting of OWN_SETTINGS in a draft or in the values of presetDraft, a default of null
+// or undefined by leaving it out.
+export function setSetting(target, key, value) {
+    if (!key.startsWith('defaults.')) {
+        target[key] = value;
+        return;
+    }
+    const name = key.slice('defaults.'.length);
+    target.defaults = target.defaults || {};
+    if (value === null || value === undefined) {
+        delete target.defaults[name];
+    } else {
+        target.defaults[name] = value;
+    }
+}
+
 export const SETTLE_NAMES = {
     away_goals: t('tournament.settle.away_goals'),
     replay: t('tournament.settle.replay'),

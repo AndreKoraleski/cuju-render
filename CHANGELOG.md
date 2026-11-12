@@ -764,6 +764,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     deciding match, prints byes and cancelled stages plainly and the expected count of matches,
     `forfeit` and `resume` name the process that plays the tournament on, and an empty `list`
     says there are no tournaments yet.
+- The Tournaments page reads more smoothly. The zoom of the Brackets view scales the columns of a
+    bracket with its type, so a smaller zoom shows more of it, and the trophy ceremony, Run again,
+    Resume and Cancel name themselves beside their symbols, with the ceremony's card low on a
+    phone so the podium stays in view. A finished tournament reads as finished, the score of
+    predictions shows once, and a server's refusal shown on its own starts with a capital.
+- The setup of a tournament keeps the seeding, scenario, match length, standard ability and
+    other settings that the person set when another preset leaves them free, and names those that
+    a preset sets in their place with Keep mine. Saving over a preset of the user and deleting one
+    ask first in place. New tournament focuses the first step, teams show their size and the
+    players they control, a team registered elsewhere joins the setup without a reload, moves of
+    entrants, stages and tiebreakers are announced, a mistake in Edit as JSON names its line and
+    column, and a tiebreaker out of use has no button to move it.
+- The review of a tournament reads the registry once rather than for each entrant and stage, so
+    the check of six teams takes a tenth of the time, and shows in place while it runs. A preset
+    of the user that holds the stages of a shipped preset unchanged fits the number of entrants as
+    the shipped one does. Teams of both sizes in a scenario of one size are told a scenario that
+    fits both sizes and the players each team controls, or that none does.
+- The server loads cuju's scenario builder in the background as it starts, so the first review
+    of a tournament answers in a tenth of a second rather than five. Start tournament waits while
+    the review shows a refusal, with the refusal as its description. A screen reader hears the
+    result of each match of the open tournament as it ends and a tournament that stops, while the
+    view redraws in silence, and the row of an entrant reads its kind and team on one line on a
+    desktop.
+- The address field of Watch shows the title of the recording that plays, else its teams, with
+    the identifier as its tooltip, and the identifier comes back to edit once the field takes the
+    focus.
 
 ### Security
 

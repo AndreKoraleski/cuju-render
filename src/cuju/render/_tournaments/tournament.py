@@ -939,18 +939,39 @@ _FORMAT_TITLES = {
 Fits = Callable[[dict[str, Any], str], 'str | dict[str, Any] | None']
 
 
-def _refuse_sizes(entrants: list[dict[str, Any]], scenario: str, index: int, reason: Any) -> None:
-    """Refuses entrants of both sizes for a scenario that fits one size, before any one team."""
+def _refuse_sizes(
+    entrants: list[dict[str, Any]],
+    scenario: str,
+    index: int,
+    reason: Any,
+    fits: Fits,
+    scenarios: list[str] | None,
+) -> None:
+    """Refuses entrants of both sizes for a scenario that fits one size, before any one team.
+
+    The refusal names a scenario that every entrant can play, one of the academy first, since a
+    scenario that fits both sizes may still give a side too few players for a team's control, or
+    says that none fits when no scenario of `scenarios` does.
+    """
     if not isinstance(reason, dict) or reason.get('id') != 'server.tournament.team_format':
         return
     sizes = {entrant['format']: entrant for entrant in reversed(entrants) if entrant['format']}
     if '5v5' in sizes and '11v11' in sizes:
+        names = sorted(scenarios or [], key=lambda name: (not name.startswith('academy_'), name))
+        fitting = next(
+            (name for name in names if not any(fits(entrant, name) for entrant in entrants)),
+            None,
+        )
+        values = {
+            'five': label_of(sizes['5v5']),
+            'eleven': label_of(sizes['11v11']),
+            'scenario': _messages.scenario(scenario),
+            'stage': index + 1,
+        }
+        if fitting is None:
+            raise TournamentMessageError('server.tournament.mixed_sizes_none', **values)
         raise TournamentMessageError(
-            'server.tournament.mixed_sizes',
-            five=label_of(sizes['5v5']),
-            eleven=label_of(sizes['11v11']),
-            scenario=_messages.scenario(scenario),
-            stage=index + 1,
+            'server.tournament.mixed_sizes', fitting=_messages.scenario(fitting), **values
         )
 
 
@@ -1016,9 +1037,9 @@ def check(
     if not isinstance(stages, list) or not 1 <= len(stages) <= MAX_STAGES:
         raise TournamentMessageError('server.tournament.stages', most=MAX_STAGES)
     count = len(entrants)
-    # The stages of a preset that ships, as it ships them, fit the number of entrants.
-    shipped = PRESETS.get(result['preset'])
-    fit = shipped is not None and stages == shipped['stages']
+    # The stages of a preset that ships, as it ships them, fit the number of entrants, also when
+    # they come from a preset of the user that saved them unchanged.
+    fit = any(stages == shipped['stages'] for shipped in PRESETS.values())
     resolved = []
     for index, raw in enumerate(stages):
         stage = _merge(raw, defaults, index)
@@ -1046,7 +1067,7 @@ def check(
                 for entrant in entrants:
                     reason = fits(entrant, scenario)
                     if reason:
-                        _refuse_sizes(entrants, scenario, index, reason)
+                        _refuse_sizes(entrants, scenario, index, reason, fits, scenarios)
                         raise TournamentMessageError(
                             message,
                             entrant=label_of(entrant),

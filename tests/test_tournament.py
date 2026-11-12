@@ -1791,6 +1791,86 @@ def test_a_team_of_the_other_size_reads_plainly_and_both_sizes_are_refused_first
     assert runner.check_config(academy)['stages'][0]['scenario'] == 'academy_empty_goal_close'
 
 
+def test_both_sizes_are_told_a_scenario_that_fits_their_control(render_home, tmp_path):
+    """A field of both sizes whose teams control four players each is told a scenario with room
+    for them on either side, since the smaller drills of the academy hold too few players."""
+    from support.common import _SINGLE, _control, _toy_team
+
+    five = _toy_team(tmp_path, 'Minis', _SINGLE, '5v5', _control(4))
+    eleven = _toy_team(tmp_path, 'Reds', _SINGLE, '11v11', _control(4))
+    config = {
+        'seed': 1,
+        'entrants': [{'kind': 'team', 'team': five['id']}, {'kind': 'team', 'team': eleven['id']}],
+        'stages': [{'format': 'knockout', 'scenario': '11_vs_11_kaggle', 'settle': ['lots']}],
+    }
+    with pytest.raises(cuju.errors.ArgumentError) as caught:
+        runner.check_config(config)
+    assert caught.value.message_id == 'server.tournament.mixed_sizes'
+    fitting = caught.value.values['fitting']['name']
+    assert fitting.startswith('academy_')
+    assert f'or choose {fitting}, which fits both sizes' in str(caught.value)
+    # The named scenario takes both teams.
+    config['stages'][0]['scenario'] = fitting
+    assert runner.check_config(config)['stages'][0]['scenario'] == fitting
+
+
+def test_both_sizes_hear_plainly_when_no_scenario_fits_them():
+    def fits(entrant, scenario):
+        if scenario.startswith('11'):
+            if entrant['format'] == '11v11':
+                return None
+            return {'id': 'server.tournament.team_format', 'text': 'x', 'values': {'format': '5v5'}}
+        return 'too few players'
+
+    with pytest.raises(rules.TournamentError) as caught:
+        rules.check(
+            {
+                'seed': 1,
+                'entrants': [{'kind': 'team', 'team': 'minis'}, {'kind': 'team', 'team': 'reds'}],
+                'stages': [{'format': 'league', 'scenario': '11_vs_11_kaggle'}],
+            },
+            _TEAMS,
+            fits,
+            {},
+            ['11_vs_11_kaggle', 'academy_empty_goal', 'academy_run_to_score_with_keeper'],
+        )
+    assert caught.value.message_id == 'server.tournament.mixed_sizes_none'
+    assert str(caught.value).endswith('so enter teams of one size')
+
+
+def test_a_check_reads_the_registry_once(render_home, tmp_path, monkeypatch):
+    """The review of a tournament reads the registry once, not once for each entrant and stage,
+    which made the check of six teams take seconds."""
+    from cuju.render._registry import teams as _teams
+    from support.common import _SINGLE, _toy_team
+
+    made = [_toy_team(tmp_path, f'Team {i}', _SINGLE, '5v5') for i in range(6)]
+    reads = []
+    real = _teams.teams
+    monkeypatch.setattr(_teams, 'teams', lambda: reads.append(1) or real())
+    config = {
+        'seed': 1,
+        'entrants': [{'kind': 'team', 'team': team['id']} for team in made],
+        'stages': [{'format': 'groups', 'group_size': 3}, {'format': 'knockout'}],
+    }
+    preview = runner.preview(config)
+    assert len(preview['config']['entrants']) == 6
+    assert len(reads) == 1
+
+
+def test_a_saved_unchanged_copy_of_a_shipped_preset_fits_as_it_does():
+    """A preset of the user that holds the stages of a shipped one fits the number of entrants
+    as the shipped one does, and keeps the settings that the person changed."""
+    shipped = rules.preset_config('swiss_16')
+    saved = {**shipped, 'preset': 'my_swiss', 'seeding': 'manual', 'concurrency': 2}
+    config = rules.check({**saved, 'name': 'Tiny', 'seed': 1, 'entrants': _builtins(3)}, _TEAMS)
+    assert config['stages'][0]['rounds'] == 2
+    assert (config['preset'], config['seeding'], config['concurrency']) == ('my_swiss', 'manual', 2)
+    euro = {**rules.preset_config('euro'), 'preset': 'my_euro', 'defaults': {'length': 400}}
+    small = rules.check({**euro, 'name': 'x', 'seed': 1, 'entrants': _builtins(2)}, _TEAMS)
+    assert small['stages'][0]['group_size'] == 2 and small['stages'][0]['length'] == 400
+
+
 def test_a_team_that_cannot_play_the_deciding_matches_is_refused_by_them():
     """The refusal names the deciding matches of the stage apart from the stage's scenario."""
 
@@ -2561,3 +2641,46 @@ def test_the_server_answers_a_tournament_without_spoilers(render_home):
         server.shutdown()
         server.server_close()
         cups.close()
+
+
+def test_warming_loads_the_scenario_builder_in_a_fresh_process(render_home):
+    """A server that warms the scenarios answers its first review without importing the builder,
+    which brings torch along and took seconds."""
+    import subprocess
+    import sys
+
+    code = (
+        'import sys\n'
+        'from cuju.render._tournaments import tournament_runner as runner\n'
+        "before = 'cuju.scenarios' in sys.modules\n"
+        'runner.warm()\n'
+        "print(before, 'cuju.scenarios' in sys.modules)\n"
+    )
+    done = subprocess.run(
+        [sys.executable, '-c', code], capture_output=True, encoding='utf-8', timeout=300, check=True
+    )
+    assert done.stdout.split() == ['False', 'True'], done.stderr
+
+
+def test_warming_keeps_quiet_about_a_failure(monkeypatch, caplog):
+    from cuju.render._registry import teams as _teams
+
+    def broken(*arguments):
+        raise RuntimeError('no builder')
+
+    monkeypatch.setattr(_teams, 'scenario_players', broken)
+    runner.warm()
+    assert 'could not load the scenarios ahead of time' in caplog.text
+
+
+def test_the_server_warms_the_scenarios_as_it_starts(render_home, monkeypatch):
+    warmed = threading.Event()
+    monkeypatch.setattr(runner, 'warm', warmed.set)
+
+    def stop(server):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_server.http.server.ThreadingHTTPServer, 'serve_forever', stop)
+    monkeypatch.setattr(_server._library, 'add_samples', lambda **options: None)
+    _server.serve(0)
+    assert warmed.wait(10)

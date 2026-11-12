@@ -746,8 +746,13 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.match_key': 'expected a match of the tournament still to play, found {key}',
     'server.tournament.mixed_sizes': (
         '{five} is a team of 5v5 and {eleven} a team of 11v11, and {scenario} of stage {stage} '
-        'fits one size alone, so enter teams of one size or choose a scenario of the academy, '
-        'which fits both'
+        'fits one size alone, so enter teams of one size or choose {fitting}, which fits both '
+        'sizes and the players each team controls'
+    ),
+    'server.tournament.mixed_sizes_none': (
+        '{five} is a team of 5v5 and {eleven} a team of 11v11, and {scenario} of stage {stage} '
+        'fits one size alone, and no scenario fits both sizes and the players each team '
+        'controls, so enter teams of one size'
     ),
     'server.tournament.name_taken': (
         'expected a name of its own for entrant {entrant}, '

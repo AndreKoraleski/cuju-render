@@ -645,8 +645,7 @@ class App {
         this.timeline.speed = 1;
         this.pose = new Pose(source.header.players.length);
         this.lastIndex = -1;
-        $('address-input').value = source.kind === 'file' ? '' : source.id;
-        $('address-input').placeholder = source.kind === 'file' ? source.id : $('address-input').placeholder;
+        this.showAddress(source);
         this.structure?.setWatchTitle(recordingTitle(source.header, source.kind === 'match' ? source.id : null) || t('main.title.match'));
         this.showEmpty(false);
         await this.rebuildPlayers();
@@ -887,14 +886,40 @@ class App {
         }
     }
 
+    // The address of the source that plays. A recording shows its title, else its teams, with
+    // its id as the tooltip, and the id comes back to edit or copy once the field takes the focus.
+    showAddress(source) {
+        const input = $('address-input');
+        const teams = source.header && Array.isArray(source.header.teams) ? source.header.teams.map((team) => teamName(team)) : [];
+        const shown = source.kind !== 'match' ? '' : recordingTitle(source.header, source.id)
+            || (teams.length === 2 && teams.every(Boolean) ? t('menu.match.recent.against', { left: teams[0], right: teams[1] }) : '');
+        input.dataset.id = source.kind === 'match' && shown ? source.id : '';
+        input.dataset.shown = input.dataset.id ? shown : '';
+        input.title = input.dataset.id ? source.id : '';
+        input.value = source.kind === 'file' ? '' : input.dataset.shown || source.id;
+        input.placeholder = source.kind === 'file' ? source.id : input.placeholder;
+    }
+
     bindAddress() {
         const form = $('address');
         const input = $('address-input');
         form.addEventListener('submit', (e) => {
             e.preventDefault();
             this.sound.unlock();
-            this.openAddress(input.value);
+            // The title of the recording that plays stands for its id.
+            this.openAddress(input.dataset.shown && input.value === input.dataset.shown ? input.dataset.id : input.value);
             input.blur();
+        });
+        input.addEventListener('focus', () => {
+            if (input.dataset.shown && input.value === input.dataset.shown) {
+                input.value = input.dataset.id;
+                input.select();
+            }
+        });
+        input.addEventListener('blur', () => {
+            if (input.dataset.shown && input.value === input.dataset.id) {
+                input.value = input.dataset.shown;
+            }
         });
         const fill = async () => {
             let list = [];

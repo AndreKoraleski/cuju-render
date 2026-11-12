@@ -151,6 +151,20 @@ def wizard_checks(client):
                 page.goStep(4);
                 const fix = await until(() => main().querySelector('.cup-fix-scenario'), 8000);
                 all.offer = !!fix && /stage 1/.test(fix.textContent);
+                // Start waits while the review shows the refusal, which names why, and a press
+                // leads to the refusal rather than to the server.
+                const start = main().querySelector('.cup-start');
+                const refusal = document.getElementById(start.getAttribute('aria-describedby'));
+                const created = tournamentsApi.create;
+                let asked = 0;
+                tournamentsApi.create = async () => {
+                    asked += 1;
+                    throw new Error('refused');
+                };
+                press(start);
+                tournamentsApi.create = created;
+                all.held = start.getAttribute('aria-disabled') === 'true' && !!refusal
+                    && refusal.contains(fix) && asked === 0 && active() === refusal;
                 if (fix) {
                     fix.click();
                     all.scenario = page.step === 3
@@ -193,8 +207,8 @@ def wizard_checks(client):
                     && seeding.options[0].textContent === 'By the earlier stage, the default'
                     && seeding.options[1].textContent === 'Random from the seed';
                 // A tiebreaker moved to the top keeps the focus on its box.
-                press(named('Move earlier: goals scored, stage 2'));
-                all.order = label(active()) === 'Use: goals scored, stage 2';
+                press(named('Move earlier: Goals scored, stage 2'));
+                all.order = label(active()) === 'Use: Goals scored, stage 2';
                 // Moving and removing a stage keep the focus on a working button.
                 press(named('Move stage 2 earlier'));
                 all.stageMoved = label(active()) === 'Move stage 1 later';
@@ -348,7 +362,9 @@ def view_checks(client):
                 press(main().querySelector('[data-focus="act-delete"]'));
                 all.deleteAsked = !!main().querySelector('.cup-actions .cup-confirm');
                 press(main().querySelector('[data-focus="ask-yes-delete"]'));
-                await until(() => page.mode === 'empty');
+                // The list takes the focus once it is read again, after the mode changes.
+                await until(() => page.mode === 'empty'
+                    && page.root.querySelector('.cup-side').contains(active()));
                 made.splice(made.indexOf(people.id), 1);
                 all.deleted = page.mode === 'empty'
                     && page.root.querySelector('.cup-side').contains(active());
@@ -444,4 +460,406 @@ def view_checks(client):
     """
     )
     assert result is True, f'Tournament actions in place {result}'
+    return 1
+
+
+def clunky_checks(client):
+    """Checks the presets kept and asked in place, the review, the editor of JSON, the orders,
+    the sizes of teams, the announcements, the registry read again and the finished view."""
+    result = client.evaluate(
+        """
+        (async () => {
+            """
+        + UNTIL
+        + """
+            const { api } = await import('./js/core/api.js');
+            const { t } = await import('./js/core/i18n.js');
+            const { tournamentsApi } = await import('./js/play/tournament.js');
+            const spoilers = await import('./js/core/spoilers.js');
+            const all = {};
+            const made = [];
+            const teams = [];
+            const make = async (config) => {
+                const entry = await tournamentsApi.create(config);
+                made.push(entry.id);
+                return entry;
+            };
+            const type = (input, text, kind = 'input') => {
+                input.value = text;
+                input.dispatchEvent(new Event(kind, { bubbles: true }));
+            };
+            const announced = () => page.announcer.textContent;
+            try {
+                // New tournament leaves the focus on the first step of the wizard.
+                press(page.root.querySelector('.cup-side-head button'));
+                await until(() => main().querySelector('[data-preset="round_robin"]'));
+                all.wizardFocus = active().id === 'cup-step-0'
+                    && !/null/.test(main().querySelector('.cup-step-panel').textContent);
+                // The settings that the person sets stay when another preset leaves them free.
+                const scenario = page.scenarios.find((name) => name.startsWith('academy'))
+                    || page.scenarios[0];
+                page.goStep(2);
+                type(named(t('tournament.settings.seeding')), 'manual', 'change');
+                type(named(t('tournament.settings.scenario')), scenario, 'change');
+                press(named(t('tournament.optional.set.label',
+                    { label: t('tournament.field.length') })));
+                type(named(t('tournament.field.length')), '900');
+                page.goStep(0);
+                press(main().querySelector('[data-preset="round_robin"]'));
+                all.kept = page.draft.seeding === 'manual'
+                    && page.draft.defaults.scenario === scenario
+                    && page.draft.defaults.length === 900 && !main().querySelector('.cup-replaced');
+                // A preset that sets its own length says so, and Keep mine gives it back.
+                press(main().querySelector('[data-preset="quick_cup"]'));
+                const notice = main().querySelector('.cup-replaced');
+                all.replaced = !!notice && /match length/.test(notice.textContent)
+                    && page.draft.defaults.length === 600 && page.draft.seeding === 'manual';
+                press(main().querySelector('[data-focus="keep-mine"]'));
+                all.keepMine = page.draft.defaults.length === 900
+                    && !main().querySelector('.cup-replaced')
+                    && active().classList.contains('cup-preset-pick');
+                all.keptSaid = await until(() => announced() === t('tournament.formatStep.kept'));
+                // Deleting a preset of the person asks in place, and Escape keeps it.
+                await tournamentsApi.savePreset('clunky_check', { title: 'Clunky check',
+                    description: '', stages: [{ format: 'league', name: 'League' }] });
+                page.presets = await tournamentsApi.presets();
+                page.renderWizard();
+                press(main().querySelector('[data-focus="delete-preset-clunky_check"]'));
+                const asked = main().querySelector('.cup-presets .cup-confirm');
+                all.deleteAsked = !!asked && active().dataset.answer === 'no';
+                active().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape',
+                    bubbles: true }));
+                all.deleteKept = !main().querySelector('.cup-presets .cup-confirm')
+                    && active().dataset.focus === 'delete-preset-clunky_check'
+                    && 'clunky_check' in await tournamentsApi.presets();
+                press(main().querySelector('[data-focus="delete-preset-clunky_check"]'));
+                press(main().querySelector('.cup-presets .cup-confirm [data-answer="yes"]'));
+                all.deleted = await until(() => !page.presets.clunky_check)
+                    && !('clunky_check' in await tournamentsApi.presets());
+                // Saving over a preset of the person asks first.
+                await tournamentsApi.savePreset('clunky_over', { title: 'Old title',
+                    description: '', stages: [{ format: 'league', name: 'League' }] });
+                page.presets = await tournamentsApi.presets();
+                // The review shows its check in place while it runs, and typing goes on.
+                const check = tournamentsApi.check;
+                let answer = null;
+                tournamentsApi.check = (config) => new Promise((resolve) => {
+                    answer = () => resolve(check(config));
+                });
+                page.goStep(4);
+                const saveName = main().querySelector('.cup-preset-name');
+                all.checking = !!main().querySelector('.cup-review .cup-checking')
+                    && main().querySelector('.cup-review').getAttribute('aria-busy') === 'true';
+                saveName.focus();
+                type(saveName, 'clunky_over');
+                await until(() => answer);
+                answer();
+                tournamentsApi.check = check;
+                await until(() => !main().querySelector('.cup-checking'));
+                all.typing = saveName.isConnected && saveName.value === 'clunky_over'
+                    && active() === saveName;
+                const title = saveName.closest('.row').querySelectorAll('input')[1];
+                type(title, 'New title');
+                press(main().querySelector('[data-focus="save-preset"]'));
+                const over = main().querySelector('.cup-save .cup-confirm');
+                all.saveAsked = !!over && /Old title/.test(over.textContent)
+                    && active().dataset.answer === 'no'
+                    && (await tournamentsApi.presets()).clunky_over.title === 'Old title';
+                press(main().querySelector('.cup-save .cup-confirm [data-answer="yes"]'));
+                all.saved = await until(() => page.presets.clunky_over
+                    && page.presets.clunky_over.title === 'New title'
+                    && active() && active().dataset.focus === 'save-preset');
+                await tournamentsApi.removePreset('clunky_over');
+                delete page.presets.clunky_over;
+                // A mistake in the JSON names its line and column, and the caret goes there.
+                page.goStep(3);
+                main().querySelector('.cup-json-box').open = true;
+                const json = main().querySelector('.cup-json');
+                type(json, '{\\n  "stages": [\\n    { format: "league" }\\n  ]\\n}');
+                press(named(t('tournament.json.apply')));
+                const note = () => main().querySelector('.cup-json-note').textContent;
+                all.json = note() === t('tournament.json.failed', { line: 3, column: 7 })
+                    && active() === json && json.selectionStart === 22
+                    && json.getAttribute('aria-invalid') === 'true';
+                type(json, '[]');
+                press(named(t('tournament.json.apply')));
+                all.jsonShape = note() === t('tournament.json.expected');
+                // An unchecked tiebreaker has no button to move it, and every name starts with a
+                // capital, as the ways to settle a tie do.
+                page.draft.stages = [{ format: 'league', name: 'League' }];
+                page.goStep(3);
+                const use = named('Use: Goal difference, stage 1');
+                press(use);
+                const row = named('Use: Goal difference, stage 1').closest('li');
+                all.unchecked = !row.querySelector('input').checked && row.classList.contains('off')
+                    && !row.querySelector('button')
+                    && active().dataset.focus === 'use-goal_difference';
+                all.capital = [...main().querySelectorAll('.cup-order li label')]
+                    .every((node) => /^[A-Z]/.test(node.textContent.trim()));
+                // The rows and the select of teams show the size of each team.
+                teams.push(await api.uploadTeam('Size check', 'main.py',
+                    new Blob(['def agent(obs):\\n    return [0]\\n']), '5v5'));
+                page.teams = await api.teams();
+                page.draft.entrants = [];
+                page.goStep(1);
+                const select = named(t('tournament.entrants.team.label'));
+                const option = [...select.options].find((o) => o.value === teams[0].id);
+                all.sizeOption = !!option
+                    && option.textContent === 'Size check, 5v5, 1 controlled player';
+                select.value = teams[0].id;
+                press(named(t('tournament.entrants.team.add')));
+                press(named(t('tournament.entrants.builtin.add')));
+                all.sizeRow = main().querySelector('.cup-entrant-size')
+                    ?.textContent === '5v5, 1 controlled player'
+                    && page.mainHost.querySelector('.cup-adder select').value === teams[0].id;
+                // The notes of names stay in place while empty, and a move is said.
+                all.notes = [...main().querySelectorAll('.cup-name-note')]
+                    .every((node) => getComputedStyle(node).display !== 'none');
+                press(main().querySelector('.cup-entrants > li .cup-down'));
+                all.moveSaid = await until(() => /^Moved Size check to place 2 of 2[.]$/.test(
+                    announced()));
+                // A team registered while the wizard is open joins the select once it is
+                // focused.
+                teams.push(await api.uploadTeam('Late check', 'main.py',
+                    new Blob(['def agent(obs):\\n    return [0]\\n']), '11v11'));
+                // A page without the focus of the system hears no focus event, so it is sent.
+                const choose = named(t('tournament.entrants.team.label'));
+                choose.focus();
+                choose.dispatchEvent(new FocusEvent('focus'));
+                all.late = await until(() => [...named(t('tournament.entrants.team.label'))
+                    .options].some((o) => o.value === teams[1].id));
+                page.cancelWizard();
+                // A finished tournament reads as finished, with or without spoilers, and its
+                // actions name themselves.
+                const cup = await make({ name: 'Finish check', seed: 4, seeding: 'manual',
+                    entrants: [{ kind: 'team', team: teams[1].id }, { kind: 'builtin',
+                        ability: 0.8 }],
+                    stages: [{ format: 'knockout', name: 'Cup', settle: ['lots'] }] });
+                // The page has not seen the team yet, so it reads the registry again.
+                page.teams = page.teams.filter((x) => x.id !== teams[1].id);
+                page.teamsAsked = null;
+                await page.open(cup.id);
+                await until(() => page.current && page.current.state === 'done', 15000);
+                await page.load(cup.id);
+                all.teamRead = await until(() => page.teams.some((x) => x.id === teams[1].id)
+                    && main().querySelector('.cup-fixture') && !main().querySelector('.cup-dot'));
+                const played = () => main().querySelector('.cup-view-played').textContent;
+                all.finished = played() === 'Finished, 1 match played';
+                const words = (key) => main().querySelector(`[data-focus="${key}"]`)
+                    ?.textContent.trim();
+                all.words = words('act-ceremony') === t('tournament.view.ceremony')
+                    && words('act-again') === t('tournament.view.again');
+                spoilers.setSpoilerFree(cup.id, true);
+                await page.load(cup.id);
+                all.finishedQuiet = played() === 'Finished, 1 match played';
+                // The score of predictions shows once, also beside what the person missed.
+                const key = page.current.matches[0].key;
+                spoilers.predict(cup.id, key, 'home');
+                spoilers.markWatched(cup.id, key);
+                page.session[cup.id] = [key];
+                await page.load(cup.id);
+                all.once = !!main().querySelector('.cup-caught-up')
+                    && main().textContent.split('Predictions:').length === 2;
+                spoilers.setSpoilerFree(cup.id, false);
+                delete page.session[cup.id];
+                // The main part redraws in silence, and the end of a match is said once.
+                const quiet = await make({ name: 'Quiet check', seed: 9, seeding: 'manual',
+                    entrants: [0.1, 0.3, 0.5, 0.7].map((ability) => ({ kind: 'builtin', ability })),
+                    stages: [{ format: 'knockout', name: 'Cup', settle: ['lots'] }] });
+                await page.open(quiet.id);
+                page.announcer.textContent = '';
+                await page.load(quiet.id);
+                all.silent = !main().hasAttribute('aria-live')
+                    && !main().closest('[aria-live]');
+                all.resultSaid = await until(() => /^Final ended: .+ [0-9]+, .+ [0-9]+[.]$/.test(
+                    announced()));
+                page.announcer.textContent = '';
+                await page.load(quiet.id);
+                await wait(200);
+                all.saidOnce = announced() === '';
+                // A refusal of the server that stands alone starts with a capital.
+                const open = await make({ name: 'Refusal check', seed: 2,
+                    entrants: [{ kind: 'person', name: 'Ana' }, { kind: 'person', name: 'Bo' }],
+                    stages: [{ format: 'knockout', name: 'Cup' }] });
+                // The name of a tournament keeps the focus through the redraws of a poll.
+                await page.open(open.id);
+                page.renderView();
+                all.titleFocus = active().tagName === 'H2' && main().contains(active());
+                const refused = await tournamentsApi.remove(open.id).catch((err) => err);
+                all.capitalRefusal = refused instanceof Error
+                    && refused.message.startsWith('Expected a tournament that has ended');
+                // A smaller zoom of the Brackets view shows the whole bracket smaller.
+                const eight = await make({ name: 'Zoom check', seed: 3, seeding: 'manual',
+                    entrants: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8].map((ability) => ({
+                        kind: 'builtin', ability })),
+                    stages: [{ format: 'knockout', name: 'Cup', settle: ['lots'] }] });
+                await page.open(eight.id);
+                await until(() => page.current && page.current.state === 'done', 15000);
+                await page.openBrackets(eight.id);
+                const width = () => main().querySelector('.cup-big .cup-bracket')
+                    .getBoundingClientRect().width;
+                page.zoom = 1;
+                page.renderView();
+                const full = width();
+                page.zoom = 0.5;
+                page.renderView();
+                const half = width();
+                all.zoom = half > 0 && half < full * 0.6;
+                all.widths = [full, half];
+                page.zoom = 1;
+                page.closeBrackets();
+                all.dialogs = dialogs.length === 0;
+            } finally {
+                cuju.hud.toast = toast;
+                window.confirm = confirm;
+                if (page.mode === 'wizard') {
+                    page.cancelWizard();
+                }
+                for (const name of ['clunky_check', 'clunky_over']) {
+                    await tournamentsApi.removePreset(name).catch(() => null);
+                }
+                for (const id of made) {
+                    await tournamentsApi.action(id, 'cancel').catch(() => null);
+                    await tournamentsApi.remove(id).catch(() => null);
+                }
+                for (const team of teams) {
+                    await api.deleteTeam(team.id).catch(() => null);
+                }
+                page.mode = 'empty';
+                page.openId = null;
+                page.zoom = 1;
+                await page.refresh();
+            }
+            const { widths, ...rest } = all;
+            return Object.values(rest).every(Boolean) || JSON.stringify(all);
+        })()
+    """
+    )
+    assert result is True, f'Tournament presets, review, orders and finished view {result}'
+    return 1
+
+
+def phone_view_checks(client):
+    """Checks the actions, the bracket that scrolls sideways and the ceremony card below the
+    podium at the width of a phone."""
+    client.call(
+        'Emulation.setDeviceMetricsOverride',
+        {'width': 390, 'height': 844, 'deviceScaleFactor': 1, 'mobile': True},
+    )
+    try:
+        result = client.evaluate(
+            """
+            (async () => {
+                """
+            + UNTIL
+            + """
+                const { tournamentsApi } = await import('./js/play/tournament.js');
+                const all = {};
+                let id = null;
+                try {
+                    const cup = await tournamentsApi.create({ name: 'Phone check', seed: 3,
+                        seeding: 'manual',
+                        entrants: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8].map((ability) => ({
+                            kind: 'builtin', ability })),
+                        stages: [{ format: 'knockout', name: 'Cup', settle: ['lots'] }] });
+                    id = cup.id;
+                    await page.open(id);
+                    await until(() => page.current && page.current.state === 'done', 15000);
+                    await page.load(id);
+                    // The actions keep their words within the width of the phone.
+                    all.actions = [...main().querySelectorAll('.cup-actions .btn')]
+                        .every((b) => b.getBoundingClientRect().right <= 390);
+                    await page.openBrackets(id);
+                    const scroll = main().querySelector('.cup-big .cup-bracket-scroll');
+                    all.sideways = !!scroll && scroll.scrollWidth > scroll.clientWidth
+                        && document.documentElement.scrollWidth <= 390;
+                    page.closeBrackets();
+                    // The card of the ceremony sits low, so the podium shows above it.
+                    await page.ceremony();
+                    await until(() => cuju.podium.showing, 8000);
+                    const card = document.getElementById('victory').getBoundingClientRect();
+                    all.ceremony = card.top >= innerHeight * 0.45 && card.bottom <= innerHeight
+                        && card.left >= 0 && card.right <= 390;
+                    all.size = [card.top, card.bottom, innerHeight];
+                    cuju.postMatch.end();
+                    cuju.showPage('tournaments');
+                } finally {
+                    cuju.hud.toast = toast;
+                    window.confirm = confirm;
+                    if (id) {
+                        await tournamentsApi.remove(id).catch(() => null);
+                    }
+                    page.mode = 'empty';
+                    page.openId = null;
+                    await page.refresh();
+                }
+                const { size, ...rest } = all;
+                return Object.values(rest).every(Boolean) || JSON.stringify(all);
+            })()
+        """
+        )
+    finally:
+        client.call('Emulation.clearDeviceMetricsOverride')
+    assert result is True, f'Tournament views at the width of a phone {result}'
+    return 1
+
+
+def desktop_checks(client):
+    """Checks that the kind of each entrant reads on one line at the width of a desktop."""
+    client.call(
+        'Emulation.setDeviceMetricsOverride',
+        {'width': 1280, 'height': 800, 'deviceScaleFactor': 1, 'mobile': False},
+    )
+    try:
+        result = client.evaluate(
+            """
+            (async () => {
+                """
+            + UNTIL
+            + """
+                const { api } = await import('./js/core/api.js');
+                const all = {};
+                const teams = [];
+                try {
+                    for (const name of ['Several five', 'Single eleven']) {
+                        teams.push(await api.uploadTeam(name, 'main.py',
+                            new Blob(['def agent(obs):\\n    return [0]\\n']), '5v5'));
+                    }
+                    page.startWizard();
+                    page.teams = await api.teams();
+                    page.draft.entrants = [...teams.map((team) => ({ kind: 'team',
+                        team: team.id })),
+                        { kind: 'builtin', ability: 0.5 }, { kind: 'person', name: 'Ana',
+                            teammates: 'builtin' }];
+                    page.goStep(1);
+                    await wait(100);
+                    // The words that a row shows of its kind, and the size of a team under
+                    // them, are one line each.
+                    const lines = (node) => {
+                        const range = document.createRange();
+                        range.selectNodeContents(node);
+                        return new Set([...range.getClientRects()].map((r) => Math.round(r.top)))
+                            .size;
+                    };
+                    const kinds = [...main().querySelectorAll('.cup-entrant-kind')];
+                    const shown = (kind) => [...kind.childNodes].filter((node) => node.nodeType
+                        === Node.TEXT_NODE || node.classList.contains('cup-entrant-size'));
+                    all.lines = kinds.map((kind) => shown(kind).map(lines));
+                    all.oneLine = kinds.length === 4 && kinds.every((kind) => shown(kind)
+                        .every((node) => lines(node) === 1));
+                    all.noScroll = document.documentElement.scrollWidth <= 1280;
+                } finally {
+                    page.cancelWizard();
+                    for (const team of teams) {
+                        await api.deleteTeam(team.id).catch(() => null);
+                    }
+                }
+                const { lines, ...rest } = all;
+                return Object.values(rest).every(Boolean) || JSON.stringify(all);
+            })()
+        """
+        )
+    finally:
+        client.call('Emulation.clearDeviceMetricsOverride')
+    assert result is True, f'Tournament entrants at the width of a desktop {result}'
     return 1

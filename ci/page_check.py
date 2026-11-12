@@ -621,7 +621,7 @@ def tournament_checks(client):
             const third = [...main().querySelectorAll('.cup-bracket-section h3')]
                 .some((h) => h.textContent === 'Third place match');
             const watch = !!main().querySelector('.cup-watch button');
-            const champion = /Champion, /.test(main().querySelector('.cup-champion').textContent);
+            const champion = /Champion: /.test(main().querySelector('.cup-champion').textContent);
             const text = page.root.textContent;
             const names = !/_vs_|academy_|11_vs|5_vs/.test(text);
             const all = { steps, picked, keys, refused: !!refused, reason, entrants, stages,
@@ -971,7 +971,7 @@ def tournament_checks(client):
             const revealed = await until(() => main().querySelector('.cup-champion')
                 && page.current.spoilers.hidden === 0);
             const score = main().querySelector('.cup-prediction-score');
-            const scored = /Predictions, \d of 1 right/.test(score ? score.textContent : '');
+            const scored = /Predictions: \d of 1 right/.test(score ? score.textContent : '');
             const unhidden = (await api.matches()).find((m) => m.id === recording);
             const back = !!unhidden && Array.isArray(unhidden.score);
             // The Brackets view shows the stage large, zooms and goes back.
@@ -1424,6 +1424,46 @@ def ui_a11y_checks(client):
     for name, value in result.items():
         assert value is True, (name, value)
     return len(result)
+
+
+def address_checks(client):
+    """Checks that the address of Watch shows a recording by its title, with its id as the tooltip
+    and as the text to edit once the field takes the focus."""
+    result = client.evaluate("""
+        (async () => {
+            const { api } = await import('./js/core/api.js');
+            const { recordingTitle } = await import('./js/core/names.js');
+            const input = document.getElementById('address-input');
+            const list = await api.matches();
+            const id = list[0].id;
+            cuju.showPage('watch');
+            await cuju.openMatch(id);
+            cuju.timeline.pause();
+            input.blur();
+            const title = recordingTitle(cuju.source.header, id);
+            const shown = !!title && input.value === title && input.title === id;
+            // A page without the focus of the system hears no focus events, so they are sent.
+            input.focus();
+            input.dispatchEvent(new FocusEvent('focus'));
+            const editing = input.value === id;
+            input.blur();
+            input.dispatchEvent(new FocusEvent('blur'));
+            const back = input.value === title;
+            // Enter on the title opens the recording itself.
+            let opened = null;
+            const open = cuju.openAddress;
+            cuju.openAddress = (value) => {
+                opened = value;
+            };
+            document.getElementById('address').requestSubmit();
+            cuju.openAddress = open;
+            const all = { shown, editing, back, submit: opened === id };
+            return Object.values(all).every(Boolean) || JSON.stringify({ ...all, title,
+                value: input.value });
+        })()
+    """)
+    assert result is True, f'The address of Watch {result}'
+    return 1
 
 
 def hash_checks(client):
@@ -3743,6 +3783,9 @@ def main():
                     const bound = play.input.keys.shot === 'KeyX' && stored.keys.shot === 'KeyX'
                         && play.keys.KeyX[0] === 'shot' && !play.keys.KeyD
                         && play.keyTable.textContent.includes('X');
+                    // The slider sits right under its label, never at the foot of a tall field.
+                    const field = play.deadZone.closest('.field').getBoundingClientRect();
+                    const near = play.deadZone.getBoundingClientRect().top - field.top < 60;
                     play.deadZone.value = '0.3';
                     play.deadZone.dispatchEvent(new Event('input'));
                     const stick = { stickX: { a: 0, s: 1 }, stickY: { a: 1, s: 1 } };
@@ -3773,7 +3816,9 @@ def main():
                     const reset = play.input.keys.shot === 'KeyD' && play.input.deadZone === 0.5
                         && play.input.devices.join() === 'auto,auto';
                     play.inputPanel.open = false;
-                    return { reserved, taken, bound, zone, devices, tested, navigable, reset };
+                    return {
+                        reserved, taken, bound, near, zone, devices, tested, navigable, reset,
+                    };
                 })()
             """)
             assert all(result.values()), f'Play input settings {result}'
@@ -4105,6 +4150,9 @@ def main():
             checks += page_tournaments.wizard_checks(client)
             checks += page_tournaments.phone_checks(client)
             checks += page_tournaments.view_checks(client)
+            checks += page_tournaments.clunky_checks(client)
+            checks += page_tournaments.phone_view_checks(client)
+            checks += page_tournaments.desktop_checks(client)
             checks += surprise_checks(client)
             checks += reconnection_checks(client)
             checks += palette_checks(client)
@@ -4136,6 +4184,7 @@ def main():
             checks += page_language.check_languages(client)
             checks += draw_checks(client)
             checks += hash_checks(client)
+            checks += address_checks(client)
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
             assert not client.evaluate('!!document.pointerLockElement')
             assert not client.errors, client.errors
