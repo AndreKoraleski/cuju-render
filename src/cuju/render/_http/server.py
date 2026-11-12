@@ -1332,6 +1332,9 @@ def make_handler(
             try:
                 if len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'duplicate':
                     self._json(_teams.duplicate(parts[2]), 201)
+                elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'preflight':
+                    # The check of a team under strict rules, a pass or the rule it broke.
+                    self._json(_tournament_runner.check_team(parts[2], self._document()))
                 elif len(parts) == 4 and parts[1] == 'matches' and parts[3] == 'video':
                     self._json(videos.start(parts[2], self._document()), 201)
                 elif len(parts) == 4 and parts[1] == 'live' and parts[3] == 'environment':
@@ -1541,8 +1544,43 @@ def make_handler(
                     self._refuse(404, 'server.tournament.unknown')
                 else:
                     self._json(entry)
+            elif len(rest) == 2 and rest[1] == 'analysis':
+                # The ratings with their intervals, the matrix of goal differences, the standings
+                # and the matches, which the page shows and exports.
+                found = cups().analysis(rest[0])
+                if found is None:
+                    self._refuse(404, 'server.tournament.unknown')
+                else:
+                    self._json(found)
+            elif len(rest) == 3 and rest[1] == 'files':
+                self._tournament_file(rest[0], rest[2])
             else:
                 self._refuse(404, 'server.no_resource')
+
+        def _tournament_file(self, identifier: str, name: str) -> None:
+            """Sends one file of a tournament's results, such as `standings.csv`, to save."""
+            from .._tournaments import results as _results
+
+            if name not in _results.FILES:
+                self._refuse(404, 'server.no_resource')
+                return
+            files = cups().files(identifier)
+            if files is None:
+                self._refuse(404, 'server.tournament.unknown')
+                return
+            body = files[name].encode()
+            kind = {
+                '.csv': 'text/csv',
+                '.jsonl': 'application/x-ndjson',
+                '.json': 'application/json',
+            }[name[name.rindex('.') :]]
+            self.send_response(200)
+            self.send_header('Content-Type', f'{kind}; charset=utf-8')
+            self.send_header('Content-Disposition', f'attachment; filename="{identifier}-{name}"')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
 
         def _tournament_post(self, rest: list[str]) -> None:
             """Creates, checks and changes tournaments, and saves presets."""
@@ -1551,6 +1589,9 @@ def make_handler(
                 self._json(cups().create(document.get('config', document)), 201)
             elif rest == ['check']:
                 self._json(_tournament_runner.preview(document.get('config', document)))
+            elif rest == ['preflight']:
+                # The pre-flight of a tournament still to start, which Review shows.
+                self._json(_tournament_runner.preflight_config(document.get('config', document)))
             elif len(rest) == 2 and rest[0] == 'presets':
                 self._json(_tournament_runner.save_preset(rest[1], document.get('preset')), 201)
             elif len(rest) == 2 and rest[1] == 'spoilers':
@@ -1560,10 +1601,12 @@ def make_handler(
                     self._refuse(404, 'server.tournament.unknown')
                 else:
                     self._json(entry)
-            elif len(rest) == 2 and rest[1] in ('cancel', 'resume', 'play', 'forfeit'):
+            elif len(rest) == 2 and rest[1] in ('cancel', 'resume', 'play', 'forfeit', 'legs'):
                 identifier, action = rest
                 try:
-                    if action == 'cancel':
+                    if action == 'legs':
+                        self._json(cups().add_legs(identifier, document.get('legs')))
+                    elif action == 'cancel':
                         if not cups().cancel(identifier):
                             raise KeyError(identifier)
                         self._json(cups().get(identifier))

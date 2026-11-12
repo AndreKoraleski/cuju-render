@@ -3557,6 +3557,92 @@
     "tournament.preset.king_of_the_hill.description": "O melhor cabeça de chave começa como rei, e cada desafiante por sua vez tenta tomar a coroa, que fica com o rei no empate.",
     "tournament.preset.gauntlet.title": "Escalada",
     "tournament.preset.gauntlet.description": "Os piores cabeças de chave se enfrentam primeiro, e o vencedor sobe para enfrentar cada cabeça de chave acima, um por vez, até o primeiro.",
+    "tournament.results.played": {
+        "=0": "Os ratings se apoiam em {count} partidas jogadas.",
+        "one": "Os ratings se apoiam em {count} partida jogada.",
+        "many": "Os ratings se apoiam em {count} partidas jogadas.",
+        "other": "Os ratings se apoiam em {count} partidas jogadas."
+    },
+    "tournament.results.cutShort": {
+        "=0": "{count} delas terminaram antes da hora, por W.O. ou antes do tempo regulamentar.",
+        "one": "{count} delas terminou antes da hora, por W.O. ou antes do tempo regulamentar.",
+        "many": "{count} delas terminaram antes da hora, por W.O. ou antes do tempo regulamentar.",
+        "other": "{count} delas terminaram antes da hora, por W.O. ou antes do tempo regulamentar."
+    },
+    "tournament.results.method": {
+        "=0": "Cada participante também joga {count} empates virtuais contra um participante de força fixa, o que mantém todo rating finito, e os intervalos vêm de {resamples} reamostragens das partidas jogadas, sorteadas a partir da semente {seed} do torneio.",
+        "one": "Cada participante também joga {count} empate virtual contra um participante de força fixa, o que mantém todo rating finito, e os intervalos vêm de {resamples} reamostragens das partidas jogadas, sorteadas a partir da semente {seed} do torneio.",
+        "many": "Cada participante também joga {count} empates virtuais contra um participante de força fixa, o que mantém todo rating finito, e os intervalos vêm de {resamples} reamostragens das partidas jogadas, sorteadas a partir da semente {seed} do torneio.",
+        "other": "Cada participante também joga {count} empates virtuais contra um participante de força fixa, o que mantém todo rating finito, e os intervalos vêm de {resamples} reamostragens das partidas jogadas, sorteadas a partir da semente {seed} do torneio."
+    },
+    "tournament.preset.strict_round_robin.title": "Pontos corridos com regras estritas",
+    "tournament.preset.strict_round_robin.description": "Todos jogam contra todos dez vezes com os lados alternados, cinco contra cinco por 3000 passos, sob regras estritas com os limites padrão, depois de uma verificação prévia de cada equipe, com o participante aleatório e a IA embutida incluídos como piso.",
+    "tournament.strict.limit.threads": {
+        "=0": "{count} threads por equipe",
+        "one": "{count} thread por equipe",
+        "many": "{count} threads por equipe",
+        "other": "{count} threads por equipe"
+    },
+    "tournament.preflight.running": {
+        "=0": "Verificando {count} equipes. Cada uma carrega e joga alguns passos, o que leva um tempo, então você pode continuar enquanto isso.",
+        "one": "Verificando {count} equipe. Ela carrega e joga alguns passos, o que leva um tempo, então você pode continuar enquanto isso.",
+        "many": "Verificando {count} equipes. Cada uma carrega e joga alguns passos, o que leva um tempo, então você pode continuar enquanto isso.",
+        "other": "Verificando {count} equipes. Cada uma carrega e joga alguns passos, o que leva um tempo, então você pode continuar enquanto isso."
+    },
+    "tournament.preflight.leftOut": {
+        "=0": "{count} participantes ficariam de fora: {names}.",
+        "one": "{count} participante ficaria de fora: {names}.",
+        "many": "{count} participantes ficariam de fora: {names}.",
+        "other": "{count} participantes ficariam de fora: {names}."
+    },
+    "tournament.preflight.state.excluded": {
+        "=0": "Verificação prévia concluída, {count} equipes deixadas de fora",
+        "one": "Verificação prévia concluída, {count} equipe deixada de fora",
+        "many": "Verificação prévia concluída, {count} equipes deixadas de fora",
+        "other": "Verificação prévia concluída, {count} equipes deixadas de fora"
+    },
+    "tournament.checks.title": {
+        "=0": "{count} equipes passaram na verificação",
+        "one": "{count} equipe passou na verificação",
+        "many": "{count} equipes passaram na verificação",
+        "other": "{count} equipes passaram na verificação"
+    },
+    "tournament.legs.added": {
+        "=0": "{count} jogos adicionados. As partidas deles vêm a seguir.",
+        "one": "{count} jogo adicionado. As partidas dele vêm a seguir.",
+        "many": "{count} jogos adicionados. As partidas deles vêm a seguir.",
+        "other": "{count} jogos adicionados. As partidas deles vêm a seguir."
+    },
+    "tournament.timing.calls": {
+        "=0": "{count} chamadas",
+        "one": "{count} chamada",
+        "many": "{count} chamadas",
+        "other": "{count} chamadas"
+    },
+    "tournament.results.ratings.caption": {
+        "=0": "Ratings de Bradley–Terry na escala Elo em torno de 1000, do melhor ao pior, cada um com seu intervalo de 95% de {count} reamostragens",
+        "one": "Ratings de Bradley–Terry na escala Elo em torno de 1000, do melhor ao pior, cada um com seu intervalo de 95% de {count} reamostragem",
+        "many": "Ratings de Bradley–Terry na escala Elo em torno de 1000, do melhor ao pior, cada um com seu intervalo de 95% de {count} reamostragens",
+        "other": "Ratings de Bradley–Terry na escala Elo em torno de 1000, do melhor ao pior, cada um com seu intervalo de 95% de {count} reamostragens"
+    },
+    "tournament.results.cell.up": {
+        "=0": "{row} contra {column}, saldo médio de gols de mais {mean} em {count} partidas",
+        "one": "{row} contra {column}, saldo médio de gols de mais {mean} em {count} partida",
+        "many": "{row} contra {column}, saldo médio de gols de mais {mean} em {count} partidas",
+        "other": "{row} contra {column}, saldo médio de gols de mais {mean} em {count} partidas"
+    },
+    "tournament.results.cell.down": {
+        "=0": "{row} contra {column}, saldo médio de gols de menos {mean} em {count} partidas",
+        "one": "{row} contra {column}, saldo médio de gols de menos {mean} em {count} partida",
+        "many": "{row} contra {column}, saldo médio de gols de menos {mean} em {count} partidas",
+        "other": "{row} contra {column}, saldo médio de gols de menos {mean} em {count} partidas"
+    },
+    "tournament.results.cell.even": {
+        "=0": "{row} contra {column}, saldo médio de gols de {mean} em {count} partidas",
+        "one": "{row} contra {column}, saldo médio de gols de {mean} em {count} partida",
+        "many": "{row} contra {column}, saldo médio de gols de {mean} em {count} partidas",
+        "other": "{row} contra {column}, saldo médio de gols de {mean} em {count} partidas"
+    },
     "matches.format.5v5": "5 contra 5",
     "matches.format.11v11": "11 contra 11",
     "matches.state.queued": "Aguardando",
@@ -4254,6 +4340,12 @@
         "many": "a política não responde há {count} segundos",
         "other": "a política não responde há {count} segundos"
     },
+    "server.preflight.timeout": {
+        "=0": "a verificação do time levou mais de {count} minutos",
+        "one": "a verificação do time levou mais de {count} minuto",
+        "many": "a verificação do time levou mais de {count} minutos",
+        "other": "a verificação do time levou mais de {count} minutos"
+    },
     "server.requests.cancelled": "cancelada",
     "server.requests.exit": "a partida terminou com o código de saída {code}",
     "server.requests.exit_detail": "a partida terminou com o código de saída {code}, {detail}",
@@ -4284,6 +4376,30 @@
     "server.sizes.safe": "a área segura deve ser uma de {modes} ou uma porcentagem de 0 a {most}, não {value}",
     "server.sizes.size": "o tamanho deve ser como `1280x720` ou um de {presets}, não {value}",
     "server.sizes.width": "a largura deve ir de {lowest} a {highest}, não {value}",
+    "server.strict.call_time": {
+        "=0": "{player} não respondeu à chamada de ação {call} em {count} segundos",
+        "one": "{player} não respondeu à chamada de ação {call} em {count} segundo",
+        "many": "{player} não respondeu à chamada de ação {call} em {count} segundos",
+        "other": "{player} não respondeu à chamada de ação {call} em {count} segundos"
+    },
+    "server.strict.first_time": {
+        "=0": "{player} não respondeu à primeira chamada de ação em {count} segundos",
+        "one": "{player} não respondeu à primeira chamada de ação em {count} segundo",
+        "many": "{player} não respondeu à primeira chamada de ação em {count} segundos",
+        "other": "{player} não respondeu à primeira chamada de ação em {count} segundos"
+    },
+    "server.strict.load_time": {
+        "=0": "{player} não carregou em {count} segundos",
+        "one": "{player} não carregou em {count} segundo",
+        "many": "{player} não carregou em {count} segundos",
+        "other": "{player} não carregou em {count} segundos"
+    },
+    "server.strict.reset_time": {
+        "=0": "{player} não reiniciou em {count} segundos",
+        "one": "{player} não reiniciou em {count} segundo",
+        "many": "{player} não reiniciou em {count} segundos",
+        "other": "{player} não reiniciou em {count} segundos"
+    },
     "server.teams.ability": "a habilidade deve ir de 0 a 1, não {value}",
     "server.teams.ability_pair": "informe um par de habilidades, esquerda e direita, não {ability}",
     "server.teams.agent_function": "a submissão {identifier} precisa de uma função agent",

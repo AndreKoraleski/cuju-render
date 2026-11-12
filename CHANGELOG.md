@@ -247,6 +247,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     match watched without spoilers, a card names only who plays next, and with Play the next match
     by itself it counts down to it. Once every match is watched, a summary lists what the person
     missed with the predictions they got right.
+- Strict rules for tournaments, a setting that is off by default. Each registered team's policy
+    plays in a process of its own with its own import path, a limit of threads, a private working
+    folder, an empty input and its prints in its log, within limits of loading, of the first and
+    every later action call, of a reset, of the mean compute time of a call and of the size of its
+    folder. A side that crashes, runs out of time, answers an invalid action or fails to load
+    forfeits the match at once by the forfeit score, with the kind of rule, its reason and the
+    score at that moment, and the tournament plays on. Matches at once share the machine's
+    threads with the teams' processes, and every match keeps its steps, whether it was cut short,
+    its timings and the actions of each side, and under strict rules the actions that replay it,
+    which `cuju render tournament replay` plays again.
+- The random entrant, one player with actions drawn at random from its match seed, beside the
+    built in AI, on the Entrants step, as `--random` and as `{"kind": "random"}`.
+- A pre-flight before a tournament's first match, which checks every registered team on both sides
+    under the tournament's rules, leaves out those that fail with their reasons and draws the
+    tournament again without them. The same check of one team runs from its card on the Teams
+    page, from Review, and as `cuju render tournament preflight`, with an exit status for
+    continuous integration, its timings and warnings.
+- A league that is the last stage of its tournament takes more legs later, running or finished,
+    and plays only the added matches, the venue in turn leg by leg, with Add legs on the page and
+    `cuju render tournament legs`.
+- Results on every tournament, Bradley and Terry ratings centred on 1000 with 95 percent bootstrap
+    intervals seeded from the tournament seed and a heat table of the mean goal difference of every
+    pair, with eight files to export from the page and as `cuju render tournament export`,
+    `standings.csv`, `ratings.csv`, `ratings_method.json`, `pairwise_gd.csv`,
+    `pairwise_counts.csv`, `matches.jsonl`, `entrants.json` and `excluded.json`.
+- The preset Strict round robin, ten legs of five against five under strict rules after a
+    pre-flight, with the random entrant and the built in AI added.
 - `cuju.render.show`, which opens the viewer on a batch, a recording file, an identifier or a URL
     from a script, a terminal or a notebook. It reuses the server of the renderer's folder, which
     `server.json` names, or starts one in the background that ends with the process unless asked

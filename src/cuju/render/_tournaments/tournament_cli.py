@@ -75,6 +75,8 @@ def _config(options: argparse.Namespace) -> dict[str, Any]:
             entrants.append({'kind': 'team', 'team': value})
         elif kind == 'person':
             entrants.append({'kind': 'person', 'name': value})
+        elif kind == 'random':
+            entrants.append({'kind': 'random'})
         else:
             try:
                 ability = None if value in ('', 'any', 'scenario') else float(value)
@@ -88,6 +90,10 @@ def _config(options: argparse.Namespace) -> dict[str, Any]:
     for key in ('name', 'seed', 'seeding', 'concurrency'):
         if getattr(options, key) is not None:
             config[key] = getattr(options, key)
+    if options.strict is not None:
+        config['strict'] = _limits(options.strict)
+    if options.preflight:
+        config['preflight'] = True
     defaults = dict(config.get('defaults') or {})
     for key in ('scenario', 'length'):
         if getattr(options, key) is not None:
@@ -101,6 +107,56 @@ def _config(options: argparse.Namespace) -> dict[str, Any]:
         for stage in rounded:
             stage['rounds'] = options.rounds
     return config
+
+
+def _limits(text: str) -> Any:
+    """Returns the limits of strict rules that `--strict` gives, true for the defaults."""
+    try:
+        found = json.loads(text)
+    except ValueError as error:
+        raise ArgumentError(f'expected --strict with a JSON object of limits, {error}') from error
+    if found == {}:
+        return True
+    if not isinstance(found, dict):
+        raise ArgumentError(f'expected --strict with a JSON object of limits, found {text!r}')
+    return found
+
+
+def check_lines(report: dict[str, Any]) -> list[str]:
+    """Returns the lines that `preflight` prints for the check of one team."""
+    name = rules.text_of(report.get('name')) or report.get('team')
+    verdict = 'pass' if report.get('ok') else 'fail'
+    lines = [f'{verdict}  {name}  {report.get("team")}  {report.get("scenario")}']
+    rule = report.get('rule')
+    if rule:
+        lines.append(f'  {rule.get("kind")}, {rule.get("reason")}')
+    for side, found in (report.get('sides') or {}).items():
+        timings = found.get('timings') or {}
+        lines.append(f'  {side}: {_timing_text(timings)}')
+    if not report.get('sides'):
+        lines.append(f'  {_timing_text(report.get("timings") or {})}')
+    if report.get('folder_mb') is not None:
+        lines.append(f'  folder {report["folder_mb"]:.1f} MB')
+    for warning in report.get('warnings') or []:
+        lines.append(f'  warning, {rules.text_of(warning)}')
+    return lines
+
+
+def _timing_text(timings: dict[str, Any]) -> str:
+    def part(key: str, words: str, unit: str) -> str | None:
+        value = timings.get(key)
+        return None if value is None else f'{words} {value:g} {unit}'
+
+    parts = [
+        part('load_seconds', 'loaded in', 's'),
+        part('reset_seconds', 'reset in', 's'),
+        part('first_ms', 'first call', 'ms'),
+        part('mean_after_first_ms', 'mean after the first', 'ms'),
+        part('max_ms', 'largest', 'ms'),
+    ]
+    calls = timings.get('calls') or 0
+    parts.append(counted(calls, 'call'))
+    return ', '.join(item for item in parts if item)
 
 
 def _check_rounds(config: dict[str, Any], rounds: int) -> None:
@@ -331,6 +387,22 @@ def _run(options: argparse.Namespace) -> int:
     return 0 if state in ('done', 'people') else 1
 
 
+def _preflight(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
+    """Checks one team as a tournament's pre-flight does, exit status 0 for a pass and 1 else."""
+    team = options.target or next(
+        (value for kind, value in options.entrants or [] if kind == 'team'), None
+    )
+    if not team:
+        parser.error('tournament preflight needs a team, as --team or the target')
+    limits = rules.check_strict(_limits(options.strict) if options.strict else True)
+    report = _tournament_runner.preflight(team, options.scenario, limits)
+    if options.json:
+        _print_json(report)
+    else:
+        print('\n'.join(check_lines(report)))
+    return 0 if report.get('ok') else 1
+
+
 def _quiet(line: str) -> None:
     del line
 
@@ -379,6 +451,8 @@ def _run_command(parser: argparse.ArgumentParser, options: argparse.Namespace) -
         return 0
     if action == 'run':
         return _run(options)
+    if action == 'preflight':
+        return _preflight(parser, options)
     tournaments = _tournament_runner.Tournaments(start=False)
     try:
         if action == 'new':
@@ -437,6 +511,40 @@ def _run_command(parser: argparse.ArgumentParser, options: argparse.Namespace) -
                     _print_json(entry)
                     return 0
                 print(f'resumed {entry["id"]}, {_plays_on(entry)}')
+            elif action == 'export':
+                files = tournaments.files(options.target)
+                target = Path(options.to or '.')
+                target.mkdir(parents=True, exist_ok=True)
+                for name, text in files.items():
+                    (target / name).write_text(text, encoding='utf-8')
+                if options.json:
+                    _print_json({'id': options.target, 'folder': str(target), 'files': list(files)})
+                else:
+                    print(f'wrote {len(files)} files of results to {target}')
+            elif action == 'legs':
+                if options.legs is None:
+                    parser.error('tournament legs needs --legs, the legs to add to the last stage')
+                entry = tournaments.add_legs(options.target, options.legs)
+                if options.json:
+                    _print_json(entry)
+                else:
+                    print(f'added {counted(options.legs, "leg")}, {_played_line(entry)}')
+                    if entry['state'] == 'running':
+                        print(f'the tournament runs, {_plays_on(entry)}')
+            elif action == 'replay':
+                if not options.match:
+                    parser.error('tournament replay needs --match, the key of a match')
+                found = _tournament_runner.replay_match(options.target, options.match)
+                if options.json:
+                    _print_json(found)
+                else:
+                    again, kept = found['replay'], found['kept']
+                    print(
+                        f'{options.match} replays in {again["steps"]} steps to '
+                        f'{again["score"][0]} to {again["score"][1]}, '
+                        + ('as it played' if found['same'] else f'though it played {kept}')
+                    )
+                return 0 if found['same'] else 1
             elif action == 'delete':
                 tournaments.remove(options.target)
                 if options.json:
@@ -454,7 +562,7 @@ def _run_command(parser: argparse.ArgumentParser, options: argparse.Namespace) -
     return 0
 
 
-_NEEDS_TARGET = ('show', 'run', 'cancel', 'forfeit', 'resume', 'delete')
+_NEEDS_TARGET = ('show', 'run', 'cancel', 'forfeit', 'resume', 'delete', 'export', 'legs', 'replay')
 _RUN_MESSAGES = {
     'done': 'the tournament is complete',
     'cancelled': 'the tournament was cancelled',

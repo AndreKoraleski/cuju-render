@@ -31,7 +31,10 @@ The layers run from `_text`, `_format` and `_store` at the bottom to `_http` and
 top. A module imports lower layers at the top of the file and higher ones only inside a function.
 `_moments/events.py`, `_moments/captions.py`, `_playing/draw.py` and `_http/headers.py` keep no
 relative imports at the top, and `_tournaments/tournament.py` and `_text/messages.py` import only each other and
-`cuju.errors`, since the mock servers load them from their files alone. `_http/headers.py` holds
+`cuju.errors`, since the mock servers load them from their files alone, and
+`_tournaments/results.py` uses the standard library alone for the same reason.
+`_playing/policy_worker.py` runs as a script of its own in each team's process under strict rules,
+so it imports nothing of the renderer. `_http/headers.py` holds
 the security headers of every response, so the page checks meet the server's rules of framing,
 and a test holds the mock's headers equal to the server's. Python rules that the page mirrors keep a
 test that holds both sides equal, in `web/js/export/sizes.js`, `web/js/recording/moments.js`,

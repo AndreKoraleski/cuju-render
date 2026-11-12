@@ -54,10 +54,14 @@ SETTLEMENTS = ('away_goals', 'replay', 'decider', 'lots')
 # How the first stage orders the entrants, and how a later stage orders those who advance.
 SEEDINGS = ('random', 'manual', 'rating')
 STAGE_SEEDINGS = ('standing', 'random', 'rating')
-KINDS = ('team', 'builtin', 'person')
+KINDS = ('team', 'builtin', 'person', 'random')
 MAX_ENTRANTS = 256
 MAX_STAGES = 8
 MAX_LEGS = 10
+# The most legs that a league's pairs play once more legs are added to a stage that has begun.
+MAX_ADDED_LEGS = 90
+# The entrants that a tournament or a preset adds to those a person enters, at most.
+MAX_INCLUDED = 8
 MAX_CONCURRENCY = 8
 # The rating of an entrant that has played no tournament match, and how far one match moves it.
 BASE_RATING = 1500.0
@@ -114,7 +118,32 @@ TOURNAMENT_KEYS = (
     'defaults',
     'stages',
     'preset',
+    'strict',
+    'preflight',
+    'include',
 )
+# The limits of strict rules with their defaults, in seconds but for the mean of a call, in
+# milliseconds, the size of a team's folder, in megabytes, which the check of a team holds it to,
+# and the threads of each team's process. Each limit takes a value from the first to the second of
+# its range.
+STRICT_DEFAULTS: dict[str, Any] = {
+    'threads': 1,
+    'load_seconds': 30.0,
+    'first_call_seconds': 10.0,
+    'call_seconds': 1.0,
+    'reset_seconds': 5.0,
+    'mean_call_ms': 20.0,
+    'folder_mb': 100.0,
+}
+STRICT_RANGES: dict[str, tuple[float, float]] = {
+    'threads': (1, 64),
+    'load_seconds': (1, 600),
+    'first_call_seconds': (0.1, 600),
+    'call_seconds': (0.01, 60),
+    'reset_seconds': (0.1, 600),
+    'mean_call_ms': (0.1, 10000),
+    'folder_mb': (1, 10000),
+}
 _ROUND_NAMES = {2: 'final', 4: 'semi_finals', 8: 'quarter_finals'}
 _TIE_NAMES = {4: 'semi_final', 8: 'quarter_final'}
 # The stage names that the rules and the shipped presets give, by their English text, each with
@@ -325,6 +354,23 @@ PRESETS: dict[str, dict[str, Any]] = {
         'take the crown, which stays with the king on a draw.',
         'seeding': 'random',
         'stages': [{'format': 'king_of_the_hill', 'name': 'King of the hill'}],
+    },
+    'strict_round_robin': {
+        'title': 'Strict round robin',
+        'description': 'Everyone plays everyone ten times with sides in turn, five against five '
+        'for 3000 steps, under strict rules with the default limits, after a pre-flight check '
+        'of every team, with the random entrant and the built-in AI added as a floor.',
+        'seeding': 'random',
+        'forfeit_score': 3,
+        'strict': True,
+        'preflight': True,
+        'include': [{'kind': 'random'}, {'kind': 'builtin'}],
+        'defaults': {
+            'scenario': '5_vs_5',
+            'length': 3000,
+            'points': {'win': 3, 'draw': 1, 'loss': 0},
+        },
+        'stages': [{'format': 'league', 'name': 'Round robin', 'legs': 10}],
     },
     'gauntlet': {
         'title': 'Gauntlet',
@@ -574,6 +620,8 @@ def _entrant_name(entrant: dict[str, Any], team: dict[str, Any] | None) -> Any:
             if ability is None
             else _label('builtin_ability', ability=f'{ability:.2f}')
         )
+    if entrant['kind'] == 'random':
+        return _label('random')
     raise TournamentMessageError('server.tournament.person_names')
 
 
@@ -609,6 +657,31 @@ def _name_entrants(entrants: list[dict[str, Any]], bases: list[tuple[Any, bool]]
         set_named(entrant, 'name', name)
 
 
+# The key of the random entrant, whose colon no identifier of a team holds, so it never names a
+# team, as the keys of the built-in AI, such as builtin:0.50, never do either.
+RANDOM_KEY = 'random:uniform'
+# The colors of the random entrant, its shirt and its trim.
+_RANDOM_KIT = ([120, 120, 128], [255, 214, 0])
+
+
+def entrant_key(raw: dict[str, Any]) -> str | None:
+    """Returns the key of an entrant as given, before its check, or `None` when it has none yet.
+
+    The key is the one that `check_entrants` gives, the team for a team, the built-in AI at its
+    ability, `random` for the random entrant and the name of a person.
+    """
+    kind = raw.get('kind', 'team')
+    if kind == 'team':
+        return str(raw.get('team'))
+    if kind == 'builtin':
+        ability = raw.get('ability')
+        return f'builtin:{"scenario" if not _number(ability) else f"{float(ability):.2f}"}'
+    if kind == 'random':
+        return RANDOM_KEY
+    name = raw.get('name')
+    return f'person:{" ".join(name.split())}' if isinstance(name, str) else None
+
+
 def check_entrants(
     entrants: Any, teams: list[dict[str, Any]], ratings: dict[str, float] | None = None
 ) -> list[dict[str, Any]]:
@@ -622,7 +695,9 @@ def check_entrants(
 
     Args:
         entrants: A list of entrants, each `{'kind': 'team', 'team': identifier}`, `{'kind':
-            'builtin', 'ability': 0.5}` or `{'kind': 'person', 'name': 'Ana'}`, with an optional
+            'builtin', 'ability': 0.5}`, `{'kind': 'random'}` for the random entrant, which plays
+            one player with actions drawn at random, or `{'kind': 'person', 'name': 'Ana'}`, with an
+            optional
             `name`, `rating` and, for a person, `teammates`, a registry team of dynamic assignment
             or `builtin`.
         teams: The registry, as `_teams.teams` returns it.
@@ -668,6 +743,11 @@ def check_entrants(
             team = builtin
             entrant.update(team='builtin', format=None)
             entrant['key'] = f'builtin:{"scenario" if ability is None else f"{ability:.2f}"}'
+        elif kind == 'random':
+            # The random entrant plays one player of any scenario, and its teammates are the
+            # built-in AI's, so it keeps the colors of no team of the registry.
+            team = None
+            entrant.update(team='random-actions', format=None, key=RANDOM_KEY)
         else:
             mates = raw.get('teammates', 'builtin')
             team = registry.get(mates) if mates != 'builtin' else builtin
@@ -688,9 +768,10 @@ def check_entrants(
         )
         entrant['rated'] = rating is not None
         kit = (team or {}).get('style', {}).get('kit', {})
-        entrant['color'] = list(kit.get('primary') or (team or {}).get('color') or [255, 111, 0])
+        primary, secondary = _RANDOM_KIT if kind == 'random' else ([255, 111, 0], [255, 255, 255])
+        entrant['color'] = list(kit.get('primary') or (team or {}).get('color') or primary)
         entrant['secondary'] = list(
-            kit.get('secondary') or (team or {}).get('secondary') or [255, 255, 255]
+            kit.get('secondary') or (team or {}).get('secondary') or secondary
         )
         entrant['ability'] = ability
         result.append(entrant)
@@ -1018,8 +1099,15 @@ def check(
     if isinstance(seed, str) and seed.strip().isdigit():
         seed = int(seed)
     result['seed'] = _count(seed, _field('seed'), 0, 2**63 - 1)
-    entrants = check_entrants(config.get('entrants'), teams, ratings)
+    include = check_include(config.get('include'))
+    given = config.get('entrants')
+    entrants = check_entrants(with_included(given, include), teams, ratings)
     result['entrants'] = entrants
+    result['include'] = include
+    result['strict'] = check_strict(config.get('strict'))
+    if not isinstance(config.get('preflight', False), bool):
+        raise TournamentMessageError('server.tournament.preflight', value=repr(config['preflight']))
+    result['preflight'] = config.get('preflight', False)
     seeding = _field('tournament_seeding')
     result['seeding'] = _choice(config.get('seeding', 'random'), SEEDINGS, seeding)
     result['concurrency'] = _count(
@@ -1081,7 +1169,80 @@ def check(
     # The stages and defaults as given, before the entrants resolved them, so a tournament run
     # again with other entrants resolves them anew.
     result['given'] = {'stages': copy.deepcopy(stages), 'defaults': copy.deepcopy(defaults)}
+    # The entrants as given too, with those the tournament adds, so a pre-flight that leaves some
+    # out makes the tournament again from the rest. They stay apart from `given`, which a run
+    # again spreads into a new configuration with entrants of its own.
+    result['given_entrants'] = copy.deepcopy(with_included(given, include))
     return result
+
+
+def check_strict(value: Any) -> dict[str, Any] | None:
+    """Returns the limits of strict rules in full, or `None` when a tournament plays without them.
+
+    Args:
+        value: `None` or false for no strict rules, true for the default limits, or an object that
+            sets some of `STRICT_DEFAULTS`, the rest keeping their defaults.
+
+    Raises:
+        TournamentError: If the value is none of those, or a limit lies outside its range.
+    """
+    if value is None or value is False:
+        return None
+    if value is True:
+        value = {}
+    if not isinstance(value, dict):
+        raise TournamentMessageError('server.tournament.strict', value=repr(value))
+    unknown = set(value) - set(STRICT_DEFAULTS)
+    if unknown:
+        raise TournamentMessageError('server.tournament.strict_settings', settings=sorted(unknown))
+    limits = {**STRICT_DEFAULTS, **value}
+    for name, (lowest, highest) in STRICT_RANGES.items():
+        found = limits[name]
+        name_label = _field(f'strict_{name}')
+        if name == 'threads':
+            limits[name] = _count(found, name_label, int(lowest), int(highest))
+        elif not _number(found) or not lowest <= found <= highest:
+            raise TournamentMessageError(
+                'server.tournament.limit',
+                name=name_label,
+                lowest=f'{lowest:g}',
+                highest=f'{highest:g}',
+                value=repr(found),
+            )
+        else:
+            limits[name] = float(found)
+    return limits
+
+
+def check_include(value: Any) -> list[dict[str, Any]]:
+    """Returns the entrants that a tournament adds to those a person enters, as a copy.
+
+    A preset such as Strict round robin adds the random entrant and the built-in AI, as a floor
+    that every team should beat. Each is an entrant as `check_entrants` takes it, and one whose
+    key an entrant already holds is left out, so the same entrant never enters twice.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_INCLUDED:
+        raise TournamentMessageError('server.tournament.include', most=MAX_INCLUDED)
+    for raw in value:
+        if not isinstance(raw, dict) or raw.get('kind', 'team') == 'person':
+            raise TournamentMessageError('server.tournament.include', most=MAX_INCLUDED)
+    return copy.deepcopy(value)
+
+
+def with_included(entrants: Any, include: list[dict[str, Any]]) -> Any:
+    """Returns the entrants as given with each included one whose key none of them holds."""
+    if not isinstance(entrants, list):
+        return entrants
+    keys = {entrant_key(raw) for raw in entrants if isinstance(raw, dict)}
+    added = []
+    for raw in include:
+        key = entrant_key(raw)
+        if key not in keys:
+            keys.add(key)
+            added.append(copy.deepcopy(raw))
+    return [*entrants, *added]
 
 
 # The evaluation.
@@ -1646,28 +1807,41 @@ def _double_elimination(
 def _league_rounds(
     run: _Run, index: int, s: dict[str, Any], members: list[int], prefix: str, group: str | None
 ) -> list[list[dict[str, Any]]]:
-    """Registers the matches of a round robin and returns the fixtures of each matchday."""
+    """Registers the matches of a round robin and returns the fixtures of each matchday.
+
+    The legs of a meeting play back to back with the venue in turn, leg by leg. Legs added to a
+    stage that has begun, its `added_legs`, play after every matchday of before, each one a
+    round robin of its own whose venue goes on in turn from the last leg, so the keys of the
+    matches of before stay as they were.
+    """
     schedule = round_robin(members)
-    days = []
+    days: list[list[dict[str, Any]]] = []
+
+    def day_of(pairs: list[tuple[Any, Any]], flip: bool) -> None:
+        day = len(days) + 1
+        fixtures = []
+        for slot, (first, second) in enumerate(pairs):
+            if first is None or second is None:
+                continue
+            home, away = (second, first) if flip else (first, second)
+            key = f'{prefix}/{day}-{slot + 1}'
+            label = (
+                _label('matchday', number=day)
+                if group is None
+                else _label('group_matchday', group=group, number=day)
+            )
+            result = run.match(key, index, s, label, home, away)
+            fixtures.append(_fixture(key, home, away, result, group))
+        days.append(fixtures)
+
     for cycle in range(s['cycles']):
         for pairs in schedule:
             for leg in range(s['legs']):
-                flip = (cycle + leg) % 2 == 1
-                day = len(days) + 1
-                fixtures = []
-                for slot, (first, second) in enumerate(pairs):
-                    if first is None or second is None:
-                        continue
-                    home, away = (second, first) if flip else (first, second)
-                    key = f'{prefix}/{day}-{slot + 1}'
-                    label = (
-                        _label('matchday', number=day)
-                        if group is None
-                        else _label('group_matchday', group=group, number=day)
-                    )
-                    result = run.match(key, index, s, label, home, away)
-                    fixtures.append(_fixture(key, home, away, result, group))
-                days.append(fixtures)
+                day_of(pairs, (cycle + leg) % 2 == 1)
+    for extra in range(s.get('added_legs') or 0):
+        for cycle in range(s['cycles']):
+            for pairs in schedule:
+                day_of(pairs, (cycle + s['legs'] + extra) % 2 == 1)
     return days
 
 
@@ -2144,6 +2318,7 @@ def _planned(settings: dict[str, Any], count: int) -> int:
         return (2 * count - 3) * legs + final_legs
     if form in ('league', 'groups'):
         sizes = settings['group_sizes'] if form == 'groups' else [count]
+        legs += settings.get('added_legs') or 0
         return sum(size * (size - 1) // 2 for size in sizes) * settings['cycles'] * legs
     if form == 'swiss':
         return settings['rounds'] * (count // 2) * legs
@@ -2311,8 +2486,21 @@ def ready(view: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def check_result(result: Any) -> dict[str, Any]:
-    """Returns a match result in canonical form, or raises `TournamentError`."""
-    if not isinstance(result, dict) or set(result) - {'score', 'cards', 'match', 'forfeit'}:
+    """Returns a match result in canonical form, or raises `TournamentError`.
+
+    A result may hold `rule`, the rule that a side broke under strict rules, which ended the match
+    as a forfeit, and `stats`, the steps of the match with the calls, timings and actions of each
+    side, which the ratings and the files of results read. Each keeps only the fields it knows,
+    of the types it knows, so a file edited by hand reads as far as it can.
+    """
+    if not isinstance(result, dict) or set(result) - {
+        'score',
+        'cards',
+        'match',
+        'forfeit',
+        'rule',
+        'stats',
+    }:
         raise TournamentMessageError('server.tournament.result', result=repr(result))
     score = result.get('score')
     if not (
@@ -2332,11 +2520,79 @@ def check_result(result: Any) -> dict[str, Any]:
     match = result.get('match')
     if match is not None and not isinstance(match, str):
         raise TournamentMessageError('server.tournament.recording', match=repr(match))
-    return {
+    checked = {
         'score': list(score),
         'cards': [list(side) for side in cards],
         'match': match,
         'forfeit': bool(result.get('forfeit', False)),
+    }
+    rule = _checked_rule(result.get('rule'))
+    if rule is not None:
+        checked['rule'] = rule
+    stats = _checked_stats(result.get('stats'))
+    if stats is not None:
+        checked['stats'] = stats
+    return checked
+
+
+# The rules that a side may break under strict rules, each ending the match as its forfeit.
+RULES = ('load', 'reset', 'crash', 'timeout', 'invalid', 'mean')
+
+
+def _checked_rule(rule: Any) -> dict[str, Any] | None:
+    """Returns the rule that a result says a side broke, with the fields of their types."""
+    if not isinstance(rule, dict) or rule.get('side') not in ('home', 'away', 'both'):
+        return None
+    found: dict[str, Any] = {
+        'side': rule['side'],
+        'kind': rule.get('kind') if rule.get('kind') in RULES else 'crash',
+        'reason': str(rule.get('reason', ''))[:2000],
+        'reason_id': rule.get('reason_id') if isinstance(rule.get('reason_id'), str) else None,
+        'reason_values': (
+            rule.get('reason_values') if isinstance(rule.get('reason_values'), dict) else None
+        ),
+        'detail': rule.get('detail')
+        if rule.get('detail') in ('count', 'type', 'range', 'size')
+        else None,
+        'step': rule.get('step') if _integer(rule.get('step')) else 0,
+        'at': [0, 0],
+    }
+    at = rule.get('at')
+    if isinstance(at, list) and len(at) == 2 and all(_integer(v) and v >= 0 for v in at):
+        found['at'] = list(at)
+    return found
+
+
+def _checked_side_stats(side: Any) -> dict[str, Any] | None:
+    if not isinstance(side, dict):
+        return None
+    found: dict[str, Any] = {'calls': side.get('calls') if _integer(side.get('calls')) else 0}
+    for key in ('first_ms', 'mean_ms', 'max_ms', 'mean_after_first_ms'):
+        value = side.get(key)
+        found[key] = round(float(value), 3) if _number(value) and value >= 0 else None
+    actions = side.get('actions')
+    found['actions'] = (
+        {
+            str(name): count
+            for name, count in actions.items()
+            if str(name).isdigit() and _integer(count) and count >= 0
+        }
+        if isinstance(actions, dict)
+        else {}
+    )
+    return found
+
+
+def _checked_stats(stats: Any) -> dict[str, Any] | None:
+    """Returns the steps, call timings and action counts that a result keeps of its match."""
+    if not isinstance(stats, dict):
+        return None
+    sides = stats.get('sides')
+    sides = sides if isinstance(sides, list) and len(sides) == 2 else [None, None]
+    return {
+        'steps': stats.get('steps') if _integer(stats.get('steps')) else None,
+        'cut_short': stats.get('cut_short') if isinstance(stats.get('cut_short'), bool) else None,
+        'sides': [_checked_side_stats(side) for side in sides],
     }
 
 
@@ -2388,6 +2644,51 @@ def match_title(tournament: dict[str, Any], home: Any, away: Any) -> dict[str, A
     )
 
 
+# The settings that a preset holds, the format part of a configuration.
+_PRESET_KEYS = (
+    'seeding',
+    'concurrency',
+    'forfeit_score',
+    'ability',
+    'strict',
+    'preflight',
+    'include',
+    'defaults',
+    'stages',
+)
+
+
+def add_legs(config: dict[str, Any], count: Any) -> dict[str, Any]:
+    """Returns a configuration whose last stage, a league or groups, plays `count` legs more.
+
+    The matches of before keep their keys, seeds and results, and the added legs play after
+    them, so a finished or running league takes more legs later and plays only the missing
+    matches. The venue goes on in turn leg by leg.
+
+    Raises:
+        TournamentError: If the last stage is no league or groups, or the legs would pass the most.
+    """
+    stage = config['stages'][-1]
+    where = _where(len(config['stages']) - 1)
+    if stage['format'] not in ('league', 'groups'):
+        raise TournamentMessageError('server.tournament.legs_format', where=where)
+    added = stage.get('added_legs') or 0
+    room = MAX_LEGS + MAX_ADDED_LEGS - stage['legs'] - added
+    if room < 1:
+        raise TournamentMessageError(
+            'server.tournament.legs_most', where=where, most=MAX_LEGS + MAX_ADDED_LEGS
+        )
+    _count(count, _field('added_legs', where=where), 1, room)
+    changed = copy.deepcopy(config)
+    changed['stages'][-1]['added_legs'] = added + count
+    return changed
+
+
+def legs_of(stage: dict[str, Any]) -> int:
+    """Returns the legs that each meeting of a stage plays, with those added later."""
+    return stage['legs'] + (stage.get('added_legs') or 0)
+
+
 def preset_config(name: str, presets: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Returns the format part of a preset, its seeding, defaults and stages, as a copy."""
     table = PRESETS if presets is None else presets
@@ -2396,11 +2697,7 @@ def preset_config(name: str, presets: dict[str, dict[str, Any]] | None = None) -
             'server.tournament.preset', presets=', '.join(sorted(table)), name=repr(name)
         )
     preset = table[name]
-    config = {
-        key: copy.deepcopy(preset[key])
-        for key in ('seeding', 'concurrency', 'forfeit_score', 'ability', 'defaults', 'stages')
-        if key in preset
-    }
+    config = {key: copy.deepcopy(preset[key]) for key in _PRESET_KEYS if key in preset}
     config['preset'] = name
     return config
 
@@ -2409,16 +2706,7 @@ def check_preset(preset: Any) -> dict[str, Any]:
     """Returns a preset that the user saves, the format part of a configuration with a title."""
     if not isinstance(preset, dict):
         raise TournamentMessageError('server.tournament.preset_object')
-    allowed = {
-        'title',
-        'description',
-        'seeding',
-        'concurrency',
-        'forfeit_score',
-        'ability',
-        'defaults',
-        'stages',
-    }
+    allowed = {'title', 'description', *_PRESET_KEYS}
     unknown = set(preset) - allowed
     if unknown:
         raise TournamentMessageError('server.tournament.preset_settings', settings=sorted(unknown))
@@ -2434,7 +2722,11 @@ def check_preset(preset: Any) -> dict[str, Any]:
     for index, stage in enumerate(stages):
         _merge(stage, defaults if isinstance(defaults, dict) else {}, index)
     check_ability(preset.get('ability'), 'server.tournament.standard_ability')
-    for key in ('seeding', 'concurrency', 'forfeit_score', 'ability', 'defaults', 'stages'):
+    check_strict(preset.get('strict'))
+    check_include(preset.get('include'))
+    if not isinstance(preset.get('preflight', False), bool):
+        raise TournamentMessageError('server.tournament.preflight', value=repr(preset['preflight']))
+    for key in _PRESET_KEYS:
         if key in preset:
             result[key] = copy.deepcopy(preset[key])
     return result

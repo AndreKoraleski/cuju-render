@@ -757,6 +757,7 @@ def _tournament_parser(commands: Any) -> None:
                 '--team': 'team',
                 '--builtin': 'builtin',
                 '--person': 'person',
+                '--random': 'random',
                 '--as': 'as',
                 '--ability': 'ability',
             }
@@ -783,6 +784,10 @@ def _tournament_parser(commands: Any) -> None:
             'forfeit',
             'award',
             'resume',
+            'preflight',
+            'export',
+            'legs',
+            'replay',
         ),
     )
     cup.add_argument('target', nargs='?', help='the identifier of a tournament')
@@ -820,6 +825,26 @@ def _tournament_parser(commands: Any) -> None:
     cup.add_argument(
         '--winner', choices=('home', 'away'), help='the side that forfeit or award gives it to'
     )
+    cup.add_argument(
+        '--random',
+        action=Entrant,
+        dest='entrants',
+        nargs=0,
+        help='the random entrant, one player with actions drawn at random',
+    )
+    cup.add_argument(
+        '--strict',
+        nargs='?',
+        const='{}',
+        default=None,
+        metavar='LIMITS',
+        help='strict rules, with the default limits or a JSON object of some of them',
+    )
+    cup.add_argument(
+        '--preflight', action='store_true', help='check every team before the first match'
+    )
+    cup.add_argument('--to', help='the folder that export writes the files of results to')
+    cup.add_argument('--legs', type=int, help='the legs that legs adds to the last stage')
     cup.add_argument('--json', action='store_true', help='print what the action prints as JSON')
 
 

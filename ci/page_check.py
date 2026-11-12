@@ -38,6 +38,7 @@ import page_help
 import page_language
 import page_matches
 import page_search
+import page_strict
 import page_tournaments
 
 
@@ -4178,6 +4179,7 @@ def main():
             checks += page_tournaments.clunky_checks(client)
             checks += page_tournaments.phone_view_checks(client)
             checks += page_tournaments.desktop_checks(client)
+            checks += page_strict.strict_checks(client)
             checks += surprise_checks(client)
             checks += reconnection_checks(client)
             checks += palette_checks(client)

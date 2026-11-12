@@ -17,6 +17,11 @@ Every file that the renderer writes carries a seal, a keyed digest of its conten
 only this home folder holds. A file without a valid seal, one dropped into the folder or edited by
 hand, loads stopped, so it plays only once a person resumes it, and every file plays at most as
 many matches at once as the rules allow.
+
+A tournament under strict rules plays each match of agents with each registered team in a process
+of its own within the limits of its rules, and a side that breaks one forfeits the match at once,
+by the forfeit score, and the tournament goes on. A tournament with a pre-flight first checks
+every registered team, and leaves out those that fail, before its first match.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import struct
 import subprocess
 import threading
@@ -45,6 +51,7 @@ from .._store import home as _home
 from .._store import library as _library
 from .._text import messages as _messages
 from .._text.messages import MessageError
+from . import results as _results
 from . import tournament as rules
 
 _LOGGER = logging.getLogger('cuju')
@@ -57,12 +64,46 @@ _FILE_VERSION = 1
 _ASK_SECONDS = 10.0
 # The file of the home folder that holds the key of the seals of its tournament files.
 _KEY_FILE = 'tournaments.key'
+# The key of the pre-flight among the matches that a tournament runs, which no match key takes.
+_PREFLIGHT = '#preflight'
+# A check of a team ends after this many seconds, as a long load and few calls take at most.
+PREFLIGHT_SECONDS = 15 * 60
 _KEYS: dict[str, bytes] = {}
 
 
 def folder() -> Path:
     """Returns the folder of the tournaments, created when missing."""
     return _home.folder('tournaments')
+
+
+def _threads() -> int:
+    """Returns the threads of this machine, which the matches at once share."""
+    return max(1, os.cpu_count() or 1)
+
+
+def replay_path(identifier: str, key: str) -> Path:
+    """Returns the file that keeps what replays a match of a tournament, its seed and actions."""
+    return folder() / f'{identifier}.replays' / f'{key.replace("/", "_")}.json'
+
+
+def replay_match(identifier: str, key: str) -> dict[str, Any]:
+    """Plays a match of a tournament under strict rules again from its seed and actions.
+
+    Returns:
+        The match's key, the steps and score that the replay gave, and those that the match kept,
+        with whether they agree.
+
+    Raises:
+        ArgumentError: If the match kept nothing to replay.
+    """
+    from .._playing import strict as _strict
+
+    found = _read(replay_path(identifier, key), None)
+    if not isinstance(found, dict) or not isinstance(found.get('actions'), list):
+        raise MessageError('server.tournament.no_replay', key=repr(key))
+    again = _strict.replay(found)
+    kept = {'steps': len(found['actions']), 'score': found.get('score')}
+    return {'key': key, 'replay': again, 'kept': kept, 'same': again == kept}
 
 
 def _write(path: Path, value: Any) -> None:
@@ -222,7 +263,12 @@ def fits(
 
     builtin = entry(_teams.BUILTIN)
     try:
-        team = entry(entrant['team'])
+        # The random entrant's side is no team of the registry, which the rules name apart.
+        team = (
+            _teams.side_entry(entrant['team'])
+            if entrant['team'] == _teams.RANDOM_ACTIONS
+            else entry(entrant['team'])
+        )
         if entrant['kind'] == 'person':
             for humans in ((True, False), (False, True)):
                 sides = [team, builtin] if humans[0] else [builtin, team]
@@ -312,6 +358,120 @@ def recording_result(identifier: str) -> dict[str, Any]:
         elif state & 2:
             cards[team][0] += 1
     return {'score': list(_SCORE.unpack_from(last, 8)), 'cards': cards, 'match': identifier}
+
+
+def preflight(
+    team: str, scenario: str | None = None, limits: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Checks a team in a process of its own, loading it and playing a few steps under strict rules.
+
+    Args:
+        team: The team of the registry.
+        scenario: The scenario, by default the one of the team's size.
+        limits: The limits of strict rules, or `None` to check only that the team loads and plays.
+
+    Returns:
+        The report of `strict.preflight`, whether the team passed, the rule it broke otherwise and
+        its timings.
+
+    Raises:
+        ArgumentError: If the team is unknown, or the check itself fails.
+    """
+    _teams.entry(team)
+    command = [*_home.python_command(), '-m', 'cuju.render._playing.strict', '--team', team]
+    if scenario is not None:
+        command += ['--scenario', scenario]
+    if limits is not None:
+        command += ['--limits', json.dumps(limits)]
+    try:
+        done = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            cwd=_home.process_folder(),
+            env=_home.process_environment(),
+            timeout=PREFLIGHT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise MessageError('server.preflight.timeout', count=PREFLIGHT_SECONDS // 60) from error
+    report = None
+    for line in done.stdout.splitlines():
+        with contextlib.suppress(ValueError):
+            found = json.loads(line)
+            report = found if isinstance(found, dict) else report
+    if report is None:
+        found = _messages.exit_fields('server.requests.exit', done.returncode, done.stderr.strip())
+        raise MessageError('server.preflight.failed', reason=found['error'])
+    if 'error' in report and 'ok' not in report:
+        reported = _messages.report_fields(report)
+        if reported['error_id'] is not None:
+            raise MessageError(reported['error_id'], **reported['error_values'])
+        raise MessageError('server.preflight.failed', reason=reported['error'])
+    return report
+
+
+def check_team(team: str, document: Any) -> dict[str, Any]:
+    """Checks one team as the Teams page asks, under strict rules with the limits it gives.
+
+    Args:
+        team: The team of the registry.
+        document: An object with an optional `scenario` and optional `strict`, true or an object
+            of limits as a tournament takes them, the default limits when absent.
+    """
+    document = document if isinstance(document, dict) else {}
+    scenario = document.get('scenario')
+    if scenario is not None and scenario not in scenarios():
+        raise MessageError('server.scenario', scenario=repr(scenario))
+    try:
+        limits = rules.check_strict(document.get('strict', True))
+    except rules.TournamentError as error:
+        raise _messages.argument_error(error) from error
+    return preflight(team, scenario, limits)
+
+
+def preflight_config(config: Any) -> dict[str, Any]:
+    """Checks every registered team of a tournament still to start, as its pre-flight will.
+
+    Returns:
+        The check of each team, under the tournament's strict rules or, without them, as a check
+        that each team loads and plays, and the entrants that a pre-flight now would leave out.
+    """
+    checked = check_config(config)
+    scenario = checked['stages'][0]['scenario']
+    teams = list(dict.fromkeys(e['team'] for e in checked['entrants'] if e['kind'] == 'team'))
+    checks = {team: preflight(team, scenario, checked.get('strict')) for team in teams}
+    failed = {team for team, report in checks.items() if not report.get('ok')}
+    return {
+        'scenario': scenario,
+        'checks': list(checks.values()),
+        'excluded': [
+            {
+                **rules.named_from('name', entrant),
+                'team': entrant['team'],
+                **{
+                    key: (checks[entrant['team']].get('rule') or {}).get(key)
+                    for key in ('reason', 'reason_id', 'reason_values')
+                },
+            }
+            for entrant in checked['entrants']
+            if entrant['kind'] == 'team' and entrant['team'] in failed
+        ],
+    }
+
+
+def forfeit_result(result: dict[str, Any], goals: int) -> dict[str, Any]:
+    """Returns the result of a match that a side ended by breaking a rule, at the forfeit score.
+
+    The side that broke the rule loses by the forfeit score, and two sides that broke one at the
+    same step both lose, 0 to 0, while the rule keeps the reason and the score at that moment.
+    """
+    side = result['rule']['side']
+    score = {'home': [0, goals], 'away': [goals, 0]}.get(side, [0, 0])
+    return {**result, 'score': score, 'cards': [[0, 0], [0, 0]], 'match': None, 'forfeit': True}
 
 
 # Ratings and presets.
@@ -475,6 +635,8 @@ def _stored(path: Path) -> dict[str, Any] | None:
         ('failure_ids', dict, {}),
         ('games', dict, {}),
         ('notes', dict, {}),
+        ('preflight', dict, None),
+        ('excluded', list, []),
         ('created', (int, float), time.time()),
         ('finished', (int, float), None),
     ):
@@ -523,6 +685,8 @@ class Tournaments:
         only: The one tournament to run, or `None` for every tournament of the folder.
         start: Whether to start the thread that runs the matches.
         interval: The seconds between two looks at the tournaments.
+        checker: Checks one team before a tournament's first match and returns its report, by
+            default `preflight` in a child process. A test passes a function of its own.
     """
 
     def __init__(
@@ -532,6 +696,7 @@ class Tournaments:
         only: str | None = None,
         start: bool = True,
         interval: float = 0.5,
+        checker: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._records: dict[str, dict[str, Any]] = {}
@@ -542,6 +707,8 @@ class Tournaments:
         self._owned: set[str] = set()
         self._games = games
         self._player = player or self._play_process
+        self._checker = checker or preflight
+        self._analyses: dict[str, tuple[int, dict[str, Any]]] = {}
         self._only = only
         self._interval = interval
         self._stop = threading.Event()
@@ -609,11 +776,13 @@ class Tournaments:
             asked = None
         with contextlib.suppress(OSError):
             request.unlink()
-        if not isinstance(asked, dict) or asked.get('action') not in ('forfeit', 'resume'):
+        if not isinstance(asked, dict) or asked.get('action') not in ('forfeit', 'resume', 'legs'):
             return
         try:
             if asked['action'] == 'forfeit':
                 self.forfeit(record['id'], str(asked.get('key')), asked.get('winner'))
+            elif asked['action'] == 'legs':
+                self.add_legs(record['id'], asked.get('legs'))
             else:
                 self.resume(record['id'])
             answer: dict[str, Any] = {'ok': True}
@@ -663,6 +832,7 @@ class Tournaments:
     def _forget(self, identifier: str) -> None:
         self._records.pop(identifier, None)
         self._views.pop(identifier, None)
+        self._analyses.pop(identifier, None)
         self._stamps.pop(identifier, None)
         self._release(identifier)
 
@@ -785,7 +955,20 @@ class Tournaments:
             'champion_color': None if champion is None else config['entrants'][champion]['color'],
             'owner': self.owner(record['id']) if record['id'] not in self._owned else None,
             'persistence_error': record.get('persistence_error'),
+            'strict': config.get('strict') is not None,
+            'preflight': self._preflight_state(record),
+            'excluded_count': len(record.get('excluded') or []),
         }
+
+    def _preflight_state(self, record: dict[str, Any]) -> str | None:
+        """Returns where a tournament's pre-flight stands, `None` for a tournament without one."""
+        if not record['config'].get('preflight'):
+            return None
+        if record.get('preflight') is not None:
+            return 'done'
+        if (record['id'], _PREFLIGHT) in self._running:
+            return 'running'
+        return 'waiting'
 
     def entries(self) -> list[dict[str, Any]]:
         """Returns a summary of every tournament, newest first."""
@@ -833,7 +1016,36 @@ class Tournaments:
                 'matches': matches,
                 'ranking': view['ranking'],
                 'champion_index': view['champion'],
+                'checks': (record.get('preflight') or {}).get('checks', []),
+                'excluded': list(record.get('excluded') or []),
             }
+
+    def analysis(self, identifier: str) -> dict[str, Any] | None:
+        """Returns the ratings, matrix, standings and matches of a tournament, or `None`.
+
+        The analysis keeps until a result changes the tournament, since its bootstrap takes a
+        while for a long league.
+        """
+        with self._lock:
+            record = self._records.get(identifier)
+            if record is None:
+                return None
+            version = self._versions[identifier]
+            cached = self._analyses.get(identifier)
+            if cached is not None and cached[0] == version:
+                return cached[1]
+            entry = self.get(identifier)
+        found = _results.analysis(entry)
+        with self._lock:
+            self._analyses[identifier] = (version, found)
+        return found
+
+    def files(self, identifier: str) -> dict[str, str] | None:
+        """Returns the text of each file of a tournament's results by its name, or `None`."""
+        found = self.analysis(identifier)
+        if found is None:
+            return None
+        return _results.files(self.get(identifier), found)
 
     def without_spoilers(self, identifier: str, watched: Any) -> dict[str, Any] | None:
         """Returns a tournament as a person sees it who watched only the matches of `watched`.
@@ -882,6 +1094,8 @@ class Tournaments:
                 'failure_ids': {},
                 'games': {},
                 'notes': {},
+                'preflight': None,
+                'excluded': [],
             }
             _write_record(self._path(identifier), record)
             self._stamps[identifier] = self._path(identifier).stat().st_mtime_ns
@@ -960,6 +1174,41 @@ class Tournaments:
             self._persist(record)
             return self._summary(record)
 
+    def add_legs(self, identifier: str, legs: Any) -> dict[str, Any]:
+        """Adds legs to the last stage of a tournament, a league or groups, and returns it.
+
+        The matches of before keep their keys, seeds and results, so only the added matches play.
+        A finished tournament runs again to play them, and a running or stopped one keeps its
+        state.
+
+        Raises:
+            ArgumentError: If the tournament was cancelled, its last stage takes no legs, or the
+                legs would pass the most.
+        """
+        with self._lock:
+            record = self._records.get(identifier)
+            if record is None:
+                raise KeyError(identifier)
+            if record['state'] == 'cancelled':
+                raise MessageError('server.tournament.legs_cancelled')
+            try:
+                rules.add_legs(record['config'], legs)
+            except rules.TournamentError as error:
+                raise _messages.argument_error(error) from error
+            asked = not self._claim(record)
+        if asked:
+            return self._ask_owner(identifier, {'action': 'legs', 'legs': legs})
+        with self._lock:
+            record = self._record(identifier)
+            try:
+                record['config'] = rules.add_legs(record['config'], legs)
+            except rules.TournamentError as error:
+                raise _messages.argument_error(error) from error
+            if record['state'] == 'done':
+                record.update(state='running', finished=None, **_messages.entry_fields(None))
+            self._persist(record)
+            return self.get(identifier)
+
     def remove(self, identifier: str) -> bool:
         """Deletes a tournament that no longer runs, and returns whether it existed."""
         with self._lock:
@@ -971,6 +1220,7 @@ class Tournaments:
             if not self._claim(record):
                 raise MessageError('server.tournament.other_process')
             self._path(identifier).unlink(missing_ok=True)
+            shutil.rmtree(folder() / f'{identifier}.replays', ignore_errors=True)
             self._forget(identifier)
             return True
 
@@ -1094,9 +1344,25 @@ class Tournaments:
     ) -> None:
         """Keeps a match's result, moves the ratings, and ends a tournament that is complete.
 
-        A match awarded by forfeit was never played, so it leaves the ratings as they are.
+        A match awarded by forfeit was never played, so it leaves the ratings as they are, and so
+        does a match that a side ended by breaking a rule, at the forfeit score.
         """
+        replay = result.pop('replay', None) if isinstance(result, dict) else None
+        if isinstance(result.get('rule'), dict):
+            score = list(result['rule'].get('at') or [0, 0])
+            result = forfeit_result(result, record['config']['forfeit_score'])
+        else:
+            score = list(result.get('score') or [0, 0])
         checked = rules.check_result(result)
+        if isinstance(replay, dict) and isinstance(replay.get('actions'), list):
+            # A match under strict rules keeps its seed and the actions of every step, which
+            # replay it exactly, beside the tournament's file.
+            path = replay_path(record['id'], match['key'])
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _write(path, {**replay, 'key': match['key'], 'score': score})
+            except OSError as error:
+                _LOGGER.warning('cuju render could not keep the actions of a match, %s', error)
         record['results'][match['key']] = checked
         record['failures'].pop(match['key'], None)
         record['failure_ids'].pop(match['key'], None)
@@ -1179,6 +1445,8 @@ class Tournaments:
                 if record['state'] != 'running' or not self._claim(record):
                     continue
                 self._follow_games(record)
+                if self._preflight_pending(record):
+                    continue
                 view = self._view(record)
                 if view['complete']:
                     record.update(state='done', finished=time.time())
@@ -1186,8 +1454,14 @@ class Tournaments:
                     self._release(record['id'])
                     continue
                 busy = sum(1 for key in self._running if key[0] == record['id'])
+                load = sum(running.get('cost', 1) for running in self._running.values())
                 for match in rules.ready(view):
                     if busy >= record['config']['concurrency']:
+                        break
+                    cost = self._cost(record, match)
+                    # The processes of strict rules count against the threads of the machine,
+                    # so matches at once never crowd each other into timeouts that no team caused.
+                    if busy and load + cost > _threads():
                         break
                     key = (record['id'], match['key'])
                     if (
@@ -1196,13 +1470,177 @@ class Tournaments:
                         or match['key'] in record['failures']
                     ):
                         continue
-                    self._running[key] = {'progress': 0.0, 'process': None}
+                    self._running[key] = {'progress': 0.0, 'process': None, 'cost': cost}
                     busy += 1
+                    load += cost
                     threading.Thread(
                         target=self._run_match, args=(record['id'], dict(match)), daemon=True
                     ).start()
                 if record['failures'] and not self._playable(record, view):
                     self._halt(record, view)
+
+    @staticmethod
+    def _cost(record: dict[str, Any], match: dict[str, Any]) -> int:
+        """Returns the threads that a match takes, its own and those of each team's process.
+
+        Under strict rules each registered team plays in a process of its own with the threads
+        that the rules give, beside the match's process, and a match without them takes one.
+        """
+        strict = record['config'].get('strict')
+        if not strict:
+            return 1
+        entrants = record['config']['entrants']
+        teams = sum(
+            1 for side in (match['home'], match['away']) if entrants[side]['kind'] == 'team'
+        )
+        return 1 + teams * int(strict.get('threads', 1))
+
+    def _preflight_pending(self, record: dict[str, Any]) -> bool:
+        """Starts a tournament's pre-flight when it is due, and returns whether it holds matches.
+
+        A tournament with a pre-flight checks its registered teams before its first match, so a
+        file of before, or one that has played a match, plays on without one.
+        """
+        if not record['config'].get('preflight') or record.get('preflight') is not None:
+            return False
+        if record['results']:
+            return False
+        key = (record['id'], _PREFLIGHT)
+        if key not in self._running:
+            self._running[key] = {'progress': 0.0, 'process': None}
+            threading.Thread(target=self._run_preflight, args=(record['id'],), daemon=True).start()
+        return True
+
+    def _run_preflight(self, identifier: str) -> None:
+        """Checks every registered team of a tournament and leaves out those that fail."""
+        key = (identifier, _PREFLIGHT)
+        try:
+            with self._lock:
+                record = self._records[identifier]
+                config = record['config']
+                scenario = config['stages'][0]['scenario']
+                limits = config.get('strict')
+                teams = list(
+                    dict.fromkeys(e['team'] for e in config['entrants'] if e['kind'] == 'team')
+                )
+            checks: dict[str, dict[str, Any]] = {}
+            for number, team in enumerate(teams):
+                try:
+                    report = self._checker(team, scenario, limits)
+                except Exception as error:
+                    ids = _messages.id_fields(error)
+                    report = {
+                        'team': team,
+                        'ok': False,
+                        'rule': {
+                            'side': 'home',
+                            'kind': 'load',
+                            'reason': str(error),
+                            'reason_id': ids.get('error_id'),
+                            'reason_values': ids.get('error_values'),
+                            'step': 0,
+                            'at': [0, 0],
+                        },
+                        'timings': {},
+                    }
+                checks[team] = report
+                self._progress(key, (number + 1) / max(1, len(teams)))
+        except Exception as error:
+            _LOGGER.warning('cuju render could not check the teams, %s', error)
+            checks = None
+        with self._lock:
+            self._running.pop(key, None)
+            record = self._records.get(identifier)
+            if (
+                record is None
+                or record['state'] != 'running'
+                or record['results']
+                or checks is None
+            ):
+                return
+            self._apply_preflight(record, checks, scenario)
+
+    def _apply_preflight(
+        self, record: dict[str, Any], checks: dict[str, dict[str, Any]], scenario: str
+    ) -> None:
+        """Keeps the checks of a pre-flight, and makes the tournament again without the teams
+        that failed, from its stages as given, so its draw fits the entrants that remain."""
+        config = record['config']
+        failed = {team for team, report in checks.items() if not report.get('ok')}
+        excluded = []
+        kept = []
+        given = config.get('given_entrants') or []
+        for index, entrant in enumerate(config['entrants']):
+            if entrant['kind'] == 'team' and entrant['team'] in failed:
+                rule = checks[entrant['team']].get('rule') or {}
+                excluded.append(
+                    {
+                        **rules.named_from('name', entrant),
+                        'kind': entrant['kind'],
+                        'team': entrant['team'],
+                        'reason': rule.get('reason', ''),
+                        'reason_id': rule.get('reason_id'),
+                        'reason_values': rule.get('reason_values'),
+                        'rule': rule.get('kind'),
+                        'timings': checks[entrant['team']].get('timings') or {},
+                    }
+                )
+            elif index < len(given):
+                kept.append(given[index])
+        record['preflight'] = {
+            'scenario': scenario,
+            'checked': time.time(),
+            'checks': [
+                {
+                    'team': team,
+                    **rules.named_from('name', report),
+                    'ok': bool(report.get('ok')),
+                    'rule': report.get('rule'),
+                    'timings': report.get('timings') or {},
+                }
+                for team, report in checks.items()
+            ],
+        }
+        record['excluded'] = excluded
+        if excluded:
+            source: dict[str, Any] = {
+                key: config[key]
+                for key in (
+                    'seed',
+                    'seeding',
+                    'concurrency',
+                    'forfeit_score',
+                    'ability',
+                    'preset',
+                    'strict',
+                    'preflight',
+                )
+                if key in config
+            }
+            if config.get('name_id') is None:
+                source['name'] = config['name']
+            source.update(
+                entrants=kept,
+                stages=config['given']['stages'],
+                defaults=config['given']['defaults'],
+            )
+            try:
+                changed = check_config(source)
+            except ArgumentError as error:
+                record.update(
+                    state='stopped',
+                    **_messages.fields(
+                        'server.preflight.left_out',
+                        error=_error_label(str(error), _messages.id_fields(error)),
+                    ),
+                )
+                self._persist(record)
+                self._release(record['id'])
+                return
+            changed['include'] = config.get('include', [])
+            changed['given_entrants'] = kept
+            record['config'] = changed
+        self._persist(record)
 
     def _follow_games(self, record: dict[str, Any]) -> None:
         """Takes the result of a person's game that ended, or frees a match whose game is gone."""
@@ -1251,6 +1689,7 @@ class Tournaments:
                 provenance = self._provenance(record, match)
                 entrants = record['config']['entrants']
                 teams = [entrants[match['home']]['team'], entrants[match['away']]['team']]
+                match = {**match, 'strict': record['config'].get('strict')}
             result = self._player(
                 match, teams, provenance, lambda share: self._progress(key, share)
             )
@@ -1353,6 +1792,8 @@ class Tournaments:
         ]
         if match['length'] is not None:
             command += ['--length', str(match['length'])]
+        if match.get('strict') is not None:
+            command += ['--strict', json.dumps(match['strict']), '--replay']
         for side, value in zip(('left', 'right'), match['ability'], strict=True):
             if value is not None:
                 command += [f'--{side}-ability', repr(value)]
@@ -1379,7 +1820,7 @@ class Tournaments:
         timer = threading.Timer(MATCH_SECONDS, process.kill)
         timer.daemon = True
         timer.start()
-        saved, failure, reported = None, None, {}
+        saved, failure, reported, stats, rule, replay = None, None, {}, None, None, None
         try:
             for line in process.stdout:
                 try:
@@ -1392,11 +1833,21 @@ class Tournaments:
                     progress(float(report['progress']))
                 if isinstance(report.get('match'), str):
                     saved = report['match']
+                if isinstance(report.get('stats'), dict):
+                    stats = report['stats']
+                if isinstance(report.get('forfeit'), dict):
+                    rule = report['forfeit']
+                if isinstance(report.get('replay'), dict):
+                    replay = report['replay']
                 if isinstance(report.get('error'), str):
                     failure, reported = report['error'], report
             code = process.wait()
         finally:
             timer.cancel()
+        if code == 0 and rule is not None:
+            # A side broke a rule of strict rules, which the runner scores as its forfeit.
+            found = {'score': [0, 0], 'rule': rule, 'stats': stats, 'forfeit': True, 'match': None}
+            return {**found, 'replay': replay} if replay else found
         if code != 0 or saved is None:
             # The error that the match reported, or its exit code, with the id of its message.
             found = (
@@ -1408,7 +1859,12 @@ class Tournaments:
             if found['error_id'] is not None:
                 error.message_id, error.values = found['error_id'], found['error_values']
             raise error
-        return recording_result(saved)
+        result = recording_result(saved)
+        if stats is not None:
+            result['stats'] = stats
+        if replay:
+            result['replay'] = replay
+        return result
 
     def run(self, identifier: str, report: Callable[[str], None] = print) -> str:
         """Runs one tournament in this process until it ends or waits for people.

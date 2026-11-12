@@ -623,7 +623,9 @@ def test_shipped_presets_fit_every_number_of_entrants(name):
             {**preset, 'name': name, 'seed': 1, 'entrants': _builtins(count)}, _TEAMS
         )
         view, _ = _play_out(config, seed=count)
-        assert sorted(view['ranking']) == list(range(count))
+        # A preset may add entrants of its own, such as the random entrant of Strict round robin.
+        added = len(rules.with_included(_builtins(count), preset.get('include', []))) - count
+        assert sorted(view['ranking']) == list(range(count + added))
 
 
 def test_a_shipped_preset_fits_its_rounds_and_an_edited_one_refuses():

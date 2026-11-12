@@ -14,6 +14,7 @@ import { addFormSurprise } from './surprise-ui.js';
 import { t, tn } from '../core/i18n.js';
 import { icon, relabel, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
+import { teamCheck } from './team-check.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -186,7 +187,9 @@ export class TeamsPage {
                 team.kind === 'builtin' ? null : t('library.item.controls', { players: controlLabel(team.control, team.format) }),
                 style.model !== 'grf' ? (style.model === 'custom' ? t('library.item.ownModel') : style.model.replace(/^kaykit-/, '').replace(/-/g, ' ')) : null,
                 team.sounds && team.sounds.length ? t('library.item.sounds', { count: team.sounds.length }) : null,
-            ].filter(Boolean).join(', '))),
+            ].filter(Boolean).join(', ')),
+            // A registered team may be checked under strict rules, as a tournament's pre-flight does.
+            team.kind === 'builtin' ? null : teamCheck(team)),
         team.kind === 'builtin' ? null : h('button', {
             class: 'btn small ghost danger',
             type: 'button',

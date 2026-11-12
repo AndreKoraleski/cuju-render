@@ -300,6 +300,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.names.person_with': '{person} with {team}',
     'server.names.player': 'Player {number}',
     'server.names.python_policy': 'Python policy',
+    'server.names.random': 'Random',
     'server.names.recorder': '{scenario}, environment {environment}',
     'server.names.right': 'Right',
     'server.names.run_attempts': '{value} of {attempts}',
@@ -359,6 +360,15 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'one': 'the policy has not answered for {count} second',
         'other': 'the policy has not answered for {count} seconds',
     },
+    'server.preflight.failed': 'the check of the team failed, {reason}',
+    'server.preflight.left_out': (
+        'the pre-flight left out the teams that failed it, and the tournament cannot be made '
+        'with the entrants that remain, {error}'
+    ),
+    'server.preflight.timeout': {
+        'one': 'the check of the team took longer than {count} minute',
+        'other': 'the check of the team took longer than {count} minutes',
+    },
     'server.requests.cancelled': 'cancelled',
     'server.requests.exit': 'the match ended with exit code {code}',
     'server.requests.exit_detail': 'the match ended with exit code {code}, {detail}',
@@ -405,6 +415,39 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     ),
     'server.sizes.size': 'expected a size such as `1280x720` or one of {presets}, found {value}',
     'server.sizes.width': 'expected a width from {lowest} to {highest}, found {value}',
+    'server.strict.both': '{home}, and {away}',
+    'server.strict.call_time': {
+        'one': '{player} did not answer action call {call} within {count} second',
+        'other': '{player} did not answer action call {call} within {count} seconds',
+    },
+    'server.strict.crash': '{player} failed in an action call, {reason}',
+    'server.strict.first_time': {
+        'one': '{player} did not answer its first action call within {count} second',
+        'other': '{player} did not answer its first action call within {count} seconds',
+    },
+    'server.strict.folder_size': (
+        '{player} holds {size} MB in its folder, above the limit of {limit} MB'
+    ),
+    'server.strict.invalid_count': '{player} answered a wrong count of actions, {reason}',
+    'server.strict.invalid_range': '{player} answered an action outside its action set, {reason}',
+    'server.strict.invalid_type': '{player} answered an action that is no whole number, {reason}',
+    'server.strict.load': '{player} failed to load, {reason}',
+    'server.strict.load_time': {
+        'one': '{player} did not load within {count} second',
+        'other': '{player} did not load within {count} seconds',
+    },
+    'server.strict.mean': (
+        '{player} took {mean} ms for an action call on average, above the limit of {limit} ms'
+    ),
+    'server.strict.reset': '{player} failed in its reset, {reason}',
+    'server.strict.reset_time': {
+        'one': '{player} did not reset within {count} second',
+        'other': '{player} did not reset within {count} seconds',
+    },
+    'server.strict.warning_action': (
+        '{player} answered the action {action} in {share}% of its actions.'
+    ),
+    'server.strict.warning_setting': 'The setting {setting} of {file} is unknown to cuju render.',
     'server.teams.ability': 'expected an ability from 0 to 1, found {value}',
     'server.teams.ability_pair': 'expected a pair of abilities, left and right, found {ability}',
     'server.teams.agent_function': 'expected an agent function in the submission {identifier}',
@@ -614,6 +657,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'enters with the kind builtin'
     ),
     'server.tournament.entrants': 'expected from 2 to {most} entrants, found {count}',
+    'server.tournament.field.added_legs': 'the legs to add to {where}',
     'server.tournament.field.advance': 'the entrants that advance from {where}',
     'server.tournament.field.best_count': 'the best places of position {position} of {where}',
     'server.tournament.field.best_position': 'the position of the best places of {where}',
@@ -647,6 +691,21 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.field.seed': 'the seed',
     'server.tournament.field.seeding': 'the seeding of {where}',
     'server.tournament.field.settle': 'the settlements of {where}',
+    'server.tournament.field.strict_call_seconds': (
+        'the seconds of each later action call under strict rules'
+    ),
+    'server.tournament.field.strict_first_call_seconds': (
+        'the seconds of the first action call under strict rules'
+    ),
+    'server.tournament.field.strict_folder_mb': (
+        "the megabytes of a team's folder under strict rules"
+    ),
+    'server.tournament.field.strict_load_seconds': 'the seconds to load under strict rules',
+    'server.tournament.field.strict_mean_call_ms': (
+        'the mean milliseconds of an action call under strict rules'
+    ),
+    'server.tournament.field.strict_reset_seconds': 'the seconds of a reset under strict rules',
+    'server.tournament.field.strict_threads': 'the threads of each team under strict rules',
     'server.tournament.field.swiss_rounds': (
         'the rounds of the Swiss {where}, which pairs {entrants} entrants without rematches,'
     ),
@@ -676,6 +735,9 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'the groups of {where} send {advance} on, by qualifiers and best places'
     ),
     'server.tournament.groups_few': 'the groups of {where} send fewer than 2 entrants on',
+    'server.tournament.include': (
+        'expected the added entrants as a list of at most {most} entrants, none of them a person'
+    ),
     'server.tournament.knockout_advance': {
         'one': 'the knockout of {where} stops at {count}, so {count} advances',
         'other': 'the knockout of {where} stops at {count}, so {count} advance',
@@ -705,6 +767,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.label.play_in_round': 'Play-in round',
     'server.tournament.label.quarter_final': 'Quarter-final {number}',
     'server.tournament.label.quarter_finals': 'Quarter-finals',
+    'server.tournament.label.random': 'Random',
     'server.tournament.label.replay': '{match}, replay',
     'server.tournament.label.round': 'Round {number}',
     'server.tournament.label.round_of': 'Round of {count}',
@@ -734,9 +797,15 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.label.winner_of': 'Winner of {match}',
     'server.tournament.label.winners_final': 'Winners final',
     'server.tournament.label.winners_round': 'Winners round {number}',
+    'server.tournament.legs_cancelled': 'a cancelled tournament takes no more legs',
+    'server.tournament.legs_format': (
+        'expected the last stage, {where}, to be a league or groups to take more legs'
+    ),
+    'server.tournament.legs_most': 'the last stage, {where}, already plays the most legs, {most}',
     'server.tournament.length': (
         'expected a length from {lowest} to {highest} steps, found {length}'
     ),
+    'server.tournament.limit': 'expected {name} from {lowest} to {highest}, found {value}',
     'server.tournament.list': 'expected {name} as a list without repeats, found {value}',
     'server.tournament.match_failed': '{label} failed, {error}',
     'server.tournament.match_failed_more': {
@@ -760,6 +829,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'found {name}, the name of entrant {other}'
     ),
     'server.tournament.no_frame': 'the recording {identifier} holds no frame',
+    'server.tournament.no_replay': 'the match {key} kept no seed and actions to replay',
     'server.tournament.no_result': 'the match gave no result',
     'server.tournament.note.early': (
         'The game ended before full time, so the match waits to be played again.'
@@ -786,6 +856,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.points': (
         'expected points for a win, draw and loss in {where}, found {points}'
     ),
+    'server.tournament.preflight': 'expected the pre-flight as true or false, found {value}',
     'server.tournament.preset': 'expected a preset from {presets}, found {name}',
     'server.tournament.preset_name': (
         'expected a preset name of small letters, digits, dashes and underscores that names no '
@@ -820,6 +891,13 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'expected the standard ability from 0 to 1, found {ability}'
     ),
     'server.tournament.stopped': 'expected a stopped tournament, found it {state}',
+    'server.tournament.strict': (
+        'expected strict rules as true, false or an object of limits, found {value}'
+    ),
+    'server.tournament.strict_settings': (
+        'expected limits of strict rules among threads, load_seconds, first_call_seconds, '
+        'call_seconds, reset_seconds, mean_call_ms and folder_mb, found {settings}'
+    ),
     'server.tournament.swiss': 'no Swiss pairing without a rematch exists for this round',
     'server.tournament.team_format': 'it is a team of {format}',
     'server.tournament.teammates': 'expected registered teammates, found {mates}',

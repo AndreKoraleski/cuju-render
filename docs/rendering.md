@@ -2767,6 +2767,7 @@ setting that the entrants cannot play is refused with the reason.
 | Ladder | Neighbours meet each round, and winners climb. |
 | King of the hill | Challengers try the king one after another. |
 | Gauntlet | The lowest seeds climb toward the top seed. |
+| Strict round robin | Ten legs of everyone against everyone, five against five for 3000 steps, under strict rules after a pre-flight, with the random entrant and the built in AI added, described under Strict round robin. |
 
 The page saves any format as a preset of the user, which the setup lists beside those that ship.
 Saving under the name of a preset of the user, and deleting one, ask first in place of the button,
@@ -2950,6 +2951,183 @@ watched yet, and the search of moments leaves its moments out. A match that a pe
 when its turn comes, as it must. Turning the switch off shows everything again, and the matches
 watched stay remembered. The page asks the server for the tournament as the person sees it with
 `POST /api/tournaments/ID/spoilers`, whose body names the watched matches by their keys.
+
+### Strict rules
+
+A tournament may play under **strict rules**, a setting of its own that is off by default, so a
+tournament plays as described above until it is turned on. Strict rules suit a contest between
+teams whose authors want every policy to compute on the same terms and every failure to settle at
+once, as a course or a league of agents does.
+
+Under strict rules each registered team's policy plays in a process of its own. The process
+imports the team's folder first and the installed packages after it, with the variable PYTHONPATH
+and every other variable of Python left out, so two teams never share a module, even modules of
+the same name, such as two files called `helper.py`. The variables `OMP_NUM_THREADS`,
+`MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS` and
+`BLIS_NUM_THREADS` hold the threads of the process to the limit of the rules, one by default, and
+torch takes the same limit once the team imports it. The process works in a private temporary
+folder, which the match removes afterwards, so a team reads its own files by their path beside its
+`main.py`, such as `os.path.join(os.path.dirname(__file__), 'model.pt')`. Its standard input reads
+as empty, and what it prints goes to its log, `logs/policies/ID.log` in the home folder, which
+starts again once it grows past a megabyte. The match and each process talk in lines of JSON on
+pipes of their own, each read on a thread of its own, the same on Windows, Linux and macOS, and
+the match reads only JSON from a process. This is isolation for fairness, so that every team plays
+on the same terms, and not a security sandbox, as with the renderer's other ways of playing a
+submission. A team's code still runs with the rights of the person who
+runs the renderer, so only teams one trusts belong in a tournament.
+
+A team may define a function named `reset` in its `main.py`, beside its agent, which strict rules
+call with no arguments before the first observation of each match. The agent stays the last
+callable of the file, as on Kaggle, so a `reset` defined before the agent is the team's reset.
+
+Each limit is a setting of the tournament, with these defaults.
+
+| Limit | Setting | Default |
+| ----- | ------- | ------- |
+| Threads of each team's process | `threads` | 1 |
+| Loading the team | `load_seconds` | 30 seconds |
+| The first action call | `first_call_seconds` | 10 seconds |
+| Every later action call | `call_seconds` | 1 second |
+| The reset | `reset_seconds` | 5 seconds |
+| The mean compute time of a call over the match, for all the team's controlled players together, leaving out the first call | `mean_call_ms` | 20 milliseconds |
+| The size of the team's folder, which the check of a team holds it to | `folder_mb` | 100 megabytes |
+
+A side that crashes, runs out of time, answers an invalid action, fails to load or to reset, or
+computes for longer on average than the limit allows, **breaks a rule**. The match ends at once,
+and the side that broke the rule forfeits it by the tournament's forfeit score, 0 to 3 by default,
+while the tournament plays on. A late player is never handed to the built in AI, and the match
+settles without waiting for an award. Each forfeit keeps the kind of rule, its reason in the language of the
+page, the step and the score at that moment. The kinds are these.
+
+- `load`, the team failed to load, or loaded too late.
+- `reset`, its reset failed or took too long.
+- `crash`, its agent raised an error, or its process ended.
+- `timeout`, an action call took longer than its limit.
+- `invalid`, an answer was no valid action, with its detail, `count` for a wrong count of
+    actions, `type` for an action that is no whole number, and `range` for an action outside the
+    action set. Strict rules check every answer exactly as Kaggle's protocol does.
+- `mean`, the mean compute time of a call, measured by the team's process around its agent alone,
+    passed its limit at the end of the match.
+
+Two sides that break a rule at the same step both lose, 0 to 0. A forfeit by a rule leaves the
+ratings of earlier tournaments as they are, as an award does. An error of the engine or of a
+match's own process fails that match alone, which waits for an award or a retry as described under
+The Tournaments page, and the matches that do not depend on it play on.
+
+Each process of a team takes its threads from the machine's, beside the one of the match, so a
+tournament under strict rules starts a match only while the threads of the matches at once fit the
+machine's threads, whatever its matches at once allow. A slow machine then plays fewer matches at
+once, and no team times out because its neighbours crowd it.
+
+Every match keeps its steps, whether it was cut short, the calls of each side's policy with the
+first, the mean, the mean after the first and the largest compute time in milliseconds, and the
+count of each action it answered. Since cuju plays every match exactly from its seed and the
+actions of each step, a match under strict rules also keeps its seed and those actions, in the
+folder `ID.replays` beside the tournament's file, and `cuju render tournament replay` plays it
+again from them and says whether the replay ends with the same steps and score.
+
+### The random entrant
+
+The **random entrant** takes part beside the built in AI. It controls one player of either size,
+the active one, with actions drawn at random from the 19 of the default set, while the built in AI
+plays its teammates at the entrant's ability. Its generator is seeded from the match seed and its
+side, so the same match plays the same actions again. It makes a floor, since a team that cannot
+beat it plays little better than chance. The Entrants step adds it, and so do `--random` on the
+command line and `{"kind": "random"}` in a configuration. Its key, `random:uniform`, holds a colon,
+which no team's identifier holds, so it never reads as a team in the files of results.
+
+A tournament or a preset may also name entrants to add, in `include`, such as
+`[{"kind": "random"}, {"kind": "builtin"}]`, which join those entered unless an entrant of the same
+kind and ability is already there.
+
+### The pre-flight
+
+A tournament may hold a **pre-flight**, its setting `preflight`, before its first match. Each
+registered team loads and plays a few steps against the built in AI under the tournament's rules,
+once on the left and once on the right, where it sees the match turned, so a team that reads the
+turned view wrong fails before the tournament. A tournament without strict rules checks only that
+each team loads and plays. A team that fails is left out with its reason and its timings, which
+the tournament shows, and the tournament is drawn again from its stages as given with the
+entrants that remain, and goes on without the team. A pre-flight that leaves fewer entrants than
+the stages need stops the tournament with the reason. Two entrants that would show the same name
+stay refused by the rules of names, as before.
+
+The same check of one team runs from the team's card on the Teams page, from Review for every
+team of a tournament still to start, and from the command line.
+
+```sh
+cuju render tournament preflight --team t-20261106-101500-3fa9
+cuju render tournament preflight t-20261106-101500-3fa9 --json
+cuju render tournament preflight --team t-20261106-101500-3fa9 --strict '{"call_seconds": 0.5}'
+```
+
+The check prints pass or fail, the rule a failing team broke, and for each side its seconds to
+load and to reset, its first, mean after the first and largest compute time of a call, and its
+calls. Its exit status is 0 for a pass and 1 for a fail, so a script of continuous integration
+checks a team before it enters. `--json` prints the whole report. The check also holds the team's
+folder to the limit `folder_mb`, and gives warnings that never fail it, one for each setting of the
+team's file `team.json` that the renderer does not know, and one when a single action makes up more
+than nine in ten of all the actions the team answered, which often means a policy that is stuck.
+
+### More legs later
+
+A league plays as many legs of each meeting as the stage sets, from 1 to 10, the venue in turn leg
+by leg, so in ten legs each side plays five at home. A league or a group stage that is the last
+stage of its tournament may take more legs later, while it runs or once it has finished, up to 100
+in all. The matches of before keep their keys, seeds and results, and only the added matches play,
+after every matchday of before, the venue going on in turn from the last leg. A finished
+tournament runs again until they have played. Add legs on the tournament does this, and so do
+`cuju render tournament legs ID --legs 5` and `POST /api/tournaments/ID/legs`.
+
+### Ratings and the files of results
+
+Every tournament shows **Results**, the ratings of its entrants and the matrix of their goal
+differences, which the page fetches while Results is open.
+
+The ratings follow the **Bradley and Terry** model, fitted to every match the tournament has
+played, forfeits and deciding matches included, a draw counting as half a win for each side. They
+read on the Elo scale, 400 points for each tenfold of strength, centred so that their mean is
+1000, and they list best first. As its prior, each entrant also plays one virtual draw against a
+virtual entrant of the fixed strength 1, which keeps the rating of an entrant that won or lost
+every match finite and draws an entrant of few matches toward the middle. Each rating carries a 95
+percent interval from a bootstrap of 200 resamples, the played matches drawn again with
+replacement, by a generator seeded with the SHA-256 digest of the tournament seed followed by
+`/bootstrap`, so the same results always give the same intervals. The interval runs from the 2.5th
+to the 97.5th percentile of the resamples. These ratings belong to the tournament alone, apart
+from the Elo ratings that carry from one tournament to the next.
+
+The **matrix** holds the mean goal difference of every pair, the row's goals less the column's
+over their matches, whichever side was at home, with the count of their matches. The page shows it
+as a heat table that scrolls inside its own box on a phone, which the keyboard reaches, each cell
+named for a screen reader.
+
+The page exports eight files, and so does `cuju render tournament export ID --to FOLDER`. The
+server sends each at `GET /api/tournaments/ID/files/NAME`, and the whole analysis at
+`GET /api/tournaments/ID/analysis`. The columns stay stable, so scripts outside the renderer can
+read them. An entrant reads by its index in the tournament and by its `id`, its key with `#2`,
+`#3` and so on for a second or third entrant of one key, as two entrants of one team share theirs.
+
+| File | What it holds |
+| ---- | ------------- |
+| `standings.csv` | `position`, `entrant`, `id`, `name`, `kind`, `team`, `played`, `won`, `drawn`, `lost`, `goals_for`, `goals_against`, `goal_difference`, `points`, `forfeits`, `cut_short` and `rating`, one row for each entrant over all its matches, in the final ranking once there is one, before that by points, goal difference, goals and rating. |
+| `ratings.csv` | `rank`, `entrant`, `id`, `name`, `rating`, `low`, `high` and `matches`, best first. |
+| `ratings_method.json` | The model, its prior, the scale, the resamples and the tournament seed of the bootstrap, and how many played matches were cut short. |
+| `pairwise_gd.csv` | `entrant`, `id`, `name`, `opponent`, `opponent_id`, `opponent_name`, `matches` and `mean_goal_difference`, one row for each ordered pair, the mean empty for a pair that has not met. |
+| `pairwise_counts.csv` | The matrix of match counts, a header of `id` and every entrant's id, then a row for each entrant. |
+| `matches.jsonl` | One JSON object for each played match, its `key`, `stage`, `label`, `scenario`, `home`, `away`, `home_name`, `away_name`, `seed`, `score`, `steps`, `cut_short`, `forfeit`, `rule` with its `side`, `kind`, `detail`, `reason`, `step` and the `score` at that moment, `timings` and `actions` for each side, and `recording`. |
+| `entrants.json` | Each entrant with its `entrant`, `id`, `name`, `kind`, `team`, `key`, `ability`, `rating`, `low` and `high`. |
+| `excluded.json` | Each entrant that the pre-flight left out, with its name, team, reason and timings. |
+
+A match that ended early, by a rule a side broke, counts in the files as any other, and says so in
+`cut_short` of its line and of the standings of both its sides, and `ratings_method.json` counts
+them, so no report mixes them with full matches unseen.
+
+### Strict round robin
+
+The preset **Strict round robin** puts these together. Every entrant plays every other ten times
+with sides in turn, five against five for 3000 steps, for three points a win and one a draw,
+under strict rules with the default limits and the forfeit at 0 to 3, after a pre-flight, with the
+random entrant and the built in AI added as a floor.
 
 ### The command line and the server
 

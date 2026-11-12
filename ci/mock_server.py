@@ -2349,6 +2349,14 @@ def make_handler(requests):
             if status == 204:
                 self.send_response(204)
                 self.end_headers()
+            elif isinstance(body, mock_tournaments.File):
+                # A file of a tournament's results goes out to save, as the server sends it.
+                data, headers = mock_tournaments.file_bytes(body)
+                self.send_response(200)
+                for name, value in headers:
+                    self.send_header(name, value)
+                self.end_headers()
+                self.wfile.write(data)
             else:
                 self._json(body, status)
 
@@ -2558,6 +2566,9 @@ def make_handler(requests):
                     self._tournaments('POST')
                 elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'duplicate':
                     self._json(duplicate(parts[2]), 201)
+                elif len(parts) == 4 and parts[1] == 'teams' and parts[3] == 'preflight':
+                    # The check of a team under strict rules, made up by the mock's tournaments.
+                    self._json(cups.check_team(parts[2], self._document()))
                 elif len(parts) == 4 and parts[1] == 'trash' and parts[3] == 'restore':
                     if trash(parts[2], restore=True):
                         self._json(details(parts[2]))

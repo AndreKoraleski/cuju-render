@@ -18,7 +18,8 @@ const root = new URL('../../src/cuju/render/', import.meta.url);
 const read = (code) => JSON.parse(readFileSync(code === 'en' ? new URL(`web/languages/${code}.json`, root) : new URL(`../../translations/${code}.json`, import.meta.url), 'utf8'));
 const files = { en: read('en'), pt: read('pt') };
 const PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
-const places = (value) => new Set((typeof value === 'string' ? [value] : Object.values(value)).flatMap((form) => [...form.matchAll(PLACEHOLDER)].map((m) => m[1])));
+// A draft may lack a message, which then holds no placeholder of its own.
+const places = (value) => new Set((value === undefined ? [] : typeof value === 'string' ? [value] : Object.values(value)).flatMap((form) => [...form.matchAll(PLACEHOLDER)].map((m) => m[1])));
 const ids = Object.keys(files.en).filter((id) => !id.startsWith('@'));
 const plural = (value) => Boolean(value) && typeof value === 'object';
 

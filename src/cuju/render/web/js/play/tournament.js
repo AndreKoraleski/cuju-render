@@ -22,13 +22,18 @@ import {
     autoplay, markWatched, noteRecordings, predict, prediction, predictionScore, setAutoplay, setSpoilerFree,
     spoilerFree, watchedKeys,
 } from '../core/spoilers.js';
+import {
+    applyPreset, fromConfig, kindGlyph, legsControl, randomAdder, randomName, removedEntrant, resultsSection, strictConfig,
+    strictFields, strictHead, strictReview,
+} from './tournament-strict.js';
+import { RANDOM_KEY, forfeitWords } from './tournament-results.js';
 
 const FORMATS = Object.keys(FORMAT_NAMES);
 const TIEBREAKERS = Object.keys(TIEBREAK_NAMES);
 const SETTLEMENTS = Object.keys(SETTLE_NAMES);
 const STEPS = [t('tournament.step.format'), t('tournament.step.entrants'), t('tournament.step.settings'), t('tournament.step.stages'), t('tournament.step.review')];
 const STATE_LABELS = { running: t('tournament.state.running'), stopped: t('tournament.state.stopped'), done: t('tournament.state.done'), cancelled: t('tournament.state.cancelled') };
-const KIND_NAMES = { team: t('tournament.kind.team'), builtin: t('tournament.kind.builtin'), person: t('tournament.kind.person') };
+const KIND_NAMES = { team: t('tournament.kind.team'), builtin: t('tournament.kind.builtin'), person: t('tournament.kind.person'), random: t('tournament.kind.random') };
 // The name of a preset of the user, as the server's rule of identifiers takes it.
 const PRESET_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 // The words between the formats of the stages in a list.
@@ -138,6 +143,9 @@ function ratingKey(entry) {
     if (entry.kind === 'builtin') {
         return `builtin:${entry.ability == null ? 'scenario' : Number(entry.ability).toFixed(2)}`;
     }
+    if (entry.kind === 'random') {
+        return RANDOM_KEY;
+    }
     return `person:${entry.name || ''}`;
 }
 
@@ -217,6 +225,8 @@ function newDraft() {
         defaults: {}, stages: [{ format: 'knockout', name: 'Cup' }], entrants: [],
         // The settings of OWN_SETTINGS that the person set by hand.
         own: new Set(),
+        // Strict rules, the pre-flight and the entrants a preset adds, see tournament-strict.js.
+        strict: null, preflight: false, include: [],
     };
 }
 
@@ -453,6 +463,7 @@ export class TournamentsPage {
             }
             return entry;
         });
+        fromConfig(draft, config);
         return draft;
     }
 
@@ -562,6 +573,7 @@ export class TournamentsPage {
             Object.assign(draft, values);
             draft.preset = name;
             this.replaced = replaced.length ? { name, items: replaced } : null;
+            applyPreset(draft, preset);
             if (!draft.name || Object.entries(this.presets).some(([key, p]) => presetTitle(key, p) === draft.name)) {
                 draft.name = presetTitle(name, preset);
             }
@@ -786,7 +798,8 @@ export class TournamentsPage {
                         return;
                     }
                     add({ kind: 'person', name, teammates: 'builtin' });
-                } }, icon('plus'))));
+                } }, icon('plus'))),
+            randomAdder(d, add, (text) => this.app.hud.toast(text, 'info')));
         // Enter in the name of a person adds the person, as the button beside it does.
         person.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.isComposing) {
@@ -822,7 +835,8 @@ export class TournamentsPage {
         const d = this.draft;
         const team = entry.kind === 'team' ? this.teams.find((x) => x.id === entry.team) : null;
         const fallback = entry.kind === 'team' ? (team ? team.name : entry.team)
-            : entry.kind === 'builtin' ? (entry.ability == null ? t('tournament.entrant.builtin') : t('tournament.entrant.builtinAt', { ability: abilityText(entry.ability) })) : '';
+            : entry.kind === 'builtin' ? (entry.ability == null ? t('tournament.entrant.builtin') : t('tournament.entrant.builtinAt', { ability: abilityText(entry.ability) }))
+                : entry.kind === 'random' ? randomName() : '';
         const number = index + 1;
         const noteId = `cup-name-note-${index}`;
         const name = h('input', { type: 'text', maxlength: String(NAME_LONGEST), value: entry.name || '', placeholder: fallback || t('tournament.entrants.name'), 'aria-label': t('tournament.entrant.name.label', { number }), 'aria-describedby': noteId });
@@ -884,7 +898,7 @@ export class TournamentsPage {
             this.announce(t('tournament.moved', { name: this.madeNames()[to] || '', place: to + 1, total: d.entrants.length }));
         };
         return h('li', { class: 'cup-entrant' },
-            team ? kitShirt(team, 0) : h('span', { class: `cup-kind ${entry.kind}`, 'aria-hidden': 'true' }, entry.kind === 'person' ? t('tournament.entrant.glyph.person') : t('tournament.entrant.glyph.builtin')),
+            team ? kitShirt(team, 0) : h('span', { class: `cup-kind ${entry.kind}`, 'aria-hidden': 'true' }, kindGlyph(entry.kind)),
             // The shirt marks a team, so its row names the team, with its kind for a screen
             // reader alone, and its size under the name.
             h('span', { class: 'cup-entrant-kind small muted' }, team ? [h('span', { class: 'sr-only' }, `${KIND_NAMES.team}, `), team.name] : KIND_NAMES[entry.kind],
@@ -896,6 +910,7 @@ export class TournamentsPage {
                 h('button', { type: 'button', class: 'btn small ghost cup-down', ...symbolOnly(t('tournament.entrant.down.label', { number })), disabled: index === d.entrants.length - 1, onclick: () => move(1) }, icon('down')),
                 h('button', { type: 'button', class: 'btn small ghost danger cup-remove', ...symbolOnly(t('tournament.entrant.remove.label', { number })), onclick: () => {
                     d.entrants.splice(index, 1);
+                    removedEntrant(d, entry);
                     this.renderWizard();
                     // The focus moves to the entrant that takes the place, else the one before it,
                     // else to the first way to add an entrant.
@@ -918,7 +933,7 @@ export class TournamentsPage {
         if (entry.kind === 'builtin') {
             return entry.ability == null ? t('tournament.entrant.builtin') : t('tournament.entrant.builtinAt', { ability: abilityText(entry.ability) });
         }
-        return '';
+        return entry.kind === 'random' ? randomName() : '';
     }
 
     // The name that each entrant of the draft takes, the one a person gave, else the one the
@@ -1030,6 +1045,7 @@ export class TournamentsPage {
             this.standardControl(),
             h('label', { class: 'field' }, t('tournament.settings.concurrency'), concurrency),
             h('label', { class: 'field' }, t('tournament.settings.forfeit'), forfeit),
+            strictFields(d),
             h('p', { class: 'muted small' }, tn('tournament.settings.note')));
     }
 
@@ -1392,7 +1408,7 @@ export class TournamentsPage {
         } else {
             this.check(host);
         }
-        return [host, save];
+        return [host, strictReview(this), save];
     }
 
     config() {
@@ -1423,7 +1439,7 @@ export class TournamentsPage {
         if (d.ability !== null && d.ability !== undefined) {
             config.ability = d.ability;
         }
-        return config;
+        return Object.assign(config, strictConfig(d));
     }
 
     async check(host) {
@@ -1499,7 +1515,7 @@ export class TournamentsPage {
         try {
             const saved = await tournamentsApi.savePreset(name, {
                 title: title || d.name || name, description: '', seeding: d.seeding, concurrency: d.concurrency,
-                forfeit_score: d.forfeit_score, ability: d.ability ?? null, defaults: d.defaults, stages: d.stages,
+                forfeit_score: d.forfeit_score, ability: d.ability ?? null, defaults: d.defaults, stages: d.stages, ...strictConfig(d),
             });
             this.presets[name] = saved;
             this.app.hud.toast(t('tournament.review.saved', { title: saved.title }));
@@ -1658,6 +1674,7 @@ export class TournamentsPage {
             this.startWizard(config);
             this.draft.seed = '';
         } }, icon('replay'), t('tournament.view.again')));
+        actions.push(legsControl(this, cup));
         if (cup.state !== 'running') {
             actions.push(this.askButton('delete',
                 h('button', { type: 'button', class: 'btn ghost danger' }, icon('trash'), t('tournament.view.delete')),
@@ -1675,6 +1692,7 @@ export class TournamentsPage {
                 h('span', { class: 'cup-view-played' }, cup.state === 'done' ? t('tournament.view.finished', { count: cup.played })
                     : t('tournament.view.played', { count: cup.played, total: cup.scheduled })),
                 cup.running ? h('span', {}, t('tournament.view.running', { count: cup.running })) : null),
+            strictHead(cup),
             cup.state === 'running' ? h('div', { class: 'progress', role: 'progressbar', 'aria-label': t('tournament.view.progress.label'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(share * 100)) },
                 h('div', { class: 'bar', style: `width:${Math.round(share * 100)}%` })) : null,
             cup.champion ? h('p', { class: 'cup-champion' }, h('span', {}, t('tournament.view.champion', { name: serverText(cup, 'champion') }))) : null,
@@ -1726,7 +1744,7 @@ export class TournamentsPage {
         const byId = !!focused && focusKey === focused.id;
         this.focusAfter = null;
         const scroll = this.mainHost.scrollTop;
-        this.mainHost.replaceChildren(h('div', { class: 'cup-view' }, head, this.caughtUp(cup), peopleBox, this.upNextBox(cup), tabs, panel, ranking));
+        this.mainHost.replaceChildren(h('div', { class: 'cup-view' }, head, this.caughtUp(cup), peopleBox, this.upNextBox(cup), tabs, panel, ranking, resultsSection(this, cup)));
         this.mainHost.scrollTop = scroll;
         if (focusKey) {
             this.refocus(focusKey, byId);
@@ -1969,7 +1987,7 @@ export class TournamentsPage {
             f.decider ? t('tournament.fixture.decider', { left: f.decider[0], right: f.decider[1] }) : null];
         const winner = typeof f.winner === 'number' && f.state === 'done' ? t('tournament.fixture.wonBy', { name: sideName(f.winner, entrants) }) : null;
         const spoken = [label, t('tournament.fixture.versus', { home: spokenSide(f.home), away: spokenSide(f.away) }),
-            f.score ? t('tournament.fixture.score', { left: f.score[0], right: f.score[1] }) : null, ...extra, decided, winner, state !== 'done' ? STATE_NAMES[state] || state : null];
+            f.score ? t('tournament.fixture.score', { left: f.score[0], right: f.score[1] }) : null, ...extra, decided, winner, forfeitWords(matches), state !== 'done' ? STATE_NAMES[state] || state : null];
         return h('div', { class: `cup-fixture state-${state}`, 'aria-label': spoken.filter(Boolean).join(', ') },
             compact && label && f.label !== round ? h('span', { class: 'cup-fixture-label small muted' }, label) : null,
             side(f.home, 0), side(f.away, 1),
@@ -1977,7 +1995,7 @@ export class TournamentsPage {
                 [...extra, decided, state !== 'done' ? STATE_NAMES[state] : null,
                     running ? t('tournament.fixture.percent', { pct: Math.round((running.progress || 0) * 100) }) : null,
                     f.group ? t('tournament.fixture.group', { group: f.group }) : null,
-                    matches.some((m) => m.result && m.result.forfeit) ? t('tournament.fixture.awarded') : null,
+                    forfeitWords(matches),
                     failed && failed.error ? serverText(failed, 'error') : null].filter(Boolean).join(', ')),
             watch.length ? h('span', { class: 'cup-watch row' }, watch.map((m, i) => h('button', {
                 type: 'button', class: 'btn small ghost', 'data-focus': `watch-${m.key}`,

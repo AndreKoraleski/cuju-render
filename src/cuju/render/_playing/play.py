@@ -16,11 +16,15 @@ set to `on`, also prints the full traceback of the policy's error to standard er
 from __future__ import annotations
 
 import argparse
+import collections
+import hashlib
 import json
 import logging
 import os
 import queue
+import random
 import re
+import struct
 import sys
 import threading
 import time
@@ -58,6 +62,10 @@ DEBUG_VARIABLE = 'CUJU_RENDER_DEBUG'
 _FRAMES = 3001
 # The v2 action that hands a player to the builtin AI for one step.
 _BUILTIN_AI = 19
+# The actions of the default set.
+DEFAULT_ACTIONS = 19
+# The score of the left and the right side, at its place in a frame of a recording.
+_SCORE = struct.Struct('<2i')
 
 
 def _report(**entries: Any) -> None:
@@ -145,7 +153,12 @@ def play(
     progress: Callable[[float], None] | None = None,
     policy_errors: bool = False,
     draw: dict[str, Any] | None = None,
-) -> Path:
+    strict: dict[str, Any] | None = None,
+    stats: dict[str, Any] | None = None,
+    steps: int | None = None,
+    save: bool = True,
+    replay: dict[str, Any] | None = None,
+) -> Path | None:
     """Plays a match between two teams of the registry, saves it and returns the recording.
 
     Args:
@@ -169,19 +182,29 @@ def play(
             and the reason in one line, in place of the submission's own error.
         draw: What a request drew at random, as `draw.resolve` returns it under `draw`, which the
             provenance keeps, or `None`.
+        strict: The limits of strict rules, as `tournament.check_strict` gives them, or `None`.
+            Under strict rules each submission plays in a process of its own within the limits,
+            and a side that breaks one ends the match at once, which raises `ForfeitError`.
+        stats: A dictionary that the match fills with its steps and, for each side, the calls of
+            its policy, their compute times and the actions it answered, or `None`.
+        steps: The steps after which the match stops, or `None` to play it to its end.
+        save: Whether to save the recording, which a check of a team leaves out.
+        replay: A dictionary that the match fills with what replays it exactly, its seed, the
+            settings of its batch and the actions of every step, or `None`.
 
     Returns:
-        The path of the recording in the renderer's folder.
+        The path of the recording in the renderer's folder, or `None` when `save` is false.
 
     Raises:
         ArgumentError: If a team is unknown, plays another format than the scenario's, or an
             ability lies outside 0 to 1.
         PolicyError: If a submission fails and `policy_errors` asks for it.
+        ForfeitError: If a side breaks a rule under strict rules.
     """
     ability = _teams.check_ability(ability)
     if scenario not in [*bundled_scenarios(), *_teams.renderer_scenarios()]:
         raise MessageError('server.play.scenario', scenario=repr(scenario))
-    sides = [_teams.entry(left), _teams.entry(right)]
+    sides = [_teams.side_entry(left), _teams.side_entry(right)]
     _teams.check_scenario(sides, scenario)
     agents = [_teams.agent_count(team, scenario, side) for side, team in enumerate(sides)]
     controls = [_teams.check_control(team.get('control'), team['format']) for team in sides]
@@ -213,35 +236,78 @@ def play(
     try:
         reader = _recording.StateReader(int(batch.left_players[0] + batch.right_players[0]))
         batch.reset()
-        # A failure names the side by its entrant, so two entrants of one team stay apart.
-        policies = Policies(
-            batch, sides, scenario, agents, extended, [0, agents[0]], side_names(tournament)
-        )
         state = batch.get_state(0)
-        lineup = reader.lineup(state)
-        timing = _recording.scenario_timing(state)
         frames = [reader.frame(state)]
-        # A match takes one frame more than its steps, the scenario's own or those of `length`.
-        total = timing['duration'] + 1 if timing['duration'] > 0 else _FRAMES
+        # A failure names the side by its entrant, so two entrants of one team stay apart.
+        arguments = (
+            batch,
+            sides,
+            scenario,
+            agents,
+            extended,
+            [0, agents[0]],
+            side_names(tournament),
+        )
+        policies: Policies | None = None
         done = False
-        while not done:
-            parts = policies.observe()
-            try:
-                answers = policies.decide(parts)
-            except PolicyError as error:
-                # A requested match raises the submission's own error, as it always has.
-                if policy_errors:
+        stepped: list[list[int]] = []
+        if replay is not None:
+            replay.update(
+                seed=seed,
+                scenario=scenario,
+                asset=asset,
+                agents=list(agents),
+                action_set='v2' if extended else 'default',
+                ability=list(ability),
+                actions=stepped,
+            )
+        try:
+            if strict is not None:
+                from . import strict as _strict
+
+                policies = _strict.StrictPolicies(*arguments, seed=seed, limits=strict)
+            else:
+                policies = Policies(*arguments, seed=seed)
+            lineup = reader.lineup(state)
+            timing = _recording.scenario_timing(state)
+            # A match takes one frame more than its steps, the scenario's own or those of
+            # `length`.
+            total = timing['duration'] + 1 if timing['duration'] > 0 else _FRAMES
+            while not done and (steps is None or len(frames) <= steps):
+                parts = policies.observe()
+                try:
+                    answers = policies.decide(parts)
+                except RuleError:
                     raise
-                raise (error.__cause__ or error) from None
-            actions = policies.actions(parts, answers)
-            _, _, finished, _ = batch.step(actions)
-            done = bool(finished[0])
-            frames.append(reader.frame(batch.get_state(0), 1 if done else 0))
-            if len(frames) % 50 == 0 and progress is not None:
-                progress(min(len(frames) / total, 0.99))
+                except PolicyError as error:
+                    # A requested match raises the submission's own error, as it always has.
+                    if policy_errors:
+                        raise
+                    raise (error.__cause__ or error) from None
+                actions = policies.actions(parts, answers)
+                if replay is not None:
+                    stepped.append([int(value) for value in actions[0].tolist()])
+                _, _, finished, _ = batch.step(actions)
+                done = bool(finished[0])
+                frames.append(reader.frame(batch.get_state(0), 1 if done else 0))
+                if len(frames) % 50 == 0 and progress is not None:
+                    progress(min(len(frames) / total, 0.99))
+            policies.finish()
+        except RuleError as broken:
+            found = policies.stats() if policies is not None else broken.stats
+            raise ForfeitError(broken, frame_score(frames[-1]), len(frames) - 1, found) from None
+        finally:
+            if policies is not None:
+                policies.close()
+                if stats is not None:
+                    # A match that ended before its own end, by a rule or a limit of steps, says
+                    # so, so that no report takes it for a full match.
+                    stats.update(steps=len(frames) - 1, cut_short=not done, sides=policies.stats())
         difficulty = batch.difficulty[0].tolist()
     finally:
         batch.close()
+    if not save:
+        return None
     # A tournament's match names its sides as the tournament's entrants, such as a renamed team.
     # A name or title that cuju makes travels as a label, and a person's as text.
     entrants = side_names(tournament)
@@ -295,6 +361,126 @@ class PolicyMessageError(_messages.Message, PolicyError):
     _wrapper = True
 
 
+def frame_score(frame: bytes) -> list[int]:
+    """Returns the score of the left and the right side in a frame of a recording."""
+    return list(_SCORE.unpack_from(frame, 8))
+
+
+class RuleError(PolicyError):
+    """Raised when a side breaks a rule under strict rules, with each side that broke one.
+
+    Attributes:
+        breaks: Each side that broke a rule at that moment, as `(side, kind, reason, detail)`,
+            the side 0 for the left and 1 for the right, the kind one of `tournament.RULES`, the
+            reason a label of a server message and the detail of an invalid action, `count`,
+            `type` or `range`, else `None`.
+        stats: The calls, timings and actions of each side, for a break before the policies of
+            the match have loaded.
+    """
+
+    def __init__(self, breaks: list[tuple[Any, ...]], stats: list[Any] | None = None) -> None:
+        self.breaks = [(*found, None)[:4] if len(found) == 3 else tuple(found) for found in breaks]
+        super().__init__('; '.join(found[2]['text'] for found in self.breaks))
+        self.stats = stats or [None, None]
+
+
+class ForfeitError(Exception):
+    """Raised when a match under strict rules ends early, since a side broke a rule.
+
+    Attributes:
+        rule: The rule as a tournament's result keeps it, the side that broke it, `home` for the
+            left, `away` for the right or `both`, the kind, the reason as text with the id and
+            values of its message, the step and the score at that moment.
+        stats: The steps of the match and the calls, timings and actions of each side up to
+            that moment.
+    """
+
+    def __init__(self, broken: RuleError, score: list[int], step: int, stats: list[Any]) -> None:
+        sides = {found[0] for found in broken.breaks}
+        _, kind, reason, detail = broken.breaks[0]
+        if len(broken.breaks) > 1:
+            reason = _messages.label(
+                'server.strict.both', home=broken.breaks[0][2], away=broken.breaks[1][2]
+            )
+        side = 'both' if len(sides) > 1 else ('home', 'away')[next(iter(sides))]
+        self.rule = {
+            'side': side,
+            'kind': kind,
+            'reason': reason['text'],
+            'reason_id': reason['id'],
+            'reason_values': reason['values'],
+            'detail': detail,
+            'step': step,
+            'at': score,
+        }
+        self.stats = {'steps': step, 'cut_short': True, 'sides': stats}
+        super().__init__(reason['text'])
+
+
+class CallStats:
+    """The calls of one side's policy in a match, their compute times and the actions answered."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.total = 0.0
+        self.largest = 0.0
+        self.first: float | None = None
+        self.actions: collections.Counter[int] = collections.Counter()
+        self.load: float | None = None
+        self.reset: float | None = None
+
+    def add(self, seconds: float, actions: list[int]) -> None:
+        """Counts one call that took `seconds` and answered `actions`."""
+        self.calls += 1
+        self.total += seconds
+        self.largest = max(self.largest, seconds)
+        if self.first is None:
+            self.first = seconds
+        self.actions.update(actions)
+
+    def mean(self, after_first: bool = False) -> float:
+        """Returns the mean seconds of a call, those after the first alone when asked."""
+        if after_first and self.calls > 1:
+            return (self.total - (self.first or 0.0)) / (self.calls - 1)
+        return self.total / self.calls if self.calls else 0.0
+
+    def summary(self) -> dict[str, Any]:
+        """Returns the calls, the first, mean and largest compute time in ms and the actions."""
+
+        def ms(value: float | None) -> float | None:
+            return None if value is None else round(value * 1000, 3)
+
+        found = {
+            'calls': self.calls,
+            'first_ms': ms(self.first),
+            'mean_ms': ms(self.mean()) if self.calls else None,
+            'max_ms': ms(self.largest) if self.calls else None,
+            'mean_after_first_ms': ms(self.mean(True)) if self.calls else None,
+            'actions': {str(action): count for action, count in sorted(self.actions.items())},
+        }
+        if self.load is not None:
+            found['load_seconds'] = round(self.load, 3)
+        if self.reset is not None:
+            found['reset_seconds'] = round(self.reset, 3)
+        return found
+
+
+class RandomPolicy:
+    """The policy of the random entrant, an action of the default set at random for each call.
+
+    Its generator is seeded from the seed of the match and its side, so a match plays the same
+    actions again with the same seed.
+    """
+
+    def __init__(self, seed: int, side: int) -> None:
+        self.random = random.Random(hashlib.sha256(f'{seed}/random/{side}'.encode()).digest())
+
+    def act(self, obs: Any, count: int) -> list[int]:
+        """Returns one action of the 19 of the default set for each controlled player."""
+        del count
+        return [self.random.randrange(DEFAULT_ACTIONS) for _ in obs['players_raw']]
+
+
 class Policies:
     """The registered policies of a match, the agents each one plays and the actions they return.
 
@@ -319,8 +505,9 @@ class Policies:
         firsts: list[int],
         names: list[Any] | None = None,
         fits: list[dict[str, Any] | None] | None = None,
+        seed: int = 0,
     ) -> None:
-        """Loads the submission of each side that has one.
+        """Loads the submission of each side that has one, and the random entrant's policy.
 
         Args:
             batch: The batch, which only `observe` reads.
@@ -335,6 +522,7 @@ class Policies:
             fits: How each side plays a challenge, as `challenge_fit` of the registry gives it,
                 with its selected players and its players out, or `None` for both sides of a
                 match, whose teams play every player they control.
+            seed: The seed of the match, from which the random entrant draws its actions.
         """
         self.batch = batch
         self.players: list[dict[str, Any]] = []
@@ -349,21 +537,51 @@ class Policies:
                 selected = fit['selected']
             elif control['assignment'] == 'fixed':
                 selected = _teams.selected_players(control, _teams.scenario_players(scenario, side))
-            function = _teams.load_agent(team['id'])
-            if extended and control['action_set'] == 'default':
-                function = _default_actions(function)
+            name = (names or [None, None])[side] or team['name']
             self.players.append(
                 {
                     'side': side,
-                    'name': (names or [None, None])[side] or team['name'],
-                    'runner': AgentRunner(function),
+                    'name': name,
+                    'runner': self._runner(team, side, extended, control, seed, name),
                     'columns': columns,
                     'selected': selected,
                     'slots': None if fit is None else fit['slots'],
                     'held': {},
                     'calls': 0,
+                    'stats': CallStats(),
                 }
             )
+
+    def _runner(
+        self,
+        team: dict[str, Any],
+        side: int,
+        extended: bool,
+        control: dict[str, Any],
+        seed: int,
+        name: Any,
+    ) -> Any:
+        """Returns what answers the calls of a side's policy, loaded in this process."""
+        del name
+        if team['kind'] == 'random':
+            return RandomPolicy(seed, side)
+        function = _teams.load_agent(team['id'])
+        if extended and control['action_set'] == 'default':
+            function = _default_actions(function)
+        return AgentRunner(function)
+
+    def stats(self) -> list[dict[str, Any] | None]:
+        """Returns the calls, timings and actions of each side, `None` for a side without one."""
+        found: list[dict[str, Any] | None] = [None, None]
+        for player in self.players:
+            found[player['side']] = player.setdefault('stats', CallStats()).summary()
+        return found
+
+    def finish(self) -> None:
+        """Checks what only the whole match tells, as strict rules do for the mean of a call."""
+
+    def close(self) -> None:
+        """Ends what the policies hold, such as the processes of strict rules."""
 
     def observe(self) -> list[Any]:
         """Returns what each policy sees at the current step, on the thread that steps the batch.
@@ -408,11 +626,15 @@ class Policies:
                 answers.append(None)
                 continue
             obs = part[2]
+            started = time.perf_counter()
             try:
                 # Kaggle's single form for one player, and its multi agent form for several.
-                answers.append(player['runner'].act(obs, count))
+                answer = player['runner'].act(obs, count)
             except Exception as error:
                 raise _policy_error(error, player['name']) from error
+            # A player that a caller added by hand, as a challenge does, counts its calls too.
+            player.setdefault('stats', CallStats()).add(time.perf_counter() - started, answer)
+            answers.append(answer)
         return answers
 
     def actions(self, parts: list[Any] | None, answers: list[Any] | None) -> torch.Tensor:
@@ -650,6 +872,8 @@ def main(arguments: list[str] | None = None) -> None:
     parser.add_argument('--length', type=int, default=None)
     parser.add_argument('--tournament', type=json.loads, default=None)
     parser.add_argument('--draw', type=json.loads, default=None)
+    parser.add_argument('--strict', type=json.loads, default=None)
+    parser.add_argument('--replay', action='store_true')
     options = parser.parse_args(arguments)
     # The reports keep a copy of standard output, and everything else written there, by Python or
     # by native code, goes to standard error.
@@ -657,6 +881,8 @@ def main(arguments: list[str] | None = None) -> None:
     _reports = os.fdopen(os.dup(1), 'w', encoding='utf-8')
     os.dup2(2, 1)
     sys.stdout = sys.stderr
+    stats: dict[str, Any] = {}
+    replay: dict[str, Any] | None = {} if options.replay else None
     try:
         path = play(
             options.left,
@@ -672,15 +898,26 @@ def main(arguments: list[str] | None = None) -> None:
             # A tournament's failure names the team that failed, a requested match's stays.
             policy_errors=options.tournament is not None,
             draw=options.draw,
+            strict=options.strict,
+            stats=stats,
+            replay=replay,
         )
+    except ForfeitError as forfeit:
+        # A side that broke a rule of strict rules ends the match, which reports the forfeit.
+        _report(progress=1.0, forfeit=forfeit.rule, stats=forfeit.stats, replay=replay)
+        return
     except PolicyError as error:
         _report(error=str(error), **_messages.id_fields(error))
         sys.exit(1)
     except Exception as error:
         _report(error=_messages.described(error), **_messages.id_fields(error))
         sys.exit(1)
-    _report(progress=1.0, match=path.stem)
+    _report(progress=1.0, match=path.stem, stats=stats, replay=replay)
 
 
 if __name__ == '__main__':
-    main()
+    # The match runs from the module as the package imports it, so its errors are the classes
+    # that strict rules raise, which a copy of this file run as the main module would not catch.
+    from cuju.render._playing import play as _module
+
+    _module.main()

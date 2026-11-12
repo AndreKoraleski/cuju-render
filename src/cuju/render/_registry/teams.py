@@ -59,6 +59,10 @@ BUILTIN = 'builtin'
 # side of a requested match, as _playing/draw.py names it. A folder of teams by such a name, which
 # only a hand could make, is left out of the registry, so no request mistakes one for the other.
 RESERVED = frozenset({'random'})
+# The side of a tournament's random entrant, which plays one player with actions at random. A
+# requested match names a team to draw at random as `random`, so the entrant's side has a name of
+# its own.
+RANDOM_ACTIONS = 'random-actions'
 # The start of a submission folder as the page uploads it, an index and the files' bytes.
 FOLDER_MAGIC = b'CUJDIR1\n'
 # The built-in AI's name until a person renames it, a label that the page shows in its language.
@@ -581,7 +585,7 @@ def teams() -> list[dict[str, Any]]:
     """
     entries = []
     for folder in _home.folder('teams').iterdir():
-        if folder.name == BUILTIN or not _home.valid_identifier(folder.name):
+        if folder.name in (BUILTIN, RANDOM_ACTIONS) or not _home.valid_identifier(folder.name):
             continue
         if folder.name in RESERVED:
             _LOGGER.warning(
@@ -708,6 +712,8 @@ def agent_count(team: dict[str, Any], scenario: str | None = None, side: int = 0
     """Returns the engine agents required by a side."""
     if team['kind'] == 'builtin':
         return 0
+    if team['kind'] == 'random':
+        return 1
     control = check_control(team.get('control'), team['format'])
     if control['assignment'] == 'dynamic':
         return control['players']
@@ -1220,7 +1226,7 @@ def _check_size(team: dict[str, Any], scenario: str) -> None:
 def check_scenario(teams_: list[dict[str, Any]], scenario: str) -> None:
     """Checks the format, count, selected players and goalkeeper on each scenario side."""
     for side, team in enumerate(teams_):
-        if team['kind'] == 'builtin':
+        if team['kind'] in ('builtin', 'random'):
             continue
         _check_size(team, scenario)
         control = check_control(team.get('control'), team['format'])
@@ -1403,7 +1409,7 @@ def match_teams(left: str, right: str) -> list[dict[str, Any]]:
 
 def header_team(identifier: str) -> dict[str, Any]:
     """Returns a team as a recording's header holds it, with its identifier, name and style."""
-    team = entry(identifier)
+    team = side_entry(identifier)
     kit = team['style']['kit']
     return {
         'id': team['id'],
@@ -1973,6 +1979,33 @@ def entry(identifier: str) -> dict[str, Any]:
         if team['id'] == identifier:
             return team
     raise MessageError('server.teams.unknown', identifier=repr(identifier))
+
+
+def side_entry(identifier: str) -> dict[str, Any]:
+    """Returns the entry of a side of a match, a team of the registry or the random entrant.
+
+    The random entrant is no team of the registry, so the Teams page leaves it out, and it plays
+    one player of either size with actions drawn at random, its teammates the built-in AI's.
+    """
+    if identifier == RANDOM_ACTIONS:
+        return _random()
+    return entry(identifier)
+
+
+_RANDOM_KIT = {
+    'pattern': 'stripes',
+    'primary': [120, 120, 128],
+    'secondary': [255, 214, 0],
+    'shorts': [60, 60, 66],
+    'socks': [255, 214, 0],
+}
+
+
+def _random() -> dict[str, Any]:
+    """Returns the entry of the random entrant, with a kit of its own and a name as a label."""
+    entry = {'id': RANDOM_ACTIONS, 'kind': 'random', 'created': None, 'format': '11v11'}
+    entry.update(_messages.named('name', _messages.label('server.names.random')))
+    return _complete(entry, _RANDOM_KIT)
 
 
 def load_agent(identifier: str) -> Any:

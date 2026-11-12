@@ -8032,3 +8032,358 @@ table.grid td.wrap {
         bottom: 80px;
     }
 }
+
+/* Strict rules, the pre-flight check, more legs and the results of a tournament, from
+   js/play/tournament-strict.js, and the strict check on a team's card, from js/teams/team-check.js.
+   The heat of the matrix runs from blue, where the row scored more, to orange, where the column
+   did, in four steps each way, every step dark enough in the dark theme and light enough in the
+   light one that the text of a cell reads at a contrast of at least 4.5 to 1. */
+:root {
+    --heat-up-1: #22364f;
+    --heat-up-2: #1f4470;
+    --heat-up-3: #1f5291;
+    --heat-up-4: #2060b0;
+    --heat-down-1: #4a2c22;
+    --heat-down-2: #6b3320;
+    --heat-down-3: #8a3a1c;
+    --heat-down-4: #a8421a;
+}
+
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+        --heat-up-1: #e3edfc;
+        --heat-up-2: #c6dbf8;
+        --heat-up-3: #a7c7f3;
+        --heat-up-4: #86b1ec;
+        --heat-down-1: #fde7dc;
+        --heat-down-2: #fbcdb7;
+        --heat-down-3: #f8b291;
+        --heat-down-4: #f4966b;
+    }
+}
+
+:root[data-theme="light"] {
+    --heat-up-1: #e3edfc;
+    --heat-up-2: #c6dbf8;
+    --heat-up-3: #a7c7f3;
+    --heat-up-4: #86b1ec;
+    --heat-down-1: #fde7dc;
+    --heat-down-2: #fbcdb7;
+    --heat-down-3: #f8b291;
+    --heat-down-4: #f4966b;
+}
+
+.cup-strict {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    padding: 10px 14px 14px;
+    border: 1px solid var(--border);
+}
+
+.cup-strict legend {
+    padding: 0 6px;
+    font-weight: 600;
+}
+
+.cup-strict p,
+.cup-strict-head p,
+.cup-review-strict p {
+    margin: 0;
+}
+
+.cup-strict-limits {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 10px 16px;
+}
+
+.cup-unit {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.cup-unit input {
+    width: 110px;
+    max-width: 100%;
+}
+
+.cup-strict-limit input[aria-invalid="true"],
+.cup-legs input[aria-invalid="true"] {
+    border-color: var(--danger);
+}
+
+.cup-kind.random .icon {
+    width: 14px;
+    height: 14px;
+}
+
+.cup-review-strict {
+    display: grid;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.cup-review-strict h3 {
+    margin: 0;
+}
+
+.cup-checks {
+    display: grid;
+    gap: 4px;
+    margin: 4px 0;
+}
+
+.cup-checks li,
+.cup-excluded li {
+    overflow-wrap: anywhere;
+}
+
+.cup-check-sides,
+.team-check-sides {
+    margin: 2px 0 0 22px;
+}
+
+.cup-check-sides li.failed,
+.team-check-sides li.failed,
+.cup-check-sides li.warning > .icon,
+.team-check-sides li.warning > .icon,
+.cup-checks li.failed > .icon,
+.cup-excluded li > .icon,
+.team-check-status.failed {
+    color: var(--danger);
+}
+
+.cup-strict-head {
+    display: grid;
+    gap: 6px;
+}
+
+.cup-excluded {
+    border-left: 3px solid var(--danger);
+}
+
+.cup-excluded h3 {
+    margin: 0 0 6px;
+    font-size: 15px;
+}
+
+.cup-legs {
+    gap: 6px;
+    align-items: center;
+}
+
+.cup-legs input {
+    width: 72px;
+}
+
+.cup-results {
+    margin-top: 18px;
+    min-width: 0;
+}
+
+.cup-results h3 {
+    margin: 0;
+}
+
+.cup-results-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    min-width: 0;
+    margin-top: 10px;
+}
+
+.cup-results-body h4 {
+    margin: 0 0 6px;
+}
+
+.cup-ratings-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.cup-ratings table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+.cup-ratings caption {
+    padding-bottom: 4px;
+    text-align: left;
+}
+
+.cup-ratings th,
+.cup-ratings td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+}
+
+.cup-ratings th[scope="row"],
+.cup-ratings thead th:nth-child(2) {
+    text-align: left;
+}
+
+.cup-interval-cell {
+    min-width: 140px;
+}
+
+.cup-interval {
+    position: relative;
+    display: block;
+    min-width: 120px;
+    height: 14px;
+    background: var(--surface-2);
+}
+
+.cup-interval-range {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    border: 1px solid var(--link);
+    background: color-mix(in srgb, var(--link) 45%, transparent);
+}
+
+.cup-interval-mark,
+.cup-interval-centre {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+}
+
+.cup-interval-mark {
+    width: 3px;
+    margin-left: -1px;
+    background: var(--text);
+}
+
+.cup-interval-centre {
+    width: 1px;
+    background: var(--muted);
+}
+
+/* The matrix scrolls inside its own box, so a phone never scrolls the page sideways, and the
+   names of its rows stay in place as the columns pass under them. */
+.cup-matrix-scroll {
+    max-width: 100%;
+    overflow: auto;
+}
+
+.cup-matrix table {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.cup-matrix caption {
+    padding-bottom: 4px;
+    text-align: left;
+}
+
+.cup-matrix th,
+.cup-matrix td {
+    min-width: 54px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+}
+
+.cup-matrix thead th {
+    max-width: 110px;
+    font-size: 13px;
+    vertical-align: bottom;
+    overflow-wrap: anywhere;
+}
+
+.cup-matrix th[scope="row"],
+.cup-matrix-corner {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    min-width: 6em;
+    max-width: 140px;
+    background: var(--surface);
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+.cup-heat {
+    color: var(--text);
+}
+
+/* Each cell keeps room for a signed mean, so a wide matrix scrolls rather than squeezing. */
+.cup-heat-mean,
+.cup-heat-count {
+    display: block;
+    min-width: 3.2em;
+}
+
+.cup-heat-mean {
+    font-weight: 600;
+}
+
+.heat-even {
+    background: var(--surface-2);
+}
+
+.heat-up-1 { background: var(--heat-up-1); }
+.heat-up-2 { background: var(--heat-up-2); }
+.heat-up-3 { background: var(--heat-up-3); }
+.heat-up-4 { background: var(--heat-up-4); }
+.heat-down-1 { background: var(--heat-down-1); }
+.heat-down-2 { background: var(--heat-down-2); }
+.heat-down-3 { background: var(--heat-down-3); }
+.heat-down-4 { background: var(--heat-down-4); }
+
+.cup-heat-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    align-items: center;
+    margin: 6px 0 0;
+}
+
+.cup-heat-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--border);
+}
+
+.cup-file-list {
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.team-check {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: center;
+    margin-top: 4px;
+}
+
+.team-check-status {
+    flex-basis: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.team-check-run[aria-disabled="true"] {
+    cursor: progress;
+    opacity: 0.75;
+}
+
+@media (forced-colors: active) {
+    .cup-heat,
+    .cup-heat-swatch,
+    .cup-interval-range {
+        border: 1px solid CanvasText;
+    }
+}
