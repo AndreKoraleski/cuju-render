@@ -151,7 +151,9 @@ def test_two_teams_keep_their_modules_threads_folders_and_inputs_apart(
         # The paths are resolved, since macOS spells a temporary folder as /var and /private/var.
         copy = Path(found['helper']).parent.resolve()
         assert Path(found['path']).resolve() == copy and copy.name == 'team'
-        assert copy.parent == Path(found['folder']).resolve() and copy.parent.name.startswith('cuju-policy-')
+        assert copy.parent == Path(found['folder']).resolve() and copy.parent.name.startswith(
+            'cuju-policy-'
+        )
         assert not copy.parent.exists()
         assert found['threads'] == {'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1'}
         assert not found['renderer'] and found['stdin'] == '' and found['pythonpath'] == []
