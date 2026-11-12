@@ -1007,6 +1007,8 @@ def _alive(pid: int) -> bool:
 _LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 # The largest body a request may send, a submission of 100 MB with room for its index.
 _MAXIMUM_BODY = 110 * 1024 * 1024
+# The largest body of a refused request that the server reads before it answers.
+_DRAINED_BODY = 64 * 1024
 
 
 def make_handler(
@@ -1069,6 +1071,7 @@ def make_handler(
             domains = getattr(self.server, 'proxy_domains', ())
             hostname = urllib.parse.urlsplit('//' + named).hostname
             if hostname not in allowed_hosts and not _launch.in_domains(hostname, domains):
+                self._drain()
                 self._refuse(403, 'server.loopback')
                 return False
             # A page served by another port of this machine is another site, so the whole
@@ -1084,6 +1087,7 @@ def make_handler(
                 origin_host = urllib.parse.urlsplit(origin).hostname
                 proxied = origin_host == hostname and _launch.in_domains(origin_host, domains)
             if origin is not None and self.command != 'GET' and origin not in own and not proxied:
+                self._drain()
                 self._refuse(403, 'server.origin')
                 return False
             try:
@@ -1095,6 +1099,21 @@ def make_handler(
                 self._refuse(413, 'server.body_size')
                 return False
             return True
+
+        def _drain(self) -> None:
+            """Reads a small body that a refused request sent, then closes the connection.
+
+            A server that answers before reading the body and closes the connection makes some
+            systems, Windows among them, reset it, so the client may lose the answer. A body too
+            large or of a malformed length is left unread, since the connection closes anyway.
+            """
+            self.close_connection = True
+            try:
+                length = int(self.headers.get('Content-Length') or 0)
+            except ValueError:
+                return
+            if 0 < length <= _DRAINED_BODY:
+                self.rfile.read(length)
 
         def log_message(self, *arguments: Any) -> None:
             pass
