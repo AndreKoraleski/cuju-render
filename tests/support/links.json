@@ -1,0 +1,33 @@
+{
+    "comment": "The data of tests/test_links.py. cuju lists every path of cuju's repository that the page, the docs, the README and the metadata link to, as it follows https://github.com/AndreKoraleski/cuju/, with its anchor. The test holds each such link to this list, and ci/check_links.py, run by hand, checks the list against cuju's repository on GitHub. skip names the hosts whose addresses are no links to check, and removed the things that the page, the docs and the README no longer mention, each with its reason.",
+    "cuju": [
+        "",
+        "issues",
+        "discussions",
+        "tree/main/docs",
+        "blob/main/CHANGELOG.md",
+        "blob/main/docs/api.md",
+        "blob/main/docs/api.md#step-observers",
+        "blob/main/docs/recipes.md",
+        "blob/main/docs/states.md"
+    ],
+    "skip": [
+        {"host": "127.0.0.1", "reason": "the address of a server on this computer"},
+        {"host": "localhost", "reason": "the address of a server on this computer"},
+        {"host": "::1", "reason": "the address of a server on this computer"},
+        {"host": "0.0.0.0", "reason": "the address a server listens on, which no browser opens"},
+        {"host": "example.com", "reason": "an address of the examples"},
+        {"host": "example.org", "reason": "an address of the examples"},
+        {"host": "www.w3.org", "reason": "the namespaces of SVG, XHTML and XLink, names rather than links"}
+    ],
+    "removed": [
+        {"pattern": "promo", "reason": "the promotional montage of Home and its script make_promo were removed"},
+        {"pattern": "montage", "reason": "the promotional montage of Home was removed"},
+        {"pattern": "mistermender|freesound\\.org/s/512340", "reason": "the music of the montage left with it"},
+        {"pattern": "cuju-teaser|cuju-montage", "reason": "the montage, its poster and its teaser left cuju's docs/assets"},
+        {"pattern": "ARCHITECTURE\\.md", "reason": "the map of the sources is the Layout section of CONTRIBUTING.md"},
+        {"pattern": "make_app_icons", "reason": "ci/make_logo.py draws every icon of the page from the logo"},
+        {"pattern": "(?<![\\w-])pt\\.json", "reason": "the draft of Brazilian Portuguese is translations/pt-BR/pt-BR.json, and the page ships English alone"},
+        {"pattern": "AndreKoraleski/cuju/(blob|tree)/main/docs/rendering\\.md", "reason": "the renderer's guide is docs/rendering.md of cuju-render, and cuju's page of that name only introduces the package"}
+    ]
+}

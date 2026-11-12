@@ -50,8 +50,10 @@ modules sit in folders by concern, from `core/` and `recording/` at the bottom t
 
 `tests/` holds the Python tests by area, `tests/support/` their shared parts and `tests/web/` the
 page's Node tests, each copying its modules into a folder that mirrors `web/js/`. `ci/` holds the
-mock servers `mock_*.py`, the page checks `page_*.py` in headless Chrome, the wheel check and the
-asset scripts `make_*` that are run by hand, and `docs/` holds the user guides. The page ships
+mock servers `mock_*.py`, the page checks `page_*.py` in headless Chrome, the wheel check, the
+link check `check_links.py` and the asset scripts `make_*`. `tests/test_links.py` runs the offline
+part of the link check, and its requests of every external link, like the asset scripts, are run
+by hand. `docs/` holds the user guides. The page ships
 in English, `web/languages/en.json`, and `translations/` holds the drafts of other languages
 outside the package, one folder per language named after its code of BCP 47, today `pt-BR` for
 Brazilian Portuguese with its messages `pt-BR.json`, its style guide and its glossary, which the

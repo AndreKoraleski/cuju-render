@@ -10,8 +10,8 @@ belong to cuju, and the renderer reads states and never writes one.
   `__main__.py`, the private subpackages and the page in `web/`. CONTRIBUTING.md maps them.
 - `tests/` holds the Python tests by area, `tests/support/` their shared parts and `tests/web/`
   the page's Node tests.
-- `ci/` holds the mock servers, the page checks in headless Chrome, the wheel check and the asset
-  scripts that are run by hand.
+- `ci/` holds the mock servers, the page checks in headless Chrome, the wheel check, and the link
+  check and the asset scripts that are run by hand.
 - `docs/` holds the user guides.
 
 ## Build and test
