@@ -16,6 +16,7 @@ import { listedScenarios, scenarioName } from '../core/scenarios.js';
 import { language, serverText, storedLanguage, t, tOr } from '../core/i18n.js';
 import { spoilerFree } from '../core/spoilers.js';
 import { chord } from '../core/keys.js';
+import { PAGES } from '../core/page-structure.js';
 
 // The most entries the list shows at once.
 export const LIMIT = 60;
@@ -104,7 +105,7 @@ export function languageChoices(languages, shown, chosen = null) {
 // The groups of the list by their English names, each the message palette.group.<key>.
 const GROUPS = {
     Pages: 'pages', Live: 'live', Recordings: 'recordings', Matches: 'matches', Play: 'play',
-    Teams: 'teams', Tournaments: 'tournaments', Follow: 'follow', Settings: 'settings', View: 'view', Help: 'help',
+    Challenges: 'challenges', Teams: 'teams', Tournaments: 'tournaments', Follow: 'follow', Settings: 'settings', View: 'view', Help: 'help',
 };
 
 // The keys of the Watch page that choose a camera, which its actions show.
@@ -133,8 +134,6 @@ export const HELP_TOPICS = [
     ['help-view', 'view', 'broadcast mode fullscreen mute'],
 ].map(([id, key, words]) => [id, t(`palette.topic.${key}.title`), searchWords(`palette.topic.${key}.words`, words)]);
 
-// The pages, each named by the message palette.page.<page>.
-const PAGES = ['home', 'watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help'];
 // The times of day, each named by the message palette.time.<key>.
 const TIMES = [['dawn', 6.5], ['day', 15], ['dusk', 19], ['night', 22]];
 
@@ -323,6 +322,7 @@ export class CommandPalette {
                 app.showPage('watch');
             }
         };
+        // The pages, each named by the message palette.page.<page>.
         for (const page of PAGES) {
             if (page !== app.page) {
                 add('Pages', t('palette.go', { page: t(`palette.page.${page}`) }), () => app.showPage(page),
@@ -359,10 +359,10 @@ export class CommandPalette {
             add('Play', t('palette.play', { scenario: scenarioName(name) }), () => this.playScenario(name),
                 searchWords('palette.words.play', 'scenario game start person'));
         }
-        add('Play', t('palette.challenges'), () => this.showChallenge(null),
+        add('Challenges', t('palette.challenges'), () => this.showChallenge(null),
             searchWords('palette.words.challenges', 'challenge drill medal leaderboard achievement'));
         for (const c of this.challenges) {
-            add('Play', t('palette.challenge', { title: tOr(`challenge.${c.id}.title`, c.title) }), () => this.showChallenge(c.id),
+            add('Challenges', t('palette.challenge', { title: tOr(`challenge.${c.id}.title`, c.title) }), () => this.showChallenge(c.id),
                 `${searchWords('palette.words.challenge', 'challenge drill medal leaderboard')} ${c.id}`, scenarioName(c.scenario));
         }
         const editing = !!(app.editor && app.editor.isOpen && app.editor.team);
@@ -494,23 +494,11 @@ export class CommandPalette {
         setTimeout(() => app.play && app.play.startButton && !app.play.setupView.hidden && app.play.startButton.focus(), 0);
     }
 
-    // Shows the Challenges section of Play, and with an identifier moves the focus to Start
-    // challenge of that challenge once the list has it.
+    // Shows the Challenges page, and with an identifier moves the focus to Play it yourself of
+    // that challenge once the list has it, else to the heading of the page.
     async showChallenge(id) {
-        this.app.showPage('play');
-        const selector = id ? `.challenge-item[data-id="${CSS.escape(id)}"] [data-action="start"]` : '#challenges-title';
-        for (let i = 0; i < 40; i++) {
-            const node = document.querySelector(selector);
-            if (node && node.getClientRects().length) {
-                if (!id) {
-                    node.tabIndex = -1;
-                }
-                node.scrollIntoView({ block: 'center' });
-                node.focus({ preventScroll: true });
-                return;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 50));
-        }
+        this.app.showPage('challenges');
+        return this.app.challengesPage ? this.app.challengesPage.focusCard(id) : false;
     }
 
     helpTopic(id) {

@@ -25,7 +25,7 @@ process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 const { HELP_TEXT, TIPS, TIP_SPOTS, chooseSpot, dismissTip, tipFor, tipState } = await import(pathToFileURL(join(folder, 'help/firstrun.js')).href);
 
 test('every page but Help has a short tip, and every control a short line of help', () => {
-    assert.deepEqual(Object.keys(TIPS).sort(), ['field', 'home', 'matches', 'play', 'recordings', 'teams', 'tournaments', 'watch']);
+    assert.deepEqual(Object.keys(TIPS).sort(), ['challenges', 'field', 'home', 'matches', 'play', 'recordings', 'teams', 'tournaments', 'watch']);
     for (const text of [...Object.values(TIPS), ...Object.values(HELP_TEXT)]) {
         assert.ok(text.length <= 90, text);
         assert.ok(!/[;:()!]/.test(text), text);
@@ -46,6 +46,16 @@ test('a stored state keeps only what it should', () => {
     assert.deepEqual(tipState(null), { dismissed: [], off: false });
     assert.deepEqual(tipState({ dismissed: ['home', 'home', 'nowhere', 3], off: 'yes' }), { dismissed: ['home'], off: false });
     assert.deepEqual(tipState({ dismissed: 'home', off: true }), { dismissed: [], off: true });
+});
+
+test('a state stored before Challenges had a page keeps its dismissals, and Challenges has its own tip', () => {
+    // Play held the challenges before, so a dismissed tip of Play stays dismissed, and the tip of
+    // the Challenges page shows once on its own page.
+    const before = { dismissed: ['home', 'play'], off: false };
+    assert.deepEqual(tipState(before), before);
+    assert.equal(tipFor('play', before), null);
+    assert.equal(tipFor('challenges', before), TIPS.challenges);
+    assert.equal(tipFor('challenges', dismissTip(before, 'challenges')), null);
 });
 
 test('a tip keeps a clear corner, else takes the first clear one, else the one that covers least', () => {

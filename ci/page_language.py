@@ -16,7 +16,18 @@ from pathlib import Path
 
 DRAFT = Path(__file__).resolve().parents[1] / 'translations' / 'pt.json'
 
-PAGES = ['home', 'watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help']
+PAGES = [
+    'home',
+    'watch',
+    'play',
+    'challenges',
+    'recordings',
+    'matches',
+    'tournaments',
+    'teams',
+    'field',
+    'help',
+]
 # The headings of the Help page, which stay as they are while its lessons are done.
 HEADINGS = (
     "[...document.querySelectorAll('#page-help h2, #page-help h3')].map((x) => x.textContent)"
@@ -24,6 +35,7 @@ HEADINGS = (
 PORTUGUESE_TABS = [
     'Assistir',
     'Jogar',
+    'Desafios',
     'Gravações',
     'Partidas',
     'Torneios',

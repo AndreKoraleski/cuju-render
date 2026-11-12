@@ -257,6 +257,7 @@ export class HomePage {
                 h('nav', { class: 'home-actions', 'aria-label': t('home.hero.pages') },
                     h('button', { type: 'button', class: 'btn primary home-cta', onclick: go('watch') }, icon('watch'), t('home.hero.watch')),
                     h('button', { type: 'button', class: 'btn', onclick: go('play') }, icon('gamepad'), t('home.hero.play')),
+                    h('button', { type: 'button', class: 'btn', onclick: go('challenges') }, icon('challenges'), t('home.hero.challenges')),
                     h('button', { type: 'button', class: 'btn', onclick: go('matches') }, icon('matches'), t('home.hero.matches')),
                     h('button', { type: 'button', class: 'btn', onclick: go('teams') }, icon('shirt'), t('home.hero.teams')),
                     h('button', { type: 'button', class: 'btn', onclick: go('field') }, icon('field'), t('home.hero.field'))),

@@ -1,9 +1,9 @@
 // Copyright 2026 The cuju Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// The benchmark of models in the Challenges section of Play. A person picks one or several
+// The benchmark of models on the Challenges page. A person picks one or several
 // registered teams and several or all challenges, and the server plays every pair as a full
-// headless run, as Run headless does, in a process of its own and by the challenges' own rules and
+// headless run, as Run a model does on a card, in a process of its own and by the challenges' own rules and
 // seeds. The view follows the job and draws a table of models by challenges, each cell with its
 // value and medal, and each model's medals, score and place, which the server counts, and exports
 // the benchmark as JSON and its table as CSV. benchCsv writes the same CSV as csv_text of
@@ -14,6 +14,12 @@ import { el as h } from '../core/menu.js';
 import { STATE_ICONS, icon, symbolOnly } from '../core/icons.js';
 import { teamName } from '../core/names.js';
 import { medalMark } from './medals.js';
+
+// The note of a run whose team played with players out, as `[played, controlled]`, such as
+// Played with 1 of its 4 players, the others out.
+export function playingText(playing) {
+    return t('challenges.playing', { players: playing[0], count: playing[1] });
+}
 
 // A benchmark is followed this often while it waits or plays.
 const POLL_MS = 1000;
@@ -291,6 +297,9 @@ export class BenchPanel {
         }
         if (cell.state === 'done') {
             const parts = [h('span', { class: 'bench-value' }, this.words.value(c, cell.value)), ' ', medalMark(cell.medal, t('challenges.board.noMedal'))];
+            if (Array.isArray(cell.playing)) {
+                parts.push(h('span', { class: 'muted small bench-failed' }, playingText(cell.playing)));
+            }
             if (cell.failed_attempts) {
                 parts.push(h('span', { class: 'muted small bench-failed' }, t('challenges.bench.failedAttempts', { count: cell.failed_attempts })));
             }

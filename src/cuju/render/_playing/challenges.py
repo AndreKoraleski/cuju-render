@@ -564,6 +564,8 @@ def _read_board(identifier: str) -> list[dict[str, Any]]:
             kept = {key: entry[key] for key in _ENTRY_FIELDS}
             if isinstance(entry.get('default_name'), bool):
                 kept['default_name'] = entry['default_name']
+            if _playing_pair(entry.get('playing')):
+                kept['playing'] = entry['playing']
             entries.append(kept)
         else:
             skipped += 1
@@ -580,6 +582,16 @@ def _read_board(identifier: str) -> list[dict[str, Any]]:
             seen.add(_competitor(entry))
             best.append(entry)
     return best
+
+
+def _playing_pair(value: Any) -> bool:
+    """Returns whether a value is the players that played and those a team controls, fewer first."""
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(_whole(number) for number in value)
+        and 1 <= value[0] < value[1] <= 11
+    )
 
 
 def _write_board(identifier: str, entries: list[dict[str, Any]]) -> None:
@@ -714,7 +726,10 @@ def _summary(identifier: str, person: str | None) -> dict[str, Any]:
 
 def _short(entry: dict[str, Any]) -> dict[str, Any]:
     keys = ('rank', 'kind', 'name', 'team', 'value', 'seconds', 'medal')
-    return _named({key: entry[key] for key in keys})
+    short = {key: entry[key] for key in keys}
+    if 'playing' in entry:
+        short['playing'] = entry['playing']
+    return _named(short)
 
 
 def _entry(
@@ -724,7 +739,10 @@ def _entry(
     totals: dict[str, Any],
     results: list[dict[str, Any]],
     default_name: bool = False,
+    playing: list[int] | None = None,
 ) -> dict[str, Any]:
+    """Returns an entry of a board. A team that played with players out keeps `playing`, the
+    players that played and the players it controls, so the board says so beside its result."""
     entry = {
         'kind': kind,
         'name': name,
@@ -747,6 +765,8 @@ def _entry(
     }
     if kind == 'person':
         entry['default_name'] = default_name
+    if playing is not None:
+        entry['playing'] = list(playing)
     return entry
 
 
@@ -1150,9 +1170,11 @@ def run(
 
     Returns:
         The run, its value, seconds, medal, rank and best run on the leaderboard, its medals as
-        `medal_items` gives them, the count of its `failed_attempts`, the result and recording of
-        each attempt, the `group` of its recordings or `None`, and the achievements that a team of
-        the registry keeps, none for the built-in AI and for a Python policy, which keep none.
+        `medal_items` gives them, the count of its `failed_attempts`, `playing`, the players that
+        played and those the team controls for a team that played with players out, else `None`,
+        the result and recording of each attempt, the `group` of its recordings or `None`, and the
+        achievements that a team of the registry keeps, none for the built-in AI and for a Python
+        policy, which keep none.
 
     Raises:
         ArgumentError: If the challenge, the team, the control or the attempts do not fit.
@@ -1185,8 +1207,10 @@ def run(
         side = {'id': None, 'kind': 'policy', 'name': competitor, 'format': '11v11'}
         side['control'] = _teams.check_control(control, side['format'])
         control = side['control']
-    _teams.check_scenario([side, builtin], scenario)
-    agents = _teams.agent_count(side, scenario, 0)
+    fit = _teams.challenge_fit(side, scenario)
+    agents = fit['agents']
+    # A team that controls more players than the side holds plays with the others out.
+    playing = None if fit['slots'] is None else [fit['playing'], fit['players']]
     checked = None if side['kind'] == 'builtin' else _teams.check_control(control, side['format'])
     extended = checked is not None and (
         checked['assignment'] == 'fixed' or checked['action_set'] == 'v2'
@@ -1195,21 +1219,27 @@ def run(
 
     def factory(batch: Any) -> Any:
         if side['kind'] != 'policy':
-            return Policies(batch, [side, builtin], scenario, [agents, 0], extended, [0, agents])
+            return Policies(
+                batch,
+                [side, builtin],
+                scenario,
+                [agents, 0],
+                extended,
+                [0, agents],
+                fits=[fit, None],
+            )
         policies = Policies(batch, [builtin, builtin], scenario, [0, 0], extended, [0, 0])
         function = policy
         if extended and checked['action_set'] == 'default':
             function = _default_actions(policy)
-        selected = None
-        if checked['assignment'] == 'fixed':
-            selected = _teams.selected_players(checked, _teams.scenario_players(scenario, 0))
         policies.players.append(
             {
                 'side': 0,
                 'name': competitor,
                 'runner': AgentRunner(function),
                 'columns': list(range(agents)),
-                'selected': selected,
+                'selected': fit['selected'],
+                'slots': fit['slots'],
                 'held': {},
                 'calls': 0,
             }
@@ -1283,12 +1313,14 @@ def run(
         **totals,
         'medals': medal_items(spec, None if practice else totals['value']),
         'failed_attempts': sum(result['failed'] for result in results),
+        'playing': playing,
     }
     if practice:
         # Practice keeps its value but wins no medal and stays off the board.
         outcome.update(medal=None, rank=None, personal_best=None, improved=False, first=False)
     else:
-        outcome.update(record(challenge, _entry('agent', competitor, kind_team, totals, results)))
+        entry = _entry('agent', competitor, kind_team, totals, results, playing=playing)
+        outcome.update(record(challenge, entry))
     outcome['achievements'] = _achievements_of(
         lambda: _achievements.for_agent_run(outcome, recordings)
     )
@@ -1445,7 +1477,7 @@ class _Jobs:
         if not isinstance(team, str):
             raise MessageError('server.challenges.team', team=repr(team))
         entry = _teams.entry(team)
-        _teams.check_scenario([entry, _teams.entry(_teams.BUILTIN)], challenge['scenario'])
+        _teams.challenge_fit(entry, challenge['scenario'])
         if attempts is not None and (
             not _whole(attempts) or not 1 <= attempts <= challenge['attempts']
         ):

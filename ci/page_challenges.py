@@ -1,10 +1,13 @@
 # Copyright 2026 The cuju Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Checks the cards of the challenges on the Play page, their pictures, teasers and labels.
+"""Checks the Challenges page, the ways to it, its cards, pictures, teasers and labels.
 
-ci/page_check.py runs card_checks and bench_checks with the other checks of the page. Run alone,
-this file starts the mock server and Chrome itself and runs these checks with the checks of a
-challenge's run in ci/page_check.py.
+ci/page_check.py runs reach_checks, card_checks and bench_checks with the other checks of the
+page. Run alone, this file starts the mock server and Chrome itself and runs these checks with the
+checks of a challenge's run in ci/page_check.py.
+
+The tab of the top bar, the item of the narrow page menu, the address, an old address of Play
+that names a challenge, the command palette and the guided tour each open the Challenges page.
 
 The mock server's catalog holds three challenges of three kinds, and the page reads their stills
 and teasers from the shipped folder of the page. The checks rest the pointer on a card and see its
@@ -98,19 +101,199 @@ def _motion(client, value):
     )
 
 
+def reach_checks(client):
+    """Checks that the tab, the page menu, Home, the address, an old address of Play, the palette
+    and the tour each open the Challenges page, that Play holds no challenges, and that the page
+    fits a phone."""
+    checks = _run(
+        client,
+        """
+        cuju.showPage('home');
+        const tab = document.querySelector('.menu [data-page="challenges"]');
+        tab.click();
+        const section = document.getElementById('page-challenges');
+        await wait(() => section.querySelector('.challenge-item'));
+        const symbol = tab.querySelector('use').getAttribute('href');
+        const others = [...document.querySelectorAll('.menu [data-page] use')]
+            .filter((use) => use.getAttribute('href') === symbol).length;
+        const all = {
+            page: cuju.page === 'challenges', shown: !section.hidden,
+            hash: location.hash === '#page=challenges' || location.hash,
+            title: document.title === 'Challenges · Cuju' || document.title,
+            current: tab.getAttribute('aria-current') === 'page',
+            symbol: (symbol === '#i-challenges' && others === 1
+                && !!document.getElementById('i-challenges')) || symbol,
+            label: tab.textContent.trim() === 'Challenges' || tab.textContent,
+            heading: (section.querySelector('h1') || {}).textContent === 'Challenges',
+        };
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'The tab opens the Challenges page',
+    )
+    checks += _run(
+        client,
+        """
+        cuju.showPage('home');
+        document.querySelector('#page-menu [data-page="challenges"]').click();
+        const menu = cuju.page === 'challenges'
+            && document.getElementById('page-menu-label').textContent === 'Challenges';
+        cuju.showPage('home');
+        await wait(() => document.querySelector('.home-actions'));
+        const hero = [...document.querySelectorAll('.home-actions button')]
+            .find((b) => b.textContent.trim() === 'Challenges');
+        hero.click();
+        const home = cuju.page === 'challenges';
+        cuju.showPage('home');
+        location.hash = '#page=challenges';
+        const address = !!(await wait(() => cuju.page === 'challenges'));
+        // The old address of Play that names a challenge opens the page at that card.
+        cuju.showPage('home');
+        location.hash = '#page=play&challenge=corner';
+        const start = () => document.querySelector(
+            '.challenge-item[data-id="corner"] [data-action="start"]');
+        const old = !!(await wait(() => cuju.page === 'challenges'
+            && document.activeElement === start()));
+        const rewritten = location.hash === '#page=challenges' || location.hash;
+        cuju.showPage('play');
+        await wait(() => document.querySelector('#page-play .play-setup'));
+        const play = !document.querySelector('#page-play .challenges, #page-play .challenge-item');
+        const all = { menu, home, address, old, rewritten, play };
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'The menu, Home and the addresses open the Challenges page',
+    )
+    checks += _run(
+        client,
+        """
+        const pick = async (query, title) => {
+            cuju.palette.open(query);
+            const found = await wait(() => {
+                cuju.palette.render();
+                const index = cuju.palette.shown.findIndex((a) => a.title === title);
+                return index >= 0 ? index + 1 : null;
+            });
+            if (!found) {
+                cuju.palette.close(false);
+                return null;
+            }
+            const action = cuju.palette.shown[found - 1];
+            cuju.palette.run(found - 1);
+            return action;
+        };
+        cuju.showPage('home');
+        const page = await pick('go to challenges', 'Go to Challenges');
+        const went = !!page && !!(await wait(() => cuju.page === 'challenges'));
+        cuju.showPage('home');
+        const one = await pick('challenge corner', 'Challenge, Corner');
+        const start = () => document.querySelector(
+            '.challenge-item[data-id="corner"] [data-action="start"]');
+        const focused = !!one && one.group === 'Challenges'
+            && !!(await wait(() => cuju.page === 'challenges'
+                && document.activeElement === start()));
+        const all = { went, focused };
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'The palette opens the Challenges page and a challenge',
+    )
+    checks += _run(
+        client,
+        """
+        const { TOUR_STEPS } = await import('./js/help/tour-core.js');
+        const index = TOUR_STEPS.findIndex((step) => step.id === 'challenges');
+        cuju.showPage('home');
+        await cuju.tour.start(index);
+        const found = !!(await wait(() => cuju.tour.state().target));
+        const board = document.querySelector(
+            '#page-challenges .challenge-item [data-action="board"]');
+        const tryIt = [...document.querySelectorAll('#tour .tour-actions button')]
+            .find((b) => b.getAttribute('aria-label') === 'Try it');
+        const shown = !!tryIt && !tryIt.hidden;
+        tryIt.click();
+        const opened = !!(await wait(() => board.getAttribute('aria-expanded') === 'true'));
+        const all = { found, page: cuju.page === 'challenges', shown, opened,
+            open: cuju.tour.state().open, matches: !cuju.play || !cuju.play.game };
+        cuju.tour.leave();
+        if (board.getAttribute('aria-expanded') === 'true') board.click();
+        // The tour ends from its last step, so a later start begins at the first step again.
+        await cuju.tour.start(TOUR_STEPS.length - 1);
+        await cuju.tour.next();
+        all.ended = cuju.tour.state().resumeAt === 0 && !cuju.tour.state().open;
+        localStorage.removeItem('cuju.tour');
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'The tour points at the Challenges page and Try it opens a leaderboard',
+    )
+    # The top bar holds every tab beside its other controls, with their names on a wide screen and
+    # their symbols alone between a wide screen and a phone.
+    for width in (1440, 1321, 1320, 761):
+        client.call(
+            'Emulation.setDeviceMetricsOverride',
+            {'width': width, 'height': 800, 'deviceScaleFactor': 1, 'mobile': False},
+        )
+        try:
+            checks += _run(
+                client,
+                """
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                const bar = document.getElementById('topbar');
+                const tabs = [...document.querySelectorAll('.menu [data-page]')];
+                const actions = document.querySelector('#topbar .top-actions')
+                    .getBoundingClientRect().left;
+                const shown = tabs.filter((tab) => tab.getClientRects().length > 0);
+                const inside = innerWidth <= 760 || (shown.length === tabs.length
+                    && shown.every((tab) => tab.getBoundingClientRect().right <= actions + 1));
+                const all = { fits: bar.scrollWidth <= bar.clientWidth + 1
+                    || [bar.scrollWidth, bar.clientWidth], inside };
+                return Object.values(all).every((v) => v === true) || all;
+                """,
+                f'The top bar fits {width} pixels',
+            )
+        finally:
+            client.call('Emulation.clearDeviceMetricsOverride')
+    client.call(
+        'Emulation.setDeviceMetricsOverride',
+        {'width': 375, 'height': 740, 'deviceScaleFactor': 1, 'mobile': True},
+    )
+    try:
+        checks += _run(
+            client,
+            """
+            cuju.showPage('home');
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const button = document.getElementById('page-menu-btn');
+            const menu = button.getClientRects().length > 0;
+            document.querySelector('#page-menu [data-page="challenges"]').click();
+            const section = document.getElementById('page-challenges');
+            await wait(() => section.querySelector('.challenge-item'));
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const wide = [...section.querySelectorAll(
+                '.challenges, .challenge-item, .challenge-list, .challenge-bench')]
+                .filter((node) => node.getBoundingClientRect().right > innerWidth + 1).length;
+            const all = { menu, page: cuju.page === 'challenges',
+                fits: section.scrollWidth <= section.clientWidth + 1 || section.scrollWidth,
+                wide: wide === 0 || wide };
+            return Object.values(all).every((v) => v === true) || all;
+            """,
+            'The Challenges page fits a phone',
+        )
+    finally:
+        client.call('Emulation.clearDeviceMetricsOverride')
+    return checks
+
+
 def card_checks(client):
     """Checks the cards' pictures and names, then their teasers by pointer, focus and button."""
     checks = _run(
         client,
         """
-        cuju.showPage('play');
+        cuju.showPage('challenges');
         await wait(() => document.querySelectorAll('.challenge-item .challenge-media').length === 3
-            && Object.keys(cuju.play.challenges.teaserFiles || {}).length);
+            && Object.keys(cuju.challengesPage.teaserFiles || {}).length);
         const ids = ['empty_goal_close', 'corner', 'one_on_one'];
         const text = (id, selector) => card(id).querySelector(selector).textContent;
         const named = ids.every((id) => {
             const heading = document.getElementById(card(id).getAttribute('aria-labelledby'));
-            return heading && heading.textContent === text(id, 'h3')
+            return heading && heading.textContent === text(id, 'h2')
                 && !/Gold|Silver|Bronze|Easy|Hard/.test(heading.textContent);
         });
         const kinds = ids.map((id) => text(id, '.challenge-chip')).join();
@@ -131,7 +314,7 @@ def card_checks(client):
         const buttons = ids.every((id) => {
             const b = card(id).querySelector('[data-action="teaser"]');
             return b && !b.hidden && pressed(id) === 'false'
-                && b.getAttribute('aria-label') === `Play the preview of ${text(id, 'h3')}`;
+                && b.getAttribute('aria-label') === `Play the preview of ${text(id, 'h2')}`;
         });
         const all = {
             named, lazy, stills: !!stills, buttons, styled: top('corner') !== top('one_on_one'),
@@ -234,7 +417,7 @@ def card_checks(client):
         const drawn = media('corner').dataset.picture === 'drawn'
             && getComputedStyle(drawing).display !== 'none';
         const muted = [...document.querySelectorAll('video')].every((v) => v.muted || v.paused);
-        await cuju.play.challenges.show();
+        await cuju.challengesPage.show();
         const back = !!(await wait(() => card('corner').querySelector('img.challenge-still')));
         document.activeElement.blur();
         const kept = localStorage.getItem('cuju.muted') === 'true';
@@ -251,8 +434,8 @@ def bench_checks(client):
     checks = _run(
         client,
         """
-        cuju.showPage('play');
-        const panel = cuju.play.challenges;
+        cuju.showPage('challenges');
+        const panel = cuju.challengesPage;
         // A default name of another language, stored before, gives way to the page's own default.
         localStorage.setItem('cuju.challengeName', 'Jogador');
         panel.nameField.value = 'Jogador';
@@ -268,7 +451,8 @@ def bench_checks(client):
         await panel.show();
         await wait(() => card('empty_goal_close')
             && card('empty_goal_close').querySelector('.medal-items'));
-        const items = (id) => [...card(id).querySelectorAll('.medal-item')];
+        // The card's own items, apart from those of the line of a headless run on the card.
+        const items = (id) => [...card(id).querySelectorAll(':scope > .medal-items .medal-item')];
         const words = items('empty_goal_close').map((li) => li.textContent.trim());
         const ordered = ['empty_goal_close', 'corner', 'one_on_one'].every((id) =>
             items(id).map((li) => li.dataset.medal).join() === 'gold,silver,bronze');
@@ -286,7 +470,8 @@ def bench_checks(client):
             ? reached.length === 1 && reached[0].dataset.medal === mine.medal
                 && /Your best/.test(reached[0].textContent)
             : reached.length === 0;
-        const job = [...document.querySelectorAll('.challenge-job .medal-item.reached')];
+        const job = [...card('one_on_one')
+            .querySelectorAll('.challenge-job .medal-item.reached')];
         const best = marked && !!mine && job.length === 1 && job[0].dataset.medal === 'silver'
             && /Reached/.test(job[0].textContent)
             && items('corner').every((li) => !li.classList.contains('reached'));
@@ -310,7 +495,7 @@ def bench_checks(client):
         client,
         """
         const { api } = await import('./js/core/api.js');
-        const panel = cuju.play.challenges;
+        const panel = cuju.challengesPage;
         const source = 'def agent(obs):\\n    return [12]\\n';
         const team = await api.uploadTeam('Bench bot', 'main.py', source, '11v11');
         try {
@@ -353,6 +538,133 @@ def bench_checks(client):
         }
         """,
         'Benchmark of a test team',
+    )
+    return checks
+
+
+def model_checks(client):
+    """Checks Play it yourself and Run a model on a card, a model's run on the card with its
+    progress, Cancel run, result and medal items, its board entry marked as a model, and the
+    ways to the benchmark and the achievements at the top of the page."""
+    checks = _run(
+        client,
+        """
+        cuju.showPage('challenges');
+        await wait(() => card('corner') && card('corner').querySelector('[data-action="model"]'));
+        const own = card('corner').querySelector('[data-action="start"]');
+        const button = card('corner').querySelector('[data-action="model"]');
+        const part = card('corner').querySelector('.challenge-model');
+        const closed = button.getAttribute('aria-expanded') === 'false' && part.hidden
+            && button.getAttribute('aria-controls') === part.id;
+        button.click();
+        const select = part.querySelector('select[data-role="team"]');
+        const opened = button.getAttribute('aria-expanded') === 'true' && !part.hidden
+            && document.activeElement === select;
+        const models = [...select.options].map((option) => option.value);
+        const attempts = [...part.querySelectorAll('select[data-role="attempts"] option')]
+            .map((option) => option.textContent).join('|');
+        const all = {
+            own: (own.textContent.trim() === 'Play it yourself'
+                && own.getAttribute('aria-label') === 'Play it yourself, Corner'
+                && !!own.querySelector('svg use')) || own.outerHTML.slice(0, 160),
+            model: (button.textContent.trim() === 'Run a model'
+                && button.getAttribute('aria-label') === 'Run a model, Corner'
+                && !!button.querySelector('svg use')) || button.outerHTML.slice(0, 160),
+            closed, opened, builtin: models[0] === 'builtin' || models.join(),
+            attempts: attempts === 'Full run, 5 attempts|Practice, one attempt' || attempts,
+            named: part.getAttribute('role') === 'group'
+                && document.getElementById(part.getAttribute('aria-labelledby')).textContent
+                    === 'Run a model',
+        };
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'Play it yourself and Run a model on a card',
+    )
+    checks += _run(
+        client,
+        """
+        const part = card('corner').querySelector('.challenge-model');
+        part.querySelector('select[data-role="team"]').value = 'builtin';
+        part.querySelector('select[data-role="attempts"]').value = 'full';
+        part.querySelector('[data-action="headless"]').click();
+        const line = () => card('corner').querySelector('.challenge-job');
+        const running = !!(await wait(() => !line().hidden
+            && line().querySelector('progress.bench-progress')
+            && line().querySelector('button[aria-label="Cancel run"]')));
+        const done = !!(await wait(() => /finished Corner/.test(line().innerText), 20000));
+        const medals = !!line().querySelector('.medal-items');
+        const others = [...document.querySelectorAll('.challenge-item:not([data-id="corner"]) '
+            + '.challenge-job')].every((other) => !/Corner/.test(other.innerText));
+        const toggle = card('corner').querySelector('[data-action="board"]');
+        if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+        const marked = !!(await wait(() => [...card('corner')
+            .querySelectorAll('.challenge-board tr.agent .challenge-kind')]
+            .some((mark) => mark.classList.contains('agent'))));
+        toggle.click();
+        const all = { running, done, medals, others, marked };
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'A model runs on its card and reaches the board as a model',
+    )
+    checks += _run(
+        client,
+        """
+        const part = card('corner').querySelector('.challenge-model');
+        part.querySelector('[data-action="headless"]').click();
+        const line = () => card('corner').querySelector('.challenge-job');
+        const cancel = await wait(() => line().querySelector('button[aria-label="Cancel run"]'));
+        if (cancel) cancel.click();
+        const stopped = !!(await wait(() => !line().querySelector('progress.bench-progress')
+            && /stopped|finished/.test(line().innerText)));
+        const button = card('corner').querySelector('[data-action="model"]');
+        button.click();
+        const shut = part.hidden && button.getAttribute('aria-expanded') === 'false';
+        const all = { cancel: !!cancel, stopped, shut };
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'Cancel run stops a model on its card',
+    )
+    checks += _run(
+        client,
+        """
+        const go = (action) => document.querySelector(`[data-action="${action}"]`);
+        const bench = go('jump-bench');
+        bench.click();
+        const toBench = document.activeElement === document.getElementById('challenge-bench-title');
+        go('jump-achievements').click();
+        const toAchievements = document.activeElement
+            === document.getElementById('achievements-title');
+        const all = {
+            label: bench.textContent.trim() === 'Benchmark several models' || bench.textContent,
+            toBench, toAchievements,
+        };
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'The top of the page leads to the benchmark and the achievements',
+    )
+    # A team that played with players out says so on the line of its run and on the board.
+    checks += _run(
+        client,
+        """
+        const panel = cuju.challengesPage;
+        const c = panel.find('corner');
+        const done = panel.jobs.find((job) => job.challenge === 'corner' && job.result);
+        const job = { ...done, id: 'out', state: 'done',
+            result: { ...done.result, playing: [1, 4] } };
+        panel.jobs = [job, ...panel.jobs];
+        panel.renderJob();
+        const line = card('corner').querySelector('.challenge-job').innerText;
+        const board = document.createElement('div');
+        panel.fillBoard(c, board, [{ rank: 1, kind: 'agent', name: 'Four', team: 'four',
+            value: 3, seconds: 4, medal: 'bronze', time: 1, playing: [1, 4] }]);
+        panel.jobs = panel.jobs.filter((entry) => entry.id !== 'out');
+        panel.renderJob();
+        const words = 'Played with 1 of its 4 players, the others out.';
+        const all = { line: line.includes(words) || line,
+            board: board.querySelector('.challenge-playing').textContent === words };
+        return Object.values(all).every((v) => v === true) || all;
+        """,
+        'A run with players out says so',
     )
     return checks
 
@@ -438,9 +750,11 @@ def main():
                 if client.evaluate('!!(window.cuju && window.cuju.menus)'):
                     break
                 time.sleep(0.2)
-            checks = card_checks(client)
+            checks = reach_checks(client)
+            checks += card_checks(client)
             checks += page.challenge_checks(client)
             checks += bench_checks(client)
+            checks += model_checks(client)
             assert client.evaluate("localStorage.getItem('cuju.muted')") == 'true'
             assert not client.evaluate('!!document.pointerLockElement')
             assert not client.errors, client.errors

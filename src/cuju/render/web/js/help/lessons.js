@@ -187,7 +187,8 @@ export class Lessons {
         }
         let challenge = false;
         try {
-            const state = play && play.challenges && play.challenges.state();
+            const page = app.challengesPage;
+            const state = page && page.state();
             challenge = !!(state && (state.run || (state.jobs && state.jobs.length)));
         } catch {
             challenge = false;

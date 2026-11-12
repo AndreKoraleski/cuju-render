@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     symbol, a difficulty shown as a badge, and the person's medal on its picture. The catalog
     names each challenge's `category` and `difficulty`, and `ci/make_challenge_teasers.py`
     makes the teasers and stills with `cuju render video` and lists them in a manifest.
-- Keep attempts as recordings, a setting of the Challenges section, with `--no-recordings` of
+- Keep attempts as recordings, a setting of the Challenges page, with `--no-recordings` of
     `cuju render challenge` and `keep_recordings=False` of `cuju.render.challenge`, for runs that
     score, rank and earn as before and add nothing to the library.
 - `cuju render team show` and `cuju render team set`, which change a team's name, format and
@@ -279,15 +279,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     scripts use it through `window.cuju.photo`.
 - Challenges, a drill for every academy scenario and two one on one matches, each with bronze,
     silver and gold targets, attempts on a fixed sequence of seeds and a leaderboard of people and
-    agents. People play them on the Play page, and teams and Python policies play them headless
-    from the page, from `cuju render challenge` and from `cuju.render.challenge`, every attempt
-    scored from its recording by the same rules.
+    agents, on a Challenges page of their own beside Play, at `#page=challenges`. People play
+    each attempt on the game view of Play, whose end card, Esc and Leave challenge lead back to
+    the challenge's card, and teams and Python policies play them headless from the page, from
+    `cuju render challenge` and from `cuju.render.challenge`, every attempt scored from its
+    recording by the same rules. Each card offers Play it yourself and Run a model, which names a
+    registered model and the attempts and follows its run on the card with progress, Cancel run,
+    the result and the medal items, and Benchmark several models at the top of the page leads to
+    the benchmark. A team that controls more players than a challenge's side holds, such as a
+    five a side team of four agents on an academy drill, plays with its extra players out, as a
+    player sent off is, in its own submission form, and its result, its board entry, its
+    benchmark cell and the command line say Played with 1 of its 4 players, the others out. The
+    tab, the narrow menu of pages, Home, the command palette, the
+    guided tour, whose Try it opens a leaderboard, and the lesson Start a challenge reach the page,
+    and an older address of Play that names a challenge opens it at that card.
 - Each challenge lists its medals as items, Gold, Silver and Bronze, each with the medal's symbol
     in the color of its metal, readable in both themes, and its target in words and numbers, such
     as Gold, 6 goals or more ahead. The cards mark the item of the person's best run, the end card
     of a run and the line of a headless run mark the item they reached, and the leaderboard shows
     each medal by its symbol and name. `cuju render challenge list` prints the items too.
-- A benchmark of models in the Challenges section of Play, which plays one or several registered
+- A benchmark of models on the Challenges page, which plays one or several registered
     teams on several or all challenges as one job, each pair as a full headless run in a process
     of its own on the challenge's fixed seeds, with progress and Cancel benchmark. Its table shows
     each model's value and medal on every challenge, its medals, a score from 0 to 100, the mean
@@ -446,7 +457,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     clear of its control and of any menu, palette, panel or dialog open over the page, docking in
     the farthest corner when no side is clear, and Esc closes an open menu before it leaves the
     tour.
-- A person who types no name on the Challenges section plays under the default name of the page's
+- A person who types no name on the Challenges page plays under the default name of the page's
     language, and the leaderboards, the titles of grouped recordings and the cards show the default
     of the page's own language, also for runs saved while the page spoke another language, which
     showed that language's default, such as Jogador, on an English page. The browser keeps a name

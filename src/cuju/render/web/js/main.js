@@ -13,7 +13,7 @@ import { PlayerTools } from './watch/player-tools.js';
 import { AnnotationOverlay } from './watch/annotations.js';
 import { AccessibilityControls } from './core/accessibility.js';
 import { OWN_KEYS, keepsKey, openPanel } from './core/comfort.js';
-import { PageStructure } from './core/page-structure.js';
+import { PAGES, PageStructure } from './core/page-structure.js';
 import { Sound } from './broadcast/audio.js';
 import { Ball } from './world/ball.js';
 import { CAMERA_MODES, CameraRig, PLAYER_VIEWS } from './world/cameras.js';
@@ -32,6 +32,7 @@ import { LiveSource } from './recording/live.js';
 import { MatchesPage } from './pages/matches.js';
 import { TournamentsPage } from './play/tournament.js';
 import { PlayPage } from './play/play.js';
+import { ChallengesPage } from './play/challenges.js';
 import { bindTopMenus } from './core/menu.js';
 import { GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_W, Pitch } from './world/pitch.js';
 import { Players, loadAssets, loadTeamRig, playerModel } from './players/players.js';
@@ -159,6 +160,9 @@ class App {
         this.matches = new MatchesPage(this);
         this.tournaments = new TournamentsPage(this);
         this.play = null;
+        // The Challenges page, whose attempts play on the game view of Play, reached by scripts
+        // as cuju.challenges.
+        this.challengesPage = new ChallengesPage(this);
         this.fieldPage = new FieldPage(this);
         this.editor = new TeamEditor(this);
         this.assets = { manifest: null, rig: null, hair: [] };
@@ -860,11 +864,15 @@ class App {
         if (previous === 'play' && this.play) {
             this.play.hide();
         }
-        if (name === 'play') {
-            this.play = this.play || new PlayPage(this);
-            this.play.show();
+        if (previous === 'challenges') {
+            this.challengesPage.hide();
         }
-        if (name === 'recordings') {
+        if (name === 'play') {
+            this.playPage().show();
+        }
+        if (name === 'challenges') {
+            this.challengesPage.open();
+        } else if (name === 'recordings') {
             this.recordings.refresh();
         } else if (name === 'matches') {
             this.matches.refresh();
@@ -898,6 +906,12 @@ class App {
         input.title = input.dataset.id ? source.id : '';
         input.value = source.kind === 'file' ? '' : input.dataset.shown || source.id;
         input.placeholder = source.kind === 'file' ? source.id : input.placeholder;
+    }
+
+    // The Play page, made on its first visit or on the first game that another page starts.
+    playPage() {
+        this.play = this.play || new PlayPage(this);
+        return this.play;
     }
 
     bindAddress() {
@@ -2457,12 +2471,19 @@ class App {
         if (`#${raw}` === this.ownHash) {
             return;
         }
-        const page = new URLSearchParams(raw).get('page');
-        if (page && ['home', 'watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help'].includes(page)) {
+        const params = new URLSearchParams(raw);
+        const page = params.get('page');
+        // A challenge in the address opens the Challenges page at its card, as does the address
+        // of the Challenges section that Play held before.
+        if (params.has('challenge') || params.has('challenges') || (page === 'play' && params.get('section') === 'challenges')) {
+            this.showPage('challenges');
+            this.challengesPage.focusCard(params.get('challenge') || null);
+            return;
+        }
+        if (page && PAGES.includes(page)) {
             this.showPage(page);
             return;
         }
-        const params = new URLSearchParams(raw);
         const t = params.has('t') ? Number(params.get('t')) : null;
         if (params.get('match')) {
             const id = params.get('match');

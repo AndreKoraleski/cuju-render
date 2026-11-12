@@ -50,9 +50,11 @@ export const TOUR_STEPS = [
         text: t('tour.step.play.text'), tryIt: null,
     },
     {
-        // None, the target is the heading of the section, and each challenge starts a match.
-        id: 'challenges', page: 'play', target: '.play-setup .challenges h2', title: t('tour.step.challenges.title'),
-        text: t('tour.step.challenges.text'), tryIt: null,
+        // Open, the Leaderboard button of the first challenge opens its leaderboard on the card,
+        // which the same button closes again. Play it yourself and Run a model beside it start
+        // matches, so the step points past them.
+        id: 'challenges', page: 'challenges', target: '#page-challenges .challenge-item [data-action="board"]',
+        title: t('tour.step.challenges.title'), text: t('tour.step.challenges.text'), tryIt: 'open',
     },
     {
         // None, the target is the list of teams, and adding a team uploads a folder.

@@ -1,15 +1,17 @@
 // Copyright 2026 The cuju Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Challenges on the Play page, short drills with bronze, silver and gold targets that people play
-// in a game and registered teams play headless on the server. Every attempt plays a fixed seed, so
+// The Challenges page, short drills with bronze, silver and gold targets that people play in a
+// game on the Play page and registered teams play headless on the server. Every attempt plays a fixed seed, so
 // people and agents face the same episodes, and the server scores each attempt from its recording
 // and keeps one leaderboard per challenge. Achievements, which the server finds in the frames by
 // the same rules for people and teams, show on the end cards and in a list of their own, kept on
 // disk for teams and in the browser for the person. Each challenge lists its medals as items, and
 // the benchmark of bench.js plays registered teams on several challenges as one job. Scripts reach
-// it all through window.cuju.challenges.
+// it all through window.cuju.challenges. An attempt plays on the game view of Play, and its end
+// card, Esc and Leave lead back here with the focus on the challenge's card.
 
+import { api } from '../core/api.js';
 import { formatDateTime, formatNumber, serverNodes, serverText, t, tn, tOr } from '../core/i18n.js';
 import { el as h } from '../core/menu.js';
 import { icon, reicon, symbolOnly } from '../core/icons.js';
@@ -17,7 +19,7 @@ import { teamName } from '../core/names.js';
 import { scenarioName } from '../core/scenarios.js';
 import { TeaserCards, loadTeasers } from './teasers.js';
 import { medalList, medalMark, medalStyle } from './medals.js';
-import { BenchPanel, benchApi, benchCsv, benchTable } from './bench.js';
+import { BenchPanel, benchApi, benchCsv, benchTable, playingText } from './bench.js';
 
 const NAME_KEY = 'cuju.challengeName';
 // The default names of a person in every language that the server knows, which count as no name,
@@ -65,8 +67,11 @@ function injectChallengeStyle() {
     const style = document.createElement('style');
     style.id = 'cuju-challenges-style';
     style.textContent = `
-.challenges { margin-top: 24px; display: flex; flex-direction: column; gap: 10px; }
-.challenges h2 { margin: 0; }
+.challenges { max-width: 1200px; margin: 24px auto; padding: 16px 20px 20px; border-top: 3px solid var(--accent);
+    background: var(--surface); display: flex; flex-direction: column; gap: 10px; }
+.challenges h1 { margin: 0; font-size: 22px; }
+.challenges > h2, .challenges section > h2 { margin: 8px 0 0; font-size: 18px; }
+@media (max-width: 600px) { .challenges { margin: 0; padding: 12px 16px; } }
 .challenges .setup-row { display: flex; flex-wrap: wrap; gap: 10px 14px; }
 .challenge-banner, .challenge-job { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
 .challenge-banner[hidden], .challenge-job[hidden] { display: none; }
@@ -75,9 +80,17 @@ function injectChallengeStyle() {
 .challenge-item { --cat: var(--accent); --cat-ink: var(--on-accent); border: 1px solid var(--border);
     border-top: 4px solid var(--cat); border-radius: 8px; padding: 0 12px 10px; display: flex;
     flex-direction: column; gap: 4px; overflow: hidden; background: var(--surface); }
-.challenge-item h3 { margin: 0; font-size: 16px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.challenge-item h2 { margin: 0; font-size: 16px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .challenge-item p { margin: 0; }
 .challenge-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.challenge-jumps { display: flex; flex-wrap: wrap; gap: 8px; }
+.challenge-model { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border);
+    border-left: 3px solid var(--cat); border-radius: 6px; }
+.challenge-model[hidden] { display: none; }
+.challenge-model h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+.challenge-model h3 .icon { width: 16px; height: 16px; }
+.challenge-model .setup-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+.challenge-model select { max-width: 100%; }
 .challenge-media { order: -1; position: relative; margin: 0 -12px 6px; aspect-ratio: 16 / 9; overflow: hidden;
     background: var(--stage-bottom); }
 .challenge-media > img, .challenge-media > video, .challenge-drawn { position: absolute; inset: 0; width: 100%;
@@ -129,12 +142,14 @@ ${categoryStyle()}
 .challenge-medal.gold { background: #d4a017; color: #1b1300; border-color: #d4a017; }
 .challenge-medal.silver { background: #b8bec6; color: #15181c; border-color: #b8bec6; }
 .challenge-medal.bronze { background: #b0703c; color: #fff; border-color: #b0703c; }
-.challenge-item:has(.challenge-board:not([hidden])) { grid-column: 1 / -1; }
-.challenge-item:has(.challenge-board:not([hidden])) .challenge-media { max-height: 220px; }
+.challenge-item:has(.challenge-board:not([hidden])), .challenge-item:has(.challenge-model:not([hidden])) { grid-column: 1 / -1; }
+.challenge-item:has(.challenge-board:not([hidden])) .challenge-media,
+.challenge-item:has(.challenge-model:not([hidden])) .challenge-media { max-height: 220px; }
 .challenge-board { overflow-x: auto; }
 .challenge-board table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .challenge-board th, .challenge-board td { text-align: left; padding: 2px 6px; border-bottom: 1px solid var(--border); }
 .challenge-board td.num, .challenge-board th.num { text-align: right; }
+.challenge-playing { display: block; }
 .challenge-kind { font-size: 11px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); }
 .challenge-kind.agent { border-style: dashed; }
 .challenge-result { display: flex; flex-direction: column; gap: 4px; }
@@ -149,7 +164,7 @@ ${categoryStyle()}
 .achievement-new { display: flex; flex-direction: column; gap: 2px; }
 .challenge-kind .icon { width: 11px; height: 11px; vertical-align: -1px; margin-right: 3px; }
 .challenge-bench { display: flex; flex-direction: column; gap: 8px; }
-.challenge-bench h3 { margin: 0; }
+.challenge-bench h2 { margin: 0; }
 .bench-choices { display: flex; flex-wrap: wrap; gap: 10px; }
 .bench-choice { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin: 0; display: flex;
     flex-direction: column; gap: 2px; min-width: min(100%, 240px); }
@@ -369,10 +384,11 @@ function competitorKind(entry) {
     return [icon('robot'), entry.team ? t('challenges.board.team') : t('challenges.board.policy')];
 }
 
-export class ChallengesPanel {
-    constructor(play) {
-        this.play = play;
-        this.app = play.app;
+// The Challenges page, its section `#page-challenges` of index.html, built on its first visit.
+export class ChallengesPage {
+    constructor(app) {
+        this.app = app;
+        this.page = document.getElementById('page-challenges');
         this.catalog = [];
         this.teams = [];
         this.run = null;
@@ -388,32 +404,98 @@ export class ChallengesPanel {
         this.app.challenges = this.script();
     }
 
-    // The section, built once for the setup view of Play.
+    // The Play page, whose game view plays each attempt, made on the first attempt when no visit
+    // of Play made it before.
+    get play() {
+        return this.app.playPage();
+    }
+
+    get built() {
+        return !!this.root;
+    }
+
+    // Builds the page once, into its section of index.html.
+    build() {
+        if (!this.root) {
+            const root = this.element();
+            if (this.page) {
+                this.page.replaceChildren(root);
+            }
+        }
+        return this.root;
+    }
+
+    // Shows the page, built on its first visit, and reads the catalog, the teams and the boards.
+    open() {
+        this.build();
+        this.shown = this.show();
+        return this.shown;
+    }
+
+    // The page leaves the screen, and every teaser goes back to its still.
+    hide() {
+        this.teasers.stop();
+    }
+
+    // Puts the focus on Play it yourself of a challenge's card once the list holds it, or on the
+    // heading of the page without one.
+    async focusCard(id = null) {
+        await this.shown;
+        const selector = id ? `.challenge-item[data-id="${CSS.escape(id)}"] [data-action="start"]` : '#challenges-title';
+        for (let i = 0; i < 40 && this.app.page === 'challenges'; i++) {
+            const node = this.list && document.querySelector(selector);
+            if (node && node.getClientRects().length) {
+                if (!id) {
+                    node.tabIndex = -1;
+                }
+                node.focus({ preventScroll: true });
+                node.scrollIntoView({ block: id ? 'center' : 'start' });
+                return true;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return false;
+    }
+
+    // The page, built once.
     element() {
         injectChallengeStyle();
         this.nameField = h('input', { type: 'text', maxlength: '40', value: readName(), placeholder: t('challenges.name.default'), 'aria-label': t('challenges.name.label'), class: 'challenge-name' });
         this.nameField.addEventListener('change', () => writeName(this.nameField.value));
         this.keepBox = h('input', { type: 'checkbox', checked: readKeep(), class: 'challenge-keep', 'aria-describedby': 'challenge-keep-hint' });
         this.keepBox.addEventListener('change', () => writeKeep(this.keepBox.checked));
-        this.teamSelect = h('select', { 'aria-label': t('challenges.team'), class: 'challenge-team' });
-        this.attemptSelect = h('select', { 'aria-label': t('challenges.attempts.label'), class: 'challenge-attempts' },
-            h('option', { value: 'full' }, t('challenges.attempts.full')), h('option', { value: '1' }, t('challenges.attempts.practice')));
+        // The model and the attempts that a card's Run a model offers first, the last ones chosen
+        // on any card.
+        this.choice = { team: 'builtin', attempts: 'full' };
+        this.models = new Set();
         this.banner = h('div', { class: 'challenge-banner', role: 'status', hidden: true });
-        this.jobLine = h('div', { class: 'challenge-job', role: 'status', 'aria-live': 'polite', hidden: true });
         this.list = h('ul', { class: 'challenge-list', 'aria-label': t('challenges.title') });
         this.bindTeasers(this.list);
         this.note = h('p', { class: 'muted small', role: 'status' });
         this.root = h('section', { class: 'challenges', 'aria-labelledby': 'challenges-title' },
-            h('h2', { id: 'challenges-title' }, t('challenges.title')),
+            h('h1', { id: 'challenges-title' }, t('challenges.title')),
             h('p', { class: 'muted' }, tn('challenges.text')),
             h('div', { class: 'setup-row' },
-                h('label', { class: 'field' }, t('challenges.name'), this.nameField),
-                h('label', { class: 'field' }, t('challenges.team'), this.teamSelect),
-                h('label', { class: 'field' }, t('challenges.attempts'), this.attemptSelect)),
+                h('label', { class: 'field' }, t('challenges.name'), this.nameField)),
             h('label', { class: 'check' }, this.keepBox, t('challenges.keep')),
             h('p', { class: 'muted small', id: 'challenge-keep-hint' }, tn('challenges.keep.hint')),
-            this.banner, this.jobLine, this.note, this.list, this.bench.element(), this.achievementsPart());
+            h('div', { class: 'challenge-jumps' },
+                h('button', { type: 'button', class: 'btn', 'data-action': 'jump-bench', onclick: () => this.jump('challenge-bench-title') },
+                    icon('stats'), t('challenges.jump.bench')),
+                h('button', { type: 'button', class: 'btn', 'data-action': 'jump-achievements', onclick: () => this.jump('achievements-title') },
+                    icon('star'), t('challenges.jump.achievements'))),
+            this.banner, this.note, this.list, this.bench.element(), this.achievementsPart());
         return this.root;
+    }
+
+    // Moves the focus to the heading of a part of the page, the benchmark or the achievements.
+    jump(id) {
+        const heading = document.getElementById(id);
+        if (heading) {
+            heading.tabIndex = -1;
+            heading.scrollIntoView({ block: 'start' });
+            heading.focus({ preventScroll: true });
+        }
     }
 
     achievementsPart() {
@@ -422,7 +504,7 @@ export class ChallengesPanel {
         this.achievementList = h('ul', { class: 'achievement-list', 'aria-label': t('challenges.achievements.title') });
         this.achievementNote = h('p', { class: 'muted small', role: 'status' });
         return h('section', { class: 'achievements', 'aria-labelledby': 'achievements-title' },
-            h('h3', { id: 'achievements-title' }, t('challenges.achievements.title')),
+            h('h2', { id: 'achievements-title' }, t('challenges.achievements.title')),
             h('p', { class: 'muted' }, tn('challenges.achievements.text')),
             h('label', { class: 'field' }, t('challenges.achievements.whose'), this.whoseSelect),
             this.achievementNote, this.achievementList);
@@ -540,6 +622,12 @@ export class ChallengesPanel {
     async show(teams = null) {
         if (teams) {
             this.teams = teams;
+        } else {
+            try {
+                this.teams = await api.teams();
+            } catch {
+                // The server is away, and the note below says so.
+            }
         }
         await this.loadNames();
         try {
@@ -550,7 +638,6 @@ export class ChallengesPanel {
         }
         await this.loadAchievements();
         this.teaserFiles = await loadTeasers();
-        this.renderTeams();
         this.render();
         this.bench.renderChoices();
         this.renderAchievements();
@@ -558,16 +645,11 @@ export class ChallengesPanel {
         this.followJobs();
     }
 
-    renderTeams() {
-        if (!this.teamSelect) {
-            return;
-        }
-        const before = this.teamSelect.value;
-        this.teamSelect.replaceChildren(...this.teams.map((team) =>
-            h('option', { value: team.id }, team.kind === 'builtin' ? t('challenges.team.builtin') : teamName(team))));
-        if (this.teams.some((team) => team.id === before)) {
-            this.teamSelect.value = before;
-        }
+    // The models of the registry that a card offers, the built-in AI first.
+    modelOptions() {
+        const teams = this.teams.length ? this.teams : [{ id: 'builtin', kind: 'builtin' }];
+        return teams.map((team) => h('option', { value: team.id },
+            team.kind === 'builtin' ? t('challenges.team.builtin') : teamName(team)));
     }
 
     render() {
@@ -597,7 +679,15 @@ export class ChallengesPanel {
         if (open) {
             this.fillBoard(c, board, this.boards.get(c.id));
         }
-        const toggle = h('button', { type: 'button', class: 'btn small', 'data-action': 'board', 'aria-expanded': open ? 'true' : 'false', ...symbolOnly(named('challenges.item.board')), onclick: () => this.toggleBoard(c, board, toggle) }, icon('podium'));
+        const toggle = h('button', { type: 'button', class: 'btn small', 'data-action': 'board', 'aria-expanded': open ? 'true' : 'false', 'aria-label': named('challenges.item.board'), onclick: () => this.toggleBoard(c, board, toggle) },
+            icon('podium'), t('challenges.item.board'));
+        const model = this.modelPart(c, title);
+        const modelOpen = this.models.has(c.id);
+        const runModel = h('button', {
+            type: 'button', class: 'btn small', 'data-action': 'model', 'aria-expanded': modelOpen ? 'true' : 'false',
+            'aria-controls': model.id, 'aria-label': named('challenges.item.model'),
+            onclick: () => this.toggleModel(c.id, model, runModel),
+        }, icon('robot'), t('challenges.item.model'));
         const leaders = c.board && c.board.top && c.board.top.length
             ? t('challenges.item.leader', {
                 name: teamName(c.board.top[0]), value: valueText(c, c.board.top[0].value),
@@ -610,7 +700,7 @@ export class ChallengesPanel {
         const classes = ['challenge-item', kind ? `cat-${kind}` : '', difficulty ? `difficulty-${difficulty}` : ''].filter(Boolean).join(' ');
         // The card takes its name from its title alone, and its picture comes first on screen.
         return h('li', { class: classes, 'data-id': c.id, 'aria-labelledby': heading },
-            h('h3', { id: heading }, title),
+            h('h2', { id: heading }, title),
             this.media(c, title, kind, difficulty, mine && mine.medal),
             h('p', {}, challengeGoal(c)),
             h('p', { class: 'muted small' }, t('challenges.item.scenario', { scenario: scenarioName(c.scenario), count: c.attempts })),
@@ -619,10 +709,62 @@ export class ChallengesPanel {
             h('p', { class: 'small' }, best),
             h('p', { class: 'muted small' }, leaders),
             h('div', { class: 'challenge-actions' },
-                h('button', { type: 'button', class: 'btn small', 'data-action': 'start', ...symbolOnly(named('challenges.item.start')), onclick: () => this.start(c.id) }, icon('play')),
-                h('button', { type: 'button', class: 'btn small', 'data-action': 'headless', ...symbolOnly(named('challenges.item.headless')), onclick: () => this.runHeadless(c.id) }, icon('robot')),
-                toggle),
-            board);
+                h('button', { type: 'button', class: 'btn small primary', 'data-action': 'start', 'aria-label': named('challenges.item.start'), onclick: () => this.start(c.id) },
+                    icon('gamepad'), t('challenges.item.start')),
+                runModel, toggle),
+            model, this.jobLineOf(c.id), board);
+    }
+
+    // The part of a card that runs a model of the registry on the challenge headless, its model,
+    // its attempts and the button that starts the run.
+    modelPart(c, title) {
+        const id = `challenge-model-${c.id}`;
+        const heading = `${id}-title`;
+        const team = h('select', { class: 'challenge-team', 'data-role': 'team' }, this.modelOptions());
+        team.value = [...team.options].some((option) => option.value === this.choice.team) ? this.choice.team : 'builtin';
+        team.addEventListener('change', () => {
+            this.choice.team = team.value;
+        });
+        const attempts = h('select', { class: 'challenge-attempts', 'data-role': 'attempts' },
+            h('option', { value: 'full' }, t('challenges.attempts.full.count', { count: c.attempts })),
+            h('option', { value: '1' }, t('challenges.attempts.practice')));
+        attempts.value = this.choice.attempts;
+        attempts.addEventListener('change', () => {
+            this.choice.attempts = attempts.value;
+        });
+        const run = h('button', {
+            type: 'button', class: 'btn primary small', 'data-action': 'headless', 'aria-label': t('challenges.model.run.label', { title }),
+            onclick: () => this.runHeadless(c.id, team.value, attempts.value === 'full' ? null : Number(attempts.value)).catch(() => {}),
+        }, icon('play'), t('challenges.model.run'));
+        return h('div', { class: 'challenge-model', id, role: 'group', 'aria-labelledby': heading, hidden: !this.models.has(c.id) },
+            h('h3', { id: heading }, icon('robot'), t('challenges.model.title')),
+            h('p', { class: 'muted small' }, t('challenges.model.text', { count: c.attempts })),
+            h('div', { class: 'setup-row' },
+                h('label', { class: 'field' }, t('challenges.model.team'), team),
+                h('label', { class: 'field' }, t('challenges.attempts'), attempts),
+                run));
+    }
+
+    // Opens or closes the part of a card that runs a model, with the focus on its model.
+    toggleModel(id, part, button) {
+        const open = !this.models.has(id);
+        if (open) {
+            this.models.add(id);
+        } else {
+            this.models.delete(id);
+        }
+        part.hidden = !open;
+        button.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            part.querySelector('select').focus();
+        }
+    }
+
+    // The line of a card that follows the newest headless run of its challenge.
+    jobLineOf(id) {
+        const line = h('div', { class: 'challenge-job', 'data-challenge': id, role: 'status', 'aria-live': 'polite', hidden: true });
+        this.fillJob(line, this.jobs.find((job) => job.challenge === id) || null);
+        return line;
     }
 
     // The picture of a card, its still or a drawing of its kind, the teaser that plays over it,
@@ -775,7 +917,8 @@ export class ChallengesPanel {
         }
         const rows = entries.map((e) => h('tr', { class: e.kind },
             h('td', { class: 'num' }, String(e.rank)),
-            h('td', {}, teamName(e), ' ', h('span', { class: `challenge-kind ${e.kind}` }, competitorKind(e))),
+            h('td', {}, teamName(e), ' ', h('span', { class: `challenge-kind ${e.kind}` }, competitorKind(e)),
+                Array.isArray(e.playing) ? h('span', { class: 'muted small challenge-playing' }, playingText(e.playing)) : null),
             h('td', { class: 'num' }, valueText(c, e.value)),
             h('td', { class: 'num' }, t('challenges.board.seconds', { seconds: num(e.seconds) })),
             h('td', {}, medalMark(e.medal, t('challenges.board.noMedal'))),
@@ -790,6 +933,7 @@ export class ChallengesPanel {
     // A person's run.
 
     async start(id) {
+        this.build();
         if (!this.catalog.length) {
             await this.show();
         }
@@ -828,18 +972,24 @@ export class ChallengesPanel {
         return this.state();
     }
 
-    // Leaves a run for the setup, and with the id of its challenge puts the focus on that
-    // challenge's Start challenge, so the end card leads back to the challenge just played.
+    // Leaves a run for this page, with the focus on Play it yourself of the challenge left, so
+    // the end card leads back to the challenge just played.
     leave(id = null) {
+        const left = id || (this.run && this.run.id);
         this.abandon(this.run);
         this.run = null;
         this.renderBanner();
-        this.play.showSetup();
-        const again = id && this.list ? this.list.querySelector(`[data-id="${CSS.escape(id)}"] [data-action="start"]`) : null;
-        if (again) {
-            again.focus({ preventScroll: true });
-            again.scrollIntoView({ block: 'center' });
+        return this.back(left);
+    }
+
+    // Leaves the game view of Play for this page with the focus on a challenge's card. A run
+    // left this way stays, and the banner of the page offers its next attempt.
+    back(id = null) {
+        if (this.app.play) {
+            this.app.play.showSetup(false);
         }
+        this.app.showPage('challenges');
+        return this.focusCard(id);
     }
 
     // Whether runs keep their attempts as recordings, as the setting of the section says.
@@ -872,7 +1022,7 @@ export class ChallengesPanel {
         this.banner.replaceChildren(...[
             h('span', {}, t('challenges.run.banner', { title: challengeTitle(run.challenge), count: run.matches.length, total: run.challenge.attempts })),
             last ? null : h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.run.next')), onclick: () => this.next() }, icon('next')),
-            h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.run.leave')), onclick: () => this.leave() }, icon('exit'))].filter(Boolean));
+            h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.run.leave')), onclick: () => this.leave(run.id) }, icon('exit'))].filter(Boolean));
     }
 
     // The end card of a game. A game of a challenge shows its attempt's result and leads on to the
@@ -900,7 +1050,7 @@ export class ChallengesPanel {
             buttons.push(h('button', { type: 'button', class: 'btn', onclick: () => this.app.openMatchInWatch(match) }, icon('watch'), t('challenges.run.watch')));
             buttons[buttons.length - 1].dataset.action = 'watch';
         }
-        buttons.push(h('button', { type: 'button', class: 'btn', onclick: () => this.leave(c.id) }, icon('exit'), last ? t('challenges.title') : t('challenges.run.leave')));
+        buttons.push(h('button', { type: 'button', class: 'btn', 'data-action': 'leave', onclick: () => this.leave(c.id) }, icon(last ? 'challenges' : 'exit'), last ? t('challenges.title') : t('challenges.run.leave')));
         const shown = [lines[0], lines[1], ...lines.filter((line) => line.classList && line.classList.contains('error-text')), result, earned, ...buttons].filter(Boolean);
         this.scoreAttempt(run, index, match, result).then(() => (last ? this.finishRun(run, result, buttons) : null));
         this.renderBanner();
@@ -985,15 +1135,16 @@ export class ChallengesPanel {
     // Headless runs of registered teams.
 
     async runHeadless(id, team = null, attempts = undefined, keep = this.keepRecordings()) {
-        const chosen = team || (this.teamSelect && this.teamSelect.value) || 'builtin';
-        const count = attempts !== undefined ? attempts : (this.attemptSelect && this.attemptSelect.value !== 'full' ? Number(this.attemptSelect.value) : null);
+        const chosen = team || this.choice.team || 'builtin';
+        const count = attempts !== undefined ? attempts : (this.choice.attempts !== 'full' ? Number(this.choice.attempts) : null);
         let job;
         try {
             job = await challengeApi.runTeam(id, chosen, count, keep);
         } catch (err) {
-            if (this.jobLine) {
-                this.jobLine.hidden = false;
-                this.jobLine.replaceChildren(h('span', { class: 'error-text' }, err.message));
+            const line = this.list && this.list.querySelector(`.challenge-job[data-challenge="${CSS.escape(id)}"]`);
+            if (line) {
+                line.hidden = false;
+                line.replaceChildren(h('span', { class: 'error-text' }, err.message));
             }
             throw err;
         }
@@ -1031,12 +1182,20 @@ export class ChallengesPanel {
     }
 
     renderJob() {
-        if (!this.jobLine) {
+        if (!this.list) {
             return;
         }
-        const job = this.jobs[0];
+        for (const line of this.list.querySelectorAll('.challenge-job[data-challenge]')) {
+            this.fillJob(line, this.jobs.find((job) => job.challenge === line.dataset.challenge) || null);
+        }
+    }
+
+    // Fills the line of a card with a headless run of its challenge, its progress and Cancel run
+    // while it plays, and its result, medal items and failed attempts once it ends.
+    fillJob(line, job) {
         if (!job) {
-            this.jobLine.hidden = true;
+            line.hidden = true;
+            line.replaceChildren();
             return;
         }
         const c = this.find(job.challenge) || { title: job.challenge, measure: 'scored', attempts: job.attempts };
@@ -1053,6 +1212,9 @@ export class ChallengesPanel {
             const won = (r.achievements || []).map((id) => this.nameOf(id));
             const values = { name: teamName(job), title, value: valueText(c, r.value), medal, names: won.join(', ') };
             text = t(won.length ? 'challenges.job.doneAchievements' : 'challenges.job.done', values);
+            if (Array.isArray(r.playing)) {
+                text = `${text} ${playingText(r.playing)}`;
+            }
         } else {
             text = t('challenges.job.stopped', { name: teamName(job), title, reason: job.error ? serverText(job, 'error') : t('challenges.job.noResult') });
         }
@@ -1062,8 +1224,8 @@ export class ChallengesPanel {
             ? h('span', { class: 'muted' }, t('challenges.job.failedAttempts', { count: job.result.failed_attempts })) : null;
         const medals = job.state === 'done' && job.result && known
             ? medalList(known, job.result.practice ? null : job.result.value, t('challenges.medals.reached'), t('challenges.medals.label', { title })) : null;
-        this.jobLine.hidden = false;
-        this.jobLine.replaceChildren(...[h('span', { class: job.state === 'failed' ? 'error-text' : '' }, text),
+        line.hidden = false;
+        line.replaceChildren(...[icon('robot'), h('span', { class: job.state === 'failed' ? 'error-text' : '' }, text),
             live ? h('progress', { class: 'bench-progress', max: '1', value: String(Number(job.progress) || 0), 'aria-label': t('challenges.job.progress') }) : null,
             live ? h('button', { type: 'button', class: 'btn small', ...symbolOnly(t('challenges.job.cancel')), onclick: () => this.cancelJob(job.id) }, icon('stop')) : null,
             failed, medals].filter(Boolean));
@@ -1095,9 +1257,7 @@ export class ChallengesPanel {
             list: async () => (self.catalog = await challengeApi.list(self.personName())),
             board: async (id) => (await challengeApi.board(id)).entries,
             start: async (id, { name } = {}) => {
-                if (!self.play.built) {
-                    self.app.showPage('play');
-                }
+                self.build();
                 if (name) {
                     writeName(String(name));
                     if (self.nameField) {
@@ -1107,7 +1267,12 @@ export class ChallengesPanel {
                 return self.start(id);
             },
             next: () => self.next(),
-            leave: () => self.leave(),
+            leave: (id = null) => self.leave(id),
+            // Shows the page, and with an identifier puts the focus on that challenge's card.
+            show: async (id = null) => {
+                self.app.showPage('challenges');
+                return self.focusCard(id);
+            },
             run: (id, { team = 'builtin', attempts = null, keepRecordings } = {}) => self.runHeadless(id, team, attempts, keepRecordings ?? self.keepRecordings()),
             jobs: async () => (self.jobs = await challengeApi.jobs()),
             cancel: (job) => self.cancelJob(job),

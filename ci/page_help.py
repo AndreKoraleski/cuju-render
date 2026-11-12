@@ -207,7 +207,7 @@ def tour_checks(client):
         const button = document.querySelector('#help-learn .btn.primary');
         await wait(() => button.textContent === 'Resume the tour at step 2');
         const resume = button.textContent === 'Resume the tour at step 2';
-        // The steps that point at Play, Teams and Tournaments find their controls.
+        // The steps that point at Play, Challenges, Teams and Tournaments find their controls.
         const found = {};
         for (const index of [5, 6, 7, 8]) {
             await cuju.tour.start(index);

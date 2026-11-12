@@ -979,6 +979,9 @@ def _challenge(parser: argparse.ArgumentParser, options: argparse.Namespace) -> 
     else:
         print(f'value {outcome["value"]:g}, no attempt counts towards it')
     print(_challenges.medal_text(spec, None if outcome['practice'] else outcome['value']))
+    if outcome.get('playing'):
+        played, controlled = outcome['playing']
+        print(f'played with {played} of its {controlled} players, the others out')
     if outcome['practice']:
         print('practice, fewer attempts than the challenge, so no medal and no leaderboard')
     else:

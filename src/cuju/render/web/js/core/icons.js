@@ -24,7 +24,7 @@ export const SYMBOLS = {
     // The top bar and the pages.
     fullscreen: 'maximize', search: 'search', settings: 'settings', keyboard: 'keyboard',
     home: 'house', watch: 'tv', gamepad: 'gamepad-2', archive: 'archive', matches: 'swords',
-    trophy: 'trophy', shirt: 'shirt', field: 'land-plot', help: 'circle-question-mark',
+    trophy: 'trophy', challenges: 'award', shirt: 'shirt', field: 'land-plot', help: 'circle-question-mark',
     // Actions.
     close: 'x', back: 'arrow-left', next: 'arrow-right', previous: 'chevron-left', forward: 'chevron-right',
     up: 'chevron-up', down: 'chevron-down', plus: 'plus', minus: 'minus', check: 'check',

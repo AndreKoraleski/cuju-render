@@ -156,15 +156,14 @@ def test_a_benchmark_plays_two_models_on_two_challenges(render_home, tmp_path, m
         '    return [5]\n',
         '11v11',
     )
-    # A team of two players fits the empty goal, and the one on one has a single player a side.
+    # A team of two players fits the empty goal, and plays the one on one, which has a single
+    # player a side, with its other player out.
     pair = _toy_team(tmp_path, 'pair', _SINGLE, '11v11', control=_control(2))
     teams = [steady['id'], crashing['id'], pair['id']]
     document = _bench.plan(teams, ['one_on_one', 'empty_goal_close'], workers=1)
-    # The challenges follow the order of the catalog, and a team that cannot play a scenario
-    # skips its challenge.
+    # The challenges follow the order of the catalog.
     assert document['challenges'] == ['empty_goal_close', 'one_on_one']
-    assert [cell['state'] for cell in document['cells']] == ['queued'] * 5 + ['skipped']
-    assert document['cells'][5]['error_id'] == 'server.teams.cannot_play'
+    assert [cell['state'] for cell in document['cells']] == ['queued'] * 6
     seen = []
     _bench.run(document, play=_in_process, changed=seen.append)
     cells = {(cell['team'], cell['challenge']): cell for cell in document['cells']}
@@ -172,7 +171,9 @@ def test_a_benchmark_plays_two_models_on_two_challenges(render_home, tmp_path, m
     broken = cells[(crashing['id'], 'empty_goal_close')]
     assert broken['state'] == 'done' and broken['failed_attempts'] == 5
     assert all(result['failed'] for result in broken['results'])
-    for cell in document['cells'][:5]:
+    assert cells[(pair['id'], 'one_on_one')]['playing'] == [1, 2]
+    assert cells[(pair['id'], 'empty_goal_close')]['playing'] is None
+    for cell in document['cells']:
         spec = _challenges.find(cell['challenge'])
         assert cell['played'] == spec['attempts'] == len(cell['results'])
         assert cell['medal'] == _challenges.medal(spec, cell['value'])
@@ -185,13 +186,13 @@ def test_a_benchmark_plays_two_models_on_two_challenges(render_home, tmp_path, m
         shares = [_bench.share(_challenges.find(cell['challenge']), cell) for cell in mine]
         assert row['score'] == round(100 * sum(shares) / 2, 1)
         assert row['gold'] + row['silver'] + row['bronze'] == sum(bool(c['medal']) for c in mine)
-    assert rows[pair['id']]['done'] == 1
+    assert rows[pair['id']]['done'] == 2
     assert sorted(row['place'] for row in document['rows'])[0] == 1
     assert document['progress'] == 1.0 and seen
     lines = _bench.csv_text(document).splitlines()
     assert lines[0].startswith('model,team,empty_goal_close value,empty_goal_close medal')
     assert len(lines) == 4 and lines[3].startswith(f'pair,{pair["id"]},')
-    assert lines[3].split(',')[4:6] == ['', '']
+    assert lines[3].split(',')[4] != ''
 
 
 def test_the_shared_table_case_matches_the_page():

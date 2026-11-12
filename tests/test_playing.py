@@ -26,6 +26,7 @@ from support.common import (
     _achievement_header,
     _challenge_frame,
     _challenge_frames,
+    _control,
     _frames,
     _person_recording,
     _shipped_language,
@@ -703,6 +704,111 @@ def test_challenge_person_and_agent_face_the_same_episode(render_home, tmp_path,
         assert game.frames[12][32:] == agent_frames[12][32:]
     finally:
         game.close()
+
+
+def test_challenge_fit_puts_extra_players_out_for_dynamic_and_fixed_control(render_home, tmp_path):
+    """A team that controls more players than a challenge's side holds plays with the others out."""
+    four = _toy_team(tmp_path, 'four', _SINGLE, '5v5', control=_control(4))
+    fit = _teams.challenge_fit(four, '1_vs_1_easy')
+    assert fit == {
+        'agents': 1,
+        'players': 4,
+        'playing': 1,
+        'slots': [0, None, None, None],
+        'selected': None,
+    }
+    # The empty goal holds a goalkeeper and a defender, both controllable.
+    fit = _teams.challenge_fit(four, 'academy_empty_goal_close')
+    assert fit['agents'] == 2 and fit['playing'] == 2 and fit['slots'] == [0, 1, None, None]
+    pair = _toy_team(tmp_path, 'pair', _SINGLE, '11v11', control=_control(2))
+    fit = _teams.challenge_fit(pair, 'academy_empty_goal_close')
+    assert fit == {'agents': 2, 'players': 2, 'playing': 2, 'slots': None, 'selected': None}
+    # A fixed selection keeps the players that the side holds, by role or by index, in the order
+    # of the submission, and the built-in AI plays the goalkeeper outside it.
+    roles = _toy_team(
+        tmp_path,
+        'roles',
+        _SINGLE,
+        '11v11',
+        control=_control(3, 'fixed', ['CF', 'CB', 'LM'], goalkeeper='builtin'),
+    )
+    fit = _teams.challenge_fit(roles, 'academy_empty_goal_close')
+    assert fit == {
+        'agents': 2,
+        'players': 3,
+        'playing': 1,
+        'slots': [None, 0, None],
+        'selected': [1],
+    }
+    indices = _toy_team(
+        tmp_path, 'indices', _SINGLE, '11v11', control=_control(3, 'fixed', [1, 2, 3])
+    )
+    fit = _teams.challenge_fit(indices, 'academy_pass_and_shoot_with_keeper')
+    assert fit['playing'] == 2 and fit['slots'] == [0, 1, None] and fit['selected'] == [1, 2]
+    # A selection that the side holds whole plays as it does in a match.
+    whole = _teams.challenge_fit(roles, 'academy_corner')
+    assert whole['slots'] is None and whole['playing'] == 3 and whole['agents'] == 11
+    wings = _toy_team(
+        tmp_path, 'wings', _SINGLE, '11v11', control=_control(2, 'fixed', ['LM', 'RM'])
+    )
+    with pytest.raises(cuju.errors.ArgumentError) as caught:
+        _teams.challenge_fit(wings, 'academy_empty_goal_close')
+    assert caught.value.message_id == 'server.teams.cannot_play'
+    assert caught.value.values['reason']['id'] == 'server.teams.control.none_present'
+    # The built-in AI plays the whole side.
+    builtin = _teams.challenge_fit(_teams.entry(_teams.BUILTIN), '1_vs_1_easy')
+    assert builtin['agents'] == 0 and builtin['slots'] is None
+
+
+def test_challenge_fit_keeps_the_size_rule(render_home, tmp_path):
+    """A five a side team never plays an eleven a side match, nor the reverse, while the academy
+    drills that both sizes play stay open to both."""
+    five = _toy_team(tmp_path, 'five', _SINGLE, '5v5', control=_control(4))
+    eleven = _toy_team(tmp_path, 'eleven', _SINGLE, '11v11', control=_control(4))
+    for team, scenario in ((five, '11_vs_11_kaggle'), (eleven, '5_vs_5')):
+        with pytest.raises(cuju.errors.ArgumentError) as caught:
+            _teams.challenge_fit(team, scenario)
+        assert caught.value.message_id == 'server.teams.scenario_format'
+    for team in (five, eleven):
+        assert _teams.challenge_fit(team, 'academy_3_vs_1_with_keeper')['playing'] == 4
+        assert _teams.challenge_fit(team, '1_vs_1_easy')['playing'] == 1
+
+
+def test_challenge_team_of_several_players_plays_one_on_one_with_the_others_out(
+    render_home, tmp_path, monkeypatch
+):
+    """A five a side team of four dynamic agents plays the one on one, whose side holds one
+    controllable player, as one player, in its own multi agent form."""
+    from cuju.render._playing import challenges as _challenges
+
+    log = tmp_path / 'calls.jsonl'
+    source = (
+        'import json\n'
+        'def agent(obs):\n'
+        '    seen = [(raw["active"], len(raw["left_team"])) for raw in obs["players_raw"]]\n'
+        f'    with open({str(log)!r}, "a", encoding="utf-8") as handle:\n'
+        '        handle.write(json.dumps([obs["controlled_players"], seen]) + "\\n")\n'
+        '    return [12, 0, 0, 0]\n'
+    )
+    four = _toy_team(tmp_path, 'four', source, '5v5', control=_control(4))
+    _short_challenges(monkeypatch, 6)
+    outcome = _challenges.run('one_on_one', team=four['id'])
+    assert outcome['playing'] == [1, 4] and not outcome['practice']
+    assert outcome['failed_attempts'] == 0 and outcome['rank'] == 1
+    calls = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+    # Each call holds the four players of the team's form, every one of them seeing the one
+    # player of the side, and the team played every step of the three attempts.
+    assert len(calls) == 18
+    assert all(
+        count == 4 and len(seen) == 4 and len({tuple(s) for s in seen}) == 1
+        for count, seen in calls
+    )
+    board = _challenges.board('one_on_one')
+    assert board[0]['team'] == four['id'] and board[0]['playing'] == [1, 4]
+    listed = {'board': _challenges._summary('one_on_one', None)}
+    assert listed['board']['top'][0]['playing'] == [1, 4]
+    document, _ = _frames(render_home / 'matches' / f'{outcome["attempts"][0]["match"]}.cjr')
+    assert document['provenance']['agent_counts'] == [1, 0]
 
 
 def test_challenge_policy_runs_and_failures(render_home, monkeypatch):

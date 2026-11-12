@@ -1171,19 +1171,28 @@ def check_ability(ability: Any) -> tuple[float | None, float | None]:
     return (pair[0], pair[1])
 
 
+def _check_size(team: dict[str, Any], scenario: str) -> None:
+    """Checks that a team plays a full-match scenario of its own size, 5v5 or 11v11.
+
+    Raises:
+        ArgumentError: If the scenario is a full match of the other size.
+    """
+    size = scenario_size(scenario.removeprefix('benchmark_full_game_'))
+    if size is not None and size != FORMATS[team['format']]:
+        raise MessageError(
+            'server.teams.scenario_format',
+            format=team['format'],
+            team=shown_name(team),
+            scenario=_messages.scenario(scenario),
+        )
+
+
 def check_scenario(teams_: list[dict[str, Any]], scenario: str) -> None:
     """Checks the format, count, selected players and goalkeeper on each scenario side."""
-    size = scenario_size(scenario.removeprefix('benchmark_full_game_'))
     for side, team in enumerate(teams_):
         if team['kind'] == 'builtin':
             continue
-        if size is not None and size != FORMATS[team['format']]:
-            raise MessageError(
-                'server.teams.scenario_format',
-                format=team['format'],
-                team=shown_name(team),
-                scenario=_messages.scenario(scenario),
-            )
+        _check_size(team, scenario)
         control = check_control(team.get('control'), team['format'])
         try:
             selected_players(control, scenario_players(scenario, side))
@@ -1194,6 +1203,113 @@ def check_scenario(teams_: list[dict[str, Any]], scenario: str) -> None:
                 scenario=_messages.scenario(scenario),
                 reason=_reason(error),
             ) from error
+
+
+def challenge_fit(team: dict[str, Any], scenario: str, side: int = 0) -> dict[str, Any]:
+    """Returns how a team plays its side of a challenge's scenario, with any extra players out.
+
+    A challenge's scenario may hold fewer controllable players than a team controls, as an academy
+    drill does for a team trained for full games. The team's extra players are then out, as a
+    selected player off the pitch after a red card is, and the team plays the players that the
+    scenario has. With dynamic assignment the team plays as many agents as the side has
+    controllable players. With fixed assignment the players of its selection that the side holds
+    play, each found as before, and the others are out, while the built-in AI plays the side's
+    players outside the selection, its goalkeeper among them. The policy is still called in its
+    own form, one observation for each player it controls, and a player out sees the observation
+    of the team's first player that plays, whose answer for the player out counts for nothing.
+
+    Args:
+        team: The registry entry, or the entry of a policy with its control.
+        scenario: The challenge's scenario.
+        side: The side the team plays, 0 for the left one.
+
+    Returns:
+        `agents`, the engine agents of the side, `players`, the players the team controls,
+        `playing`, those that play, `slots`, the place among the players that play of each player
+        the team controls in the order of its submission, `None` for a player out, or `None`
+        itself when every player plays, and `selected`, the formation indices of the players of a
+        fixed assignment that play, or `None` for dynamic assignment.
+
+    Raises:
+        ArgumentError: If the scenario is a full match of the other size, or the team cannot play
+            the side, such as a fixed selection of which the side holds no player.
+    """
+    if team['kind'] == 'builtin':
+        return {'agents': 0, 'players': 0, 'playing': 0, 'slots': None, 'selected': None}
+    _check_size(team, scenario)
+    control = check_control(team.get('control'), team['format'])
+    formation = scenario_players(scenario, side)
+    available = [index for index, player in enumerate(formation) if player.controllable]
+    count = control['players']
+
+    def refused(error: BaseException) -> MessageError:
+        return MessageError(
+            'server.teams.cannot_play',
+            team=shown_name(team),
+            scenario=_messages.scenario(scenario),
+            reason=_reason(error),
+        )
+
+    if control['assignment'] == 'dynamic':
+        if count <= len(available):
+            try:
+                selected_players(control, formation)
+            except ArgumentError as error:
+                raise refused(error) from error
+            return {
+                'agents': count,
+                'players': count,
+                'playing': count,
+                'slots': None,
+                'selected': None,
+            }
+        if not available:
+            raise refused(MessageError('server.teams.control.too_few', count=0))
+        playing = len(available)
+        slots = [*range(playing), *[None] * (count - playing)]
+        return {
+            'agents': playing,
+            'players': count,
+            'playing': playing,
+            'slots': slots,
+            'selected': None,
+        }
+    chosen: list[int] = []
+    slots: list[int | None] = []
+    for item in control['selection']:
+        candidates = (
+            [item]
+            if type(item) is int
+            else [index for index in available if formation[index].role == ROLES.index(item)]
+        )
+        found = next((i for i in candidates if i in available and i not in chosen), None)
+        slots.append(None if found is None else len(chosen))
+        if found is not None:
+            chosen.append(found)
+    if None not in slots:
+        try:
+            selected = selected_players(control, formation)
+        except ArgumentError as error:
+            raise refused(error) from error
+        return {
+            'agents': len(available),
+            'players': count,
+            'playing': count,
+            'slots': None,
+            'selected': selected,
+        }
+    if not chosen:
+        raise refused(MessageError('server.teams.control.none_present'))
+    keeper = [index for index, player in enumerate(formation) if player.role == 0]
+    if control['goalkeeper'] in ('builtin', 'scenario') and any(i in keeper for i in chosen):
+        raise refused(MessageError('server.teams.control.goalkeeper_outside'))
+    return {
+        'agents': len(available),
+        'players': count,
+        'playing': len(chosen),
+        'slots': slots,
+        'selected': chosen,
+    }
 
 
 def game_agents(teams_: list[dict[str, Any]], scenario: str, humans: Any) -> list[int]:

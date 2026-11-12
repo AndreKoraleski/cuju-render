@@ -16,13 +16,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // keyboard kit draws.
 const root = mkdtempSync(join(tmpdir(), 'cuju-palette-'));
 const folder = join(root, 'js');
-for (const name of ['help/palette.js', 'core/names.js', 'core/scenarios.js', 'core/i18n.js', 'core/keys.js', 'core/spoilers.js']) {
+for (const name of ['help/palette.js', 'core/names.js', 'core/scenarios.js', 'core/i18n.js', 'core/keys.js', 'core/spoilers.js', 'core/page-structure.js']) {
     cpSync(fileURLToPath(new URL(`../../src/cuju/render/web/js/${name}`, import.meta.url)), join(folder, name));
 }
 cpSync(fileURLToPath(new URL('../../src/cuju/render/web/vendor/lucide', import.meta.url)), join(root, 'vendor', 'lucide'), { recursive: true });
 writeFileSync(join(root, 'package.json'), '{"type": "module"}\n');
 process.on('exit', () => rmSync(root, { recursive: true, force: true }));
-const { HELP_TOPICS, LIMIT, fold, languageChoices, matchScore, rankActions } = await import(pathToFileURL(join(folder, 'help/palette.js')).href);
+const { HELP_TOPICS, LIMIT, fold, languageChoices, matchScore, paletteAction, rankActions } = await import(pathToFileURL(join(folder, 'help/palette.js')).href);
+const { PAGES } = await import(pathToFileURL(join(folder, 'core/page-structure.js')).href);
 
 const ACTIONS = [
     { group: 'Pages', title: 'Go to Recordings', keywords: 'page open' },
@@ -86,11 +87,25 @@ test('the example of the docs finds Go to Teams, and photo and surprise find the
     const actions = [...pages,
         { group: 'View', title: 'Photo mode', keywords: 'photo picture screenshot capture still image' },
         { group: 'Teams', title: 'Surprise me, a new team', keywords: 'surprise random generate kit name colors seed team' },
-        { group: 'Play', title: 'Challenge, Empty goal', keywords: 'challenge drill medal leaderboard empty_goal_close' }];
+        { group: 'Challenges', title: 'Challenge, Empty goal', keywords: 'challenge drill medal leaderboard empty_goal_close' }];
     assert.equal(rankActions('gotea', actions)[0].title, 'Go to Teams');
     assert.equal(rankActions('photo', actions)[0].title, 'Photo mode');
     assert.equal(rankActions('surprise', actions)[0].title, 'Surprise me, a new team');
     assert.equal(rankActions('challenge', actions)[0].title, 'Challenge, Empty goal');
+});
+
+test('the palette goes to the Challenges page, and finds the challenges in a group of their own', () => {
+    // The palette offers a page for each page of the top bar, Challenges beside Play.
+    assert.equal(PAGES[PAGES.indexOf('play') + 1], 'challenges');
+    const pages = PAGES.map((page) => ({ group: 'Pages', title: `Go to ${page[0].toUpperCase()}${page.slice(1)}`, keywords: `page open ${page}` }));
+    const actions = [...pages,
+        paletteAction('Challenges', 'Challenges and achievements', () => {}, 'challenge drill medal leaderboard achievement'),
+        paletteAction('Play', 'Play a game, Corner', () => {}, 'scenario game start person')];
+    assert.equal(rankActions('go to challenges', actions)[0].title, 'Go to Challenges');
+    assert.equal(rankActions('achievement', actions)[0].title, 'Challenges and achievements');
+    // The challenges show in a group of their own, apart from the games of Play.
+    assert.equal(actions.find((action) => action.title === 'Challenges and achievements').group, 'Challenges');
+    assert.equal(rankActions('challenges', actions).filter((action) => action.group === 'Play').length, 0);
 });
 
 test('the palette offers each other language and following the browser', () => {

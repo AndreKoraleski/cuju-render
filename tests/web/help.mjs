@@ -34,7 +34,7 @@ const plain = (text) => !/[;:()!]/.test(text) && !/ - |—|–/.test(text);
 
 test('the tour has a step on each page that the task names, in words alone', () => {
     const pages = new Set(tour.TOUR_STEPS.map((step) => step.page));
-    for (const page of ['home', 'watch', 'play', 'teams', 'tournaments', 'help']) {
+    for (const page of ['home', 'watch', 'play', 'challenges', 'teams', 'tournaments', 'help']) {
         assert.ok(pages.has(page), page);
     }
     assert.ok(tour.TOUR_STEPS.some((step) => step.id === 'challenges'));
@@ -158,8 +158,9 @@ test('each step of the tour names what Try it does, on a target the page has', (
             assert.ok(found, `${step.id} ${mark}${name}`);
         }
     }
-    // Try it opens the palette, the menus, the settings and the wizard, and starts no match.
-    assert.deepEqual(opens, ['palette', 'match', 'view', 'tournaments', 'settings']);
+    // Try it opens the palette, the menus, a leaderboard, the settings and the wizard, and
+    // starts no match.
+    assert.deepEqual(opens, ['palette', 'match', 'view', 'challenges', 'tournaments', 'settings']);
     assert.equal(tour.TOUR_STEPS.find((step) => step.id === 'play').tryIt, null);
     assert.equal(tour.TOUR_STEPS.find((step) => step.id === 'timeline').tryIt, 'focus');
 });
@@ -171,8 +172,30 @@ test('the catalog of lessons holds the eight lessons of the task, each with agen
         assert.ok(plain(lesson.ask) && plain(lesson.praise) && plain(lesson.title), lesson.id);
         assert.ok(checks.has(lesson.agent.check), lesson.id);
         assert.ok(lesson.agent.steps.length > 0 && lesson.agent.steps.every((step) => step.say && (step.run || step.python || step.http || step.script)), lesson.id);
-        assert.ok(['home', 'watch', 'play', 'teams'].includes(lesson.page), lesson.id);
+        assert.ok(['home', 'watch', 'play', 'challenges', 'teams'].includes(lesson.page), lesson.id);
     }
+});
+
+test('the challenges step and lesson point at the Challenges page, and a stored place resumes there', () => {
+    const index = tour.TOUR_STEPS.findIndex((step) => step.id === 'challenges');
+    const step = tour.TOUR_STEPS[index];
+    assert.equal(step.page, 'challenges');
+    assert.ok(step.target.startsWith('#page-challenges '), step.target);
+    // The leaderboard button is a disclosure, which Try it opens and the same button closes,
+    // rather than Play it yourself or Run a model's Run, which start matches.
+    assert.match(step.target, /data-action="board"/);
+    assert.equal(step.tryIt, 'open');
+    assert.ok(html.includes('id="page-challenges"'));
+    assert.ok(html.includes('data-page="challenges"'));
+    // A tour left at the step of the challenges, when they were a section of Play, resumes at
+    // the same step, which now opens the Challenges page.
+    assert.equal(tour.TOUR_STEPS[tour.resumeStep({ step: index, started: true })].page, 'challenges');
+    const lesson = catalog.find((entry) => entry.id === 'start_challenge');
+    assert.equal(lesson.page, 'challenges');
+    assert.match(english['lesson.start_challenge.ask'], /Challenges page/);
+    // A lesson under way or done before the move keeps its progress.
+    assert.deepEqual(lessons.progressState({ done: { register_team: 'a' }, current: 'start_challenge' }, ids),
+        { done: { register_team: 'a' }, current: 'start_challenge' });
 });
 
 test('progress keeps known lessons, the first time of each, and finds the next one', () => {

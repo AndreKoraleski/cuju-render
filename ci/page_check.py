@@ -1393,8 +1393,8 @@ def ui_a11y_checks(client):
             const shown = (node) => !node.closest('[hidden]')
                 && (node.getClientRects().length > 0 || node.classList.contains('sr-only'));
             const bad = [];
-            const pages = ['play', 'recordings', 'matches', 'tournaments', 'teams', 'field',
-                'help'];
+            const pages = ['play', 'challenges', 'recordings', 'matches', 'tournaments', 'teams',
+                'field', 'help'];
             for (const page of pages) {
                 cuju.showPage(page);
                 await wait(700);
@@ -2968,7 +2968,8 @@ def photo_checks(client):
 
 
 def challenge_checks(client):
-    """Checks the Challenges section of Play, a person's run, a headless run and achievements."""
+    """Checks the Challenges page, a person's run on Play and its way back, a headless run and
+    achievements."""
     key = {'key': 'Enter', 'code': 'Enter', 'windowsVirtualKeyCode': 13}
     result = client.evaluate("""
         (async () => {
@@ -3005,19 +3006,20 @@ def challenge_checks(client):
                     ...state.ends[state.specs.length - 1] };
                 return state.entry;
             };
-            cuju.showPage('play');
+            cuju.showPage('challenges');
             for (let i = 0; i < 100 && !document.querySelector('.challenge-item'); i++) {
                 await wait(50);
             }
             const items = [...document.querySelectorAll('.challenge-item')];
-            const titles = items.map((item) => item.querySelector('h3').textContent);
+            const titles = items.map((item) => item.querySelector('h2').textContent);
             const named = titles.join() === 'Empty goal from close range,Corner,One on one'
                 && !/_/.test(document.querySelector('.challenges').innerText);
             const start = document.querySelector(
                 '.challenge-item[data-id="one_on_one"] [data-action="start"]');
             start.focus();
             // Every challenge has the same buttons, and each names its challenge.
-            const labelled = start.getAttribute('aria-label') === 'Start challenge, One on one';
+            const labelled = start.getAttribute('aria-label')
+                === 'Play it yourself, One on one';
             return { named, labelled, focused: document.activeElement === start,
                 scripted: typeof cuju.challenges.start === 'function' };
         })()
@@ -3045,7 +3047,8 @@ def challenge_checks(client):
             const card = cuju.play.endPanel.innerText;
             const ended = /attempt 1 of 3/.test(card) && /No goal|Scored/.test(card)
                 && /New achievement, Off the mark/.test(card) && /Next attempt/.test(card);
-            return { started, ended, live: !cuju.play.end.hidden };
+            // The attempt plays on the game view of Play.
+            return { started, ended, live: !cuju.play.end.hidden, play: cuju.page === 'play' };
         })()
     """)
     assert all(result.values()), f'Challenge attempt {result}'
@@ -3102,16 +3105,36 @@ def challenge_checks(client):
         })()
     """)
     assert all(result.values()), f'Challenge run by controller {result}'
+    # Esc on the end card of the run leads back to the Challenges page, at the challenge's card.
+    for kind in ('keyDown', 'keyUp'):
+        client.call(
+            'Input.dispatchKeyEvent',
+            {'type': kind, 'key': 'Escape', 'code': 'Escape', 'windowsVirtualKeyCode': 27},
+        )
+    result = client.evaluate("""
+        (async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const start = () => document.querySelector(
+                '.challenge-item[data-id="one_on_one"] [data-action="start"]');
+            for (let i = 0; i < 100 && document.activeElement !== start(); i++) await wait(50);
+            return { page: cuju.page === 'challenges', focus: document.activeElement === start(),
+                hash: location.hash === '#page=challenges', setup: !cuju.play.game
+                    && !cuju.play.setupView.hidden };
+        })()
+    """)
+    assert all(result.values()), f'Challenge run returns to its page {result}'
     result = client.evaluate("""
         (async () => {
             const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
             const { api } = await import('./js/core/api.js');
             try {
                 if (cuju.play.game?.source) cuju.play.game.source.live.stop();
-                cuju.challenges.leave();
-                await wait(100);
+                await cuju.challenges.leave();
+                const back = cuju.page === 'challenges' && document.activeElement === document
+                    .querySelector('.challenge-item[data-id="one_on_one"] [data-action="start"]');
                 const job = await cuju.challenges.run('one_on_one', { team: 'builtin' });
-                const line = () => document.querySelector('.challenge-job').innerText;
+                const line = () => document.querySelector(
+                    '.challenge-item[data-id="one_on_one"] .challenge-job').innerText;
                 for (let i = 0; i < 100 && !/finished/.test(line()); i++) await wait(100);
                 const headless = job.state === 'queued' && /finished One on one/.test(line());
                 for (let i = 0; i < 50 && !document.querySelector(
@@ -3140,7 +3163,7 @@ def challenge_checks(client):
                 const achievements = earned.join() === 'off_the_mark'
                     && scripted.person.off_the_mark.count === 2 && scripted.catalog.length > 3
                     && listed.length === scripted.catalog.length;
-                return { headless, marked, ranked, achievements };
+                return { back, headless, marked, ranked, achievements };
             } finally {
                 Object.assign(api, window.pageCheckApi);
                 localStorage.removeItem('cuju.achievements');
@@ -3150,7 +3173,7 @@ def challenge_checks(client):
         })()
     """)
     assert all(result.values()), f'Challenges headless run and achievements {result}'
-    return 4
+    return 5
 
 
 def main():
@@ -3260,6 +3283,7 @@ def main():
                 'teams',
                 'field',
                 'play',
+                'challenges',
                 'help',
             ]:
                 result = client.evaluate(f"""
@@ -4172,9 +4196,11 @@ def main():
             checks += worklet_checks(client, port)
             checks += worker_checks(client)
             checks += photo_checks(client)
+            checks += page_challenges.reach_checks(client)
             checks += page_challenges.card_checks(client)
             checks += challenge_checks(client)
             checks += page_challenges.bench_checks(client)
+            checks += page_challenges.model_checks(client)
             checks += page_help.help_checks(client, port)
             checks += page_a11y.a11y_checks(client)
             checks += page_search.check_search(client)

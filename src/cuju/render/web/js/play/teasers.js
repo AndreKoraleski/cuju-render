@@ -88,6 +88,14 @@ export class TeaserCards {
         this.current = null;
     }
 
+    // The page leaves the screen, and every card goes back to its still.
+    stop() {
+        for (const entry of this.cards.values()) {
+            entry.reasons.clear();
+        }
+        this.refresh();
+    }
+
     view(id) {
         const entry = this.cards.get(id);
         return entry ? this.viewOf(entry) : null;

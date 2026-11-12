@@ -1243,11 +1243,12 @@ Export alone.
 
 ## Page layout
 
-The page holds nine pages, chosen from the bar along its top. The logo at the left of the bar, the
+The page holds ten pages, chosen from the bar along its top. The logo at the left of the bar, the
 letters of the name standing on the bar itself, in light grays in the dark theme and in dark grays
-in the light theme, opens Home, and a screen reader names it Cuju, Home. Tabs open Watch, Play, Recordings, Matches, Tournaments, Teams, Field and Help.
-Each tab shows a symbol beside its name, a television for Watch, a controller for Play, a box of
-files for Recordings, crossed swords for Matches, a trophy for Tournaments, a shirt for Teams, a
+in the light theme, opens Home, and a screen reader names it Cuju, Home. Tabs open Watch, Play,
+Challenges, Recordings, Matches, Tournaments, Teams, Field and Help.
+Each tab shows a symbol beside its name, a television for Watch, a controller for Play, a rosette
+for Challenges, a box of files for Recordings, crossed swords for Matches, a trophy for Tournaments, a shirt for Teams, a
 plot of land for Field and a question mark for Help. On a screen of middle width the tabs show
 their symbols alone, and the tooltip of each names the page and what it holds. Commands, a
 magnifying glass, Settings, a gear, and Fullscreen, four corners, sit at the right end of the bar.
@@ -1289,7 +1290,8 @@ The symbols that recur across the pages are these.
 | a square | Stop, Cancel a run |
 | a trophy | Trophy ceremony, Match summary |
 | a medal | Leaderboard |
-| a robot | Run headless |
+| a rosette | Challenges |
+| a robot | Run a model, a model on the leaderboard |
 | a gauge | Speed |
 | a calendar | Date |
 | lines of falling length | Sort |
@@ -1352,7 +1354,7 @@ recordings, a game on Play in each listed scenario, a request for a match, the s
 theme, broadcast mode, player labels, motion and the presets of the presentation, the choices of
 the View menu, which are the cameras, the arenas, the four times of day, the weather, photo mode
 and fullscreen, every player of the open match to follow with the Follow player camera, the
-challenges of Play, Surprise me for a team, and the topics of the Help page. Typing narrows the
+Challenges page and each challenge in a group of their own, Surprise me for a team, and the topics of the Help page. Typing narrows the
 list, with the letters of each word in order anywhere in a name, so `gotea` finds Go to Teams
 and `follow 10` finds the player with that number. Words that belong to an action also find it,
 such as `volume` for Mute and `photo` for Photo mode. The arrows move through the list,
@@ -1388,9 +1390,8 @@ and `#live=` with the identifier of a live source opens the source. An address t
 opens Home. A local file uses `#page=watch` and must be opened again after a reload.
 
 **Home** opens with the cuju title, with a
-tagline, a short description and the actions beneath it. Watch and Play a game open their pages,
-alongside
-Request a match, Teams and Field, and a line under the actions counts the live sources and the
+tagline, a short description and the actions beneath it. Watch, Play a game and Challenges open
+their pages, alongside Request a match, Teams and Field, and a line under the actions counts the live sources and the
 recordings. The page continues in sections. The first holds Live now and Latest recordings
 side by side, the sources that stream at the moment, each opening with one click, and the five
 newest recordings, each with a control that plays it. While there are no sources and no
@@ -1517,6 +1518,11 @@ that a screen reader reads as drawn at random. Retry on such a request sends the
 parts, pool and seed again, so it draws the same match, and Repeat sends them without the seed,
 so the server draws a new seed and with it a new draw. The tooltips of the two buttons say which
 one keeps the seed.
+
+**Challenges** lists the challenges as cards, each with Play it yourself, Run a model and its
+leaderboard, with the benchmark of models and the achievements, as described under [Challenges](#challenges). Its address
+is `#page=challenges`, and an older address of Play that names a challenge, such as
+`#page=play&challenge=corner`, opens the page at that challenge's card.
 
 **Tournaments** makes and follows tournaments of registered teams, the built in AI and people, as
 described under Tournaments.
@@ -3180,9 +3186,14 @@ identifiers `finishing`, `dribbling`, `combination`, `set_piece`, `counterattack
 and `duel` and the levels `easy`, `medium` and `hard`, and `cuju render challenge list --json`
 prints them with the rest of each challenge.
 
-### On the Play page
+### On the Challenges page
 
-The setup card of Play holds a Challenges section under the Play button. A field takes the person's
+The Challenges page, a tab of its own beside Play with a rosette as its symbol, holds every
+challenge, its leaderboard, the headless runs, the benchmark of models and the achievements. Its
+address is `#page=challenges`, and the command palette, Home, the guided tour and the lesson Start
+a challenge lead to it, as does an older address of Play that names a challenge, such as
+`#page=play&challenge=corner`, which opens the page with the focus on that challenge's card. Play
+itself holds the setup and the game alone. A field at the top of the page takes the person's
 name for the leaderboards, which the browser keeps once the person types one. A person who types
 none plays under the default name of the page's language, Player in English, and the page shows
 that default in its own language wherever the name shows, on the leaderboards, in the titles of the
@@ -3191,28 +3202,31 @@ run keeps the name it was saved with, and a new run under the default says so in
 while an older one counts as the default when its name is the default of a language that the
 server knows. Every person under a default name is one competitor. Each challenge shows its goal, its
 scenario, its medals as items, the ability of the built in AI on each side, the person's best run
-with its medal and rank, and the leader of its board. Start challenge plays the first attempt as a game of
-the challenge's scenario, seed and ability, with Save to Recordings on and the person on the left
-alone. The end card of each attempt shows the attempt's result, which the server scores from the
+with its medal and rank, and the leader of its board, and each card offers two ways to play it,
+Play it yourself, with the symbol of a controller, and Run a model, with the symbol of a robot,
+which the section on agents describes. Play it yourself opens the game view of
+Play and plays the first attempt as a game of the challenge's scenario, seed and ability, with Save
+to Recordings on and the person on the left alone. The end card of each attempt shows the attempt's result, which the server scores from the
 saved recording, and offers Next attempt, Watch it and Leave challenge. After the last attempt the
 page sends the run to the server, the person's name and the recordings in order, and the end card
 shows the value with the seconds that its counting attempts took to score in all, the medal, the
 medal items with the one this run reached marked This run, the personal best or, for the person's
 first run, its place on the board, the rank and any achievements, with Try again. A run in which no attempt counted shows its value alone. An
-achievement earned again in a run shows on the first end card that earns it. Leave challenge and
-the Challenges button of the last end card return to the setup with the focus on the challenge
-just played, and each button of a challenge names its challenge for screen readers. A
-setup card that opens while a run is under way, after Esc on an end card for example, names the run
-and offers Next attempt and Leave challenge.
+achievement earned again in a run shows on the first end card that earns it. Leave challenge,
+the Challenges button of the last end card, Esc on an end card and the right button of a
+controller return to the Challenges page with the focus on Play it yourself of the challenge just
+played, and each button of a challenge names its challenge for screen readers. While a run is
+under way, after Esc on an end card for example, the page names the run above the cards and
+offers Next attempt, which plays on Play again, and Leave challenge.
 
-Keep attempts as recordings, a setting of the section that the browser keeps, is on by default,
+Keep attempts as recordings, a setting of the page that the browser keeps, is on by default,
 and the attempts of each run then gather in one group of the Recordings page. With the setting
 off, a run scores, ranks and earns exactly as with it on, and leaves the library as it was. The
 attempts of a person's run still save their recordings while the run plays, since the server
 scores each attempt from its recording, and the server removes them for good once it has scored
 the whole run, so the end card of such a run offers no Watch it. A run that a person leaves before
 its end hands its attempts to the server as well, which keeps them as the group of a left run, or
-removes them when the setting is off. The setting applies to the headless runs that the section
+removes them when the setting is off. The setting applies to the headless runs that the page
 starts too.
 
 The server scores every recording of the run again and checks that each one fits its attempt, a
@@ -3223,12 +3237,12 @@ A run that fails a check stays off the board, and the end card names the reason.
 Leaderboard opens the board of a challenge below it, with the rank, the competitor marked as a
 person by the symbol of a person or as a model by the symbol of a robot, with its kind, a team or
 a Python policy, the value, the seconds to score, the medal by its symbol in its metal's color and
-its name, and the date of each best run, and the seeds of the attempts. The keyboard and a controller work every control of the section, as they
-work the rest of the setup card.
+its name, and the date of each best run, and the seeds of the attempts. The keyboard works every control
+of the page, and on a phone the cards stand in one column under the fields.
 
 ### The cards
 
-The Challenges section lists every challenge as a card, and each card shows what its challenge is
+The Challenges page lists every challenge as a card, and each card shows what its challenge is
 before a run starts. The card opens with a picture of the drill, a still of its first moments that
 shows where the players and the ball stand, and over the picture sit the kind of the challenge, in
 its own color with its own symbol, the difficulty as a badge of one, two or three bars with its
@@ -3289,6 +3303,27 @@ match would choose for the team, and becomes a recording of the library whose pr
 source `challenge`, as described under Recording format. The recordings of a run form one group,
 as [Recordings](#recordings) describes, and the result names it in `group`.
 
+A team trained for full games may control more players than the side of a challenge holds, such
+as a five a side team of four agents on the one on one, whose side holds one controllable player.
+The team then plays with its extra players out, as a selected player who leaves the pitch after a
+red card is out of a match, and the built in AI plays the rest of the side. A team of dynamic
+assignment plays as many agents as the side has controllable players. A team of fixed assignment
+plays the players of its selection that the side holds, by role or by index as in a match, and
+the others of its selection are out, while the built in AI plays the players of the side outside
+the selection, its goalkeeper among them. The policy is still called in its own form, Kaggle's
+single form for one player and its multi agent form for several, with one observation for each
+player it controls, and a player out sees the observation of the team's first player that plays,
+whose answer for the player out counts for nothing. The size rule of matches stays, so a five a
+side team never plays an eleven a side match and an eleven a side team never a five a side one,
+while the academy drills and the one on one stay open to both sizes. A fixed selection of which
+the side holds no player cannot play the challenge, and the run is refused with the reason.
+
+So that every score stays honest, the result of such a run says `playing`, the players that
+played and the players the team controls, such as `[1, 4]`, and the leaderboard, the line of the
+run on its card, the cell of a benchmark and the command line all say Played with 1 of its 4
+players, the others out, beside the result. A run in which every player plays says `playing` as
+`None`, and the board then says nothing more.
+
 `keep_recordings=False` in Python and `--no-recordings` on the command line play a run without
 recordings. Such a run scores, ranks and earns from the same frames as one that keeps them, and
 adds nothing to the library. Its attempts then name no recording, `match` is `None` in each of
@@ -3306,9 +3341,12 @@ competitor as a person, a team or a Python policy, so a policy that shares a tea
 apart from the team. A search by `team:` reads the names in the recordings, so it finds both, and
 a name of its own keeps the policy apart there too.
 
-From the Play page, the team list and Attempts of the Challenges section and Run headless on a
-challenge start a run on the server, in a process of its own, one at a time. The line above the
-list follows the run attempt by attempt with a bar of the attempts played, Cancel run ends it, and
+On the Challenges page, Run a model on a card opens the part of the card that runs a model, a
+registered team of the registry or GRF's built in AI, on that challenge headless. It names the
+model and the attempts, a full run of the challenge's fixed seeds or one attempt as practice, and
+Run starts the run on the server, in a process of its own, one at a time. The card keeps the
+model and the attempts chosen last for every card, and the same button closes the part again. A
+line of the card follows the run attempt by attempt with a bar of the attempts played, Cancel run ends it, and
 the result shows its value, medal and rank when it is done, with the medal items and the one the
 run reached marked Reached, and the count of failed attempts when there are any. The run reaches
 the leaderboard under the team's name, marked as a model.
@@ -3359,7 +3397,7 @@ for attempt in result['attempts']:
 
 A **benchmark** plays one or several models, the registered teams that requested matches and
 tournaments play, on several or all challenges as one job, and compares them in one table. Each
-pair of a model and a challenge plays as a full headless run, exactly as Run headless plays it,
+pair of a model and a challenge plays as a full headless run, exactly as Run a model plays it,
 in a process of its own, with the challenge's scenario, abilities, fixed seeds and scoring. A
 model's value on a challenge therefore compares with a person's value on it, and the same model
 on the same seeds gives the same value, seconds and medal on every machine, as long as its policy
@@ -3368,11 +3406,12 @@ has a process of its own, no model's run sees the state of another, such as a mo
 variable that a submission leaves behind. A policy that fails ends its attempt alone, as described
 under Agents, and a run that ends without a result, such as one whose process stops, leaves its
 cell failed with the reason, so the job always goes on to the next pair. A model that cannot play
-a challenge, such as a team of several players on the one on one, skips that challenge with the
-reason. Each run of a benchmark reaches the leaderboard of its challenge as any full run does,
+a challenge, such as a team of fixed assignment whose selection the side holds none of, skips
+that challenge with the reason. Each run of a benchmark reaches the leaderboard of its challenge as any full run does,
 under the team's name and marked as a model, apart from people.
 
-The Challenges section of Play holds Benchmark models under the cards. Its Models list takes one
+The Challenges page holds Benchmark models under the cards, and Benchmark several models at the
+top of the page leads there, as Achievements beside it leads to the achievements. Its Models list takes one
 or several teams of the registry, GRF's built in AI among them, and its Challenges list takes
 several or all challenges, with All challenges to choose or clear them at once. Keep the attempts
 of the benchmark as recordings, off by default, keeps every attempt in the library as the group of
@@ -3429,7 +3468,8 @@ or skipped.
 ### Scripts
 
 Scripts and agents that drive the page reach challenges through `window.cuju.challenges`, which
-exists once the Play page has opened, as `cuju.showPage('play')` does for a script.
+exists from the start of the page. `cuju.showPage('challenges')` opens the page, and
+`await show(id)` opens it with the focus on that challenge's card.
 
 | Call | Effect |
 | ---- | ------ |
@@ -3505,7 +3545,7 @@ that takes the winner one goal past the loser's final total, as for Late winner 
 Hat trick and Clean sheet keep the meanings that they have there, over the whole recording.
 
 The end card of a game on Play names the achievements of the game, the new ones first, and the end
-card of a challenge adds those of its medal. The Challenges section closes with an Achievements
+card of a challenge adds those of its medal. The Challenges page closes with an Achievements
 list of every achievement, earned or not, with the count and the date of the first time, for the
 person or for any team of the registry. The person's achievements stay in the browser, and a
 team's stay with the server in a JSON file of its own, which holds for each achievement the first
@@ -3527,8 +3567,8 @@ from a script that drives the page, and every lesson ends by the same rule for b
 
 The **guided tour** walks through the pages one step at a time and points at the real control of
 each step with a ring around it. It visits Home and the command palette, the Match menu, the
-timeline and the View menu of Watch, the Play button and the Challenges section of Play, the team
-list of Teams, New tournament of Tournaments, the Settings button and the Learn by doing part of
+timeline and the View menu of Watch, the Play button, the leaderboard of the first challenge on
+the Challenges page, the team list of Teams, New tournament of Tournaments, the Settings button and the Learn by doing part of
 Help, eleven steps in all. Each step opens its page, names the step and its number, and says in a
 sentence what the control does and the key that reaches it.
 
@@ -3551,11 +3591,14 @@ palette or dialog is open over it, and the page then says at which step it stopp
 **Try it** shows on the steps whose control has something to try in place. On the command palette,
 the Match and View menus of Watch, New tournament and Settings, it opens what the control opens,
 just as a click on it would, and the focus moves into the palette, the menu or the panel, so the
-arrows, Enter and Esc work there as usual. Esc then closes the menu first, and a second Esc leaves
+arrows, Enter and Esc work there as usual. On Challenges it opens the leaderboard of the first
+challenge on its card, which the same button closes again, and starts no match. Esc then closes the menu first, and a second Esc leaves
 the tour. On the timeline, Try it moves the focus to the timeline and says that Left and Right seek
 five seconds, and thirty with Shift. The other steps point at the logo, which leads to the Home
 page the step already shows, at Play, which starts a match, at the team list, whose additions
-upload a folder, and at the headings of Challenges and Help, so their cards leave Try it out.
+upload a folder, and at the heading of Help, so their cards leave Try it out. A tour left at the
+step of the challenges, from the time they were a section of Play, resumes there on the Challenges
+page.
 
 A step that needs a recording, such as the timeline, offers Open the sample match when nothing
 plays, which adds the five a side sample to the library when it is missing, restores it from the
@@ -3582,7 +3625,7 @@ is done. There are eight, in this order.
 | Follow a player | follow one player with a number key, P or the View menu | the camera follows a player, as Follow player, the player on the ball or first person |
 | Play for 30 seconds | play a game on Play | the game has played 300 steps, 30 seconds of match time |
 | Register a team | upload a submission or add the starter team | the registry holds a team besides the built in AI |
-| Start a challenge | start a challenge on Play, by hand or headless | a run of a challenge is under way |
+| Start a challenge | start a challenge on the Challenges page, by hand or headless | a run of a challenge is under way |
 | Make a photo | make a photo in photo mode | photo mode captures or saves a new photo |
 
 Start the lessons on Help begins the first lesson not done, and Start on each lesson of the list

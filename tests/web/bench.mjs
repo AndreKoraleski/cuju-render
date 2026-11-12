@@ -34,7 +34,7 @@ globalThis.localStorage = { getItem: (key) => (key === 'cuju.language' ? '"en"' 
 globalThis.location = { search: '' };
 Object.defineProperty(globalThis, 'navigator', { value: { languages: ['en-US'], language: 'en-US' }, configurable: true, writable: true });
 globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
-const { benchApi, benchCell, benchCsv, benchJson, benchProgress, benchTable } = await import(pathToFileURL(join(folder, 'play/bench.js')).href);
+const { benchApi, benchCell, benchCsv, benchJson, benchProgress, benchTable, playingText } = await import(pathToFileURL(join(folder, 'play/bench.js')).href);
 
 const job = shared.document;
 
@@ -70,4 +70,11 @@ test('a running benchmark shows the cells it has played and leaves the others em
     running.cells[1].value = null;
     const lines = benchCsv(running).trim().split('\n');
     assert.match(lines[1], /,5,gold,,,/);
+});
+
+test('a run with players out says how many of its players played', () => {
+    // A team of four that played the one on one played with one player, the others out, and the
+    // board, the line of the run and the cell of a benchmark all say so in the same words.
+    assert.equal(playingText([1, 4]), 'Played with 1 of its 4 players, the others out.');
+    assert.equal(playingText([2, 3]), 'Played with 2 of its 3 players, the others out.');
 });

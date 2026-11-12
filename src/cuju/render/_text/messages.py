@@ -468,6 +468,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.teams.control.legacy_goalkeeper': (
         'expected 10 players for the earlier goalkeeper setting'
     ),
+    'server.teams.control.none_present': 'scenario holds none of the selected players',
     'server.teams.control.players': 'expected from 1 to {most} controlled players',
     'server.teams.control.select_player': 'scenario cannot select player {player}',
     'server.teams.control.selection_count': 'expected one selection for each controlled player',

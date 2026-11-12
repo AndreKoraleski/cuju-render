@@ -15,7 +15,7 @@ export const TIPS_KEY = 'cuju.tips';
 
 // The tip of each page, shown once until dismissed, the message firstrun.tip.<page>. The tip of
 // Watch waits for a match.
-export const TIPS = Object.fromEntries(['home', 'watch', 'recordings', 'matches', 'tournaments', 'teams', 'play', 'field']
+export const TIPS = Object.fromEntries(['home', 'watch', 'recordings', 'matches', 'tournaments', 'teams', 'play', 'challenges', 'field']
     .map((page) => [page, t(`firstrun.tip.${page}`)]));
 
 // The line of help of each main control by its id, the message firstrun.help.<id>.
@@ -25,7 +25,7 @@ export const HELP_TEXT = Object.fromEntries([
 ].map((id) => [id, t(`firstrun.help.${id}`)]));
 // The line of help of each page's tab, the message firstrun.tab.<page> after the name of the page,
 // since a tab of a middle-sized screen shows its symbol alone.
-const TAB_HELP = Object.fromEntries(['watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help']
+const TAB_HELP = Object.fromEntries(['watch', 'play', 'challenges', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help']
     .map((page) => [page, t('symbol.tip', { name: t(`html.nav.${page}`), text: t(`firstrun.tab.${page}`) })]));
 
 // The corners a tip may take, in the order it tries them, the lower left first.

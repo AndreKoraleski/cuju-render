@@ -52,6 +52,7 @@ SPDX-License-Identifier: Apache-2.0
         <nav class="menu" aria-label="Pages" data-i18n-aria-label="html.nav.pages">
             <button data-page="watch"><svg class="icon" aria-hidden="true"><use href="#i-watch"/></svg><span class="nav-label" data-i18n="html.nav.watch">Watch</span></button>
             <button data-page="play"><svg class="icon" aria-hidden="true"><use href="#i-gamepad"/></svg><span class="nav-label" data-i18n="html.nav.play">Play</span></button>
+            <button data-page="challenges"><svg class="icon" aria-hidden="true"><use href="#i-challenges"/></svg><span class="nav-label" data-i18n="html.nav.challenges">Challenges</span></button>
             <button data-page="recordings"><svg class="icon" aria-hidden="true"><use href="#i-archive"/></svg><span class="nav-label" data-i18n="html.nav.recordings">Recordings</span></button>
             <button data-page="matches"><svg class="icon" aria-hidden="true"><use href="#i-matches"/></svg><span class="nav-label" data-i18n="html.nav.matches">Matches</span></button>
             <button data-page="tournaments"><svg class="icon" aria-hidden="true"><use href="#i-trophy"/></svg><span class="nav-label" data-i18n="html.nav.tournaments">Tournaments</span></button>
@@ -66,6 +67,7 @@ SPDX-License-Identifier: Apache-2.0
                 <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="home"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.home">Home</span></span></button>
                 <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="watch"><svg class="icon" aria-hidden="true"><use href="#i-watch"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.watch">Watch</span></span></button>
                 <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="play"><svg class="icon" aria-hidden="true"><use href="#i-gamepad"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.play">Play</span></span></button>
+                <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="challenges"><svg class="icon" aria-hidden="true"><use href="#i-challenges"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.challenges">Challenges</span></span></button>
                 <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="recordings"><svg class="icon" aria-hidden="true"><use href="#i-archive"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.recordings">Recordings</span></span></button>
                 <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="matches"><svg class="icon" aria-hidden="true"><use href="#i-matches"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.matches">Matches</span></span></button>
                 <button type="button" role="menuitem" tabindex="-1" class="dd-item" data-page="tournaments"><svg class="icon" aria-hidden="true"><use href="#i-trophy"/></svg><span class="dd-text"><span class="dd-label" data-i18n="html.nav.tournaments">Tournaments</span></span></button>
@@ -200,6 +202,8 @@ SPDX-License-Identifier: Apache-2.0
 
         <section id="page-play" class="page" hidden></section>
 
+        <section id="page-challenges" class="page" hidden></section>
+
         <section id="page-recordings" class="page" hidden></section>
 
         <section id="page-matches" class="page" hidden></section>
@@ -228,7 +232,7 @@ SPDX-License-Identifier: Apache-2.0
                 <p data-i18n="html.help.start">Watch, open a file or choose a source. Recordings, browse saved games.
                     Record a batch with cuju.render.Recorder. Watch live with cuju.render.watch.
                     Matches, choose teams and request a game. Play, choose a side and start.</p>
-                <h2 id="help-pages" data-i18n="html.help.pages.title">Pages</h2><p data-i18n="html.help.pages">Home, choose an activity. Teams, import submissions and edit players.
+                <h2 id="help-pages" data-i18n="html.help.pages.title">Pages</h2><p data-i18n="html.help.pages">Home, choose an activity. Challenges, play drills for medals and the leaderboards. Teams, import submissions and edit players.
                     Field, arrange the pitch and stadium. Help, find controls and guides.
                     Ctrl K, or the search button in the top bar, opens the command palette on any page.</p>
                 <h2 id="help-teams" data-i18n="html.help.teams.title">Making a team</h2><p data-i18n="html.help.teams">A team is a submission folder in the format of

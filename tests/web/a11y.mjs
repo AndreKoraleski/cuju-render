@@ -76,6 +76,8 @@ test('each page has a title of its own, and Watch names its recording', () => {
     assert.equal(pageTitle('watch', 'Sample match'), 'Sample match · Cuju');
     assert.equal(pageTitle('watch'), 'Watch · Cuju');
     assert.equal(pageName('tournaments'), 'Tournaments');
+    assert.equal(pageName('challenges'), 'Challenges');
+    assert.equal(pageTitle('challenges'), 'Challenges · Cuju');
 });
 
 test('scenario names read the agents of each side in words', () => {

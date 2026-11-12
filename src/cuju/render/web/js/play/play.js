@@ -10,7 +10,6 @@
 
 import * as THREE from 'three';
 import { api } from '../core/api.js';
-import { ChallengesPanel } from './challenges.js';
 import { serverText, t, tm, tn, tOr } from '../core/i18n.js';
 import { chord, chordName } from '../core/keys.js';
 import { LiveSource } from '../recording/live.js';
@@ -367,7 +366,6 @@ export class PlayPage {
         setInterval(() => this.heartbeat(), HEARTBEAT_MS);
         this.marker = this.makeMarker();
         app.poseHooks.push((pose, s) => this.placeMarker(pose, s));
-        this.challenges = new ChallengesPanel(this);
     }
 
     get visible() {
@@ -439,8 +437,7 @@ export class PlayPage {
                 this.padTable),
             this.padNote,
             this.inputSettings(),
-            h('div', { class: 'play-row' }, this.startButton),
-            this.challenges.element());
+            h('div', { class: 'play-row' }, this.startButton));
         this.view = h('div', { class: 'play-view', tabindex: '0', 'aria-label': t('play.view') });
         this.view.addEventListener('focusout', () => this.releaseKeys());
         this.status = h('div', { class: 'play-status', 'aria-live': 'polite' });
@@ -461,8 +458,7 @@ export class PlayPage {
         this.end.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
-                this.showSetup();
-                this.startButton.focus();
+                this.closeEnd();
             }
         });
         this.wait = h('div', { class: 'play-wait', hidden: true }, h('div', { class: 'spinner' }), h('span', {}, t('play.starting')));
@@ -514,7 +510,6 @@ export class PlayPage {
         }
         this.syncTeams();
         this.updatePadNote();
-        this.challenges.show(this.teamList);
         if (this.game) {
             this.enterStage();
             // A game that the page started away from Play, such as a match of a tournament, has
@@ -597,12 +592,25 @@ export class PlayPage {
         });
     }
 
-    showSetup() {
+    showSetup(focus = true) {
         this.leaveStage();
         this.game = null;
         this.setupView.hidden = false;
         this.stage.hidden = true;
-        this.startButton.focus();
+        if (focus) {
+            this.startButton.focus();
+        }
+    }
+
+    // Leaves the end card, for the setup, or for the Challenges page after an attempt of a
+    // challenge, with the focus on that challenge's card.
+    closeEnd() {
+        const spec = this.game && this.game.spec;
+        if (spec && spec.challenge && this.app.challengesPage) {
+            this.app.challengesPage.back(spec.challenge.id);
+            return;
+        }
+        this.showSetup();
     }
 
     // A game.
@@ -859,7 +867,8 @@ export class PlayPage {
                 h('button', { type: 'button', class: 'btn', onclick: () => this.showSetup() }, icon('plus'), t('play.end.new')));
         }
         lines.push(h('button', { type: 'button', class: 'btn', onclick: () => this.goHome() }, icon('home'), t('play.home')));
-        this.endPanel.replaceChildren(...this.challenges.endCard(entry, game, lines));
+        const challenges = this.app.challengesPage;
+        this.endPanel.replaceChildren(...(challenges ? challenges.endCard(entry, game, lines) : lines));
         this.end.hidden = false;
     }
 
@@ -1401,7 +1410,7 @@ export class PlayPage {
     }
 
     // East closes the setup panel or the controls card, resumes from the pause menu, and leaves
-    // the end card for the setup, as Esc does.
+    // the end card for the setup or the Challenges page, as Esc does.
     navBack() {
         if (this.padSetup) {
             this.closePadSetup(false);
@@ -1414,7 +1423,7 @@ export class PlayPage {
         } else if (!this.menu.hidden) {
             this.pause(false);
         } else if (!this.end.hidden) {
-            this.showSetup();
+            this.closeEnd();
         }
     }
 

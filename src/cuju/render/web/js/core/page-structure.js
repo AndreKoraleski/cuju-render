@@ -12,9 +12,10 @@
 
 import { t } from './i18n.js';
 
-export const PAGE_NAMES = Object.fromEntries(
-    ['home', 'watch', 'play', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help']
-        .map((page) => [page, t(`structure.page.${page}`)]));
+// The pages in the order of the top bar, each opened by the address #page=<page>.
+export const PAGES = ['home', 'watch', 'play', 'challenges', 'recordings', 'matches', 'tournaments', 'teams', 'field', 'help'];
+
+export const PAGE_NAMES = Object.fromEntries(PAGES.map((page) => [page, t(`structure.page.${page}`)]));
 
 // The name of a page as the page shows it.
 export function pageName(page) {

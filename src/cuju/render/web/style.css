@@ -7820,7 +7820,7 @@ table.grid td.wrap {
 
 /* Between a wide screen and the dropdown of a phone, the tabs show their symbols alone and keep
    their names for screen readers and the tooltip. */
-@media (max-width: 1180px) {
+@media (max-width: 1320px) {
     .menu .nav-label {
         position: absolute;
         width: 1px;

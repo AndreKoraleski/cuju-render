@@ -318,6 +318,7 @@ class Policies:
         extended: bool,
         firsts: list[int],
         names: list[Any] | None = None,
+        fits: list[dict[str, Any] | None] | None = None,
     ) -> None:
         """Loads the submission of each side that has one.
 
@@ -331,6 +332,9 @@ class Policies:
             firsts: The column of the first agent that each side's team plays.
             names: The name of each side that its failure gives, text, a label or `None` for
                 the team's own, such as the entrants of a tournament, or `None` for both.
+            fits: How each side plays a challenge, as `challenge_fit` of the registry gives it,
+                with its selected players and its players out, or `None` for both sides of a
+                match, whose teams play every player they control.
         """
         self.batch = batch
         self.players: list[dict[str, Any]] = []
@@ -339,8 +343,11 @@ class Policies:
                 continue
             columns = list(range(firsts[side], firsts[side] + agents[side]))
             control = _teams.check_control(team.get('control'), team['format'])
+            fit = (fits or [None, None])[side]
             selected = None
-            if control['assignment'] == 'fixed':
+            if fit is not None:
+                selected = fit['selected']
+            elif control['assignment'] == 'fixed':
                 selected = _teams.selected_players(control, _teams.scenario_players(scenario, side))
             function = _teams.load_agent(team['id'])
             if extended and control['action_set'] == 'default':
@@ -352,6 +359,7 @@ class Policies:
                     'runner': AgentRunner(function),
                     'columns': columns,
                     'selected': selected,
+                    'slots': None if fit is None else fit['slots'],
                     'held': {},
                     'calls': 0,
                 }
@@ -361,8 +369,11 @@ class Policies:
         """Returns what each policy sees at the current step, on the thread that steps the batch.
 
         Each entry holds the columns that the policy plays at the step, the columns of its selected
-        players who left the pitch, and its observation. An entry is `None` when GRF hands the
-        players of a fixed assignment over again, and the built-in AI plays them for that step.
+        players who left the pitch, its observation, and the answers that count, in the order of
+        the columns, or `None` for all of them. An entry is `None` when GRF hands the players of a
+        fixed assignment over again, and the built-in AI plays them for that step. A team that
+        plays a challenge with players out still sees one observation for each player it
+        controls, and a player out sees the observation of its first player that plays.
         """
         raw = {name: tensor.cpu() for name, tensor in self.batch.raw().items()}
         parts: list[Any] = []
@@ -374,9 +385,14 @@ class Policies:
                     parts.append(None)
                     continue
                 columns, missing = found
-            obs = observation(self.batch, 0, list(columns), step=player['calls'], raw=raw)
+            seen, pick = list(columns), None
+            slots = player.get('slots')
+            if slots is not None:
+                seen = [columns[0] if place is None else columns[place] for place in slots]
+                pick = [slots.index(place) for place in range(len(columns))]
+            obs = observation(self.batch, 0, seen, step=player['calls'], raw=raw)
             player['calls'] += 1
-            parts.append((columns, missing, obs))
+            parts.append((columns, missing, obs, pick))
         return parts
 
     def decide(self, parts: list[Any]) -> list[Any]:
@@ -391,7 +407,7 @@ class Policies:
             if part is None:
                 answers.append(None)
                 continue
-            _, _, obs = part
+            obs = part[2]
             try:
                 # Kaggle's single form for one player, and its multi agent form for several.
                 answers.append(player['runner'].act(obs, count))
@@ -418,8 +434,9 @@ class Policies:
                 actions[:, player['columns']] = _BUILTIN_AI
             if part is None:
                 continue
-            columns, missing, _ = part
-            actions[:, columns] = torch.tensor(answers[index], dtype=torch.int32).reshape(1, -1)
+            columns, missing, _, pick = part
+            answer = answers[index] if pick is None else [answers[index][slot] for slot in pick]
+            actions[:, columns] = torch.tensor(answer, dtype=torch.int32).reshape(1, -1)
             # A selected player off the pitch, after a red card for one, is left to the built-in
             # AI, and the submission keeps playing the others.
             actions[:, missing] = _BUILTIN_AI

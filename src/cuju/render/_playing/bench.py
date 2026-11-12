@@ -118,7 +118,6 @@ def plan(
     chosen = _challenge_ids(challenges)
     keep = _challenges._keep_flag(keep_recordings)
     count = _workers(workers)
-    builtin = _teams.entry(_teams.BUILTIN)
     models, cells = [], []
     for identifier in identifiers:
         entry = _teams.entry(identifier)
@@ -127,7 +126,7 @@ def plan(
             spec = _challenges.find(challenge)
             cell = _cell(identifier, spec)
             try:
-                _teams.check_scenario([entry, builtin], spec['scenario'])
+                _teams.challenge_fit(entry, spec['scenario'])
             except ArgumentError as error:
                 cell.update(state='skipped', **_messages.entry_fields(error))
             cells.append(cell)
@@ -156,6 +155,8 @@ def _cell(team: str, spec: dict[str, Any]) -> dict[str, Any]:
         'seconds': None,
         'medal': None,
         'failed_attempts': 0,
+        # The players that played and those the team controls, for a team with players out.
+        'playing': None,
         'rank': None,
         'group': None,
         'results': [],
@@ -337,6 +338,7 @@ def run(
                     'rank': result.get('rank'),
                     'group': result.get('group'),
                     'failed_attempts': result.get('failed_attempts', 0),
+                    'playing': result.get('playing'),
                     'results': list(result['attempts']),
                     'played': len(result['attempts']),
                 }
