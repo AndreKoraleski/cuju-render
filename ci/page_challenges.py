@@ -595,12 +595,16 @@ def model_checks(client):
         const medals = !!line().querySelector('.medal-items');
         const others = [...document.querySelectorAll('.challenge-item:not([data-id="corner"]) '
             + '.challenge-job')].every((other) => !/Corner/.test(other.innerText));
-        const toggle = card('corner').querySelector('[data-action="board"]');
-        if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
-        const marked = !!(await wait(() => [...card('corner')
-            .querySelectorAll('.challenge-board tr.agent .challenge-kind')]
-            .some((mark) => mark.classList.contains('agent'))));
-        toggle.click();
+        // The page rebuilds its cards when the run ends, which can close a board opened a moment
+        // before, so the check opens it again until its entry shows, on a slow machine too.
+        const marked = !!(await wait(() => {
+            const toggle = card('corner').querySelector('[data-action="board"]');
+            if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+            return [...card('corner').querySelectorAll('.challenge-board tr.agent .challenge-kind')]
+                .some((mark) => mark.classList.contains('agent'));
+        }));
+        const shut = card('corner').querySelector('[data-action="board"]');
+        if (shut.getAttribute('aria-expanded') === 'true') shut.click();
         const all = { running, done, medals, others, marked };
         return Object.values(all).every((v) => v === true) || all;
         """,

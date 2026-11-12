@@ -1166,7 +1166,12 @@ export class ChallengesPage {
                 this.renderJob();
                 const ended = this.jobs.some((j) => j.state === 'done' && before.get(j.id) && before.get(j.id) !== 'done');
                 if (ended) {
+                    // A board that is open stays open and shows the new result, so the page that
+                    // rebuilds itself does not close it under the reader.
+                    const open = [...this.boards.keys()];
                     this.boards.clear();
+                    await Promise.all(open.map((id) => challengeApi.board(id)
+                        .then((data) => this.boards.set(id, data.entries), () => null)));
                     this.show();
                 }
             } catch {
