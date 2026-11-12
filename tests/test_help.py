@@ -80,6 +80,7 @@ def test_doctor_scrubs_the_home_of_the_renderer_and_the_name_of_the_user(tmp_pat
     assert str(elsewhere) not in json.dumps(report) and 'Ana Lima' not in json.dumps(report)
     # Windows reads a path whatever its case, and so does the scrub there.
     shouted = f'{str(elsewhere).upper()}/x and {str(user).lower()}/y of ana lima'
+    monkeypatch.setattr(_doctor, '_CASELESS', False)
     assert _doctor.scrub(shouted) == shouted
     monkeypatch.setattr(_doctor, '_CASELESS', True)
     assert _doctor.scrub(shouted) == '$CUJU_RENDER_HOME/x and ~/y of <user>'
