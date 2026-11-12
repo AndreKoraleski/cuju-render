@@ -342,6 +342,10 @@ def tour_try_checks(client):
             """
             const { POINTER_PANELS } = await import('./js/core/comfort.js');
             cuju.director?.stop?.(true);
+            // A machine without a GPU gets the offer of the 2D view, which the person declines.
+            localStorage.setItem('cuju.view2dDeclined', 'true');
+            const offer = document.getElementById('flat-suggest');
+            if (offer) offer.hidden = true;
             const others = () => [...document.querySelectorAll(POINTER_PANELS)]
                 .filter((node) => node.getClientRects().length > 0 && !node.closest('#tour'));
             const clear = await wait(() => others().length === 0);
