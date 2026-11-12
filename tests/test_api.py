@@ -201,18 +201,22 @@ def test_demo_starts_its_server_and_ends_cleanly_on_ctrl_c(render_home):
     process = subprocess.Popen(
         [sys.executable, '-m', 'cuju.render', 'demo', '--port', '0', '--no-open'],
         stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         encoding='utf-8',
         errors='replace',
     )
     try:
         address = None
+        seen = []
         for line in process.stdout:
+            seen.append(line)
             if 'serves http://' in line:
                 address = line[line.index('http://') :].split()[0]
             if 'Ctrl+C' in line:
                 break
-        assert address and '#live=' in line
+        # A failure shows the output of the demo, which says why it ended.
+        assert address and '#live=' in line, ''.join(seen)
         assert len(json.loads(_get(address, 'api/live')[1])) == 1
         process.send_signal(signal.SIGINT)
         assert process.wait(30) == 0
@@ -398,15 +402,19 @@ def test_demo_ends_within_about_a_second_of_ctrl_c(render_home):
     process = subprocess.Popen(
         [sys.executable, '-m', 'cuju.render', 'demo', '--port', '0', '--no-open'],
         stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         encoding='utf-8',
         errors='replace',
         start_new_session=True,
     )
     try:
+        seen = []
         for line in process.stdout:
+            seen.append(line)
             if 'Ctrl+C' in line:
                 break
+        assert seen and 'Ctrl+C' in seen[-1], ''.join(seen)
         time.sleep(1)
         started = time.monotonic()
         os.killpg(process.pid, signal.SIGINT)
@@ -415,10 +423,11 @@ def test_demo_ends_within_about_a_second_of_ctrl_c(render_home):
         assert took < 2.5, took
         assert not list((render_home / 'live').glob('*.json'))
         time.sleep(0.5)
-        with pytest.raises(ProcessLookupError):
+        # macOS answers a group that is gone with a refusal where Linux says there is none.
+        with pytest.raises((ProcessLookupError, PermissionError)):
             os.killpg(process.pid, 0)
     finally:
         if process.poll() is None:
             process.kill()
-        with contextlib.suppress(ProcessLookupError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)

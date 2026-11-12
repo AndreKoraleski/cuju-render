@@ -40,7 +40,7 @@ SCENARIOS = {'5v5': '5_vs_5', '11v11': '11_vs_11_stochastic'}
 _TITLE_LABEL = _messages.label('server.names.demo')
 _TITLE = _TITLE_LABEL['text']
 # How long the command waits for the server, and for the match to load and announce itself.
-_SERVER_WAIT = 30.0
+_SERVER_WAIT = 90.0
 _MATCH_WAIT = 120.0
 # How long a match or server that was asked to stop may take before it is ended by force, and
 # how long a server that Ctrl+C reached too may take to end by itself before it is asked to.
