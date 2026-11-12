@@ -398,6 +398,11 @@ def test_the_command_line_installs_and_removes_the_launchers(
 
 WEB = Path(_window.__file__).resolve().parents[1] / 'web'
 LOGO = WEB / 'assets' / 'cuju-logo.svg'
+# The bare marks, the letters alone on a clear background, for dark and for light surfaces.
+MARK = WEB / 'assets' / 'cuju-mark.svg'
+MARK_LIGHT = WEB / 'assets' / 'cuju-mark-light.svg'
+# The gradients of the letters, from the back copy to the front one.
+LAYERS = ('back', 'middle', 'front')
 # Each PNG of the mark, its side and whether it is the maskable icon, as ci/make_logo.py makes them.
 PICTURES = {
     'assets/cuju-logo.png': (128, False),
@@ -430,6 +435,7 @@ ATTRIBUTES = {
     'offset',
     'stop-color',
 }
+SVG_NS = '{http://www.w3.org/2000/svg}'
 
 
 def _make_logo():
@@ -442,25 +448,138 @@ def _make_logo():
     return module
 
 
-def test_the_logo_is_plain_shapes_alone():
+def _plain_shapes(path):
+    """Returns the root of the SVG at `path` once every element is a plain shape or gradient."""
     import xml.etree.ElementTree as ET
 
-    text = LOGO.read_text(encoding='utf-8')
-    assert '<!-- The cuju mark.' in text
-    root = ET.fromstring(text)
+    root = ET.fromstring(path.read_text(encoding='utf-8'))
     ids = {element.get('id') for element in root.iter()}
     for element in root.iter():
         namespace, _, tag = element.tag.rpartition('}')
-        assert namespace == '{http://www.w3.org/2000/svg' and tag in SHAPES, element.tag
-        assert set(element.attrib) <= ATTRIBUTES, (tag, element.attrib)
+        assert namespace == SVG_NS[:-1] and tag in SHAPES, (path.name, element.tag)
+        assert set(element.attrib) <= ATTRIBUTES, (path.name, tag, element.attrib)
         assert not (element.text or '').strip() and not (element.tail or '').strip()
         # A fill names a color or a gradient of the file itself, never a file elsewhere.
         fill = element.get('fill', '#000000')
         found = re.fullmatch(r'url\(#([\w-]+)\)', fill)
         assert re.fullmatch(r'#[0-9a-f]{6}', fill) or (found and found.group(1) in ids), fill
+    return root
+
+
+def _stops(path):
+    """Returns the colors of each radial gradient of the SVG at `path`, by its id."""
+    return {
+        gradient.get('id'): [stop.get('stop-color') for stop in gradient]
+        for gradient in _plain_shapes(path).iter(f'{SVG_NS}radialGradient')
+    }
+
+
+def test_the_logo_is_plain_shapes_alone():
+    assert '<!-- The cuju mark.' in LOGO.read_text(encoding='utf-8')
+    root = _plain_shapes(LOGO)
     assert root.get('viewBox') == '0 0 512 512'
-    assert root.find('{http://www.w3.org/2000/svg}g[@id="frame"]') is not None
-    assert root.find('{http://www.w3.org/2000/svg}g[@id="mark"]') is not None
+    assert root.find(f'{SVG_NS}g[@id="frame"]') is not None
+    assert root.find(f'{SVG_NS}g[@id="mark"]') is not None
+
+
+@pytest.mark.parametrize('path', [MARK, MARK_LIGHT], ids=lambda path: path.name)
+def test_each_bare_mark_is_the_letters_alone_in_their_own_square(path):
+    make_logo = _make_logo()
+    root = _plain_shapes(path)
+    side = make_logo.LETTERS + 2 * make_logo.MARGIN
+    assert root.get('viewBox') == f'0 0 {side} {side}'
+    assert root.get('width') == root.get('height') == str(side)
+    # The letters alone, without the frame or the gradient of its border.
+    assert root.find(f'{SVG_NS}g[@id="frame"]') is None
+    assert not root.findall(f'.//{SVG_NS}rect')
+    assert not root.findall(f'.//{SVG_NS}linearGradient')
+    mark = root.find(f'{SVG_NS}g[@id="mark"]')
+    margin = make_logo.MARGIN
+    assert mark.get('transform') == f'translate({margin} {margin})'
+    # The same three stacked copies and their paths as the logo's letters.
+    logo = _plain_shapes(LOGO).find(f'{SVG_NS}g[@id="mark"]')
+    shapes = [(item.get('fill'), ' '.join(item.get('d').split())) for item in logo]
+    assert [(item.get('fill'), ' '.join(item.get('d').split())) for item in mark] == shapes
+    assert [fill for fill, _ in shapes] == [f'url(#{name})' for name in LAYERS]
+
+
+def test_the_bare_marks_are_written_from_the_logo():
+    # ci/make_logo.py writes both bare marks from the shapes of the logo, so they never drift.
+    make_logo = _make_logo()
+    written = dict(make_logo.marks())
+    assert set(written) == {MARK.name, MARK_LIGHT.name}
+    for path in (MARK, MARK_LIGHT):
+        assert path.read_text(encoding='utf-8') == written[path.name], path.name
+    assert make_logo.LAYERS == LAYERS
+
+
+def test_the_bare_marks_keep_the_logos_grays_or_take_dark_ones():
+    logo, dark, light = _stops(LOGO), _stops(MARK), _stops(MARK_LIGHT)
+    assert set(dark) == set(light) == set(LAYERS)
+    assert all(dark[name] == logo[name] for name in LAYERS)
+    assert light == {name: list(colors) for name, colors in _make_logo().LIGHT.items()}
+
+
+def _palette(theme):
+    """Returns the surfaces of the page's palette in a theme, from the tokens of style.css."""
+    text = (WEB / 'style.css').read_text(encoding='utf-8')
+    opening = ':root {' if theme == 'dark' else ':root[data-theme="light"] {'
+    block = text.split(opening, 1)[1].split('}', 1)[0]
+    tokens = dict(re.findall(r'--([\w-]+):\s*(#[0-9a-f]{6});', block))
+    return [tokens[name] for name in ('bg', 'surface', 'surface-2')]
+
+
+def _luminance(color):
+    channels = [int(color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _contrast(one, other):
+    high, low = sorted((_luminance(one), _luminance(other)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+@pytest.mark.parametrize(('path', 'theme'), [(MARK, 'dark'), (MARK_LIGHT, 'light')])
+def test_each_bare_mark_reads_on_the_surfaces_of_its_theme(path, theme):
+    stops = _stops(path)
+    # The front letters hold a contrast of at least six and a half to one with every surface of
+    # the theme, and each copy behind them stands closer to the page than the copy in front of it.
+    for surface in _palette(theme):
+        assert min(_contrast(color, surface) for color in stops['front']) >= 6.5, surface
+        order = [min(_contrast(color, surface) for color in stops[name]) for name in LAYERS]
+        assert order == sorted(order), (surface, order)
+    # Each gray brightens outward from near the middle of the grid, as in the logo.
+    for name in LAYERS:
+        inner, outer = stops[name]
+        assert _luminance(inner) < _luminance(outer), (name, stops[name])
+
+
+def test_the_page_shows_the_bare_mark_by_theme_and_the_tile_as_an_icon():
+    page = (WEB / 'index.html').read_text(encoding='utf-8')
+    # The icons of the tab, the manifest and the home screen keep the tile.
+    assert '<link rel="icon" type="image/svg+xml" sizes="any" href="assets/cuju-logo.svg">' in page
+    assert '<link rel="apple-touch-icon" href="assets/icons/cuju-maskable-512.png">' in page
+    # The bar holds the bare mark in both grays, and style.css hides the one the theme leaves out.
+    assert '<img class="logo mark-for-dark" src="assets/cuju-mark.svg"' in page
+    assert '<img class="logo mark-for-light" src="assets/cuju-mark-light.svg"' in page
+    assert '<img class="stinger-logo" src="assets/cuju-mark.svg"' in page
+    style = (WEB / 'style.css').read_text(encoding='utf-8')
+    for rule in (
+        ':root[data-theme="dark"] .mark-for-light,\n:root[data-theme="light"] .mark-for-dark {',
+        '@media (prefers-color-scheme: light) {\n'
+        '    :root:not([data-theme="dark"]) .mark-for-dark {',
+        '@media not all and (prefers-color-scheme: light) {\n'
+        '    :root:not([data-theme="light"]) .mark-for-light {',
+    ):
+        assert rule in style, rule
+    home = (WEB / 'js' / 'pages' / 'home.js').read_text(encoding='utf-8')
+    assert "['cuju-mark.svg', 'mark-for-dark'], ['cuju-mark-light.svg', 'mark-for-light']" in home
+    assert 'cuju-logo' not in home
+    # Over the match the bare mark in light grays stands on dark bands and panels.
+    for name in ('broadcast/transition.js', 'export/feed.js', 'world/stadium.js'):
+        source = (WEB / 'js' / name).read_text(encoding='utf-8')
+        assert "'assets/cuju-mark.svg'" in source and 'cuju-logo' not in source, name
 
 
 def test_the_manifest_names_cuju_with_the_svg_and_every_png():
@@ -481,7 +600,7 @@ def test_the_manifest_names_cuju_with_the_svg_and_every_png():
     page = (WEB / 'index.html').read_text(encoding='utf-8')
     assert '<link rel="icon" type="image/svg+xml" sizes="any" href="assets/cuju-logo.svg">' in page
     assert '<link rel="icon" type="image/png" sizes="128x128" href="assets/cuju-logo.png">' in page
-    assert '<img class="logo" src="assets/cuju-logo.svg"' in page and '<title>Cuju</title>' in page
+    assert '<title>Cuju</title>' in page
 
 
 def test_each_png_of_the_logo_has_its_size_and_shape():

@@ -636,8 +636,9 @@ function validFans(list) {
 // The last fans a stadium was given, so a stadium built again when the art arrives keeps them.
 let lastFans = [null, null];
 
-// The cuju mark for the boards, null until it loads. The mark carries its own dark square and
-// gray gradient border, so it stands on any panel as it is.
+// The cuju mark for the boards, null until it loads. The bare mark in light grays stands on the
+// dark panel as the team names stand on theirs, printed on the board, where the logo's tile would
+// be a box inside the panel.
 let boardLogo = null;
 const boardLogoReady = new Promise((resolve) => {
     const img = new Image();
@@ -646,7 +647,7 @@ const boardLogoReady = new Promise((resolve) => {
         resolve(img);
     };
     img.onerror = () => resolve(null);
-    img.src = 'assets/cuju-logo.svg';
+    img.src = 'assets/cuju-mark.svg';
 });
 
 // LED boards, the cuju logo and the team names on colored panels, with the asset boards between

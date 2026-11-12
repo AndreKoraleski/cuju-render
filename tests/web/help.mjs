@@ -430,4 +430,16 @@ test('the manifest names Cuju and the icons that ship, and the start address ope
     }
     assert.ok(manifest.icons.some((icon) => icon.purpose === 'maskable'));
     assert.ok(manifest.icons.some((icon) => icon.src === 'assets/cuju-logo.svg'));
+    // The icons keep the tiled logo, and the bare marks stay inside the page.
+    assert.ok(manifest.icons.every((icon) => !icon.src.includes('cuju-mark')));
+});
+
+test('the shell of the worker holds files that ship, the logo and both bare marks among them', () => {
+    const { rules } = loadWorker('http://127.0.0.1:8780/sw.js?build=abc');
+    for (const path of rules.SHELL.filter(Boolean)) {
+        assert.ok(readFileSync(new URL(path, web)).length > 0, path);
+    }
+    for (const path of ['assets/cuju-logo.svg', 'assets/cuju-mark.svg', 'assets/cuju-mark-light.svg']) {
+        assert.ok(rules.SHELL.includes(path), path);
+    }
 });

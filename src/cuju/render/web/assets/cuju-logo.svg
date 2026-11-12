@@ -1,9 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
     <!-- The cuju mark. The letters C, U, J and U stand in a two by two grid, each a rounded square
          stroke with two copies behind it, offset down and to the right in darker grays, on a dark
-         square with rounded corners and a gray border that stays three quarters white over its top left
-         half and darkens to a quarter white at the bottom right, as the light falls on the letters. Each gray brightens outward from near the
-         middle of the grid. ci/make_logo.py renders the PNG icons of the page from this file. -->
+         square with rounded corners and a gray border that stays three quarters white over its top
+         left half and darkens to a quarter white at the bottom right, as the light falls on the
+         letters. Each gray brightens outward from near the middle of the grid. ci/make_logo.py
+         renders the PNG icons of the page from this file and writes the bare marks cuju-mark.svg
+         and cuju-mark-light.svg from its letters. -->
     <defs>
         <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" stop-color="#bfbfbf"/>

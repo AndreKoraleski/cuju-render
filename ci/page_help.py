@@ -62,9 +62,8 @@ def parts_checks(client):
                 ?.getAttribute('href') === 'assets/cuju-logo.svg'
                 && !!document.querySelector('link[rel="icon"][type="image/png"]'),
             brand: document.getElementById('home-btn').getAttribute('aria-label') === 'Cuju, Home'
-                && document.querySelector('#home-btn img').getAttribute('src')
-                === 'assets/cuju-logo.svg'
-                && document.querySelector('#home-btn img').naturalWidth > 0,
+                && [...document.querySelectorAll('#home-btn img')].every((img) => img.complete
+                    && img.naturalWidth > 0),
             lessons: !!(await wait(
                 () => document.querySelectorAll('.lesson-list li').length === 8)),
             topics: (await import('./js/help/palette.js')).HELP_TOPICS
@@ -74,6 +73,51 @@ def parts_checks(client):
         """,
         'The parts of Help',
     )
+
+
+def mark_checks(client):
+    """Checks that the bar and Home show the bare mark in the grays of the theme in force.
+
+    The theme is the one the settings chose, or otherwise the system's, which the check sets to
+    each scheme in turn.
+    """
+    checks = 0
+    for scheme in ('light', 'dark'):
+        client.call(
+            'Emulation.setEmulatedMedia',
+            {'features': [{'name': 'prefers-color-scheme', 'value': scheme}]},
+        )
+        system = 'cuju-mark-light.svg' if scheme == 'light' else 'cuju-mark.svg'
+        checks += _run(
+            client,
+            f"""
+            const root = document.documentElement;
+            const held = root.dataset.theme;
+            const shown = (selector) => [...document.querySelectorAll(selector)]
+                .filter((img) => getComputedStyle(img).display !== 'none')
+                .map((img) => img.getAttribute('src'));
+            const each = (file) => ['#home-btn img', '.home-wordmark', '.home-colophon-logo']
+                .every((selector) => JSON.stringify(shown(selector))
+                    === JSON.stringify([`assets/${{file}}`]));
+            const all = {{ home: !!(await wait(() => document.querySelector('.home-wordmark'))) }};
+            root.dataset.theme = 'light';
+            all.light = each('cuju-mark-light.svg');
+            root.dataset.theme = 'dark';
+            all.dark = each('cuju-mark.svg');
+            delete root.dataset.theme;
+            all.system = each('{system}');
+            all.name = document.querySelector('#page-home h1').textContent === ''
+                && [...document.querySelectorAll('.home-wordmark')]
+                    .every((img) => img.alt === 'Cuju');
+            if (held) {{
+                root.dataset.theme = held;
+            }}
+            return Object.values(all).every(Boolean) || JSON.stringify(all);
+            """,
+            f'The bare marks under a {scheme} system',
+        )
+    client.call('Emulation.setEmulatedMedia', {'features': []})
+    return checks
 
 
 def sample_checks(client):
@@ -521,7 +565,8 @@ def pwa_checks(client, port):
             manifest: manifest.headers.get('Content-Type') === 'application/manifest+json'
                 && parsed.name === 'Cuju' && parsed.icons.length === 4,
             logo: logo.headers.get('Content-Type') === 'image/svg+xml'
-                && urls.includes('/assets/cuju-logo.svg'),
+                && ['cuju-logo.svg', 'cuju-mark.svg', 'cuju-mark-light.svg']
+                    .every((file) => urls.includes(`/assets/${file}`)),
         };
         return Object.values(all).every(Boolean) || JSON.stringify({ ...all, urls });
         """,
@@ -675,6 +720,7 @@ def offer_checks(client, port):
 def help_checks(client, port):
     """Runs every check of the Help page's parts, and returns how many passed."""
     checks = parts_checks(client)
+    checks += mark_checks(client)
     checks += sample_checks(client)
     checks += tour_checks(client)
     checks += tour_try_checks(client)

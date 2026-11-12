@@ -145,8 +145,10 @@ export class Feed {
         const slate = document.createElement('div');
         slate.id = 'feed-slate';
         slate.setAttribute('aria-live', 'polite');
+        // The bare mark in light grays, as the slate's words are light, since the slate lies over
+        // the picture of the stream and the logo's tile would be a box in it.
         const logo = document.createElement('img');
-        logo.src = 'assets/cuju-logo.svg';
+        logo.src = 'assets/cuju-mark.svg';
         logo.alt = '';
         this.slateText = document.createElement('div');
         this.slateText.className = 'feed-slate-text';

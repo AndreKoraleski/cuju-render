@@ -417,11 +417,32 @@ fieldset.plain:disabled {
     cursor: pointer;
 }
 
-/* The logo carries its own dark square and gray gradient border, so both themes show it as it is. */
+/* The bare mark stands on the bar without its tile, in the grays of the theme in force. */
 .logo {
     display: block;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
+}
+
+/* The bare mark comes in two grays, cuju-mark.svg in light grays for the dark theme and
+   cuju-mark-light.svg in dark grays for the light theme. A place in the page's interface holds
+   both pictures, and the theme in force hides the other one, the theme the person chose in the
+   settings or otherwise the system's, as the palette above follows them. */
+:root[data-theme="dark"] .mark-for-light,
+:root[data-theme="light"] .mark-for-dark {
+    display: none;
+}
+
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .mark-for-dark {
+        display: none;
+    }
+}
+
+@media not all and (prefers-color-scheme: light) {
+    :root:not([data-theme="light"]) .mark-for-light {
+        display: none;
+    }
 }
 
 .menu {
@@ -1244,14 +1265,17 @@ body.offline .offline-note {
     animation-delay: 0.04s;
 }
 
+/* The bare mark on the stinger's dark band, with a soft shadow that keeps its edge where it meets
+   the accent band or the picture. */
 .stinger-logo {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 92px;
-    height: 92px;
+    width: 84px;
+    height: 84px;
     opacity: 0;
     transform: translate(-50%, -50%) scale(0.6);
+    filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.55));
 }
 
 #stinger.in .stinger-logo {
@@ -4852,12 +4876,12 @@ dialog.painter .toolbar {
     transform: translate(-50%, -50%) skewX(14deg);
 }
 
-/* The mark's own gray gradient border is the plate, and the shadow follows its rounded corners. */
+/* The bare mark rides the dark middle band, where a tile would be a box in the picture, and its
+   shadow follows the letters, so they keep their edge where the band runs over a bright pitch. */
 .wipe-logo {
-    width: clamp(84px, 11vw, 150px);
+    width: clamp(76px, 10vw, 136px);
     height: auto;
-    border-radius: 22%;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 0 0 4px rgba(255, 255, 255, 0.25);
+    filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 1px rgba(0, 0, 0, 0.8));
 }
 
 .wipe-label {
@@ -4910,9 +4934,11 @@ dialog.painter .toolbar {
     opacity: 1;
 }
 
+/* The bare mark heads the card's dark panel, which is its surface, so a tile would be a box on it. */
 .tc-logo {
-    width: 46px;
-    height: 46px;
+    width: 44px;
+    height: 44px;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
 }
 
 .tc-kicker {

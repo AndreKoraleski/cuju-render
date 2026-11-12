@@ -343,11 +343,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     modules and files keep the lowercase cuju. Launchers that an earlier install made under the
     name cuju still uninstall, and a new install replaces them.
 - The logo is a vector drawing, `web/assets/cuju-logo.svg`, the same four letters with their
-    stacked gray copies on a dark square with rounded corners and a gray gradient border. The top bar,
-    Home, the favicon, the manifest, the broadcast wipes, the clean feed's slate and the boards of
-    the stadium show it, sharp at every size, and `ci/make_logo.py` renders every PNG icon from it
-    at its own size through headless Chrome. The maskable icon fills its square with the dark
-    background and leaves the border out, since Android cuts such an icon to a shape of its own.
+    stacked gray copies on a dark square with rounded corners and a gray gradient border. The
+    favicon, the manifest, the home screen icon, the launchers and the app window show it as a
+    tile, sharp at every size, and `ci/make_logo.py` renders every PNG icon from it at its own size
+    through headless Chrome. The maskable icon fills its square with the dark background and leaves
+    the border out, since Android cuts such an icon to a shape of its own. Inside the page the
+    letters stand without their tile, as the bare mark, `web/assets/cuju-mark.svg` in light grays
+    for dark surfaces and `web/assets/cuju-mark-light.svg` in dark grays for light surfaces, which
+    `ci/make_logo.py` writes from the logo's letters. The top bar and Home show the one that suits
+    the theme in force, the theme of the settings or of the system, and the stinger, the wipes, the
+    title card, the clean feed's slate and the boards of the stadium show the light one, with a
+    soft shadow over the match.
 - The controls of the page show symbols, the Lucide icons that the page ships in
     `web/vendor/lucide` under the ISC License. Toolbars, rows, dialogs, the painter, the tabs of the
     top bar, the menus of Watch, the choices of the Field page and the states of requests,

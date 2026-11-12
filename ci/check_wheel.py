@@ -35,9 +35,11 @@ REQUIRED = [
     'cuju/render/samples/sample-5v5.cjr',
     'cuju/render/samples/sample-11v11.cjr',
     'cuju/render/web/assets/challenges/manifest.json',
-    # The logo, its PNG pictures and the manifest of the installable page that names them.
+    # The logo, its bare marks, its PNG pictures and the manifest of the installable page.
     'cuju/render/web/manifest.webmanifest',
     'cuju/render/web/assets/cuju-logo.svg',
+    'cuju/render/web/assets/cuju-mark.svg',
+    'cuju/render/web/assets/cuju-mark-light.svg',
     'cuju/render/web/assets/cuju-logo.png',
     'cuju/render/web/assets/cuju-logo-384.png',
     'cuju/render/web/assets/icons/cuju-192.png',

@@ -28,7 +28,7 @@ const SHELL = [
     '', 'style.css', 'home.css', 'easy.css', 'flat.css', 'js/main.js', 'js/boot.js', 'js/capture.js', 'lessons.json',
     'languages/en.json',
     'manifest.webmanifest', 'assets/cuju-logo.svg', 'assets/cuju-logo.png', 'assets/icons/cuju-192.png',
-    'assets/icons/cuju-512.png',
+    'assets/icons/cuju-512.png', 'assets/cuju-mark.svg', 'assets/cuju-mark-light.svg',
 ];
 // Media that the page streams in ranges, which the cache leaves to the server.
 const STREAMED = /\.(mp4|webm|mov|m4v|cjr)$/i;

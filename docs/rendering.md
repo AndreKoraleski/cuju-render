@@ -1244,8 +1244,8 @@ Export alone.
 ## Page layout
 
 The page holds nine pages, chosen from the bar along its top. The logo at the left of the bar, the
-letters of the name on a dark rounded square with a gray gradient border, opens Home, and a screen reader
-names it Cuju, Home. Tabs open Watch, Play, Recordings, Matches, Tournaments, Teams, Field and Help.
+letters of the name standing on the bar itself, in light grays in the dark theme and in dark grays
+in the light theme, opens Home, and a screen reader names it Cuju, Home. Tabs open Watch, Play, Recordings, Matches, Tournaments, Teams, Field and Help.
 Each tab shows a symbol beside its name, a television for Watch, a controller for Play, a box of
 files for Recordings, crossed swords for Matches, a trophy for Tournaments, a shirt for Teams, a
 plot of land for Field and a question mark for Help. On a screen of middle width the tabs show
@@ -2165,8 +2165,9 @@ end, so a feed runs unattended for a whole evening.
 
 A feed that follows a source plays each match to its end before it opens the next, so a newer
 match waits for the one on air to finish, and a feed that falls behind skips to the newest match.
-Between matches it holds the last picture for six seconds and then shows its slate, the cuju logo
-and a line that says what the feed waits for, until the next match arrives. The option `slate=0`
+Between matches it holds the last picture for six seconds and then shows its slate, the cuju mark
+and a line that says what the feed waits for, both light with a soft dark shadow, so they read over
+any picture that the stream puts behind the feed, until the next match arrives. The option `slate=0`
 shows the background alone instead. A feed of one recording holds its last picture at the end, and
 `loop=1` plays it again from the start, with its team sheets.
 
@@ -3736,6 +3737,26 @@ Android cuts a maskable icon to a shape of its own, and keeps the letters inside
 any such shape leaves whole. The script `ci/make_logo.py` of the repository renders every PNG from
 the SVG at its own size through headless Chrome.
 
+Inside the page the letters stand without their tile, as the bare mark, wherever the page's own
+surface or a graphic of the broadcast already gives them a ground. The bare mark comes in two
+grays, `web/assets/cuju-mark.svg` in the light grays of the logo for dark surfaces and
+`web/assets/cuju-mark-light.svg` in dark grays for light surfaces, with the same three stacked
+copies, the front one strongest and the ones behind it fading toward the page, and each gray
+brightening outward from near the middle of the grid as in the logo. The front letters of each keep
+a contrast of more than six and a half to one with every surface of their theme. The bar along the
+top of the page, the name at the head of Home and the small mark at its foot show the gray that
+suits the theme in force, the theme that the settings chose or, when they follow the system, the
+system's own, and they change at once when the theme changes. Over the match the light gray mark
+stands on the dark band of the stinger, rides the dark middle band of the wipe between restarts,
+heads the dark panel of the title card at half time and full time, and leads the slate of the
+clean feed, each with a soft shadow that keeps the letters clear where they meet the bright pitch.
+The advertising boards print the light gray mark on a dark panel, in the manner of the team names
+on theirs. The tab of the browser, the manifest, the icon of a home screen, the launchers and the
+app window keep the tiled logo, since a system shows an icon as a tile among others and cuts it to
+shapes of its own. `ci/make_logo.py` writes both bare marks from the letters of the logo, so the
+three files keep the same shapes, and `python ci/make_logo.py --marks --check` confirms that the
+shipped marks match the logo without starting Chrome.
+
 Chrome and Edge install the page as an app, with a window and an icon of its own and a place
 among the computer's apps. The installed page keeps a copy of its own files, so it starts fast and
 opens even when the server is stopped, and its Home page then says that the server is not
@@ -4078,7 +4099,7 @@ at the rim, and a camera at a player's eyes leaves that player's bubble out.
 or with a painted crowd in colors of the viewer's choosing, or with GRF's own crowd, at a density of
 choice. The painted crowd sways with the play and stands and jumps after a goal. The advertising
 boards show the sponsors of the two teams in turn, the boards that ship with the renderer, with the
-cuju logo and the team names, or up to eight boards of the viewer's own, uploaded or drawn.
+cuju mark and the team names printed on their panels, or up to eight boards of the viewer's own, uploaded or drawn.
 
 **Field page.** The page groups its settings into presets, the arena, the grass, the time of day,
 the weather, the boards and the crowd. The ten presets range from a summer afternoon to a rainy

@@ -67,7 +67,11 @@ def app_folder() -> Path:
 
 
 def icon(size: int = 512) -> Path:
-    """Returns the icon of the page at `size`, 192 or 512 pixels."""
+    """Returns the icon of the page at `size`, 192 or 512 pixels.
+
+    The launchers and the app window take the tiled logo, since a system shows an app's icon as a
+    tile among the icons of other apps.
+    """
     return Path(__file__).resolve().parents[1] / 'web' / 'assets' / 'icons' / f'cuju-{size}.png'
 
 

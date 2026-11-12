@@ -99,10 +99,11 @@ SPDX-License-Identifier: Apache-2.0
     line-height: 0;
 }
 
+/* The bare mark stands on the band as the name, in the grays of the theme in force. */
 .home-wordmark {
     display: block;
-    width: 168px;
-    height: 168px;
+    width: 148px;
+    height: 148px;
 }
 
 .home-tagline {
@@ -688,8 +689,8 @@ SPDX-License-Identifier: Apache-2.0
 }
 
 .home-colophon-logo {
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     opacity: 0.8;
 }
 

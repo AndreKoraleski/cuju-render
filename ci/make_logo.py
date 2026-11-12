@@ -1,9 +1,9 @@
 # Copyright 2026 The cuju Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Renders the PNG pictures of the cuju mark from its SVG through headless Chrome.
+"""Writes the bare marks of the cuju logo and renders its PNG pictures through headless Chrome.
 
 Usage:
-    python ci/make_logo.py [--chrome PROGRAM] [--check]
+    python ci/make_logo.py [--chrome PROGRAM] [--check] [--marks]
 
 The mark is src/cuju/render/web/assets/cuju-logo.svg, a dark square with rounded corners and a gray
 gradient border that holds the letters. Each PNG is drawn from it at its own size, never scaled from
@@ -14,8 +14,18 @@ whole square with the dark background and leaves the border out, since a system 
 of its own, and its letters stay inside the round safe zone, whose diameter is four fifths of the
 side. Chrome draws the SVG into a canvas of the exact size, and this script writes the pixels as an
 8 bit PNG with Python's standard library, so the same SVG and the same build of Chrome give the same
-pixels. With --check the script writes nothing and exits with status 1 when the pixels of a shipped
-picture differ from those it would make.
+pixels.
+
+The bare marks are SVG files of the letters alone on a clear background, cut to the letters' own
+square with a small margin. cuju-mark.svg keeps the light grays of the logo for dark surfaces, and
+cuju-mark-light.svg draws the same three stacked copies in dark grays for light surfaces, the front
+copy darkest and the copies behind it lighter toward the page, each gray brightening outward from
+near the middle of the grid as in the logo. The script writes both from the shapes of the logo, so
+the three files never drift apart, and the colors of the light mark live here in LIGHT.
+
+With --check the script writes nothing and exits with status 1 when a shipped bare mark or the
+pixels of a shipped picture differ from those it would make. With --marks it writes or checks the
+bare marks alone, which needs no Chrome.
 
 The program comes from --chrome, then the variable CUJU_CHROME, then google-chrome on the path.
 """
@@ -45,6 +55,25 @@ LETTERS = 384
 # The share of the maskable icon's side that the letters fill, which keeps their rounded corners
 # inside the safe zone.
 MASKABLE_SHARE = 0.5625
+# The margin of clear space around the letters in the bare marks, in units of the SVG.
+MARGIN = 12
+# The gradients of the letters, from the back copy to the front one.
+LAYERS = ('back', 'middle', 'front')
+# The dark grays of the light mark, the inner and outer stop of each gradient. The front copy
+# holds a contrast of more than six and a half to one with each surface of the light theme, as the
+# light grays of the logo do with those of the dark one, and the copies behind it fade toward the
+# page.
+LIGHT = {
+    'back': ('#8e8f92', '#c5c6c8'),
+    'middle': ('#5f6064', '#a3a4a7'),
+    'front': ('#3c3d40', '#545559'),
+}
+# Each bare mark, its path inside the assets, the colors it takes, or None for the logo's own,
+# and the opening of its comment.
+MARKS = (
+    ('cuju-mark.svg', None, 'light grays for dark surfaces'),
+    ('cuju-mark-light.svg', LIGHT, 'dark grays for light surfaces'),
+)
 # Each picture, its path inside the assets, its side in pixels and whether it is maskable.
 PICTURES = (
     ('cuju-logo.png', 128, False),
@@ -100,6 +129,51 @@ def maskable(svg):
     ET.SubElement(frame, f'{{{SVG}}}rect', width=f'{side:g}', height=f'{side:g}', fill=BACKGROUND)
     mark.set('transform', f'translate({offset:g} {offset:g}) scale({scale:g})')
     return ET.tostring(root, encoding='unicode')
+
+
+def bare(svg, colors=None, about=''):
+    """Returns the text of a bare mark, the letters of the logo alone on a clear background.
+
+    The letters keep their paths and gradients, take the colors of `colors` by gradient when it is
+    given, and move to a square of their own side and a margin on each edge.
+    """
+    root = ET.fromstring(svg)
+    mark = root.find(f'{{{SVG}}}g[@id="mark"]')
+    if mark is None:
+        raise ValueError(f'expected the group mark in {LOGO}')
+    side = LETTERS + 2 * MARGIN
+    lines = [
+        f'<svg xmlns="{SVG}" width="{side}" height="{side}" viewBox="0 0 {side} {side}">',
+        f'    <!-- The bare cuju mark in {about}, the letters of the logo alone on a',
+        '         clear background. ci/make_logo.py writes this file from the shapes of',
+        '         cuju-logo.svg. -->',
+        '    <defs>',
+    ]
+    for name in LAYERS:
+        gradient = root.find(f'.//{{{SVG}}}radialGradient[@id="{name}"]')
+        if gradient is None:
+            raise ValueError(f'expected the gradient {name} in {LOGO}')
+        keys = ('gradientUnits', 'cx', 'cy', 'r')
+        attributes = ' '.join(f'{key}="{gradient.get(key)}"' for key in keys)
+        lines.append(f'        <radialGradient id="{name}" {attributes}>')
+        stops = gradient.findall(f'{{{SVG}}}stop')
+        for k, stop in enumerate(stops):
+            color = colors[name][k] if colors else stop.get('stop-color')
+            lines.append(f'            <stop offset="{stop.get("offset")}" stop-color="{color}"/>')
+        lines.append('        </radialGradient>')
+    lines += ['    </defs>', f'    <g id="mark" transform="translate({MARGIN} {MARGIN})">']
+    for path in mark.findall(f'{{{SVG}}}path'):
+        parts = re.findall(r'M[^M]*', ' '.join(path.get('d').split()))
+        body = '\n            '.join(part.strip() for part in parts)
+        lines.append(f'        <path fill="{path.get("fill")}" d="{body}"/>')
+    lines += ['    </g>', '</svg>', '']
+    return '\n'.join(lines)
+
+
+def marks():
+    """Returns each bare mark's path inside the assets and its text."""
+    svg = LOGO.read_text(encoding='utf-8')
+    return [(name, bare(svg, colors, about)) for name, colors, about in MARKS]
 
 
 def find_chrome(named):
@@ -267,9 +341,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--chrome', help='the Chrome to run')
     parser.add_argument('--check', action='store_true', help='compare with the shipped pictures')
+    parser.add_argument('--marks', action='store_true', help='the bare marks alone, without Chrome')
     options = parser.parse_args()
     differs = []
-    for name, data in pictures(find_chrome(options.chrome)):
+    for name, text in marks():
+        path = ASSETS / name
+        if options.check:
+            if not path.is_file() or path.read_text(encoding='utf-8') != text:
+                differs.append(name)
+            continue
+        path.write_bytes(text.encode('utf-8'))
+        print(f'wrote {path.relative_to(ROOT).as_posix()}, {len(text)} bytes')
+    drawn = [] if options.marks else pictures(find_chrome(options.chrome))
+    for name, data in drawn:
         path = ASSETS / name
         if options.check:
             if not path.is_file() or rgba(path.read_bytes()) != rgba(data):
@@ -280,7 +364,7 @@ def main():
         print(f'wrote {path.relative_to(ROOT).as_posix()}, {len(data)} bytes')
     if differs:
         print(
-            f'the pictures {", ".join(differs)} differ from the SVG, run ci/make_logo.py',
+            f'the files {", ".join(differs)} differ from the logo, run ci/make_logo.py',
             file=sys.stderr,
         )
         return 1
