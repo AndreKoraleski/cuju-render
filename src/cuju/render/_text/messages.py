@@ -575,6 +575,10 @@ MESSAGES: dict[str, str | dict[str, str]] = {
             'enter {where}'
         ),
     },
+    'server.tournament.bracket_exact': {
+        'one': 'a bracket of {size} needs exactly {size} entrants, and {count} enters {where}',
+        'other': 'a bracket of {size} needs exactly {size} entrants, and {count} enter {where}',
+    },
     'server.tournament.bracket_play_in': {
         'one': (
             'a bracket of {size} with a play-in round needs from {size} to {highest} entrants, and '
@@ -590,9 +594,14 @@ MESSAGES: dict[str, str | dict[str, str]] = {
         'expected a tournament that runs or stopped, found it {state}'
     ),
     'server.tournament.cannot_play': '{entrant} cannot play {scenario} in stage {stage}, {reason}',
+    'server.tournament.cannot_play_decider': (
+        '{entrant} cannot play {scenario}, the scenario of the deciding matches of stage {stage}, '
+        '{reason}, so choose another scenario for them or settle drawn ties without them'
+    ),
     'server.tournament.cards': 'expected cards as two pairs of counts, found {cards}',
     'server.tournament.choice': 'expected {name} from {choices}, found {value}',
     'server.tournament.count': 'expected {name} from {lowest} to {highest}, found {value}',
+    'server.tournament.count_exact': 'expected {name} to be {lowest}, found {value}',
     'server.tournament.defaults': 'expected the defaults as an object',
     'server.tournament.description': 'expected a description of at most 400 characters',
     'server.tournament.double_byes': 'a double elimination bracket fills with byes, in {where}',
@@ -627,12 +636,12 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.field.legs': 'the legs of {where}',
     'server.tournament.field.length': 'the length of {where}',
     'server.tournament.field.name': 'a name',
-    'server.tournament.field.points_draw': 'the points of a draw',
-    'server.tournament.field.points_loss': 'the points of a loss',
-    'server.tournament.field.points_win': 'the points of a win',
+    'server.tournament.field.points_draw': 'the points of a draw in {where}',
+    'server.tournament.field.points_loss': 'the points of a loss in {where}',
+    'server.tournament.field.points_win': 'the points of a win in {where}',
     'server.tournament.field.pots': 'the pots of {where}',
     'server.tournament.field.preset_title': 'a preset title',
-    'server.tournament.field.qualifiers': 'the qualifiers of group {group}',
+    'server.tournament.field.qualifiers': 'the qualifiers of group {group} of {where}',
     'server.tournament.field.replays': 'the replays of {where}',
     'server.tournament.field.seed': 'the seed',
     'server.tournament.field.seeding': 'the seeding of {where}',
@@ -735,6 +744,11 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     },
     'server.tournament.match_failed_one_more': '{label} failed, {error}, and 1 more match failed',
     'server.tournament.match_key': 'expected a match of the tournament still to play, found {key}',
+    'server.tournament.mixed_sizes': (
+        '{five} is a team of 5v5 and {eleven} a team of 11v11, and {scenario} of stage {stage} '
+        'fits one size alone, so enter teams of one size or choose a scenario of the academy, '
+        'which fits both'
+    ),
     'server.tournament.name_taken': (
         'expected a name of its own for entrant {entrant}, '
         'found {name}, the name of entrant {other}'
@@ -763,7 +777,9 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     'server.tournament.person_match': 'expected a match of a person',
     'server.tournament.person_names': 'expected a name for each person',
     'server.tournament.playing': 'the match is playing now',
-    'server.tournament.points': 'expected points for a win, draw and loss, found {points}',
+    'server.tournament.points': (
+        'expected points for a win, draw and loss in {where}, found {points}'
+    ),
     'server.tournament.preset': 'expected a preset from {presets}, found {name}',
     'server.tournament.preset_name': (
         'expected a preset name of small letters, digits, dashes and underscores that names no '
@@ -799,6 +815,7 @@ MESSAGES: dict[str, str | dict[str, str]] = {
     ),
     'server.tournament.stopped': 'expected a stopped tournament, found it {state}',
     'server.tournament.swiss': 'no Swiss pairing without a rematch exists for this round',
+    'server.tournament.team_format': 'it is a team of {format}',
     'server.tournament.teammates': 'expected registered teammates, found {mates}',
     'server.tournament.text': 'expected {name} as text, found {value}',
     'server.tournament.text_length': 'expected {name} of 1 to {most} characters, found {value}',

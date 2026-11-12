@@ -241,3 +241,59 @@ test('A team that plays itself keeps its keepers apart', async () => {
     kits.separateKeepers(kept, [team, other]);
     assert.deepEqual(kept[1].goalkeeper.primary, kept[0].goalkeeper.primary);
 });
+
+test('Progress counts the matches the server expects, so it never falls back as rounds are drawn', () => {
+    // A Swiss of six schedules three matches a round, and the server expects nine in all.
+    const first = layout.progressShare({ state: 'running', played: 2, scheduled: 3, expected: 9 });
+    const second = layout.progressShare({ state: 'running', played: 3, scheduled: 6, expected: 9 });
+    assert.ok(second >= first, [first, second]);
+    assert.equal(second, 3 / 9);
+    // A replay beyond what the server expected counts in the schedule instead.
+    assert.equal(layout.progressShare({ state: 'running', played: 9, scheduled: 10, expected: 9 }), 0.9);
+    assert.equal(layout.progressShare({ state: 'running', played: 0, scheduled: 0 }), 0);
+});
+
+test('A canceled tournament has nothing to play next and reads its open fixtures as canceled', () => {
+    const matches = [
+        { key: 'a', home: 0, away: 1, state: 'done', result: { score: [1, 0] } },
+        { key: 'b', home: 2, away: 3, state: 'ready', result: null },
+    ];
+    assert.deepEqual(layout.upNext({ state: 'running', matches }).map((m) => m.key), ['b']);
+    assert.deepEqual(layout.upNext({ state: 'cancelled', matches }), []);
+    assert.deepEqual(layout.upNext({ state: 'done', matches }), []);
+    // A match that waits to be watched still comes up after the end.
+    const unseen = [{ ...matches[0], state: 'unseen', result: null }, matches[1]];
+    assert.deepEqual(layout.upNext({ state: 'cancelled', matches: unseen, spoilers: { unseen: ['a'] } }).map((m) => m.key), ['a']);
+    const map = new Map(matches.map((m) => [m.key, m]));
+    assert.equal(layout.fixtureState({ state: 'ready', matches: ['b'] }, map, true), 'cancelled');
+    assert.equal(layout.fixtureState({ state: 'done', matches: ['a'] }, map, true), 'done');
+    assert.equal(layout.STATE_NAMES.cancelled, 'Not played, canceled');
+});
+
+test('A ladder and a king of the hill name their own order in the caption of their tables', () => {
+    const tiebreakers = ['goal_difference', 'lots'];
+    assert.equal(layout.tableCaption('league', tiebreakers), 'Ordered by points, then goal difference, then lots drawn from the tournament seed.');
+    assert.equal(layout.tableCaption('ladder', tiebreakers), 'Ordered by place on the ladder.');
+    assert.equal(layout.tableCaption('king_of_the_hill', tiebreakers), 'The king first, then by ties won.');
+});
+
+test('Made names number from 2 around the given names, as the server names entrants', () => {
+    const names = layout.madeNames([
+        { name: 'Built-in AI 0.50', own: false },
+        { name: 'Built-in AI 0.50', own: false },
+        { name: 'Rex 2', own: true },
+        { name: 'Rex', own: false },
+        { name: 'Rex', own: false },
+    ]);
+    assert.deepEqual(names, ['Built-in AI 0.50', 'Built-in AI 0.50 2', 'Rex 2', 'Rex', 'Rex 3']);
+});
+
+test('Run again takes the stages as given, else drops the settings that the count of entrants made', () => {
+    const keys = ['format', 'name', 'bracket_size', 'advance', 'rounds', 'legs'];
+    const resolved = { format: 'knockout', name: 'Cup', bracket_size: 4, advance: 1, rounds: 2, legs: 2, entrants: 4 };
+    assert.deepEqual(layout.againStages({ stages: [resolved] }, keys), [{ format: 'knockout', name: 'Cup', legs: 2 }]);
+    const given = [{ format: 'knockout', name: 'Cup', legs: 2 }];
+    const again = layout.againStages({ stages: [resolved], given: { stages: given, defaults: {} } }, keys);
+    assert.deepEqual(again, given);
+    assert.notEqual(again[0], given[0], 'the draft holds a copy');
+});

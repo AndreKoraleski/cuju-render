@@ -40,7 +40,9 @@ for _name in (
     _package = types.ModuleType(_name)
     _package.__path__ = []
     sys.modules[_name] = _package
-_load('cuju_mock_rules.render._text.messages', _CUJU / 'render' / '_text' / 'messages.py')
+messages = _load(
+    'cuju_mock_rules.render._text.messages', _CUJU / 'render' / '_text' / 'messages.py'
+)
 rules = _load(
     'cuju_mock_rules.render._tournaments.tournament',
     _CUJU / 'render' / '_tournaments' / 'tournament.py',
@@ -147,6 +149,7 @@ class MockTournaments:
             ],
             'played': view['played'],
             'scheduled': len(view['matches']),
+            'expected': view['expected'],
             'running': 0,
             'failed': len(record['failures']),
             'people_waiting': sum(1 for m in rules.ready(view) if m['person']),
@@ -183,7 +186,8 @@ class MockTournaments:
         try:
             return self._respond(method, rest, document)
         except rules.TournamentError as error:
-            return 400, {'error': str(error)}
+            # A refusal of the rules names its message and values, as the server's answers do.
+            return 400, messages.error_fields(error, str(error))
 
     def _respond(self, method, rest, document):
         if method == 'GET':

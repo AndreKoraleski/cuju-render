@@ -731,6 +731,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A reset of the lessons waits out a look at the server's lessons under way and drops an answer
     that the reset overtook, so a lesson done right after a reset is reported to the server and
     stays done.
+- The Review of a tournament offers Choose another scenario for a stage, or for the deciding
+    matches of a stage, when a team cannot play it, and names the deciding matches in the refusal.
+    Entrants of both sizes are refused in one plain message, and a team of the other size reads
+    as such without repeating itself.
+- The progress of a match and of a tournament counts against the match's own length and the
+    matches that the tournament's plan expects, so a short match fills its progress and a
+    tournament's share no longer falls back when a round is drawn. The summary of a tournament
+    gains `expected`.
+- Run again keeps the stages as they were given, so it plays with more or fewer entrants, and a
+    saved preset keeps its forfeit score.
+- The setup of a tournament keeps the focus on the control in use or its neighbour after every
+    change, numbers its entrants, keeps the ability boxes readable on a phone, moves through the
+    presets with the arrow keys, adds a person on Enter, refuses an empty ability of the built in
+    AI and a preset name that the server would refuse, numbers a repeated built in AI as the
+    server does, stops Add every team at 256 entrants, and names the stage in the labels of its
+    stage, tiebreaker and settle buttons.
+- An open tournament asks in place before Cancel and Delete, keeps the focus after an award, a
+    resume, a reveal or the intermission, reads a cancelled tournament as such with nothing in Up
+    next, says in the list why a tournament stopped, captions the tables of a ladder and a king of
+    the hill by their own order, tells a replay before how a tie was decided, leaves a tie of two
+    byes empty, dresses the away side of a kickoff card in its away kit, names a final once and
+    counts the matches of Reveal all in the caught-up summary. The trophy ceremony ends when
+    another match opens.
+- `cuju render tournament show` names who goes on after a tie decided by lots, a replay or a
+    deciding match, prints byes and cancelled stages plainly and the expected count of matches,
+    `forfeit` and `resume` name the process that plays the tournament on, and an empty `list`
+    says there are no tournaments yet.
 
 ### Security
 

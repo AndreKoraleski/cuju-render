@@ -142,6 +142,49 @@ export function freeName(base, taken, longest = NAME_LONGEST) {
     return name;
 }
 
+// The name of each entrant of a list, as `_name_entrants` of the server's rules gives them, from
+// the name each shows of its own and whether a person gave it. A given name stays as given, and
+// a made one, such as Built-in AI 0.50, takes the first free number from 2 that no given name and
+// no earlier made name holds, in the words of `numbered`.
+export function madeNames(bases, numbered = (name, number) => t('server.tournament.label.numbered', { name, number })) {
+    const names = new Set(bases.filter((base) => base.own).map((base) => nameKey(base.name)));
+    return bases.map((base) => {
+        if (base.own) {
+            return base.name;
+        }
+        let name = base.name;
+        for (let number = 2; names.has(nameKey(name)); number++) {
+            name = numbered(base.name, number);
+        }
+        names.add(nameKey(name));
+        return name;
+    });
+}
+
+// The settings of a stage that the rules work out from the count of its entrants, which a
+// tournament run again with other entrants works out anew.
+const COUNTED = ['bracket_size', 'advance', 'rounds', 'groups', 'group_sizes', 'pots', 'best_count'];
+
+// The stages of a tournament to run again, those its maker gave when the tournament keeps them,
+// else its resolved stages with only the settings of `keys`, and without those that follow from
+// the count of entrants, so another count of entrants works them out anew.
+export function againStages(config, keys, fallback = []) {
+    const given = config && config.given && Array.isArray(config.given.stages) ? config.given.stages : null;
+    const stages = given || (config && config.stages) || fallback;
+    return JSON.parse(JSON.stringify(stages)).map((stage) => {
+        if (given) {
+            return stage;
+        }
+        const own = {};
+        for (const [key, value] of Object.entries(stage)) {
+            if (keys.includes(key) && !COUNTED.includes(key)) {
+                own[key] = value;
+            }
+        }
+        return own;
+    });
+}
+
 export const SETTLE_NAMES = {
     away_goals: t('tournament.settle.away_goals'),
     replay: t('tournament.settle.replay'),
@@ -234,12 +277,32 @@ export function tiebreakText(row, next, entrants) {
     return t('tournament.tiebreakText.points', { other, name });
 }
 
-// The share of a tournament played, from 0 to 1, by the matches scheduled so far.
-export function progressShare(entry) {
-    if (!entry || !entry.scheduled) {
-        return entry && entry.state === 'done' ? 1 : 0;
+// The caption of a stage's table, which names how it is ordered. A ladder orders by place on the
+// ladder and a king of the hill by the king first and then by ties won, while the tables of the
+// other formats order by points and then by their tiebreakers.
+export function tableCaption(format, tiebreakers) {
+    if (format === 'ladder') {
+        return t('tournament.table.caption.ladder');
     }
-    return entry.state === 'done' ? 1 : Math.min(1, entry.played / entry.scheduled);
+    if (format === 'king_of_the_hill') {
+        return t('tournament.table.caption.king');
+    }
+    const order = (tiebreakers || []).map((name) => TIEBREAK_NAMES[name] || name).join(t('tournament.formats.commaThen'));
+    return t('tournament.table.caption', { order });
+}
+
+// The share of a tournament played, from 0 to 1, of the matches that the server expects the whole
+// tournament to play, or of those scheduled so far when it expects fewer or names none, so the
+// share keeps from falling back each time a round is drawn.
+export function progressShare(entry) {
+    if (!entry) {
+        return 0;
+    }
+    if (entry.state === 'done') {
+        return 1;
+    }
+    const total = Math.max(entry.scheduled || 0, Number(entry.expected) || 0);
+    return total ? Math.min(1, entry.played / total) : 0;
 }
 
 // A short description of a stage's format for a list, such as Groups of 4 then 2 advance.
@@ -263,10 +326,14 @@ export function fixtureMatches(fixture, matches) {
     return (fixture.matches || []).map((key) => matches.get(key)).filter(Boolean);
 }
 
-// The state of a fixture for the page, from the states of its matches.
-export function fixtureState(fixture, matches) {
+// The state of a fixture for the page, from the states of its matches. A fixture of a canceled
+// tournament that has not ended never plays, and says so.
+export function fixtureState(fixture, matches, canceled = false) {
     if (fixture.state === 'done') {
         return 'done';
+    }
+    if (canceled) {
+        return 'cancelled';
     }
     if (fixture.state === 'waiting') {
         return 'waiting';
@@ -289,6 +356,7 @@ export const STATE_NAMES = {
     person: t('tournament.fixtureState.person'),
     ready: t('tournament.fixtureState.ready'),
     unseen: t('tournament.fixtureState.unseen'),
+    cancelled: t('tournament.fixtureState.cancelled'),
 };
 
 // The labels of the matches that end a tournament or a bracket, which a card announces as such.
@@ -307,7 +375,8 @@ export function isFinal(match) {
 }
 
 // The matches that come next for a person, those played and waiting to be watched first, in the
-// order to watch them, then those still to play, at most `count`.
+// order to watch them, then those still to play while the tournament runs or stopped, at most
+// `count`. A tournament that ended or was canceled has no match still to play.
 export function upNext(entry, count = 4) {
     if (!entry || !Array.isArray(entry.matches)) {
         return [];
@@ -315,6 +384,7 @@ export function upNext(entry, count = 4) {
     const unseen = (entry.spoilers && entry.spoilers.unseen) || [];
     const byKey = new Map(entry.matches.map((m) => [m.key, m]));
     const watch = unseen.map((key) => byKey.get(key)).filter(Boolean);
-    const play = entry.matches.filter((m) => !m.result && m.state !== 'unseen' && typeof m.home === 'number' && typeof m.away === 'number');
+    const open = entry.state === undefined || entry.state === 'running' || entry.state === 'stopped';
+    const play = open ? entry.matches.filter((m) => !m.result && m.state !== 'unseen' && typeof m.home === 'number' && typeof m.away === 'number') : [];
     return [...watch, ...play].slice(0, count);
 }

@@ -975,6 +975,15 @@ def test_play_reports_progress_only_to_its_function(render_home, tmp_path, monke
     assert not isinstance(caught.value, cuju.render.PolicyError)
 
 
+def test_play_progress_follows_the_length_of_the_match(render_home):
+    """The progress of a match of 100 steps reaches most of the way, not a thirtieth of it."""
+    from cuju.render._playing import play as _play
+
+    seen = []
+    _play.play('builtin', 'builtin', '5_vs_5', seed=1, length=100, progress=seen.append)
+    assert seen and max(seen) > 0.4 and all(0 < share < 1 for share in seen), seen
+
+
 def test_challenge_agents_keep_names_and_only_stored_achievements(render_home, monkeypatch, capsys):
     """A lambda plays as Python policy, and the runs that keep nothing return no achievements."""
     from cuju.render.__main__ import main

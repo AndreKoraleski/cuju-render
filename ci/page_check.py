@@ -37,6 +37,7 @@ import page_groups
 import page_help
 import page_language
 import page_search
+import page_tournaments
 
 
 class CDP:
@@ -569,6 +570,13 @@ def tournament_checks(client):
             // A button by its accessible name, the label of a symbol or the text it shows.
             const button = (text) => [...main().querySelectorAll('button')]
                 .find((b) => (b.getAttribute('aria-label') || b.textContent).trim() === text);
+            // Adds the built in AI at four rising abilities, one at a time through its field.
+            const addFour = () => {
+                for (const value of ['0.2', '0.4', '0.6', '0.8']) {
+                    main().querySelector('.cup-adder input[type="number"]').value = value;
+                    button('Add built-in AI').click();
+                }
+            };
             page.root.querySelector('.cup-side-head button').click();
             const tabs = [...main().querySelectorAll('[role="tab"]')].map((t) => t.textContent);
             const steps = tabs.length === 5 && tabs[0].endsWith('Format');
@@ -587,9 +595,9 @@ def tournament_checks(client):
             const reason = refused && /entrants/.test(
                 main().querySelector('.cup-review [role="alert"]').textContent);
             page.goStep(1);
-            button('Add four of rising ability').click();
-            button('Add four of rising ability').click();
-            button('Add four of rising ability').click();
+            addFour();
+            addFour();
+            addFour();
             const entrants = main().querySelectorAll('.cup-entrants > li').length === 13;
             page.goStep(3);
             const stages = main().querySelectorAll('.cup-stage').length === 2;
@@ -795,6 +803,13 @@ def tournament_checks(client):
             const main = () => page.mainHost;
             const button = (text) => [...main().querySelectorAll('button')]
                 .find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === text);
+            // Adds the built in AI at four rising abilities, one at a time through its field.
+            const addFour = () => {
+                for (const value of ['0.2', '0.4', '0.6', '0.8']) {
+                    main().querySelector('.cup-adder input[type="number"]').value = value;
+                    button('Add built-in AI').click();
+                }
+            };
             const team = await fetch('/api/teams?name=Able%20FC&filename=main.py&format=11v11', {
                 method: 'POST', body: 'def agent(obs):\\n    return [0]\\n',
             }).then((r) => r.json());
@@ -805,7 +820,7 @@ def tournament_checks(client):
             page.goStep(1);
             main().querySelector('.cup-adder select').value = team.id;
             button('Add team').click();
-            button('Add four of rising ability').click();
+            addFour();
             // The draw is random by default, and Set the bracket by hand seeds in list order.
             const box = () => main().querySelector('.cup-manual');
             const note = () => main().querySelector('.cup-draw-note').textContent;
@@ -4087,6 +4102,9 @@ def main():
             checks += page_groups.check_groups(client)
             checks += tournament_checks(client)
             checks += tournament_play_checks(client, debug, port)
+            checks += page_tournaments.wizard_checks(client)
+            checks += page_tournaments.phone_checks(client)
+            checks += page_tournaments.view_checks(client)
             checks += surprise_checks(client)
             checks += reconnection_checks(client)
             checks += palette_checks(client)

@@ -584,6 +584,11 @@ class App {
         if (this.postMatch.running) {
             this.postMatch.end();
         }
+        // A podium that stands on its own, as the trophy ceremony of a tournament raises it, goes
+        // with the source it stood over.
+        if (this.podium.showing) {
+            this.podium.hide();
+        }
         this.sound.stopEvents();
         clearTimeout(this.fullTimeTimer);
         $('post-show').hidden = true;

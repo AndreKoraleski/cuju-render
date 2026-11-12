@@ -104,7 +104,7 @@ test('the request takes every shared size, a custom even size, the scale and the
 test('progress reads as a sentence', () => {
     assert.equal(progressText(null), '');
     assert.match(progressText({ state: 'running', frame: 0 }), /Starting Chrome/);
-    assert.equal(progressText({ state: 'running', frame: 30, frames: 60, progress: 0.5 }), 'Drawing frame 30 of 60, 50 percent.');
+    assert.equal(progressText({ state: 'running', frame: 30, frames: 60, progress: 0.5 }), 'Drawing frame 30 of 60, 50%.');
     assert.match(progressText({ state: 'running', frame: 60, frames: 60, progress: 1 }), /Finishing/);
     assert.equal(progressText({ state: 'done', bytes: 2500000 }), 'The video is ready, 2.5 MB.');
     // A finished export names its range, which may differ from the fields of the dialog.

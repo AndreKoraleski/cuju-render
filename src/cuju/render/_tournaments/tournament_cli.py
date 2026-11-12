@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +137,15 @@ def _ability_line(config: dict[str, Any]) -> str:
     return 'standard ability ' + ("the scenario's" if standard is None else f'{standard:.2f}')
 
 
+def _played_line(entry: dict[str, Any]) -> str:
+    """Returns how many matches a tournament played of those it expects, and those scheduled."""
+    played, scheduled = entry['played'], entry['scheduled']
+    expected = max(entry.get('expected') or 0, scheduled)
+    if expected == scheduled:
+        return f'{played} of {scheduled} scheduled matches played'
+    return f'{played} of {expected} matches played, {scheduled} scheduled so far'
+
+
 def describe(entry: dict[str, Any]) -> list[str]:
     """Returns the lines that `show` prints, the stages with their tables, results and ranking."""
     names = _names(entry['config'])
@@ -150,14 +160,18 @@ def describe(entry: dict[str, Any]) -> list[str]:
 
     lines = [
         f'{entry["name"]}  {entry["id"]}  {entry["state"]}  seed {entry["seed"]}',
-        f'{entry["played"]} of {entry["scheduled"]} scheduled matches played, '
-        f'{_ability_line(entry["config"])}',
+        f'{_played_line(entry)}, {_ability_line(entry["config"])}',
     ]
     if entry.get('error'):
         lines.append(entry['error'])
+    # A cancelled tournament plays nothing more, so its unfinished stages read as cancelled.
+    cancelled = entry['state'] == 'cancelled'
     for stage in entry['stages_view']:
         lines.append('')
-        lines.append(f'{_stage_title(stage)}, {_STAGE_STATES.get(stage["state"], stage["state"])}')
+        state = _STAGE_STATES.get(stage['state'], stage['state'])
+        if cancelled and stage['state'] != 'done':
+            state = 'cancelled'
+        lines.append(f'{_stage_title(stage)}, {state}')
         swiss = stage['format'] == 'swiss'
         for table in stage['tables']:
             lines.append(f'  {table["name"]}')
@@ -181,26 +195,16 @@ def describe(entry: dict[str, Any]) -> list[str]:
                 extra += f', king {names[round_["king"]]}'
             lines.append(f'  {round_["name"]}{extra}')
             for fixture in round_['fixtures']:
-                score = fixture.get('score')
-                done = fixture.get('state') == 'done'
-                if score is not None:
-                    text = f'  {score[0]} to {score[1]}' + ('' if done else ' so far')
-                else:
-                    text = '' if done else '  not played'
-                how = _DECIDED.get(fixture.get('decided_by') or '', '')
-                if how:
-                    text += f', {how}'
-                for key, words in (('replay', 'replay'), ('decider', 'deciding matches')):
-                    if fixture.get(key):
-                        text += f', {words} {fixture[key][0]} to {fixture[key][1]}'
-                if awarded & set(fixture.get('matches', [])):
-                    text += ', awarded'
-                lines.append(f'    {name(fixture["home"])} against {name(fixture["away"])}{text}')
+                line = _fixture_line(fixture, name, awarded, cancelled)
+                if line:
+                    lines.append(line)
     waiting = [match for match in entry['matches'] if match.get('state') != 'done']
     if waiting:
-        lines += ['', 'Matches to play']
+        lines += ['', 'Matches not played' if cancelled else 'Matches to play']
         for match in waiting:
             state = _MATCH_STATES.get(match.get('state'), match.get('state'))
+            if cancelled:
+                state = 'not played, the tournament was cancelled'
             if match.get('error'):
                 state = f'{state}, {match["error"]}'
             lines.append(
@@ -213,6 +217,40 @@ def describe(entry: dict[str, Any]) -> list[str]:
     if entry['champion'] is not None:
         lines += ['', f'Champion: {entry["champion"]}']
     return lines
+
+
+def _fixture_line(
+    fixture: dict[str, Any], name: Callable[[Any], str], awarded: set[str], cancelled: bool
+) -> str | None:
+    """Returns the line of a tie in `show`, its score and then how it was settled, in the order
+    it happened, or `None` for a tie of two byes, which plays nothing."""
+    home, away = fixture['home'], fixture['away']
+    if fixture.get('decided_by') == 'bye' or home is None or away is None:
+        if home is None and away is None:
+            return None
+        return f'    {name(away if home is None else home)}, a bye'
+    score = fixture.get('score')
+    done = fixture.get('state') == 'done'
+    if score is not None:
+        text = f'  {score[0]} to {score[1]}' + ('' if done else ' so far')
+    elif done:
+        text = ''
+    else:
+        text = '  not played' + (', the tournament was cancelled' if cancelled else '')
+    earlier = False
+    for key, words in (('replay', 'replay'), ('decider', 'deciding matches')):
+        if fixture.get(key):
+            text += f', {words} {fixture[key][0]} to {fixture[key][1]}'
+            earlier = True
+    how = fixture.get('decided_by')
+    winner = fixture.get('winner')
+    if how in _DECIDED and isinstance(winner, int):
+        text += ', ' + _DECIDED[how].format(
+            winner=name(winner), then='then ' if earlier and how == 'lots' else ''
+        )
+    if awarded & set(fixture.get('matches', [])):
+        text += ', awarded'
+    return f'    {name(home)} against {name(away)}{text}'
 
 
 def preview_lines(preview: dict[str, Any]) -> list[str]:
@@ -261,6 +299,13 @@ def _print_json(value: Any) -> None:
 
 def _plays_it(identifier: str) -> str:
     return f'a running cuju render serve plays it, or cuju render tournament run {identifier}'
+
+
+def _plays_on(entry: dict[str, Any]) -> str:
+    """Returns who plays a tournament on after a change, the process that holds it when one does."""
+    if entry.get('owner'):
+        return f'and process {entry["owner"]}, which holds it, plays it on'
+    return _plays_it(entry['id'])
 
 
 def run_command(parser: argparse.ArgumentParser, options: argparse.Namespace) -> int:
@@ -356,6 +401,8 @@ def _run_command(parser: argparse.ArgumentParser, options: argparse.Namespace) -
             entries = tournaments.entries()
             if options.json:
                 _print_json(entries)
+            elif not entries:
+                print('no tournaments yet, cuju render tournament new makes one')
             else:
                 for entry in entries:
                     champion = f'  won by {entry["champion"]}' if entry['champion'] else ''
@@ -381,7 +428,7 @@ def _run_command(parser: argparse.ArgumentParser, options: argparse.Namespace) -
                 side = match['home'] if options.winner == 'home' else match['away']
                 print(f'awarded {match["label"]} to {entry["config"]["entrants"][side]["name"]}')
                 if entry['state'] == 'running':
-                    print(f'the tournament runs, {_plays_it(entry["id"])}')
+                    print(f'the tournament runs, {_plays_on(entry)}')
                 elif entry['error']:
                     print(f'the tournament stays {entry["state"]}, {entry["error"]}')
             elif action == 'resume':
@@ -389,7 +436,7 @@ def _run_command(parser: argparse.ArgumentParser, options: argparse.Namespace) -
                 if options.json:
                     _print_json(entry)
                     return 0
-                print(f'resumed {entry["id"]}, {_plays_it(entry["id"])}')
+                print(f'resumed {entry["id"]}, {_plays_on(entry)}')
             elif action == 'delete':
                 tournaments.remove(options.target)
                 if options.json:
@@ -422,11 +469,11 @@ _STAGE_STATES = {
     'playing': 'playing',
     'done': 'finished',
 }
+# Each follows the score, the replay and the deciding matches, so it names only who went on.
 _DECIDED = {
-    'away goals': 'on away goals',
-    'replay': 'after a replay',
-    'decider': 'after deciding matches',
-    'lots': 'by lots',
-    'holder': 'the holder keeps it on a draw',
-    'bye': 'a bye',
+    'away goals': '{winner} wins on away goals',
+    'replay': '{winner} wins',
+    'decider': '{winner} wins',
+    'lots': '{then}{winner} wins by lots',
+    'holder': '{winner} keeps the place on a draw',
 }

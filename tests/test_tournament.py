@@ -12,6 +12,7 @@ import urllib.request
 
 import pytest
 
+import cuju.errors
 from cuju.render._format import recording as _recording
 from cuju.render._http import server as _server
 from cuju.render._store import home as _home
@@ -105,6 +106,32 @@ def test_every_format_ends_with_a_full_ranking(stage, count):
     keys = [match['key'] for match in view['matches']]
     assert len(keys) == len(set(keys))
     assert all(match['home'] != match['away'] for match in view['matches'])
+
+
+@pytest.mark.parametrize('stage', _FORMATS, ids=lambda stage: '-'.join(map(str, stage.values())))
+@pytest.mark.parametrize('count', [2, 3, 5, 8, 13])
+def test_the_expected_matches_count_the_plan_and_never_fall(stage, count):
+    """A tournament of decisive matches plays what it expected, and the count never goes down."""
+    stop = {'until': 2} if stage['format'] == 'knockout' else {}
+    chain = [{**stage, 'advance': 2, **stop}, {'format': 'knockout'}]
+    config = _config(chain if count > 4 else [stage], count)
+    draw = random.Random(count)
+    results, counts = {}, []
+    view = rules.evaluate(config, results)
+    while not view['complete']:
+        counts.append(view['expected'])
+        assert view['expected'] >= len(view['matches'])
+        for match in rules.ready(view):
+            goals = draw.randrange(3)
+            score = [goals + 1, goals] if draw.random() < 0.5 else [goals, goals + 1]
+            results[match['key']] = {'score': score, 'cards': [[0, 0], [0, 0]]}
+        view = rules.evaluate(config, results)
+    assert counts == sorted(counts) and view['expected'] == view['played']
+    # Only the reset of a grand final and the later laps of a king, whose challengers depend on
+    # who is king at their turn, play other than the first count.
+    if stage.get('laps', 1) == 1:
+        resets = [m for m in view['matches'] if m['label_id'].endswith('grand_final_reset')]
+        assert counts[0] + len(resets) == view['played'], (counts, view['played'])
 
 
 @pytest.mark.parametrize(
@@ -526,7 +553,7 @@ def test_stages_take_their_own_scenarios_within_what_entrants_play():
         ({'stages': [{'format': 'knockout', 'until': 3}]}, 'power of two below'),
         ({'stages': [{'format': 'groups', 'groups': 5}]}, 'at least 2 entrants'),
         ({'stages': [{'format': 'groups', 'group_sizes': [4, 3]}]}, 'hold 7 entrants'),
-        ({'stages': [{'format': 'groups', 'qualifiers': 5}]}, 'qualifiers of group A'),
+        ({'stages': [{'format': 'groups', 'qualifiers': 5}]}, 'qualifiers of group A of stage 1'),
         ({'stages': [{'format': 'swiss', 'rounds': 5}]}, 'without rematches'),
         (
             {
@@ -547,7 +574,19 @@ def test_stages_take_their_own_scenarios_within_what_entrants_play():
             },
             'without repeats',
         ),
-        ({'stages': [{'format': 'league', 'points': {'win': 3}}]}, 'points for a win'),
+        ({'stages': [{'format': 'league', 'points': {'win': 3}}]}, 'draw and loss in stage 1'),
+        (
+            {'stages': [{'format': 'league', 'points': {'win': 300, 'draw': 1, 'loss': 0}}]},
+            'the points of a win in stage 1',
+        ),
+        (
+            {'entrants': _builtins(3), 'stages': [{'format': 'knockout', 'bracket_size': 2}]},
+            'a bracket of 2 needs exactly 2 entrants, and 3 enter stage 1',
+        ),
+        (
+            {'entrants': _builtins(2), 'stages': [{'format': 'swiss', 'rounds': 2}]},
+            'which pairs 2 entrants without rematches, to be 1, found 2',
+        ),
         ({'stages': [{'format': 'league', 'cup': 1}]}, 'unknown settings'),
         ({'stages': [{'format': 'league', 'length': 10}]}, 'length of stage 1'),
         ({'concurrency': 9}, 'matches at once'),
@@ -787,6 +826,8 @@ def test_runner_plays_a_tournament_and_resumes_after_a_restart(render_home):
     first = runner.Tournaments(player=_fake_player(calls), start=False)
     entry = first.create(_builtin_config(8))
     identifier = entry['id']
+    # The summary counts the matches of the whole plan, so its progress never runs backward.
+    assert entry['scheduled'] == 4 and entry['expected'] == 7
     # One tick starts the matches it may, one at a time by default.
     first.tick()
     assert _wait(lambda: first.get(identifier)['played'] == 1)
@@ -801,12 +842,27 @@ def test_runner_plays_a_tournament_and_resumes_after_a_restart(render_home):
     assert second.run(identifier, report=lambda line: None) == 'done'
     done = second.get(identifier)
     assert done['state'] == 'done' and done['champion']
-    assert len(calls) == 6 and done['played'] == 7
+    assert len(calls) == 6 and done['played'] == done['expected'] == 7
     view = rules.evaluate(stored['config'], {})
     expected = {m['key']: m['seed'] for m in view['matches']}
     assert all(expected[m['key']] == m['seed'] for m in done['matches'] if m['key'] in expected)
     second.close()
     assert runner.ratings()
+
+
+def test_a_tournament_keeps_its_stages_as_given_to_run_again_with_other_entrants(render_home):
+    """The resolved stages fit the entrants of the first run, and those as given fit any count."""
+    cups = runner.Tournaments(player=_fake_player([]), start=False)
+    entry = cups.create({'preset': 'world_cup', 'seed': 3, 'entrants': _builtins(4)}, run=False)
+    config = cups.get(entry['id'])['config']
+    assert config['given']['stages'] == rules.PRESETS['world_cup']['stages']
+    assert config['given']['defaults'] == rules.PRESETS['world_cup']['defaults']
+    again = {key: config[key] for key in ('seeding', 'preset', 'ability')}
+    with pytest.raises(cuju.errors.ArgumentError):
+        runner.check_config({**again, 'entrants': _builtins(7), 'stages': config['stages']})
+    checked = runner.check_config({**again, 'entrants': _builtins(7), **config['given']})
+    assert checked['stages'][0]['group_sizes'] == [4, 3]
+    cups.close()
 
 
 def test_runner_runs_several_matches_at_once(render_home):
@@ -1308,7 +1364,7 @@ def test_command_line_checks_deletes_rates_and_prints_json(render_home, capsys, 
     assert main(['tournament', 'check', '--preset', 'quick_cup', '--json', *four]) == 0
     assert json.loads(capsys.readouterr().out)['matches'] == 2
     assert main(['tournament', 'list']) == 0
-    assert capsys.readouterr().out == ''
+    assert capsys.readouterr().out.startswith('no tournaments yet')
     assert main(['tournament', 'ratings']) == 0
     assert 'no ratings yet' in capsys.readouterr().out
     arguments = ['tournament', 'new', '--preset', 'swiss_16', '--seed', '2', *four, *scenario]
@@ -1359,7 +1415,31 @@ def test_show_names_byes_replays_and_deciders():
         'ranking': view['ranking'],
     }
     text = '\n'.join(describe(entry))
-    assert '1 to 1, after deciding matches, replay 0 to 0, deciding matches 2 to 1' in text
+    first = config['entrants'][0]['name']
+    # The notes run in the order the tie went, and name who went on.
+    assert f'1 to 1, replay 0 to 0, deciding matches 2 to 1, {first} wins' in text
+    results['0/w2-1/d2'] = {'score': [2, 0]}
+    view = rules.evaluate(config, results)
+    entry.update(stages_view=view['stages'], ranking=view['ranking'])
+    winner = config['entrants'][view['stages'][0]['rounds'][0]['fixtures'][0]['winner']]['name']
+    text = '\n'.join(describe(entry))
+    assert f'replay 0 to 0, deciding matches 2 to 2, then {winner} wins by lots' in text
+    # A tie with a bye names the entrant alone, and a tie of two byes leaves no line.
+    double = _config([{'format': 'double_elimination'}], 3, seeding='manual')
+    view = rules.evaluate(double, {})
+    entry.update(config=double, stages_view=view['stages'], matches=[], ranking=None)
+    text = '\n'.join(describe(entry))
+    assert f'    {double["entrants"][0]["name"]}, a bye' in text
+    assert 'against a bye' not in text and 'a bye against' not in text
+    assert '    Loser of Winners round 1, tie 2, a bye' in text
+    entry.update(played=0, scheduled=2, expected=4)
+    assert '0 of 4 matches played, 2 scheduled so far' in '\n'.join(describe(entry))
+    # A cancelled tournament reads its unfinished stage and matches as cancelled.
+    entry.update(state='cancelled', matches=[{**m, 'state': 'ready'} for m in view['matches']])
+    text = '\n'.join(describe(entry))
+    assert 'Double elimination, cancelled' in text and 'Matches not played' in text
+    assert 'not played, the tournament was cancelled' in text and 'in the queue' not in text
+    entry.update(state='done')
     swiss = _config([{'format': 'swiss', 'rounds': 1}], 3)
     view = rules.evaluate(swiss, {})
     entry.update(config=swiss, stages_view=view['stages'], matches=[], ranking=None)
@@ -1416,6 +1496,33 @@ def test_command_line_awards_resumes_and_prints_json(render_home, capsys, monkey
     assert listed[0]['id'] == identifier and listed[0]['state'] == 'done'
     assert main(['tournament', 'resume', identifier]) == 1
     assert 'expected a stopped tournament' in capsys.readouterr().err
+
+
+def test_command_line_names_the_process_that_plays_on_and_an_empty_list(
+    render_home, capsys, monkeypatch
+):
+    """A change that another process takes names that process, and an empty list says so."""
+    from cuju.render.__main__ import main
+
+    assert main(['tournament', 'list']) == 0
+    assert capsys.readouterr().out == 'no tournaments yet, cuju render tournament new makes one\n'
+    arguments = ['tournament', 'new', '--preset', 'quick_cup', '--builtin', '0.1']
+    assert main([*arguments, '--builtin', '0.2']) == 0
+    identifier = capsys.readouterr().out.split()[1]
+
+    def held(self, identifier, *rest):
+        return {**self.get(identifier), 'state': 'running', 'owner': 4242}
+
+    monkeypatch.setattr(runner.Tournaments, 'resume', held)
+    monkeypatch.setattr(runner.Tournaments, 'forfeit', held)
+    assert main(['tournament', 'resume', identifier]) == 0
+    assert capsys.readouterr().out == (
+        f'resumed {identifier}, and process 4242, which holds it, plays it on\n'
+    )
+    assert main(['tournament', 'award', identifier, '--match', '0/w2-1/1', '--winner', 'home']) == 0
+    output = capsys.readouterr().out
+    assert 'the tournament runs, and process 4242, which holds it, plays it on' in output
+    assert 'cuju render tournament run' not in output
 
 
 # Real matches.
@@ -1654,6 +1761,55 @@ def test_a_refused_entrant_names_the_scenario_and_reason_as_values():
     }
     assert values['reason']['id'] == 'server.teams.scenario_format'
     assert str(caught.value).startswith('Minis cannot play 11_vs_11_kaggle in stage 1, unused')
+
+
+def test_a_team_of_the_other_size_reads_plainly_and_both_sizes_are_refused_first(
+    render_home, tmp_path
+):
+    """A team of five in a full match of eleven names its size alone, and a field of both sizes
+    is told that no full match fits it before any one team."""
+    from support.common import _SINGLE, _toy_team
+
+    five = _toy_team(tmp_path, 'Minis', _SINGLE, '5v5')
+    eleven = _toy_team(tmp_path, 'Reds', _SINGLE, '11v11')
+
+    def config(*teams):
+        entrants = [{'kind': 'team', 'team': team['id']} for team in teams]
+        stages = [{'format': 'knockout', 'scenario': '11_vs_11_kaggle', 'settle': ['lots']}]
+        return {'seed': 1, 'entrants': [*entrants, {'kind': 'builtin'}], 'stages': stages}
+
+    with pytest.raises(cuju.errors.ArgumentError) as caught:
+        runner.check_config(config(five))
+    assert str(caught.value) == 'Minis cannot play 11_vs_11_kaggle in stage 1, it is a team of 5v5'
+    with pytest.raises(cuju.errors.ArgumentError) as caught:
+        runner.check_config(config(eleven, five))
+    assert caught.value.message_id == 'server.tournament.mixed_sizes'
+    assert str(caught.value).startswith('Minis is a team of 5v5 and Reds a team of 11v11')
+    # A scenario of the academy fits both sizes, so the same entrants play it.
+    academy = config(eleven, five)
+    academy['stages'][0]['scenario'] = 'academy_empty_goal_close'
+    assert runner.check_config(academy)['stages'][0]['scenario'] == 'academy_empty_goal_close'
+
+
+def test_a_team_that_cannot_play_the_deciding_matches_is_refused_by_them():
+    """The refusal names the deciding matches of the stage apart from the stage's scenario."""
+
+    def fits(entrant, scenario):
+        return 'too few players' if scenario.startswith('academy') else None
+
+    config = {
+        'name': 'Cup',
+        'seed': 1,
+        'entrants': _builtins(4),
+        'stages': [{'format': 'knockout', 'settle': ['decider', 'lots']}],
+    }
+    with pytest.raises(rules.TournamentError) as caught:
+        rules.check(config, _TEAMS, fits)
+    assert caught.value.message_id == 'server.tournament.cannot_play_decider'
+    assert str(caught.value.values['stage']) == '1'
+    assert 'the scenario of the deciding matches of stage 1' in str(caught.value)
+    config['stages'][0]['settle'] = ['replay', 'lots']
+    assert rules.check(config, _TEAMS, fits)['stages'][0]['settle'] == ['replay', 'lots']
 
 
 def _labelled_failure(player='Built-in AI'):

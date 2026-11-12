@@ -53,7 +53,8 @@ from .errors import PolicyError
 _reports: TextIO | None = None
 # The variable that prints the traceback of a policy's error, as `on`.
 DEBUG_VARIABLE = 'CUJU_RENDER_DEBUG'
-# GRF: a full match of the shipped scenarios lasts 3000 steps, so it takes 3001 frames.
+# GRF: a full match of the shipped scenarios lasts 3000 steps, so it takes 3001 frames, which the
+# progress of a match divides by when its scenario names no duration.
 _FRAMES = 3001
 # The v2 action that hands a player to the builtin AI for one step.
 _BUILTIN_AI = 19
@@ -220,6 +221,8 @@ def play(
         lineup = reader.lineup(state)
         timing = _recording.scenario_timing(state)
         frames = [reader.frame(state)]
+        # A match takes one frame more than its steps, the scenario's own or those of `length`.
+        total = timing['duration'] + 1 if timing['duration'] > 0 else _FRAMES
         done = False
         while not done:
             parts = policies.observe()
@@ -235,7 +238,7 @@ def play(
             done = bool(finished[0])
             frames.append(reader.frame(batch.get_state(0), 1 if done else 0))
             if len(frames) % 50 == 0 and progress is not None:
-                progress(min(len(frames) / _FRAMES, 0.99))
+                progress(min(len(frames) / total, 0.99))
         difficulty = batch.difficulty[0].tolist()
     finally:
         batch.close()

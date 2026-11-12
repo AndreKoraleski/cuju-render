@@ -6921,11 +6921,14 @@ dialog.painter .toolbar {
     margin-bottom: 14px;
 }
 
+/* Each box keeps its rows at the top, so a box with one row lines up with its neighbours, and a
+   field and its button share the bottom of their row. */
 .cup-adder {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
     align-items: flex-end;
+    align-content: flex-start;
     min-width: 0;
     padding: 10px;
     border: 1px solid var(--border);
@@ -6950,9 +6953,13 @@ dialog.painter .toolbar {
     flex-direction: column;
     gap: 6px;
     padding-left: 28px;
+    counter-reset: entrant;
 }
 
+/* Each entrant shows its number, the seed of a draw by hand and the number that notes name. */
 .cup-entrant {
+    position: relative;
+    counter-increment: entrant;
     display: grid;
     grid-template-columns: 28px minmax(100px, 160px) minmax(140px, 1fr) minmax(110px, 160px) minmax(80px, 120px) minmax(90px, 130px) auto;
     gap: 8px 12px;
@@ -6961,10 +6968,32 @@ dialog.painter .toolbar {
     border-bottom: 1px solid var(--border);
 }
 
+.cup-entrant::before {
+    content: counter(entrant);
+    position: absolute;
+    bottom: 14px;
+    left: -28px;
+    width: 22px;
+    text-align: right;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 760px) {
     .cup-entrant {
         display: flex;
         flex-wrap: wrap;
+    }
+
+    /* The number stands beside the first line of a row that wraps. */
+    .cup-entrant::before {
+        top: 10px;
+        bottom: auto;
+    }
+
+    /* The ability of an entrant stays wide enough for the standard that its placeholder names. */
+    .cup-entrant .cup-entrant-ability {
+        min-width: 10em;
     }
 }
 
@@ -7102,6 +7131,13 @@ dialog.painter .toolbar {
 
 .cup-review-draw {
     columns: 2 260px;
+}
+
+/* The offer of another scenario names its stage at length, so its words wrap on a phone. */
+.cup-fix-scenario {
+    max-width: 100%;
+    white-space: normal;
+    text-align: start;
 }
 
 .cup-save {

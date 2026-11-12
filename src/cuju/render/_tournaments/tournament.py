@@ -464,6 +464,11 @@ def _choice(value: Any, choices: tuple[str, ...], name: Any) -> str:
 
 def _count(value: Any, name: Any, lowest: int, highest: int) -> int:
     if not _integer(value) or not lowest <= value <= highest:
+        # A range of one value reads as that value.
+        if lowest == highest:
+            raise TournamentMessageError(
+                'server.tournament.count_exact', name=name, lowest=lowest, value=repr(value)
+            )
         raise TournamentMessageError(
             'server.tournament.count', name=name, lowest=lowest, highest=highest, value=repr(value)
         )
@@ -706,11 +711,11 @@ def _merge(stage: dict[str, Any], defaults: dict[str, Any], index: int) -> dict[
     return {**copy.deepcopy(STAGE_DEFAULTS), **copy.deepcopy(defaults), **copy.deepcopy(stage)}
 
 
-def _check_points(points: Any) -> dict[str, int]:
+def _check_points(points: Any, where: dict[str, Any]) -> dict[str, int]:
     if not isinstance(points, dict) or set(points) != {'win', 'draw', 'loss'}:
-        raise TournamentMessageError('server.tournament.points', points=repr(points))
+        raise TournamentMessageError('server.tournament.points', where=where, points=repr(points))
     for name, value in points.items():
-        _count(value, _field(f'points_{name}'), -100, 100)
+        _count(value, _field(f'points_{name}', where=where), -100, 100)
     return dict(points)
 
 
@@ -757,7 +762,8 @@ def _qualifiers(stage: dict[str, Any], sizes: list[int], index: int) -> list[int
     if not isinstance(value, list) or len(value) != len(sizes):
         raise TournamentMessageError('server.tournament.qualifiers', stage=index + 1)
     for group, (size, qualified) in enumerate(zip(sizes, value, strict=True)):
-        _count(qualified, _field('qualifiers', group=group_name(group)), 0, size)
+        name = _field('qualifiers', group=group_name(group), where=_where(index))
+        _count(qualified, name, 0, size)
     return list(value)
 
 
@@ -803,7 +809,7 @@ def _resolve_stage(
         _count(stage['final_legs'], _field('final_legs', where=where), 1, MAX_LEGS)
     stage['settle'] = _ordered_names(stage['settle'], SETTLEMENTS, _field('settle', where=where))
     _count(stage['replays'], _field('replays', where=where), 1, 5)
-    stage['points'] = _check_points(stage['points'])
+    stage['points'] = _check_points(stage['points'], where)
     stage['tiebreakers'] = _ordered_names(
         stage['tiebreakers'], TIEBREAKERS, _field('tiebreakers', where=where)
     )
@@ -833,8 +839,10 @@ def _resolve_stage(
         if not _integer(size) or not _power(size) or size < 2:
             raise TournamentMessageError('server.tournament.bracket_power', where=where)
         if mode == 'byes' and not count <= size < 2 * count:
+            # A bracket of 2 takes exactly 2, which reads better than a range of one value.
+            exact = size == 2
             raise TournamentMessageError(
-                'server.tournament.bracket_byes',
+                'server.tournament.bracket_exact' if exact else 'server.tournament.bracket_byes',
                 size=size,
                 lowest=size // 2 + 1,
                 count=count,
@@ -931,6 +939,21 @@ _FORMAT_TITLES = {
 Fits = Callable[[dict[str, Any], str], 'str | dict[str, Any] | None']
 
 
+def _refuse_sizes(entrants: list[dict[str, Any]], scenario: str, index: int, reason: Any) -> None:
+    """Refuses entrants of both sizes for a scenario that fits one size, before any one team."""
+    if not isinstance(reason, dict) or reason.get('id') != 'server.tournament.team_format':
+        return
+    sizes = {entrant['format']: entrant for entrant in reversed(entrants) if entrant['format']}
+    if '5v5' in sizes and '11v11' in sizes:
+        raise TournamentMessageError(
+            'server.tournament.mixed_sizes',
+            five=label_of(sizes['5v5']),
+            eleven=label_of(sizes['11v11']),
+            scenario=_messages.scenario(scenario),
+            stage=index + 1,
+        )
+
+
 def default_scenario(entrants: list[dict[str, Any]]) -> str:
     """Returns the scenario of a stage that names none, the Kaggle match or 5 against 5."""
     formats = {entrant['format'] for entrant in entrants if entrant['format']}
@@ -1011,19 +1034,21 @@ def check(
                     'server.tournament.stage_scenario', stage=index + 1, scenario=repr(stage[key])
                 )
         if fits is not None:
-            wanted = [stage['scenario']]
+            wanted = [(stage['scenario'], 'server.tournament.cannot_play')]
             if 'decider' in stage['settle'] and stage['format'] not in (
                 'league',
                 'groups',
                 'swiss',
             ):
-                wanted.append(stage['decider_scenario'])
-            for scenario in wanted:
+                # A deciding match plays a scenario of its own, which the refusal names apart.
+                wanted.append((stage['decider_scenario'], 'server.tournament.cannot_play_decider'))
+            for scenario, message in wanted:
                 for entrant in entrants:
                     reason = fits(entrant, scenario)
                     if reason:
+                        _refuse_sizes(entrants, scenario, index, reason)
                         raise TournamentMessageError(
-                            'server.tournament.cannot_play',
+                            message,
                             entrant=label_of(entrant),
                             scenario=_messages.scenario(scenario),
                             stage=index + 1,
@@ -1032,6 +1057,9 @@ def check(
         resolved.append(stage)
         count = stage['advance']
     result['stages'] = resolved
+    # The stages and defaults as given, before the entrants resolved them, so a tournament run
+    # again with other entrants resolves them anew.
+    result['given'] = {'stages': copy.deepcopy(stages), 'defaults': copy.deepcopy(defaults)}
     return result
 
 
@@ -2073,6 +2101,58 @@ def _reseed(config: dict[str, Any], stage: dict[str, Any], index: int, ranked: l
     return entrants
 
 
+def _planned(settings: dict[str, Any], count: int) -> int:
+    """Returns the matches that a stage of `count` entrants plays by its plan.
+
+    The plan counts every tie that two entrants play, and leaves out the replays, deciding
+    matches and the reset of a grand final, which only results bring.
+    """
+    legs = settings['legs']
+    final_legs = settings.get('final_legs') or legs
+    form = settings['format']
+    if count < 2:
+        return 0
+    if form == 'knockout':
+        until = settings['until']
+        ties = count - until
+        if until > 1:
+            return ties * legs
+        third = 1 if settings['third_place'] and count >= 4 else 0
+        return (ties - 1) * legs + final_legs + third * legs
+    if form == 'double_elimination':
+        return (2 * count - 3) * legs + final_legs
+    if form in ('league', 'groups'):
+        sizes = settings['group_sizes'] if form == 'groups' else [count]
+        return sum(size * (size - 1) // 2 for size in sizes) * settings['cycles'] * legs
+    if form == 'swiss':
+        return settings['rounds'] * (count // 2) * legs
+    if form == 'ladder':
+        ties = 0
+        for number in range(settings['rounds']):
+            start = number % 2 if count > 2 else 0
+            ties += len(range(start, count - 1, 2))
+        return ties * legs
+    if form == 'king_of_the_hill':
+        return settings['laps'] * (count - 1) * legs
+    return (count - 1) * legs
+
+
+def expected_matches(config: dict[str, Any], matches: list[dict[str, Any]]) -> int:
+    """Returns the matches that a tournament plays by its plan and by its results so far.
+
+    The replays and deciding matches that results have brought add to the plan, and the count is
+    never below the matches already scheduled.
+    """
+    count = len(config['entrants'])
+    planned = 0
+    for settings in config['stages']:
+        planned += _planned(settings, count)
+        count = settings['advance']
+    # A replay ends its key in r and a deciding match in d, each followed by its number.
+    extra = sum(1 for match in matches if match['key'].rsplit('/', 1)[-1][:1] in ('r', 'd'))
+    return max(planned + extra, len(matches))
+
+
 def evaluate(config: dict[str, Any], results: dict[str, Any]) -> dict[str, Any]:
     """Replays a tournament from its configuration and results, as far as the results reach.
 
@@ -2125,13 +2205,16 @@ def evaluate(config: dict[str, Any], results: dict[str, Any]) -> dict[str, Any]:
             ranking += [e for e in view['ranking'] if e not in ranking]
     matches = list(run.matches.values())
     played = sum(1 for match in matches if match['result'] is not None)
+    complete = ranking is not None
     return {
         'stages': stages,
         'matches': matches,
         'ranking': ranking,
         'champion': ranking[0] if ranking else None,
-        'complete': ranking is not None,
+        'complete': complete,
         'played': played,
+        # A finished tournament played what it expected, and one still to play counts its plan.
+        'expected': played if complete else expected_matches(config, matches),
     }
 
 

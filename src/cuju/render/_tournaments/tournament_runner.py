@@ -219,7 +219,25 @@ def fits(entrant: dict[str, Any], scenario: str) -> str | dict[str, Any] | None:
             _teams.check_scenario([team, builtin], scenario)
             _teams.check_scenario([builtin, team], scenario)
     except ArgumentError as error:
-        return _error_label(str(error), _messages.id_fields(error))
+        ids = _messages.id_fields(error)
+        values = ids.get('error_values') if isinstance(ids, dict) else None
+        # A team of the other size needs only its size, since the message names the rest.
+        if (
+            isinstance(ids, dict)
+            and ids.get('error_id') == 'server.teams.scenario_format'
+            and isinstance(values, dict)
+        ):
+            return _messages.label('server.tournament.team_format', format=values.get('format'))
+        # The team's own refusal names the team and the scenario, which the tournament's message
+        # names too, so the tournament keeps only its reason.
+        if (
+            isinstance(ids, dict)
+            and ids.get('error_id') == 'server.teams.cannot_play'
+            and isinstance(values, dict)
+            and values.get('reason')
+        ):
+            return values['reason']
+        return _error_label(str(error), ids)
     return None
 
 
@@ -722,6 +740,7 @@ class Tournaments:
             ],
             'played': view['played'],
             'scheduled': len(view['matches']),
+            'expected': view['expected'],
             'running': running,
             'failed': len(record['failures']),
             'people_waiting': len(waiting),

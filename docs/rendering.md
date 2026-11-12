@@ -2646,6 +2646,14 @@ what a draw does and how many advance, are described with their formats above. A
 cannot work, such as more Swiss rounds than allow a pairing without rematches, groups of one, a
 bracket too small for its entrants, a stage that receives fewer than two entrants or a team in a
 scenario of another format, is refused with a message that names the setting, the stage and why.
+A team of five a side and a team of eleven a side play together only in scenarios of the academy,
+so a full match among entrants of both sizes is refused with a message that names one team of
+each size, before the message about any one team.
+The deciding matches of a stage play a scenario of their own, an academy drill by default, and a
+team that cannot play it, such as one that controls more players than the drill holds, is refused
+with a message that names the deciding matches of that stage. Another scenario for them, in the
+stage's Scenario of a deciding match on the page or its `decider_scenario` in a configuration
+file, or drawn ties settled without a deciding match, in its `settle`, lets the team play.
 
 Ratings come from earlier tournaments. Every match that a tournament plays moves the rating of both
 entrants by the Elo formula, 20 points for an upset at most, and a new entrant starts at 1500.
@@ -2709,20 +2717,29 @@ The page saves any format as a preset of the user, which the setup lists beside 
 ### The Tournaments page
 
 The **Tournaments** page lists every tournament on its left, with its state, entrants, formats,
-progress, the champion of a finished one and the matches waiting for a person. **New tournament**
-opens the setup on the right, in five steps that are tabs of their own, so any step opens at any
-time, and the arrow keys move between them.
+progress, the champion of a finished one, the matches waiting for a person and, for a stopped
+tournament, the failed matches that wait for an award or Resume. The progress counts the matches
+that the whole tournament is expected to play, so it grows steadily while later rounds are drawn.
+**New tournament** opens the setup on the right, in five steps that are tabs of their own, so any
+step opens at any time, and the arrow keys move between them. Next and Back move the focus to the
+tab of the step they open, and every control that redraws a step keeps the focus on itself or on
+its nearest neighbour.
 
-1. **Format** offers the presets, those that ship and those of the user.
+1. **Format** offers the presets, those that ship and those of the user, as a group of choices
+    that the arrow keys move through.
 2. **Entrants** has Set the bracket by hand above its list, which turns the random draw into a
     draw in the order of the list and says which of the two applies, and it adds registered teams
-    one at a time or every one at once, the built in AI at an ability, or four of them at rising
-    abilities, and people by name, with the built in AI or a
-    team of dynamic assignment as their teammates. Each entrant may be renamed, given an ability
+    one at a time or every one at once, the built in AI at an ability, and people by name, with
+    the built in AI or a team of dynamic assignment as their teammates. Enter in the name of a
+    person adds the person, Add every team says so when every team has entered already, and the
+    list stops at 256 entrants. Each row shows the entrant's number, the seed of a draw by hand
+    and the number that the notes of this step name. Each entrant may be renamed, given an ability
     of its own, given a rating and moved up or down, which is the seeding when it is manual, or
     removed. A team added again, or any team whose name an entrant already shows, enters under the
     first free name, such as Rex 2, with its name field focused so the proposal can be changed at
-    once. A name that repeats
+    once. The built in AI added at an ability that an entrant already shows takes the next number
+    in the same way, such as Built-in AI 0.50 2, which its name field shows until a name is typed,
+    and an empty ability box adds nobody. A name that repeats
     another entrant's is marked beside its field with the entrant it repeats, a person is added
     only under a name of their own, and Review lists every repeated name until each entrant has
     its own. The Ability field of each row stays empty to follow the standard, which its
@@ -2738,21 +2755,31 @@ time, and the arrow keys move between them.
     JSON to change as text.
 5. **Review** checks the tournament on the server and shows the standard ability, the entrants
     with an ability of their own, each stage with its entrants, those who advance, its scenario,
-    its ability and the draw of its first round or its groups, or the reason it cannot be made. It
-    also saves the format as a preset. Start tournament begins it.
+    its ability and the draw of its first round or its groups, or the reason it cannot be made. A
+    team that cannot play the scenario of a stage, or of its deciding matches, comes with a button
+    that opens that field of the stage. Review also saves the format as a preset under a name of
+    small letters, digits, dashes and underscores, which the page asks for before it saves, and a
+    preset keeps the forfeit score with the rest. Start tournament begins it.
 
 An open tournament shows its state, seed and progress, the matches playing now, and buttons to
 cancel it, resume it after a failed match, hold its trophy ceremony, run it again with the same
-settings and a new seed, or delete it, which leaves its recordings in Recordings. Its stages are
+settings and a new seed, or delete it, which leaves its recordings in Recordings. Cancel and
+Delete ask first in place of the button, as Award does, and Escape or the second button leaves
+the tournament as it was. A canceled tournament says so beneath its name, lists nothing in Up
+next and reads each match still to play as not played. Run again starts from the stages as they
+were set, so a bracket, a group size or a count of rounds follows the new entrants. Its stages are
 tabs. A knockout or a double elimination shows its **bracket**, one column a round, each tie between
 the two that feed it, with the play-in round, the losers bracket, the grand final and the third
 place match in sections of their own, and a bracket wider than the page scrolls sideways. Leagues,
 groups, Swiss rounds, ladders and the challenges of a king show **tables**, with the places that
-qualify marked, a caption that names the order of the tiebreakers, and a line for each entrant that
-stands above another on equal points that names the tiebreaker that placed it there. **Fixtures and
-results** list every round with its matches, their scores, or their state while none of their
-matches has played, how a tie was decided, the progress of a match that plays, and Watch, which
-opens the recording of each match. An entrant whose own ability differs from the standard shows
+qualify marked, a caption that names how the table is ordered, by points and then the tiebreakers
+in turn, by place on a ladder, or by the king first and then the ties won, and a line for each
+entrant that stands above another on equal points that names the tiebreaker that placed it there.
+**Fixtures and results** list every round with its matches, their scores, or their state while
+none of their matches has played, the score of a replay or of deciding matches and then how a tie
+was decided, such as replay 0 to 0, by lots, the progress of a match that plays, and Watch, which
+opens the recording of each match. A tie between two byes of a bracket plays nothing and leaves its
+place empty. An entrant whose own ability differs from the standard shows
 it beside its name in the bracket, the tables and the fixtures, such as Ability 0.30 after the
 symbol of the built in AI, and the head of the tournament names its standard ability. A built in AI
 whose name the rules made already holds its ability in its name. The page follows a running
@@ -2788,9 +2815,10 @@ each name with its message beside it, the command line prints the English text, 
 of an earlier version shows its names as it saved them.
 
 An open tournament lists **Up next** above its stages, the next matches as kickoff cards, each
-with its stage and label, the two sides with their kits and the state of the match. The matches
-that wait to be watched come first, in the order to watch them, and then those still to play. A
-final, a grand final and its deciding match have a card of their own, marked with the trophy. Each
+with its stage and label, the two sides with their kits and the state of the match, the away side
+of two entrants of one team in its away kit, as in the match. The matches that wait to be watched
+come first, in the order to watch them, and then those still to play while the tournament runs.
+A final, a grand final and its deciding match have a card of their own, marked with the trophy. Each
 card takes a prediction of its result, a win for either side or a draw, which the browser keeps
 and which counts once the match's result shows, so the tournament shows how many predictions came
 right, such as Predictions, 2 of 3 right.
@@ -2798,7 +2826,7 @@ right, such as Predictions, 2 of 3 right.
 The **trophy ceremony** of a finished tournament opens the last match that the champion played on
 the Watch page at its end, and holds the podium and confetti of the show after a match, with the
 champion's players on the steps in the champion's colors, the champion's name, and the tournament
-won with the runner up beneath it. Close ends it.
+won with the runner up beneath it. Close ends it, and so does opening another match.
 
 ### The Brackets view
 
@@ -2828,11 +2856,12 @@ the match counts as watched when its recording plays to its end, and only then d
 in the bracket and the tables. While it plays, the timeline leaves its goals unmarked. At its end a
 card names the next match, who plays it and nothing more, with Play now and Cancel, and a final has
 a card of its own. With **Play the next match by itself** on, the card counts down ten seconds and
-plays the next match, and Cancel, Escape or leaving Watch stops it. **Reveal** shows the result of
-one match without watching it, and **Reveal all** shows every result, after a question in place of
-the button that Escape or the close button answers with no. A match awarded without a recording
-reveals at once. Once every played match is watched, a summary lists the results of the matches
-watched in that visit, what the person missed, with the predictions they got right.
+plays the next match, and Cancel, Escape or leaving Watch stops it and gives the focus back to
+where it was, and a screen reader reads the count as a timer when asked, not every second.
+**Reveal** shows the result of one match without watching it, and **Reveal all** shows every
+result, after a question in place of the button that Escape or the close button answers with no. A
+match awarded without a recording reveals at once. Once every played match is watched, a summary lists the results of the matches
+watched or revealed in that visit, what the person missed, with the predictions they got right.
 
 The lists of the page keep the secret too. Home, Recordings, the Trash, the details of a recording,
 the command palette and the search of moments show a recording of an unwatched match without its
@@ -2882,7 +2911,8 @@ their matches on the page. One process at a time runs a tournament, and a lock f
 names the process, so the server leaves alone a tournament that `run` plays, and the page follows
 it. A cancel from either reaches the process that runs it. An award or a resume from the command
 line, or from the page while `run` holds the tournament, goes to the process that runs it, which
-applies it within a moment and answers. The key of a match is checked first, so a wrong one reads
+applies it within a moment and answers, and the command line names that process, which plays the
+tournament on. The key of a match is checked first, so a wrong one reads
 as such at once. A process that gives no answer within ten seconds leaves the change undone, and
 the refusal names the route of its server to send it to, such as
 `POST /api/tournaments/ID/forfeit`. A tournament that stopped leaves its lock, so the command line
@@ -2895,20 +2925,25 @@ it plays once a person resumes it on the page or runs it from the command line, 
 file again. Every tournament file plays at most eight matches at once, the most that a new
 tournament may ask for.
 
-The show command prints each stage with its tables and results, a tie that has played none of its
-matches as not played, and then every match still to play with its key, label, sides and state,
-with the error of a failed one. `forfeit`, also named `award`, gives the match of `--match` to the
+The show command prints how many matches the tournament has played of those it expects, then each
+stage with its tables and results, a tie that has played none of its matches as not played, and
+then every match still to play with its key, label, sides and state, with the error of a failed
+one. A tie reads in the order it went, its score, its replay and its deciding matches, and then
+who won it when the score alone does not tell, such as Rex wins by lots. An entrant with a bye
+reads as Rex, a bye, and a cancelled tournament reads its unfinished stages and matches as
+cancelled and not played. `forfeit`, also named `award`, gives the match of `--match` to the
 side of `--winner`, `home` or `away`, by the forfeit score, as Award does on the page, and
 `resume` plays the failed matches again, as `run` also does. The check command takes the options
 of new and prints each stage with its entrants, those who advance, its scenario and its first draw
 or groups, and makes nothing, or the reason the configuration cannot make a tournament. A cancel
-of a tournament that has ended is refused, and `delete` removes a tournament that has ended, which
-leaves its recordings in the library. The ratings command lists the rating of every entrant that
-has played, the highest first, with its matches and key. Every action takes `--json`, which prints
-what the server returns for it, the summary of a new tournament, the summaries of `list`, the whole
-tournament of `show`, `forfeit` and `cancel`, the resolved configuration and draw of `check`, the
-ratings, the presets, and for `run` the `outcome`, `done`, `stopped`, `people` or `cancelled`,
-beside the whole `tournament`.
+of a tournament that has ended is refused, and `delete` removes a tournament that no longer runs,
+one that has ended, stopped or been cancelled, which leaves its recordings in the library. The
+list command prints a line for each tournament, or says that none is made yet. The ratings command
+lists the rating of every entrant that has played, the highest first, with its matches and key.
+Every action takes `--json`, which prints what the server returns for it, the summary of a new
+tournament, the summaries of `list`, the whole tournament of `show`, `forfeit` and `cancel`, the
+resolved configuration and draw of `check`, the ratings, the presets, and for `run` the `outcome`,
+`done`, `stopped`, `people` or `cancelled`, beside the whole `tournament`.
 
 The server answers `GET /api/tournaments`, `GET /api/tournaments/ID`, `GET
 /api/tournaments/presets`, `GET /api/tournaments/ratings`, `POST /api/tournaments` with a
@@ -2927,7 +2962,12 @@ Origin checks as every other route.
 
 A match key comes from the `matches` of `GET /api/tournaments/ID`, each with its `key`, `label`,
 `home` and `away` entrants and `state`, and the summary of a tournament counts its `failed`
-matches. A refused change answers 400 with the reason, and an unknown tournament 404.
+matches. The summary also counts the matches `played`, those `scheduled` so far, whose sides are
+known, and those `expected`, the matches that the plan of every stage holds, with the replays and
+deciding matches that results have brought, never fewer than those scheduled and equal to those
+played once the tournament has ended. The page measures the progress of a tournament against the
+expected count, so it never runs backward when a new round is drawn. A refused change answers 400
+with the reason, and an unknown tournament 404.
 
 ### Configuration files
 
@@ -3027,7 +3067,10 @@ the teammates of Ana at the standard of 0.6.
 ### Files
 
 Each tournament lives in a JSON file of the folder `tournaments`, with its resolved configuration,
-the result of every match and its state, written through a temporary file. A file that cannot be
+the result of every match and its state, written through a temporary file. The configuration also
+keeps its stages and defaults as they were given, before the entrants resolved them, under `given`,
+which `GET /api/tournaments/ID` returns with the rest, so Run again on the page starts from them
+and resolves them anew for any number of entrants. A file that cannot be
 read is skipped with a warning, and the server starts with the rest. A restart of the server
 resumes every running tournament where it stopped, and a match that was playing plays again from
 its start with the same seed. The ratings and the presets of the user live in `ratings.json` and

@@ -14,8 +14,8 @@ import { icon, stateBadge, symbolOnly } from '../core/icons.js';
 import { listedScenarios, scenarioName, scenarioText } from '../core/scenarios.js';
 import {
     DECIDED_NAMES, FORMAT_NAMES, NAME_LONGEST, SECTION_NAMES, SETTLE_NAMES, STATE_NAMES, TIEBREAK_NAMES,
-    bracketLayout, entrantName, fixtureMatches, fixtureState, formatsText, freeName, isBracket, isFinal, nameKey,
-    progressShare, sections, shownAbility, sideName, stageNameText, stageText, tiebreakText, upNext,
+    againStages, bracketLayout, entrantName, fixtureMatches, fixtureState, formatsText, freeName, isBracket, isFinal, madeNames, nameKey,
+    progressShare, sections, shownAbility, sideName, stageNameText, stageText, tableCaption, tiebreakText, upNext,
 } from './tournament-layout.js';
 import {
     autoplay, markWatched, noteRecordings, predict, prediction, predictionScore, setAutoplay, setSpoilerFree,
@@ -28,6 +28,8 @@ const SETTLEMENTS = Object.keys(SETTLE_NAMES);
 const STEPS = [t('tournament.step.format'), t('tournament.step.entrants'), t('tournament.step.settings'), t('tournament.step.stages'), t('tournament.step.review')];
 const STATE_LABELS = { running: t('tournament.state.running'), stopped: t('tournament.state.stopped'), done: t('tournament.state.done'), cancelled: t('tournament.state.cancelled') };
 const KIND_NAMES = { team: t('tournament.kind.team'), builtin: t('tournament.kind.builtin'), person: t('tournament.kind.person') };
+// The name of a preset of the user, as the server's rule of identifiers takes it.
+const PRESET_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 // The words between the formats of the stages in a list.
 const COMMA_THEN = t('tournament.formats.commaThen');
 
@@ -92,6 +94,9 @@ async function call(method, path, json) {
     if (!res.ok) {
         const error = new Error((body && body.error && serverText(body, 'error')) || t('tournament.api.status', { status: res.status }));
         error.status = res.status;
+        // The message of a refusal and its values, so the page can lead to the setting it names.
+        error.id = (body && body.error_id) || null;
+        error.values = (body && body.error_values) || {};
         throw error;
     }
     return body;
@@ -147,6 +152,8 @@ const OFF_SCENARIO = t('tournament.off.scenario');
 const OFF_ENTRANTS = t('tournament.off.entrants');
 const BY_ENTRANTS = t('tournament.scenario.byEntrants');
 const RANDOM_SEEDING = t('tournament.seeding.random');
+// The seeding of a later stage, whose default is the standing of the stage before it.
+const LATER_SEEDING = [['standing', t('tournament.field.seeding.standing')], ['random', t('tournament.field.seeding.random')], ['rating', t('tournament.field.seeding.rating')]];
 const STAGE_FIELDS = [
     { key: 'name', label: t('tournament.field.name'), type: 'text', formats: ALL },
     { key: 'format', label: t('tournament.field.format'), type: 'select', options: FORMATS.map((f) => [f, FORMAT_NAMES[f]]), formats: ALL },
@@ -178,7 +185,7 @@ const STAGE_FIELDS = [
     { key: 'rounds', label: t('tournament.field.rounds'), type: 'optional', min: 1, max: 1000, step: 1, initial: 5, off: OFF_ENTRANTS, formats: ['swiss', 'ladder'] },
     { key: 'bye_points', label: t('tournament.field.bye_points'), type: 'select', options: [['win', t('tournament.field.bye_points.win')], ['draw', t('tournament.field.bye_points.draw')], ['none', t('tournament.field.bye_points.none')]], formats: ['swiss'] },
     { key: 'laps', label: t('tournament.field.laps'), type: 'number', min: 1, max: 10, formats: ['king_of_the_hill'] },
-    { key: 'seeding', label: t('tournament.field.seeding'), type: 'select', options: [['standing', t('tournament.field.seeding.standing')], ['random', RANDOM_SEEDING], ['rating', t('tournament.field.seeding.rating')]], formats: ALL, later: true },
+    { key: 'seeding', label: t('tournament.field.seeding'), type: 'select', options: LATER_SEEDING, formats: ALL, later: true },
     { key: 'advance', label: t('tournament.field.advance'), type: 'optional', min: 1, max: 256, step: 1, initial: 4, off: t('tournament.off.format'), formats: ALL, notLast: true },
 ];
 const STAGE_DEFAULTS = {
@@ -311,7 +318,10 @@ export class TournamentsPage {
                 t('tournament.list.meta', { count: cup.entrants, formats: formatsText(cup.stages) })),
             cup.champion && !spoilerFree(cup.id) ? h('span', { class: 'cup-item-champion' }, t('tournament.list.champion', { name: serverText(cup, 'champion') })) : null,
             spoilerFree(cup.id) ? h('span', { class: 'cup-item-spoilers small muted' }, icon('eye', 'icon text-symbol'), t('tournament.spoilers.listed')) : null,
-            cup.people_waiting ? h('span', { class: 'cup-item-people' }, t('tournament.list.people', { count: cup.people_waiting })) : null,
+            // People wait only for a tournament that runs or stopped, never one that ended.
+            cup.people_waiting && ['running', 'stopped'].includes(cup.state) ? h('span', { class: 'cup-item-people' }, t('tournament.list.people', { count: cup.people_waiting })) : null,
+            // A stopped tournament says why, the failed matches that wait for an award or Resume.
+            cup.state === 'stopped' && cup.failed ? h('span', { class: 'cup-item-failed small' }, icon('warning', 'icon text-symbol'), t('tournament.list.failed', { count: cup.failed })) : null,
             cup.state === 'running' ? h('span', { class: 'progress', 'aria-hidden': 'true' }, h('span', { class: 'bar', style: `width:${Math.round(share * 100)}%` })) : null);
             return h('li', {}, button);
         }));
@@ -367,15 +377,8 @@ export class TournamentsPage {
         if (config.name_id) {
             draft.name = '';
         }
-        draft.stages = clone(config.stages || draft.stages).map((stage) => {
-            const own = {};
-            for (const [key, value] of Object.entries(stage)) {
-                if (key in STAGE_DEFAULTS) {
-                    own[key] = value;
-                }
-            }
-            return own;
-        });
+        draft.stages = againStages(config, Object.keys(STAGE_DEFAULTS), draft.stages);
+        draft.defaults = clone((config.given && config.given.defaults) || {});
         draft.entrants = (config.entrants || []).map((e) => {
             const entry = { kind: e.kind, name: e.name_id ? undefined : e.name, ability: e.ability ?? null };
             if (e.kind === 'team') {
@@ -406,14 +409,41 @@ export class TournamentsPage {
         const nav = h('div', { class: 'cup-nav' },
             h('button', { type: 'button', class: 'btn ghost', ...symbolOnly(t('tournament.wizard.cancel')), onclick: () => this.cancelWizard() }, icon('close')),
             h('span', { class: 'cup-nav-gap' }),
-            this.step > 0 ? h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.wizard.back')), onclick: () => this.goStep(this.step - 1) }, icon('back')) : null,
+            this.step > 0 ? h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.wizard.back')), onclick: () => this.goStep(this.step - 1, true) }, icon('back')) : null,
             this.step < STEPS.length - 1
-                ? h('button', { type: 'button', class: 'btn primary', ...symbolOnly(t('tournament.wizard.next')), onclick: () => this.goStep(this.step + 1) }, icon('next'))
+                ? h('button', { type: 'button', class: 'btn primary', ...symbolOnly(t('tournament.wizard.next')), onclick: () => this.goStep(this.step + 1, true) }, icon('next'))
                 : h('button', { type: 'button', class: 'btn primary cup-start', onclick: (e) => this.create(e.currentTarget) }, icon('play'), t('tournament.wizard.start')));
+        const memo = this.focusMemo();
         this.mainHost.replaceChildren(h('div', { class: 'cup-wizard' },
             h('header', { class: 'cup-head' }, h('h2', {}, t('tournament.new')),
                 h('p', { class: 'muted' }, tn('tournament.wizard.text'))),
             tabs, panel, nav));
+        this.restoreFocus(memo);
+    }
+
+    // What the focused control of the main part is, by its id, its focus key or its accessible
+    // name, so the same control takes the focus again once the part is drawn anew.
+    focusMemo() {
+        const node = document.activeElement;
+        if (!node || node === this.mainHost || !this.mainHost.contains(node)) {
+            return null;
+        }
+        return { id: node.id || null, focus: node.dataset.focus || null, label: node.getAttribute('aria-label') };
+    }
+
+    // Focuses the control that `memo` names, or the tab of the current step when it is gone or
+    // can no longer be used, so the focus never falls back to the start of the page.
+    restoreFocus(memo) {
+        if (!memo) {
+            return;
+        }
+        const usable = (node) => node && !node.disabled && node.isConnected;
+        const all = [...this.mainHost.querySelectorAll('button, input, select, textarea, [tabindex]')];
+        const found = (memo.id && document.getElementById(memo.id))
+            || (memo.focus && all.find((node) => node.dataset.focus === memo.focus))
+            || (memo.label && all.find((node) => node.getAttribute('aria-label') === memo.label));
+        const target = usable(found) ? found : document.getElementById(`cup-step-${this.step}`);
+        target?.focus();
     }
 
     stepKeys(e, index) {
@@ -426,11 +456,25 @@ export class TournamentsPage {
         }
     }
 
-    goStep(index) {
+    // Opens the Stages step at the scenario of a stage, for a person to choose another.
+    focusStageScenario(index, decider = false) {
+        this.goStep(3);
+        const field = t(decider ? 'tournament.field.decider_scenario' : 'tournament.field.scenario');
+        const label = t('tournament.stage.fieldLabel', { label: field, number: index + 1 });
+        const stage = this.mainHost.querySelectorAll('.cup-stage')[index];
+        const control = stage && [...stage.querySelectorAll('select, button, input')]
+            .find((node) => (node.getAttribute('aria-label') || '').startsWith(label));
+        stage?.scrollIntoView({ block: 'center' });
+        control?.focus();
+    }
+
+    // Opens a step, and with `focusTab` or from a tab focuses the tab of the step, as Next and Back
+    // do, so a screen reader names the step that opened.
+    goStep(index, focusTab = false) {
         this.step = index;
-        const focusTab = document.activeElement && document.activeElement.classList.contains('cup-step');
+        const fromTab = document.activeElement && document.activeElement.classList.contains('cup-step');
         this.renderWizard();
-        if (focusTab) {
+        if (focusTab || fromTab) {
             document.getElementById(`cup-step-${index}`)?.focus();
         }
     }
@@ -456,6 +500,9 @@ export class TournamentsPage {
             if (preset.concurrency) {
                 draft.concurrency = preset.concurrency;
             }
+            if (preset.forfeit_score) {
+                draft.forfeit_score = preset.forfeit_score;
+            }
             if ('ability' in preset) {
                 draft.ability = preset.ability ?? null;
             }
@@ -465,12 +512,26 @@ export class TournamentsPage {
             this.renderWizard();
             this.mainHost.querySelector(`[data-preset="${name}"]`)?.focus();
         };
-        const cards = entries.map(([name, preset]) => {
+        // The presets are a group of radio buttons with one stop of the Tab key, the chosen one or
+        // else the first, and the arrow keys choose the next or the previous, Home and End the ends.
+        const names = entries.map(([name]) => name);
+        const stop = names.includes(this.draft.preset) ? this.draft.preset : names[0];
+        const keys = (e, index) => {
+            const moves = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: -index, End: names.length - 1 - index };
+            if (e.key in moves && !e.altKey && !e.ctrlKey && !e.metaKey) {
+                e.preventDefault();
+                const next = e.key === 'Home' || e.key === 'End' ? index + moves[e.key] : (index + moves[e.key] + names.length) % names.length;
+                choose(names[next]);
+            }
+        };
+        const cards = entries.map(([name, preset], index) => {
             const on = this.draft.preset === name;
             return h('div', { class: `cup-preset${on ? ' active' : ''}` },
                 h('button', {
                     type: 'button', class: 'cup-preset-pick', role: 'radio', 'aria-checked': on ? 'true' : 'false', 'data-preset': name,
+                    tabindex: name === stop ? '0' : '-1',
                     onclick: () => choose(name),
+                    onkeydown: (e) => keys(e, index),
                 },
                 h('span', { class: 'cup-preset-title' }, presetTitle(name, preset)),
                 h('span', { class: 'cup-preset-text muted small' }, presetDescription(name, preset) || preset.stages.map(stageText).join(COMMA_THEN)),
@@ -481,7 +542,12 @@ export class TournamentsPage {
                         try {
                             await tournamentsApi.removePreset(name);
                             delete this.presets[name];
+                            // A draft made from the deleted preset no longer names it.
+                            if (this.draft.preset === name) {
+                                this.draft.preset = null;
+                            }
                             this.renderWizard();
+                            this.mainHost.querySelector('.cup-preset-pick[tabindex="0"]')?.focus();
                         } catch (err) {
                             this.app.hud.toast(err.message, 'error');
                         }
@@ -527,29 +593,47 @@ export class TournamentsPage {
         const adders = h('div', { class: 'cup-adders' },
             h('div', { class: 'cup-adder' }, h('label', { class: 'field' }, t('tournament.entrants.team'), teamSelect),
                 h('button', { type: 'button', class: 'btn', disabled: !teams.length, ...symbolOnly(t('tournament.entrants.team.add')), onclick: () => addTeam(teamSelect.value) }, icon('plus')),
-                h('button', { type: 'button', class: 'btn ghost', disabled: !teams.length, onclick: () => {
+                h('button', { type: 'button', class: 'btn ghost', 'data-focus': 'add-all', disabled: !teams.length, onclick: () => {
                     const have = new Set(d.entrants.filter((e) => e.kind === 'team').map((e) => e.team));
-                    for (const x of teams.filter((team) => !have.has(team.id))) {
+                    const missing = teams.filter((team) => !have.has(team.id));
+                    if (!missing.length) {
+                        this.app.hud.toast(t('tournament.entrants.team.allIn'), 'info');
+                        return;
+                    }
+                    // The list stops at the most entrants a tournament takes, and says so.
+                    const room = 256 - d.entrants.length;
+                    for (const x of missing.slice(0, Math.max(0, room))) {
                         const taken = this.takenNames();
                         d.entrants.push(taken.has(nameKey(x.name)) ? { kind: 'team', team: x.id, name: freeName(x.name, taken) } : { kind: 'team', team: x.id });
+                    }
+                    if (missing.length > room) {
+                        this.app.hud.toast(t('tournament.entrants.full'), 'error');
                     }
                     this.renderWizard();
                 } }, icon('plus'), t('tournament.entrants.team.addAll'))),
             h('div', { class: 'cup-adder' }, h('label', { class: 'field' }, t('tournament.entrants.builtin'), ability),
                 h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.entrants.builtin.add')), onclick: () => {
-                    const value = Number(ability.value);
+                    // An empty box reads as no ability at all, never as 0.
+                    const value = ability.value.trim() === '' ? NaN : Number(ability.value);
                     if (!(value >= 0 && value <= 1)) {
                         this.app.hud.toast(t('tournament.entrants.builtin.range'), 'error');
+                        ability.focus();
                         return;
                     }
-                    add({ kind: 'builtin', ability: Math.round(value * 10000) / 10000 });
-                } }, icon('plus')),
-                h('button', { type: 'button', class: 'btn ghost', onclick: () => {
-                    [0.2, 0.4, 0.6, 0.8].forEach((v) => d.entrants.push({ kind: 'builtin', ability: v }));
-                    this.renderWizard();
-                } }, icon('plus'), t('tournament.entrants.builtin.addFour'))),
+                    const entry = { kind: 'builtin', ability: Math.round(value * 10000) / 10000 };
+                    const base = this.shownName(entry);
+                    if (add(entry)) {
+                        // The built-in AI at an ability that an entrant already shows enters under
+                        // the next number, which the server gives it, as a team entered again does.
+                        const made = this.madeNames().at(-1);
+                        if (made !== base) {
+                            this.app.hud.toast(t('tournament.entrants.renamed', { team: base, name: made }), 'info', 6000, 'edit');
+                            this.mainHost.querySelector('.cup-entrants > li:last-child .cup-entrant-name input')?.focus();
+                        }
+                    }
+                } }, icon('plus'))),
             h('div', { class: 'cup-adder' }, h('label', { class: 'field' }, t('tournament.entrants.person'), person),
-                h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.entrants.person.add')), onclick: () => {
+                h('button', { type: 'button', class: 'btn cup-add-person', ...symbolOnly(t('tournament.entrants.person.add')), onclick: () => {
                     const name = person.value.trim();
                     if (!name) {
                         this.app.hud.toast(t('tournament.entrants.person.noName'), 'error');
@@ -563,6 +647,13 @@ export class TournamentsPage {
                     }
                     add({ kind: 'person', name, teammates: 'builtin' });
                 } }, icon('plus'))));
+        // Enter in the name of a person adds the person, as the button beside it does.
+        person.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.isComposing) {
+                e.preventDefault();
+                adders.querySelector('.cup-add-person')?.click();
+            }
+        });
         const rows = d.entrants.map((entry, index) => this.entrantRow(entry, index));
         queueMicrotask(() => this.markNames());
         // The draw is random from the tournament seed, unless the person sets the bracket by hand,
@@ -618,6 +709,10 @@ export class TournamentsPage {
         });
         ability.addEventListener('input', () => {
             entry.ability = ability.value === '' ? null : Number(ability.value);
+            // The made name of the built-in AI holds its ability, so the names follow it.
+            if (entry.kind === 'builtin') {
+                this.markNames();
+            }
         });
         const abilityField = h('label', { class: 'field small-field' }, t('tournament.entrant.ability'), ability);
         if (entry.kind === 'person') {
@@ -640,7 +735,11 @@ export class TournamentsPage {
             }
             [d.entrants[index], d.entrants[to]] = [d.entrants[to], d.entrants[index]];
             this.renderWizard();
-            this.mainHost.querySelectorAll('.cup-entrants > li')[to]?.querySelector(by < 0 ? '.cup-up' : '.cup-down')?.focus();
+            // The moved entrant keeps the focus on the button that moved it, or on the other one
+            // once it reaches either end of the list.
+            const row = this.mainHost.querySelectorAll('.cup-entrants > li')[to];
+            const buttons = row ? [row.querySelector(by < 0 ? '.cup-up' : '.cup-down'), row.querySelector(by < 0 ? '.cup-down' : '.cup-up')] : [];
+            buttons.find((button) => button && !button.disabled)?.focus();
         };
         return h('li', { class: 'cup-entrant' },
             team ? kitShirt(team, 0) : h('span', { class: `cup-kind ${entry.kind}`, 'aria-hidden': 'true' }, entry.kind === 'person' ? t('tournament.entrant.glyph.person') : t('tournament.entrant.glyph.builtin')),
@@ -650,9 +749,14 @@ export class TournamentsPage {
             h('span', { class: 'cup-entrant-actions' },
                 h('button', { type: 'button', class: 'btn small ghost cup-up', ...symbolOnly(t('tournament.entrant.up.label', { number })), disabled: index === 0, onclick: () => move(-1) }, icon('up')),
                 h('button', { type: 'button', class: 'btn small ghost cup-down', ...symbolOnly(t('tournament.entrant.down.label', { number })), disabled: index === d.entrants.length - 1, onclick: () => move(1) }, icon('down')),
-                h('button', { type: 'button', class: 'btn small ghost danger', ...symbolOnly(t('tournament.entrant.remove.label', { number })), onclick: () => {
+                h('button', { type: 'button', class: 'btn small ghost danger cup-remove', ...symbolOnly(t('tournament.entrant.remove.label', { number })), onclick: () => {
                     d.entrants.splice(index, 1);
                     this.renderWizard();
+                    // The focus moves to the entrant that takes the place, else the one before it,
+                    // else to the first way to add an entrant.
+                    const rows = this.mainHost.querySelectorAll('.cup-entrants > li');
+                    const row = rows[Math.min(index, rows.length - 1)];
+                    (row ? row.querySelector('.cup-remove') : this.mainHost.querySelector('.cup-adder select, .cup-adder input'))?.focus();
                 } }, icon('close'))));
     }
 
@@ -670,6 +774,12 @@ export class TournamentsPage {
             return entry.ability == null ? t('tournament.entrant.builtin') : t('tournament.entrant.builtinAt', { ability: abilityText(entry.ability) });
         }
         return '';
+    }
+
+    // The name that each entrant of the draft takes, the one a person gave, else the one the
+    // server makes from its team or kind, numbered from 2 when an entrant already holds it.
+    madeNames() {
+        return madeNames(this.draft.entrants.map((e) => ({ name: this.shownName(e), own: !!e.name })));
     }
 
     // The keys of the names that the entrants of the draft show.
@@ -701,11 +811,16 @@ export class TournamentsPage {
         if (!this.draft || this.mode !== 'wizard') {
             return;
         }
+        const made = this.madeNames();
         this.mainHost.querySelectorAll('.cup-entrants > li').forEach((row, index) => {
             const input = row.querySelector('.cup-entrant-name input');
             const note = row.querySelector('.cup-name-note');
             if (!input || !note) {
                 return;
+            }
+            // A field left empty shows the name that the entrant takes, as the server makes it.
+            if (made[index] && input.placeholder !== made[index]) {
+                input.placeholder = made[index];
             }
             const other = this.nameClash(index);
             const text = other >= 0 ? t('tournament.entrant.name.taken', { name: this.draft.entrants[index].name, other: other + 1 }) : '';
@@ -797,7 +912,7 @@ export class TournamentsPage {
         const d = this.draft;
         const label = t('tournament.settings.ability');
         const on = d.ability !== null && d.ability !== undefined;
-        const box = h('input', { type: 'checkbox', class: 'cup-standard-set', checked: on, 'aria-label': t('tournament.optional.set.label', { label: label.toLowerCase() }) });
+        const box = h('input', { type: 'checkbox', class: 'cup-standard-set', checked: on, 'aria-label': t('tournament.optional.set.label', { label }) });
         const range = h('input', { type: 'range', class: 'cup-standard-range', min: '0', max: '1', step: '0.05', value: String(on ? d.ability : 0.5), disabled: !on, 'aria-label': label });
         const shown = h('output', { class: 'ability-value' });
         const show = () => {
@@ -820,7 +935,7 @@ export class TournamentsPage {
     // A number that may be left to its default, a box that turns it on and the number itself.
     optionalNumber(field, value, onChange) {
         const on = value !== null && value !== undefined;
-        const box = h('input', { type: 'checkbox', checked: on, 'aria-label': t('tournament.optional.set.label', { label: field.label.toLowerCase() }) });
+        const box = h('input', { type: 'checkbox', checked: on, 'aria-label': t('tournament.optional.set.label', { label: field.label }) });
         const input = h('input', {
             type: 'number', min: String(field.min), max: String(field.max), step: String(field.step || 1),
             value: String(on ? value : field.initial), disabled: !on, 'aria-label': field.label,
@@ -857,15 +972,22 @@ export class TournamentsPage {
                 applied.textContent = t('tournament.json.failed', { reason: err.message });
             }
         } }, icon('check'));
+        // The editor of JSON stays open through the redraws that applying it makes.
+        const jsonBox = h('details', { class: 'cup-json-box', open: !!this.jsonOpen }, h('summary', {}, t('tournament.json.edit')), json, h('div', { class: 'row' }, apply), applied);
+        jsonBox.addEventListener('toggle', () => {
+            this.jsonOpen = jsonBox.open;
+        });
         return [
             h('p', { class: 'muted' }, tn('tournament.stages.intro')),
             h('div', { class: 'cup-form' }, this.standardControl()),
             h('div', { class: 'cup-stages' }, stages),
-            h('button', { type: 'button', class: 'btn', disabled: d.stages.length >= 8, ...symbolOnly(t('tournament.stages.add')), onclick: () => {
+            h('button', { type: 'button', class: 'btn', 'data-focus': 'add-stage', disabled: d.stages.length >= 8, ...symbolOnly(t('tournament.stages.add')), onclick: () => {
                 d.stages.push({ format: 'knockout', name: '' });
                 this.renderWizard();
+                // The new stage opens at its first field, its name.
+                [...this.mainHost.querySelectorAll('.cup-stage')].at(-1)?.querySelector('input, select')?.focus();
             } }, icon('plus')),
-            h('details', { class: 'cup-json-box' }, h('summary', {}, t('tournament.json.edit')), json, h('div', { class: 'row' }, apply), applied),
+            jsonBox,
         ];
     }
 
@@ -877,20 +999,34 @@ export class TournamentsPage {
         const rows = STAGE_FIELDS.filter((f) => (!f.formats || f.formats.includes(format))
             && !(f.later && index === 0) && !(f.notLast && last))
             .map((field) => this.stageField(stage, merged, field, index));
+        // A stage that moves keeps the focus on the button that moved it, or on the other one at
+        // either end, and a removed stage gives it to the stage that takes its place.
+        const focusStage = (at, ...kinds) => {
+            const card = this.mainHost.querySelectorAll('.cup-stage')[at];
+            kinds.map((kind) => card && card.querySelector(`[data-stage="${kind}"]`))
+                .find((button) => button && !button.disabled)?.focus();
+        };
         const move = (by) => {
             const to = index + by;
             [d.stages[index], d.stages[to]] = [d.stages[to], d.stages[index]];
             this.renderWizard();
+            focusStage(to, by < 0 ? 'earlier' : 'later', by < 0 ? 'later' : 'earlier');
         };
+        const number = index + 1;
         return h('fieldset', { class: 'cup-stage' },
             h('legend', {}, t('tournament.stage.legend', { number: index + 1, format: FORMAT_NAMES[format] || format })),
             h('div', { class: 'cup-stage-fields' }, rows),
             h('div', { class: 'row' },
-                h('button', { type: 'button', class: 'btn small ghost', disabled: index === 0, ...symbolOnly(t('tournament.stage.earlier')), onclick: () => move(-1) }, icon('up')),
-                h('button', { type: 'button', class: 'btn small ghost', disabled: last, ...symbolOnly(t('tournament.stage.later')), onclick: () => move(1) }, icon('down')),
-                h('button', { type: 'button', class: 'btn small ghost danger', disabled: d.stages.length === 1, ...symbolOnly(t('tournament.stage.remove')), onclick: () => {
+                h('button', { type: 'button', class: 'btn small ghost', 'data-stage': 'earlier', disabled: index === 0, ...symbolOnly(t('tournament.stage.earlier', { number })), onclick: () => move(-1) }, icon('up')),
+                h('button', { type: 'button', class: 'btn small ghost', 'data-stage': 'later', disabled: last, ...symbolOnly(t('tournament.stage.later', { number })), onclick: () => move(1) }, icon('down')),
+                h('button', { type: 'button', class: 'btn small ghost danger', 'data-stage': 'remove', disabled: d.stages.length === 1, ...symbolOnly(t('tournament.stage.remove', { number })), onclick: () => {
                     d.stages.splice(index, 1);
                     this.renderWizard();
+                    const count = this.mainHost.querySelectorAll('.cup-stage').length;
+                    focusStage(Math.min(index, count - 1), 'remove', 'earlier', 'later');
+                    if (!this.mainHost.contains(document.activeElement)) {
+                        this.mainHost.querySelector('[data-focus="add-stage"]')?.focus();
+                    }
                 } }, icon('close'))));
     }
 
@@ -966,14 +1102,14 @@ export class TournamentsPage {
             input.addEventListener('input', sync);
             control = h('span', { class: 'cup-optional' }, input, h('label', { class: 'check' }, box, t('tournament.stage.fill')));
         } else if (field.type === 'order') {
-            control = this.orderControl(field, value, set, label);
+            control = this.orderControl(field, value, set, label, index + 1);
         }
         return h('div', { class: 'field cup-field' }, h('span', { class: 'cup-field-label' }, field.label), control,
             field.help ? h('span', { class: 'muted small' }, field.help) : null);
     }
 
     // An ordered choice, such as the tiebreakers, each option on or off with buttons to move it.
-    orderControl(field, value, set, label) {
+    orderControl(field, value, set, label, number) {
         const chosen = (value || []).filter((v) => field.options.includes(v));
         // Lots always decide last, so they stay at the end of the list.
         const order = [...chosen, ...field.options.filter((v) => !chosen.includes(v))].filter((v) => v !== 'lots');
@@ -984,7 +1120,7 @@ export class TournamentsPage {
         const draw = (focus = null) => {
             list.replaceChildren(...order.map((name, i) => {
                 const on = chosen.includes(name);
-                const box = h('input', { type: 'checkbox', checked: on || name === 'lots', disabled: name === 'lots', 'aria-label': t('tournament.order.use.label', { name: field.names[name] }) });
+                const box = h('input', { type: 'checkbox', checked: on || name === 'lots', disabled: name === 'lots', 'data-focus': `use-${name}`, 'aria-label': t('tournament.order.use.label', { name: field.names[name], number }) });
                 box.addEventListener('change', () => {
                     if (box.checked) {
                         chosen.push(name);
@@ -993,10 +1129,11 @@ export class TournamentsPage {
                     }
                     commit();
                 });
-                const up = name === 'lots' ? null : h('button', { type: 'button', class: 'btn small ghost', disabled: i === 0, ...symbolOnly(t('tournament.order.earlier.label', { name: field.names[name] })), onclick: () => {
+                const up = name === 'lots' ? null : h('button', { type: 'button', class: 'btn small ghost', disabled: i === 0, ...symbolOnly(t('tournament.order.earlier.label', { name: field.names[name], number })), onclick: () => {
                     [order[i - 1], order[i]] = [order[i], order[i - 1]];
                     commit();
-                    draw(`up-${name}`);
+                    // At the top of the list the button no longer moves it, so its box takes the focus.
+                    draw(i - 1 === 0 ? `use-${name}` : `up-${name}`);
                 } }, icon('up'));
                 if (up) {
                     up.dataset.focus = `up-${name}`;
@@ -1017,11 +1154,26 @@ export class TournamentsPage {
 
     reviewStep() {
         const host = h('div', { class: 'cup-review', 'aria-busy': 'true' }, h('p', { class: 'muted' }, t('tournament.review.checking')));
-        const saveName = h('input', { type: 'text', placeholder: t('tournament.review.presetName.placeholder'), pattern: '[a-z0-9][a-z0-9_-]*', 'aria-label': t('tournament.review.presetName.label') });
+        const saveName = h('input', { type: 'text', class: 'cup-preset-name', maxlength: '64', placeholder: t('tournament.review.presetName.placeholder'), pattern: PRESET_NAME.source, 'aria-label': t('tournament.review.presetName.label') });
         const saveTitle = h('input', { type: 'text', maxlength: '60', placeholder: t('tournament.review.presetTitle.placeholder'), value: this.draft.name, 'aria-label': t('tournament.review.presetTitle.label') });
         const save = h('div', { class: 'cup-save' },
             h('h3', {}, t('tournament.review.save.title')),
-            h('div', { class: 'row' }, saveName, saveTitle, h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.review.save')), onclick: () => this.savePreset(saveName.value.trim(), saveTitle.value.trim()) }, icon('save'))));
+            h('div', { class: 'row' },
+                h('label', { class: 'field' }, t('tournament.review.presetName'), saveName),
+                h('label', { class: 'field' }, t('tournament.review.presetTitle.placeholder'), saveTitle),
+                h('button', { type: 'button', class: 'btn', ...symbolOnly(t('tournament.review.save')), onclick: () => {
+                    // A name that the server cannot take is refused here, with its rule and the
+                    // focus on the name.
+                    const name = saveName.value.trim();
+                    if (!PRESET_NAME.test(name)) {
+                        saveName.setAttribute('aria-invalid', 'true');
+                        this.app.hud.toast(t('tournament.review.presetName.rule'), 'error', 7000);
+                        saveName.focus();
+                        return;
+                    }
+                    saveName.removeAttribute('aria-invalid');
+                    this.savePreset(name, saveTitle.value.trim());
+                } }, icon('save'))));
         const clashes = this.nameClashes();
         if (clashes.length) {
             // Two entrants that share a name go back to the entrants step, before any check.
@@ -1103,8 +1255,17 @@ export class TournamentsPage {
             host.replaceChildren(...parts);
         } catch (err) {
             host.setAttribute('aria-busy', 'false');
+            // A scenario that an entrant cannot play names its stage, so a button leads straight to
+            // that stage's scenario.
+            // A scenario of the deciding matches leads to that field of the stage instead.
+            const decider = err.id === 'server.tournament.cannot_play_decider';
+            const stage = err.id === 'server.tournament.cannot_play' || decider ? Number(err.values?.stage) : NaN;
+            const fix = Number.isInteger(stage) && stage >= 1 && stage <= this.draft.stages.length
+                ? h('button', { type: 'button', class: 'btn cup-fix-scenario', onclick: () => this.focusStageScenario(stage - 1, decider) },
+                    icon('edit'), t(decider ? 'tournament.review.fixDecider' : 'tournament.review.fixScenario', { number: stage }))
+                : null;
             host.replaceChildren(h('div', { class: 'notice error', role: 'alert' }, h('p', {}, err.message),
-                h('p', { class: 'muted small' }, tn('tournament.review.failed'))));
+                h('p', { class: 'muted small' }, tn('tournament.review.failed')), fix));
         }
     }
 
@@ -1147,6 +1308,7 @@ export class TournamentsPage {
         this.root.querySelector('.cup-layout')?.classList.remove('brackets');
         this.openId = id;
         this.awarding = null;
+        this.asking = null;
         this.stageTab = null;
         this.renderList();
         this.mainHost.setAttribute('aria-busy', 'true');
@@ -1211,7 +1373,11 @@ export class TournamentsPage {
         const share = progressShare(cup);
         const actions = [];
         if (cup.state === 'running') {
-            actions.push(h('button', { type: 'button', class: 'btn ghost danger', 'data-focus': 'act-cancel', ...symbolOnly(t('tournament.view.cancel')), onclick: () => this.act('cancel', t('tournament.view.cancelled')) }, icon('stop')));
+            // Canceling cannot be undone, so it asks first in place of the button.
+            actions.push(this.askButton('cancel',
+                h('button', { type: 'button', class: 'btn ghost danger', ...symbolOnly(t('tournament.view.cancel')) }, icon('stop')),
+                t('tournament.view.cancel.confirm', { name: serverText(cup, 'name') }), t('tournament.view.cancel'), t('tournament.view.cancel.no'),
+                () => this.act('cancel', t('tournament.view.cancelled'))));
         }
         if (cup.state === 'stopped') {
             actions.push(h('button', { type: 'button', class: 'btn primary', 'data-focus': 'act-resume', ...symbolOnly(t('tournament.view.resume')), onclick: () => this.act('resume', t('tournament.view.resumed')) }, icon('play')));
@@ -1227,7 +1393,10 @@ export class TournamentsPage {
             this.draft.seed = '';
         } }, icon('replay')));
         if (cup.state !== 'running') {
-            actions.push(h('button', { type: 'button', class: 'btn ghost danger', 'data-focus': 'act-delete', onclick: () => this.remove() }, icon('trash'), t('tournament.view.delete')));
+            actions.push(this.askButton('delete',
+                h('button', { type: 'button', class: 'btn ghost danger' }, icon('trash'), t('tournament.view.delete')),
+                t('tournament.delete.confirm', { name: serverText(cup, 'name') }), t('tournament.view.delete'), t('tournament.forfeit.no'),
+                () => this.remove()));
         }
         const head = h('header', { class: 'cup-head' },
             h('h2', { tabindex: '-1' }, serverText(cup, 'name')),
@@ -1241,6 +1410,7 @@ export class TournamentsPage {
             cup.state === 'running' ? h('div', { class: 'progress', role: 'progressbar', 'aria-label': t('tournament.view.progress.label'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(share * 100)) },
                 h('div', { class: 'bar', style: `width:${Math.round(share * 100)}%` })) : null,
             cup.champion ? h('p', { class: 'cup-champion' }, h('span', {}, t('tournament.view.champion', { name: serverText(cup, 'champion') }))) : null,
+            cup.state === 'cancelled' ? h('p', { class: 'notice cup-canceled' }, icon('close', 'icon text-symbol'), t('tournament.view.canceledNote')) : null,
             cup.error ? h('div', { class: 'notice error', role: 'alert' }, h('p', {}, serverText(cup, 'error')), this.failedAwards(cup)) : null,
             cup.persistence_error ? h('div', { class: 'notice error' }, h('p', {}, serverText(cup, 'persistence_error'))) : null,
             cup.owner ? h('p', { class: 'muted small' }, t('tournament.view.owner', { owner: cup.owner })) : null,
@@ -1283,14 +1453,80 @@ export class TournamentsPage {
             h('h3', { id: 'cup-ranking-title' }, t('tournament.view.ranking')),
             h('ol', {}, cup.ranking.map((e) => h('li', {}, entrantName(entrants[e]))))) : null;
         const focused = document.activeElement && this.mainHost.contains(document.activeElement) ? document.activeElement : null;
-        const focusKey = focused ? (focused.id || focused.dataset.focus || null) : null;
-        const byId = focusKey && focused.id === focusKey;
+        // An action that took the focus with it, such as a confirmed award, names where it was.
+        const focusKey = focused ? (focused.id || focused.dataset.focus || null) : this.focusAfter || null;
+        const byId = !!focused && focusKey === focused.id;
+        this.focusAfter = null;
         const scroll = this.mainHost.scrollTop;
         this.mainHost.replaceChildren(h('div', { class: 'cup-view' }, head, this.caughtUp(cup), peopleBox, this.upNextBox(cup), tabs, panel, ranking));
         this.mainHost.scrollTop = scroll;
         if (focusKey) {
-            (byId ? document.getElementById(focusKey) : this.mainHost.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`))?.focus();
+            this.refocus(focusKey, byId);
         }
+    }
+
+    // A button of the tournament that asks first, as an award does, the question with its yes and
+    // no in place of the button, through the page's refreshes until either answer. Escape or no
+    // leaves everything as it was, and the focus returns to the button.
+    askButton(name, button, question, yes, no, onYes) {
+        const focus = (key) => this.mainHost.querySelector(`[data-focus="${CSS.escape(key)}"]`)?.focus();
+        if (this.asking !== name) {
+            button.dataset.focus = `act-${name}`;
+            button.addEventListener('click', () => {
+                this.asking = name;
+                this.renderView();
+                focus(`ask-no-${name}`);
+            });
+            return button;
+        }
+        const cancel = () => {
+            this.asking = null;
+            this.renderView();
+            focus(`act-${name}`);
+        };
+        return h('span', {
+            class: 'cup-confirm', role: 'group', 'aria-label': question,
+            onkeydown: (e) => {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancel();
+                }
+            },
+        },
+        h('span', { class: 'small' }, question),
+        h('button', { type: 'button', class: 'btn small primary danger', 'data-focus': `ask-yes-${name}`, onclick: (e) => {
+            e.currentTarget.disabled = true;
+            this.asking = null;
+            this.focusAfter = `ask-yes-${name}`;
+            onYes();
+        } }, yes),
+        h('button', { type: 'button', class: 'btn small ghost', 'data-focus': `ask-no-${name}`, onclick: cancel }, icon('close'), no));
+    }
+
+    // Focuses the control of `key` again once the tournament is drawn anew, or when it is gone or
+    // can no longer be used, as after an award, a reveal or a change of state, a control that
+    // takes its place, else the name of the tournament, so the focus never falls to the page.
+    refocus(key, byId = false) {
+        const find = (name) => {
+            const node = this.mainHost.querySelector(`[data-focus="${CSS.escape(name)}"]`);
+            return node && !node.disabled ? node : null;
+        };
+        const usable = byId ? document.getElementById(key) : find(key);
+        if (usable && !usable.disabled) {
+            usable.focus();
+            return;
+        }
+        const match = /^(?:unseen-watch|unseen-reveal)-(.+)$/.exec(key);
+        const instead = {
+            'act-resume': ['act-cancel', 'act-delete'], 'act-cancel': ['act-delete', 'act-resume'],
+            'ask-yes-cancel': ['act-delete', 'act-resume'], 'ask-no-cancel': ['act-cancel'],
+            'zoom-out': ['zoom-in'], 'zoom-in': ['zoom-out'], 'watch-next': ['reveal-all'],
+        }[key] || (match ? [`watch-${match[1]}`, 'watch-next'] : []);
+        const award = /^award-yes-(fixture|notice)-/.exec(key);
+        const next = award ? [...this.mainHost.querySelectorAll(`[data-focus^="award-${award[1]}-"]`)].find((node) => !node.disabled) : null;
+        const found = next || [...instead, 'watch-next'].map(find).find(Boolean);
+        (found || this.mainHost.querySelector('h2'))?.focus();
     }
 
     // The awards of the failed matches, for the notice of a stopped tournament.
@@ -1343,6 +1579,7 @@ export class TournamentsPage {
         h('span', { class: 'small' }, question),
         h('button', { type: 'button', class: 'btn small primary', 'data-focus': `award-yes-${id}`, onclick: async (e) => {
             e.currentTarget.disabled = true;
+            this.focusAfter = `award-yes-${id}`;
             try {
                 this.current = await tournamentsApi.action(this.current.id, 'forfeit', { key: match.key, winner: side });
                 this.awarding = null;
@@ -1362,7 +1599,8 @@ export class TournamentsPage {
         const parts = [h('p', { class: 'muted small' }, [
             stageText(settings), scenarioName(settings.scenario), settings.length ? t('tournament.count.steps', { count: settings.length }) : null,
             settings.ability != null ? t('tournament.stage.ability', { ability: abilityText(settings.ability) }) : null,
-            stage.state === 'waiting' ? t('tournament.stage.waiting') : null,
+            stage.state === 'waiting' && this.current.state !== 'cancelled' ? t('tournament.stage.waiting') : null,
+            stage.state !== 'done' && this.current.state === 'cancelled' ? t('tournament.stage.cancelled') : null,
         ].filter(Boolean).join(', '))];
         if (stage.state === 'waiting') {
             return parts;
@@ -1411,9 +1649,14 @@ export class TournamentsPage {
             }
         });
         layout.cells.flat().forEach((cell) => {
-            const box = h('div', { class: 'cup-bracket-cell', role: 'listitem', style: `grid-column:${cell.column}; grid-row:${cell.rowStart + 1} / ${cell.rowEnd + 1}` },
-                this.fixture(byId.get(cell.id), true, roundOf.get(cell.id)));
-            grid.append(box);
+            const fixture = byId.get(cell.id);
+            const place = `grid-column:${cell.column}; grid-row:${cell.rowStart + 1} / ${cell.rowEnd + 1}`;
+            // A tie of two byes plays nothing and holds its place in the grid empty.
+            if (fixture.home == null && fixture.away == null) {
+                grid.append(h('div', { class: 'cup-bracket-cell empty', 'aria-hidden': 'true', style: place }));
+                return;
+            }
+            grid.append(h('div', { class: 'cup-bracket-cell', role: 'listitem', style: place }, this.fixture(fixture, true, roundOf.get(cell.id))));
         });
         return h('section', { class: 'cup-bracket-section', 'aria-label': name },
             h('h3', {}, name), h('div', { class: 'cup-bracket-scroll', tabindex: '0', 'aria-label': t('tournament.bracket.scroll.label', { name }) }, grid));
@@ -1422,7 +1665,7 @@ export class TournamentsPage {
     fixture(f, compact = false, round = null) {
         const cup = this.current;
         const entrants = cup.config.entrants;
-        const state = fixtureState(f, this.matchMap);
+        const state = fixtureState(f, this.matchMap, cup.state === 'cancelled');
         const matches = fixtureMatches(f, this.matchMap);
         // Two entrants of one team meet with the away side in its away kit, as in the match.
         const same = typeof f.home === 'number' && typeof f.away === 'number' && entrants[f.home].team === entrants[f.away].team;
@@ -1442,7 +1685,10 @@ export class TournamentsPage {
                 f.score ? h('b', { class: 'cup-goals' }, String(f.score[index])) : null);
         };
         const running = matches.find((m) => m.state === 'running');
-        const decided = f.decided_by && DECIDED_NAMES[f.decided_by] ? DECIDED_NAMES[f.decided_by] : '';
+        // How a tie was decided, left out where the score of its replay or deciding matches
+        // already says so, after those scores, in the order things happened.
+        const told = (f.decided_by === 'replay' && f.replay) || (f.decided_by === 'decider' && f.decider);
+        const decided = !told && f.decided_by && DECIDED_NAMES[f.decided_by] ? DECIDED_NAMES[f.decided_by] : '';
         const watch = matches.filter((m) => m.result && m.result.match);
         const unseen = matches.filter((m) => m.state === 'unseen');
         // A failed match waits for an award to either side, or a retry by Resume.
@@ -1453,12 +1699,12 @@ export class TournamentsPage {
             f.decider ? t('tournament.fixture.decider', { left: f.decider[0], right: f.decider[1] }) : null];
         const winner = typeof f.winner === 'number' && f.state === 'done' ? t('tournament.fixture.wonBy', { name: sideName(f.winner, entrants) }) : null;
         const spoken = [label, t('tournament.fixture.versus', { home: spokenSide(f.home), away: spokenSide(f.away) }),
-            f.score ? t('tournament.fixture.score', { left: f.score[0], right: f.score[1] }) : null, ...extra, winner, decided, state !== 'done' ? STATE_NAMES[state] || state : null];
+            f.score ? t('tournament.fixture.score', { left: f.score[0], right: f.score[1] }) : null, ...extra, decided, winner, state !== 'done' ? STATE_NAMES[state] || state : null];
         return h('div', { class: `cup-fixture state-${state}`, 'aria-label': spoken.filter(Boolean).join(', ') },
             compact && label && f.label !== round ? h('span', { class: 'cup-fixture-label small muted' }, label) : null,
             side(f.home, 0), side(f.away, 1),
             h('span', { class: 'cup-fixture-meta small muted' },
-                [decided, ...extra, state !== 'done' ? STATE_NAMES[state] : null,
+                [...extra, decided, state !== 'done' ? STATE_NAMES[state] : null,
                     running ? t('tournament.fixture.percent', { pct: Math.round((running.progress || 0) * 100) }) : null,
                     f.group ? t('tournament.fixture.group', { group: f.group }) : null,
                     matches.some((m) => m.result && m.result.forfeit) ? t('tournament.fixture.awarded') : null,
@@ -1468,7 +1714,8 @@ export class TournamentsPage {
                 ...symbolOnly(t('tournament.watch.label', { label: serverText(m, 'label'), home: entrantName(entrants[m.home]), away: entrantName(entrants[m.away]) })),
                 onclick: () => this.app.openMatchInWatch(m.result.match),
             }, icon('watch'), watch.length > 1 ? formatNumber(i + 1) : null))) : null,
-            unseen.length ? h('span', { class: 'cup-unseen row' }, unseen.map((m) => this.unseenButtons(m))) : null,
+            // Each match gives a pair of buttons, so the pairs flatten into one row.
+            unseen.length ? h('span', { class: 'cup-unseen row' }, unseen.flatMap((m) => this.unseenButtons(m))) : null,
             failed ? h('span', { class: 'row' }, this.forfeitButton(failed, 'home'), this.forfeitButton(failed, 'away')) : null,
             matches.some((m) => m.state === 'person') ? h('button', { type: 'button', class: 'btn small primary', 'data-focus': `play-${f.id}`, disabled: cup.state !== 'running', ...symbolOnly(t('tournament.play')), onclick: () => this.playMatch(matches.find((m) => m.state === 'person')) }, icon('play')) : null);
     }
@@ -1502,12 +1749,11 @@ export class TournamentsPage {
             return h('tr', { class: qualified && stage.index < this.current.config.stages.length - 1 ? 'qualified' : '' },
                 cells.map((value, i) => (i === 1 ? h('th', { scope: 'row' }, String(value), abilityBadge(entrants[row.entrant], this.current.config.ability ?? null), row.best ? h('span', { class: 'muted small' }, t('tournament.table.best')) : null) : h('td', {}, String(value)))));
         });
-        const ordered = settings.tiebreakers.map((name) => TIEBREAK_NAMES[name]).join(COMMA_THEN);
         const name = serverText(table, 'name');
         return h('section', { class: 'cup-table' },
             h('h3', {}, name),
             h('div', { class: 'cup-table-scroll', tabindex: '0', 'aria-label': t('tournament.table.scroll.label', { name }) },
-                h('table', {}, h('caption', { class: 'muted small' }, t('tournament.table.caption', { order: ordered })),
+                h('table', {}, h('caption', { class: 'muted small' }, tableCaption(stage.format, settings.tiebreakers)),
                     h('thead', {}, h('tr', {}, head.map((name) => h('th', { scope: 'col' }, name)))),
                     h('tbody', {}, rows))),
             notes.length ? h('ul', { class: 'cup-tiebreaks small' }, notes) : null);
@@ -1523,18 +1769,19 @@ export class TournamentsPage {
         }
     }
 
+    // Deletes the open tournament, once its question has been answered, and gives the focus to
+    // the list of tournaments.
     async remove() {
         const cup = this.current;
-        if (!window.confirm(t('tournament.delete.confirm', { name: serverText(cup, 'name') }))) {
-            return;
-        }
         try {
             await tournamentsApi.remove(cup.id);
             this.mode = 'empty';
             this.openId = null;
             this.current = null;
             await this.refresh();
+            (this.listHost.querySelector('.cup-item') || this.root.querySelector('.cup-side-head button'))?.focus();
         } catch (err) {
+            this.renderView();
             this.app.hud.toast(err.message, 'error');
         }
     }
@@ -1668,6 +1915,11 @@ export class TournamentsPage {
         }, h('span', { class: 'small' }, question),
         h('button', { type: 'button', class: 'btn small primary', 'data-focus': 'reveal-yes', onclick: async () => {
             this.revealing = false;
+            // The matches revealed here join those watched in this visit, so the summary of what
+            // the person missed lists them too.
+            const seen = new Set(watchedKeys(cup.id));
+            const fresh = (cup.spoilers.played || []).filter((key) => !seen.has(key));
+            (this.session[cup.id] = this.session[cup.id] || []).push(...fresh);
             markWatched(cup.id, ...(cup.spoilers.played || []));
             await this.load(cup.id);
             this.app.hud.toast(t('tournament.spoilers.revealed.all'));
@@ -1786,7 +2038,8 @@ export class TournamentsPage {
         const entrants = entry.config.entrants;
         const final = isFinal(next);
         const id = entry.id;
-        const left = h('span', { class: 'cup-count small', role: 'status' });
+        // A timer reads its count when asked, so a screen reader is not told every second.
+        const left = h('span', { class: 'cup-count small', role: 'timer' });
         let seconds = 10;
         const tick = () => {
             left.textContent = counting ? t('tournament.intermission.count', { count: seconds }) : '';
@@ -1806,13 +2059,14 @@ export class TournamentsPage {
             final ? t('tournament.intermission.final') : t('tournament.intermission.next')),
         h('p', { class: 'cup-intermission-stage small muted' }, `${serverText(entry, 'name')}, ${serverText(next, 'label')}`),
         h('p', { class: 'cup-intermission-sides' },
-            this.kickoffSide(entrants[next.home], 0), h('span', { class: 'cup-versus' }, t('tournament.intermission.versus')), this.kickoffSide(entrants[next.away], 1)),
+            this.kickoffSide(entrants[next.home], 0), h('span', { class: 'cup-versus' }, t('tournament.intermission.versus')), this.kickoffSide(entrants[next.away], 1, entrants[next.home])),
         left,
         h('div', { class: 'row' }, play,
             h('button', { type: 'button', class: 'btn ghost', onclick: () => this.closeIntermission() }, icon('close'), t('tournament.intermission.cancel'))));
         tick();
+        const before = document.activeElement;
         host.append(card);
-        this.intermission = { card, timer: null };
+        this.intermission = { card, timer: null, before };
         if (counting) {
             this.intermission.timer = setInterval(() => {
                 // A person who left Watch keeps the next match from starting there.
@@ -1830,20 +2084,31 @@ export class TournamentsPage {
         play.focus({ preventScroll: true });
     }
 
+    // Closes the card between matches. A card that held the focus gives it back to where it was
+    // before the card opened, else to the play button of Watch.
     closeIntermission() {
         if (!this.intermission) {
             return;
         }
-        clearInterval(this.intermission.timer);
-        this.intermission.card.remove();
+        const { card, timer, before } = this.intermission;
+        const held = card.contains(document.activeElement);
+        clearInterval(timer);
+        card.remove();
         this.intermission = null;
+        if (held) {
+            const back = before && before.isConnected && before !== document.body ? before : document.getElementById('btn-play');
+            back?.focus({ preventScroll: true });
+        }
     }
 
-    // A side of a kickoff card, the kit of its team or a mark of its color, and its name.
-    kickoffSide(entrant, index) {
+    // A side of a kickoff card, the kit of its team or a mark of its color, and its name. Two
+    // entrants of one team meet with the away side in its away kit, as in the match.
+    kickoffSide(entrant, index, other = null) {
         const team = entrant ? this.teams.find((x) => x.id === entrant.team) : null;
-        return h('span', { class: 'cup-kickoff-side' },
-            team ? kitShirt(team, index) : entrant ? h('span', { class: 'cup-dot', style: `background: rgb(${(entrant.color || [128, 128, 128]).join(',')})`, 'aria-hidden': 'true' }) : null,
+        const away = index === 1 && !!entrant && !!other && entrant.team === other.team;
+        const color = (away ? entrant && entrant.secondary : entrant && entrant.color) || [128, 128, 128];
+        return h('span', { class: `cup-kickoff-side${away ? ' away' : ''}` },
+            team ? kitShirt(away ? awayTeam(team) : team, index) : entrant ? h('span', { class: 'cup-dot', style: `background: rgb(${color.join(',')})`, 'aria-hidden': 'true' }) : null,
             h('span', {}, entrantName(entrant)));
     }
 
@@ -1867,9 +2132,9 @@ export class TournamentsPage {
                 },
             }, words);
             return h('li', { class: `cup-kickoff${final ? ' final' : ''}` },
-                h('p', { class: 'cup-kickoff-label small muted' }, final ? icon('trophy', 'icon text-symbol') : null,
-                    final ? t('tournament.upNext.final', { label: serverText(m, 'label') }) : serverText(m, 'label')),
-                h('p', { class: 'cup-kickoff-sides' }, this.kickoffSide(entrants[m.home], 0), h('span', { class: 'cup-versus' }, t('tournament.intermission.versus')), this.kickoffSide(entrants[m.away], 1)),
+                // The label of a final names it already, beside the symbol of the trophy.
+                h('p', { class: 'cup-kickoff-label small muted' }, final ? icon('trophy', 'icon text-symbol') : null, serverText(m, 'label')),
+                h('p', { class: 'cup-kickoff-sides' }, this.kickoffSide(entrants[m.home], 0), h('span', { class: 'cup-versus' }, t('tournament.intermission.versus')), this.kickoffSide(entrants[m.away], 1, entrants[m.home])),
                 h('p', { class: 'small muted' }, STATE_NAMES[m.state] || ''),
                 h('div', { class: 'cup-predict row', role: 'group', 'aria-label': t('tournament.predictions.label', { label: serverText(m, 'label') }) },
                     choose('home', entrantName(entrants[m.home])), choose('draw', t('tournament.predictions.draw')), choose('away', entrantName(entrants[m.away]))),
@@ -1970,13 +2235,15 @@ export class TournamentsPage {
         const panel = h('div', { class: 'cup-stage-view cup-big', id: 'cup-stage-panel', role: 'tabpanel', 'aria-labelledby': `cup-tab-${this.stageTab}`, style: `--cup-zoom: ${this.zoom}` },
             this.stageView(stage, cup.config.stages[this.stageTab]));
         const focused = document.activeElement && this.mainHost.contains(document.activeElement) ? document.activeElement : null;
-        const focusKey = focused ? (focused.id || focused.dataset.focus || null) : null;
-        const byId = focusKey && focused.id === focusKey;
+        // An action that took the focus with it, such as a confirmed award, names where it was.
+        const focusKey = focused ? (focused.id || focused.dataset.focus || null) : this.focusAfter || null;
+        const byId = !!focused && focusKey === focused.id;
+        this.focusAfter = null;
         const scroll = this.mainHost.scrollTop;
         this.mainHost.replaceChildren(h('div', { class: 'cup-view cup-brackets' }, head, tabs, panel));
         this.mainHost.scrollTop = scroll;
         if (focusKey) {
-            (byId ? document.getElementById(focusKey) : this.mainHost.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`))?.focus();
+            this.refocus(focusKey, byId);
         }
     }
 
@@ -2005,7 +2272,7 @@ export class TournamentsPage {
         }
         for (const cup of list) {
             const key = `${cup.id}|${cup.people_waiting}`;
-            if (cup.people_waiting && !this.announced.has(key)) {
+            if (cup.people_waiting && cup.state === 'running' && !this.announced.has(key)) {
                 this.announced.add(key);
                 this.app.hud.toast(t(this.visible ? 'tournament.toast.person' : 'tournament.toast.person.away', { name: serverText(cup, 'name') }), 'info', 6000);
             }
