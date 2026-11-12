@@ -120,7 +120,8 @@ def test_the_mean_of_a_call_after_the_first_is_limited_in_a_match(render_home):
         'builtin',
         '5_vs_5',
         seed=3,
-        strict={**_QUICK, 'match_seconds': 60},
+        # A mean far above the sleep of the team, so a slow runner does not break it.
+        strict={**_QUICK, 'mean_call_ms': 400, 'match_seconds': 60},
         stats=stats,
         steps=8,
         save=False,
@@ -147,9 +148,10 @@ def test_two_teams_keep_their_modules_threads_folders_and_inputs_apart(
     for found in seen:
         # Each team played from a copy of its folder inside its own private working folder,
         # both removed once the match ended.
-        copy = Path(found['helper']).parent
-        assert Path(found['path']) == copy and copy.name == 'team'
-        assert copy.parent == Path(found['folder']) and copy.parent.name.startswith('cuju-policy-')
+        # The paths are resolved, since macOS spells a temporary folder as /var and /private/var.
+        copy = Path(found['helper']).parent.resolve()
+        assert Path(found['path']).resolve() == copy and copy.name == 'team'
+        assert copy.parent == Path(found['folder']).resolve() and copy.parent.name.startswith('cuju-policy-')
         assert not copy.parent.exists()
         assert found['threads'] == {'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1'}
         assert not found['renderer'] and found['stdin'] == '' and found['pythonpath'] == []
