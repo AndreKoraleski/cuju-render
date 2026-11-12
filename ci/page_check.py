@@ -1578,7 +1578,9 @@ def first_run_checks(client):
             box.click();
             cuju.showPage('home');
             const tip = document.getElementById('tip');
-            const shown = await wait(() => !tip.hidden && !!tip.querySelector('kbd.chord'));
+            // The tip of Watch may still show for a moment, so the check waits for Home's own tip.
+            const shown = await wait(() => !tip.hidden && tip.dataset.page === 'home'
+                && !!tip.querySelector('kbd.chord'));
             tip.querySelector('button').click();
             const dismissed = tip.hidden
                 && JSON.parse(localStorage.getItem('cuju.tips')).dismissed.includes('home');

@@ -61,7 +61,11 @@ def _forfeit(left, right='builtin', limits=None, steps=20):
 def test_each_broken_rule_ends_the_match_with_its_reason(render_home, name, kind, message, detail):
     team = _team(name)
     # A test's own limits of memory and of the time of a match, low enough to break quickly.
-    limits = {**_QUICK, 'memory_mb': 300}
+    limits = dict(_QUICK)
+    # A low memory limit breaks quickly for the hungry team, and stays away from the others, since
+    # on Linux each new thread reserves stack memory and would fail to start under it.
+    if kind == 'memory':
+        limits['memory_mb'] = 300
     if kind == 'total_time':
         limits['match_seconds'] = 0.02
     forfeit = _forfeit(team, limits=limits)
